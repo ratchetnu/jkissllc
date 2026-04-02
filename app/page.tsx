@@ -134,12 +134,15 @@ export default function Home() {
 
       {/* ── Hero ── */}
       <section className="relative min-h-screen flex items-center overflow-hidden">
-        {/* Background image */}
-        <div className="absolute inset-0">
-          <Image src="/images/hero.jpg" alt="J Kiss LLC delivery truck" fill className="object-cover" priority style={{ objectPosition: 'center' }} />
-          <div className="absolute inset-0" style={{ background: 'linear-gradient(90deg, rgba(11,11,12,0.92) 0%, rgba(11,11,12,0.70) 50%, rgba(11,11,12,0.40) 100%)' }} />
-          <div className="absolute inset-0" style={{ background: 'radial-gradient(circle at 20% 50%, rgba(224,0,42,0.15), transparent 60%)' }} />
+        {/* Background */}
+        <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg, #0b0b0c 0%, #1a0508 100%)' }} />
+        <div className="absolute inset-0" style={{ background: 'radial-gradient(circle at 20% 50%, rgba(224,0,42,0.18), transparent 55%)' }} />
+        {/* Truck image — right side */}
+        <div className="absolute right-0 bottom-0 top-0 w-full md:w-3/5 flex items-end md:items-center justify-center md:justify-end pointer-events-none" style={{ opacity: 0.95 }}>
+          <Image src="/images/hero.png" alt="J Kiss LLC delivery truck" width={700} height={900} className="object-contain object-bottom md:object-right-bottom" priority style={{ maxHeight: '95vh', width: 'auto' }} />
         </div>
+        {/* Left fade so text stays readable */}
+        <div className="absolute inset-0 hidden md:block" style={{ background: 'linear-gradient(90deg, rgba(11,11,12,1) 0%, rgba(11,11,12,0.85) 40%, rgba(11,11,12,0.2) 70%, transparent 100%)' }} />
 
         <div className="relative max-w-6xl mx-auto px-6 pt-32 pb-24">
           <div className="max-w-2xl">
