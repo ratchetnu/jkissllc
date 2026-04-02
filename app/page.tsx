@@ -392,9 +392,9 @@ function ContactForm() {
     const form = e.currentTarget
     const data = Object.fromEntries(new FormData(form))
     try {
-      const res = await fetch('https://formspree.io/f/xpwzgkpj', {
+      const res = await fetch('/api/contact', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       })
       if (res.ok) { setStatus('sent'); form.reset() }
