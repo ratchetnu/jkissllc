@@ -101,6 +101,7 @@ function Nav() {
           {[['Services', '#services'], ['About', '#about'], ['Coverage', '#coverage'], ['Contact', '#contact']].map(([label, href]) => (
             <a key={href} href={href} className="text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)' }}>{label}</a>
           ))}
+          <a href="/start-your-carrier" className="text-sm font-bold transition hover:text-white" style={{ color: '#ff6680' }}>Start a Carrier</a>
         </nav>
 
         <a href="#contact" className="hidden md:inline-flex btn" style={{ padding: '10px 20px', fontSize: '13px' }}>Get a Quote</a>
@@ -119,6 +120,7 @@ function Nav() {
           {[['Services', '#services'], ['About', '#about'], ['Coverage', '#coverage'], ['Contact', '#contact']].map(([label, href]) => (
             <a key={href} href={href} className="text-base font-medium py-2" style={{ color: 'var(--muted)' }} onClick={() => setOpen(false)}>{label}</a>
           ))}
+          <a href="/start-your-carrier" className="text-base font-bold py-2" style={{ color: '#ff6680' }} onClick={() => setOpen(false)}>Start a Carrier</a>
           <a href="#contact" className="btn mt-2" onClick={() => setOpen(false)}>Get a Quote</a>
         </div>
       )}
