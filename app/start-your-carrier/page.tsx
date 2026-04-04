@@ -182,66 +182,63 @@ const ANNUAL = [
 const BOX_TRUCK_COMPARE = [
   {
     req: 'CDL Required',
-    under: 'No — standard driver\'s license',
-    over: 'Yes — Class B CDL minimum',
-    underOk: true,
-    overOk: false,
+    boxUnder: { text: 'No — standard license', ok: true },
+    boxOver:  { text: 'Class B CDL', ok: false },
+    semi:     { text: 'Class A CDL', ok: false },
   },
   {
     req: 'USDOT Number',
-    under: 'Yes — if interstate & over 10,001 lbs',
-    over: 'Yes — required',
-    underOk: false,
-    overOk: false,
+    boxUnder: { text: 'Yes — if interstate & 10,001+ lbs', ok: false },
+    boxOver:  { text: 'Yes — required', ok: false },
+    semi:     { text: 'Yes — required', ok: false },
   },
   {
     req: 'DOT Medical Card',
-    under: 'Yes — required if over 10,001 lbs GVWR',
-    over: 'Yes — required',
-    underOk: false,
-    overOk: false,
+    boxUnder: { text: 'Yes — if 10,001+ lbs interstate', ok: false },
+    boxOver:  { text: 'Yes — required', ok: false },
+    semi:     { text: 'Yes — required', ok: false },
   },
   {
     req: 'Operating Authority',
-    under: 'Yes — required for for-hire interstate',
-    over: 'Yes — required',
-    underOk: false,
-    overOk: false,
+    boxUnder: { text: 'Yes — for-hire interstate', ok: false },
+    boxOver:  { text: 'Yes — required', ok: false },
+    semi:     { text: 'Yes — required', ok: false },
   },
   {
-    req: 'ELD / Hours of Service',
-    under: 'Required if interstate 10,001+ lbs. Short-haul exemption available within 150-mile radius.',
-    over: 'Full ELD & HOS rules apply — no short-haul exemption if over 150 miles',
-    underOk: true,
-    overOk: false,
+    req: 'ELD / HOS',
+    boxUnder: { text: '150-mile short-haul exemption available', ok: true },
+    boxOver:  { text: 'Full ELD — short-haul exemption still possible within 150 mi', ok: false },
+    semi:     { text: 'Full ELD & HOS — no exemption on most runs', ok: false },
   },
   {
-    req: 'IFTA (Fuel Tax)',
-    under: 'NOT required — under 26,001 lbs exempt',
-    over: 'Required — quarterly filings',
-    underOk: true,
-    overOk: false,
+    req: 'IFTA Fuel Tax',
+    boxUnder: { text: 'NOT required', ok: true },
+    boxOver:  { text: 'Required — quarterly', ok: false },
+    semi:     { text: 'Required — quarterly', ok: false },
   },
   {
-    req: 'IRP Apportioned Plates',
-    under: 'NOT required — under 26,001 lbs exempt',
-    over: 'Required for interstate operations',
-    underOk: true,
-    overOk: false,
+    req: 'IRP Plates',
+    boxUnder: { text: 'NOT required', ok: true },
+    boxOver:  { text: 'Required interstate', ok: false },
+    semi:     { text: 'Required interstate', ok: false },
   },
   {
-    req: 'Insurance Minimum (Interstate)',
-    under: '$750,000 CSL — brokers often require $1M on COI',
-    over: '$750,000 CSL — same federal minimum',
-    underOk: false,
-    overOk: false,
+    req: 'Insurance Min. (Interstate)',
+    boxUnder: { text: '$750K CSL (brokers require $1M)', ok: false },
+    boxOver:  { text: '$750K CSL (brokers require $1M)', ok: false },
+    semi:     { text: '$750K CSL (brokers require $1M)', ok: false },
   },
   {
     req: 'UCR Registration',
-    under: 'Required if for-hire interstate & over 10,001 lbs',
-    over: 'Required',
-    underOk: false,
-    overOk: false,
+    boxUnder: { text: 'Yes — for-hire interstate 10,001+ lbs', ok: false },
+    boxOver:  { text: 'Yes — required', ok: false },
+    semi:     { text: 'Yes — required', ok: false },
+  },
+  {
+    req: 'Drug & Alcohol Testing',
+    boxUnder: { text: 'Yes — if CDL not required, still applies for interstate CMV', ok: false },
+    boxOver:  { text: 'Yes — full program required', ok: false },
+    semi:     { text: 'Yes — full program required', ok: false },
   },
 ]
 
@@ -302,6 +299,109 @@ export default function StartYourCarrierPage() {
           </p>
         </div>
       </div>
+
+      {/* ── Box Truck Requirements ── */}
+      <section className="py-24 px-6" style={{ borderBottom: '1px solid var(--line)' }}>
+        <div className="max-w-4xl mx-auto">
+          <FadeUp>
+            <div className="label mb-4">Start Here — Know Your Vehicle</div>
+            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Box Truck vs. All Other CMVs</h2>
+            <p className="text-base mb-3" style={{ color: 'var(--muted)' }}>
+              Your requirements depend on what you're driving. Box trucks under 26,000 lbs GVWR have a lighter compliance load than larger vehicles. The 26,001 lb line is the most important number in your business — check your door jamb sticker to confirm your truck's GVWR before you do anything else.
+            </p>
+            <p className="text-sm mb-10" style={{ color: 'rgba(255,255,255,.4)' }}>
+              GVWR = Gross Vehicle Weight Rating. It's the manufacturer's maximum operating weight, printed on the door jamb sticker. It does not change based on what you're carrying.
+            </p>
+          </FadeUp>
+
+          {/* 3-column vehicle cards */}
+          <div className="grid sm:grid-cols-3 gap-4 mb-10">
+            <FadeUp>
+              <div className="p-6 rounded-2xl h-full" style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.12)' }}>
+                <div className="text-2xl mb-3">📦</div>
+                <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--muted)' }}>Box Truck</p>
+                <p className="text-xl font-black text-white mb-2" style={{ letterSpacing: '-0.03em' }}>Under 26,000 lbs</p>
+                <p className="text-xs font-semibold mb-3" style={{ color: '#4ade80' }}>No CDL required</p>
+                <p className="text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>
+                  16 ft, 20 ft, most 24 ft box trucks. No IFTA. No IRP plates. Fewer federal requirements — but USDOT, insurance, and operating authority still apply for interstate for-hire work.
+                </p>
+              </div>
+            </FadeUp>
+            <FadeUp delay={60}>
+              <div className="p-6 rounded-2xl h-full" style={{ background: 'rgba(224,0,42,.05)', border: '1px solid rgba(224,0,42,.2)' }}>
+                <div className="text-2xl mb-3">🚛</div>
+                <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: 'rgba(255,102,128,.7)' }}>Box Truck</p>
+                <p className="text-xl font-black text-white mb-2" style={{ letterSpacing: '-0.03em' }}>Over 26,000 lbs</p>
+                <p className="text-xs font-semibold mb-3" style={{ color: '#ff6680' }}>Class B CDL required</p>
+                <p className="text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>
+                  Most 26 ft box trucks. Single vehicle, no trailer. Class B CDL required. Full FMCSA compliance: IFTA, IRP, ELD. Short-haul ELD exemption still possible within 150-mile radius.
+                </p>
+              </div>
+            </FadeUp>
+            <FadeUp delay={120}>
+              <div className="p-6 rounded-2xl h-full" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.18)' }}>
+                <div className="text-2xl mb-3">🚚</div>
+                <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: 'rgba(255,255,255,.5)' }}>Semi / Combination</p>
+                <p className="text-xl font-black text-white mb-2" style={{ letterSpacing: '-0.03em' }}>Over 26,000 lbs</p>
+                <p className="text-xs font-semibold mb-3" style={{ color: '#facc15' }}>Class A CDL required</p>
+                <p className="text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>
+                  Tractor-trailer, semi-truck. GCWR over 26,001 lbs with trailer GVWR over 10,000 lbs. Class A CDL required. Full FMCSA compliance: IFTA, IRP, ELD, full HOS with no short-haul exemption on most runs.
+                </p>
+              </div>
+            </FadeUp>
+          </div>
+
+          {/* 3-column comparison table */}
+          <FadeUp delay={100}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs" style={{ borderCollapse: 'separate', borderSpacing: '0 5px' }}>
+                <thead>
+                  <tr>
+                    <th className="text-left pb-3 font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '14px', fontSize: '10px' }}>Requirement</th>
+                    <th className="text-left pb-3 font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '14px', fontSize: '10px' }}>Box Truck &lt;26K lbs</th>
+                    <th className="text-left pb-3 font-bold uppercase tracking-widest" style={{ color: 'rgba(255,102,128,.6)', paddingLeft: '14px', fontSize: '10px' }}>Box Truck &gt;26K lbs</th>
+                    <th className="text-left pb-3 font-bold uppercase tracking-widest" style={{ color: 'rgba(250,204,21,.6)', paddingLeft: '14px', fontSize: '10px' }}>Semi / Combo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {BOX_TRUCK_COMPARE.map((row, i) => (
+                    <tr key={i}>
+                      <td className="py-3 px-4 font-bold text-white rounded-l-xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', borderRight: 'none', whiteSpace: 'nowrap' }}>{row.req}</td>
+                      <td className="py-3 px-4" style={{ background: 'rgba(255,255,255,.03)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)', color: row.boxUnder.ok ? '#4ade80' : 'var(--muted)' }}>{row.boxUnder.text}</td>
+                      <td className="py-3 px-4" style={{ background: 'rgba(255,255,255,.03)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)', color: row.boxOver.ok ? '#4ade80' : 'var(--muted)' }}>{row.boxOver.text}</td>
+                      <td className="py-3 px-4 rounded-r-xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', borderLeft: 'none', color: row.semi.ok ? '#4ade80' : 'var(--muted)' }}>{row.semi.text}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </FadeUp>
+
+          {/* Key notes */}
+          <FadeUp delay={200}>
+            <div className="mt-8 space-y-4">
+              <div className="p-5 rounded-2xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+                <p className="text-sm font-bold text-white mb-1">Short-Haul ELD Exemption</p>
+                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
+                  Available to both box truck weight classes. If your driver operates within a <strong style={{ color: '#fff' }}>150 air-mile radius</strong> of their home terminal and returns within 14 hours, they may use time records instead of an ELD. Semis on long-haul runs typically cannot use this exemption. Applies per driver, per day.
+                </p>
+              </div>
+              <div className="p-5 rounded-2xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+                <p className="text-sm font-bold text-white mb-1">Broker Insurance Expectations vs. Federal Minimums</p>
+                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
+                  Federal minimum for non-hazardous interstate freight is <strong style={{ color: '#fff' }}>$750,000 CSL</strong> — for all three vehicle types. Most load boards and freight brokers require <strong style={{ color: '#fff' }}>$1,000,000 liability</strong> on your COI before they'll assign loads. Budget for $1M from day one regardless of truck size.
+                </p>
+              </div>
+              <div className="p-5 rounded-2xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+                <p className="text-sm font-bold text-white mb-1">DOT Medical Card — Non-CDL Box Truck Drivers</p>
+                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
+                  No CDL doesn't mean no DOT medical card. Drivers operating vehicles over <strong style={{ color: '#fff' }}>10,001 lbs GVWR in interstate commerce</strong> must carry a valid DOT medical examiner's certificate — even without a CDL. Renewed every 24 months minimum.
+                </p>
+              </div>
+            </div>
+          </FadeUp>
+        </div>
+      </section>
 
       {/* ── Startup Checklist ── */}
       <section className="py-24 px-6">
@@ -389,94 +489,6 @@ export default function StartYourCarrierPage() {
                 <a href="https://safer.fmcsa.dot.gov" target="_blank" rel="noopener noreferrer" style={{ color: '#ff6680' }}>safer.fmcsa.dot.gov</a>
                 {' '}using your USDOT number. Status will show as <strong style={{ color: '#fff' }}>"Pending"</strong> until all three conditions are met: BOC-3 on file, insurance on file, and protest period complete. If it's been over 30 days and still Pending, call FMCSA at 1-800-832-5660.
               </p>
-            </div>
-          </FadeUp>
-        </div>
-      </section>
-
-      {/* ── Box Truck Requirements ── */}
-      <section className="py-24 px-6">
-        <div className="max-w-4xl mx-auto">
-          <FadeUp>
-            <div className="label mb-4">Box Truck Operators</div>
-            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Know Your Weight Class</h2>
-            <p className="text-base mb-3" style={{ color: 'var(--muted)' }}>
-              Box truck requirements split at the <strong style={{ color: '#fff' }}>26,001 lb GVWR line</strong>. GVWR is the manufacturer's max operating weight — not what your truck actually weighs loaded. Check your door jamb sticker. Most 16–24 ft box trucks fall under 26,000 lbs. Most 26 ft trucks sit right at or just over it.
-            </p>
-            <p className="text-sm mb-10" style={{ color: 'rgba(255,255,255,.4)' }}>
-              GVWR is set by the manufacturer and printed on the door jamb sticker — it does not change based on what you're carrying.
-            </p>
-          </FadeUp>
-
-          {/* Weight class cards */}
-          <div className="grid sm:grid-cols-2 gap-4 mb-10">
-            <FadeUp>
-              <div className="p-6 rounded-2xl h-full" style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.12)' }}>
-                <div className="text-2xl mb-3">📦</div>
-                <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--muted)' }}>Typical box trucks</p>
-                <p className="text-2xl font-black text-white mb-2" style={{ letterSpacing: '-0.03em' }}>Under 26,000 lbs</p>
-                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
-                  16 ft, 20 ft, and most 24 ft box trucks. No CDL required. Fewer federal requirements — but USDOT, insurance, and operating authority still apply for interstate for-hire work.
-                </p>
-              </div>
-            </FadeUp>
-            <FadeUp delay={80}>
-              <div className="p-6 rounded-2xl h-full" style={{ background: 'rgba(224,0,42,.05)', border: '1px solid rgba(224,0,42,.2)' }}>
-                <div className="text-2xl mb-3">🚛</div>
-                <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: 'rgba(255,102,128,.7)' }}>26 ft trucks & larger</p>
-                <p className="text-2xl font-black text-white mb-2" style={{ letterSpacing: '-0.03em' }}>Over 26,000 lbs</p>
-                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
-                  Most 26 ft box trucks and anything larger. Class B CDL required. Full FMCSA compliance including IFTA, IRP apportioned plates, and mandatory ELD with no short-haul exemption beyond 150 miles.
-                </p>
-              </div>
-            </FadeUp>
-          </div>
-
-          {/* Comparison table */}
-          <FadeUp delay={100}>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm" style={{ borderCollapse: 'separate', borderSpacing: '0 6px' }}>
-                <thead>
-                  <tr>
-                    <th className="text-left pb-3 text-xs font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '16px' }}>Requirement</th>
-                    <th className="text-left pb-3 text-xs font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '16px' }}>Under 26,000 lbs</th>
-                    <th className="text-left pb-3 text-xs font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '16px' }}>Over 26,000 lbs</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {BOX_TRUCK_COMPARE.map((row, i) => (
-                    <tr key={i}>
-                      <td className="py-3 px-4 font-bold text-white text-xs rounded-l-xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', borderRight: 'none', whiteSpace: 'nowrap' }}>{row.req}</td>
-                      <td className="py-3 px-4 text-xs rounded-none" style={{ background: 'rgba(255,255,255,.03)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)', color: row.underOk ? '#4ade80' : 'var(--muted)' }}>{row.under}</td>
-                      <td className="py-3 px-4 text-xs rounded-r-xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', borderLeft: 'none', color: row.overOk ? '#4ade80' : 'var(--muted)' }}>{row.over}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </FadeUp>
-
-          {/* Key notes */}
-          <FadeUp delay={200}>
-            <div className="mt-8 space-y-4">
-              <div className="p-5 rounded-2xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
-                <p className="text-sm font-bold text-white mb-1">Short-Haul ELD Exemption (Under 26,000 lbs)</p>
-                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
-                  If your drivers operate within a <strong style={{ color: '#fff' }}>150 air-mile radius</strong> of their home terminal and return to that terminal within 14 hours, they may qualify for the short-haul exemption — meaning paper logs or time records instead of an ELD. You still need to track Hours of Service. This exemption applies per driver, per day.
-                </p>
-              </div>
-              <div className="p-5 rounded-2xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
-                <p className="text-sm font-bold text-white mb-1">Broker Insurance Expectations vs. Federal Minimums</p>
-                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
-                  The federal minimum for non-hazardous interstate freight is <strong style={{ color: '#fff' }}>$750,000 CSL</strong>. However, most load boards and freight brokers require <strong style={{ color: '#fff' }}>$1,000,000 liability</strong> on your Certificate of Insurance (COI) before they will assign you loads — regardless of your truck size. Budget for $1M coverage from day one.
-                </p>
-              </div>
-              <div className="p-5 rounded-2xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
-                <p className="text-sm font-bold text-white mb-1">DOT Medical Card — Non-CDL Drivers</p>
-                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
-                  Even without a CDL requirement, drivers operating vehicles over <strong style={{ color: '#fff' }}>10,001 lbs GVWR in interstate commerce</strong> must carry a valid DOT medical examiner's certificate. This requires a physical from an FMCSA-registered medical examiner and must be renewed every 24 months (or more frequently if the examiner requires it).
-                </p>
-              </div>
             </div>
           </FadeUp>
         </div>
@@ -618,13 +630,13 @@ export default function StartYourCarrierPage() {
         <div className="max-w-4xl mx-auto">
           <FadeUp>
             <div className="glass-card p-10 text-center" style={{ borderRadius: '24px', background: 'linear-gradient(135deg, rgba(224,0,42,.08), rgba(255,255,255,.02))' }}>
-              <div className="label mb-5 mx-auto" style={{ width: 'fit-content' }}>8+ Years in DFW Freight</div>
+              <div className="label mb-5 mx-auto" style={{ width: 'fit-content' }}>5+ Years in DFW Freight</div>
               <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em', lineHeight: 1.1 }}>
                 Already Running? We Can<br />
                 <span style={{ color: 'var(--red)' }}>Move Your Freight.</span>
               </h2>
               <p className="text-base mb-8 max-w-lg mx-auto leading-relaxed" style={{ color: 'var(--muted)' }}>
-                J Kiss LLC has operated in the DFW freight market for over 8 years. We partner with warehouses, retailers, and logistics companies that need a reliable carrier they can count on.
+                J Kiss LLC has operated in the DFW freight market for over 5 years (since September 2020). We partner with warehouses, retailers, and logistics companies that need a reliable carrier they can count on.
               </p>
               <div className="flex flex-wrap justify-center gap-4">
                 <Link href="/#contact" className="btn">Request a Quote →</Link>

@@ -57,7 +57,7 @@ const SERVICES = [
 ]
 
 const STATS = [
-  { value: '8+', label: 'Years in Operation' },
+  { value: '5+', label: 'Years in Operation' },
   { value: '6+', label: 'Major Retail Partners' },
   { value: 'DFW', label: 'Metro Coverage' },
   { value: '100%', label: 'Licensed & Insured' },
@@ -274,7 +274,7 @@ export default function Home() {
             </h2>
             <div className="space-y-4 text-base leading-relaxed" style={{ color: 'var(--muted)' }}>
               <p>
-                J Kiss LLC is a Dallas–Fort Worth based freight and last-mile delivery company. We have spent years building a reputation for on-time performance, careful handling, and clear communication with every client we serve.
+                J Kiss LLC is a Dallas–Fort Worth based freight and last-mile delivery company. In business since September 2020, we have spent 5+ years building a reputation for on-time performance, careful handling, and clear communication with every client we serve.
               </p>
               <p>
                 We have executed delivery contracts for some of the largest retail and logistics operations in the country — including Lowe's, Rooms To Go, Living Spaces, RH, Nebraska Furniture Mart, and XPO Logistics. Every run is handled with the same level of professionalism we bring to our biggest accounts.
@@ -333,7 +333,7 @@ export default function Home() {
                   Business in <span style={{ color: 'var(--red)' }}>Texas?</span>
                 </h2>
                 <p className="text-base leading-relaxed mb-8" style={{ color: 'var(--muted)' }}>
-                  We put together a complete guide based on 8+ years running freight in DFW. Every federal and state requirement, insurance minimums, IFTA, IRP, ELD rules, drug testing — plus a monthly, quarterly, and annual compliance calendar so you never miss a deadline.
+                  We put together a complete guide based on 5+ years running freight in DFW (in business since September 2020). Every federal and state requirement, insurance minimums, IFTA, IRP, ELD rules, drug testing — plus a monthly, quarterly, and annual compliance calendar so you never miss a deadline.
                 </p>
                 <a href="/start-your-carrier" className="btn" style={{ width: 'fit-content' }}>Read the Free Guide →</a>
               </FadeUp>
