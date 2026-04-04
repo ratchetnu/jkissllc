@@ -185,17 +185,39 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* Setup prompt — if env vars missing */}
+        {/* Setup prompt — token needs to be a Personal Access Token */}
         {noData && !error && (
-          <div className="glass-card rounded-2xl p-8 text-center mb-8">
-            <p className="text-lg font-black text-white mb-3">Setup Required</p>
-            <p className="text-sm leading-relaxed max-w-lg mx-auto" style={{ color: 'var(--muted)' }}>
-              Analytics data requires two environment variables in your Vercel project:
-            </p>
-            <div className="mt-5 inline-block text-left text-sm font-mono rounded-xl p-5 space-y-2"
-              style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)' }}>
-              <p><span style={{ color: 'var(--red)' }}>VERCEL_TOKEN</span> — your personal access token from vercel.com/account/tokens</p>
-              <p><span style={{ color: 'var(--red)' }}>VERCEL_PROJECT_ID</span> — found in your project Settings → General</p>
+          <div className="space-y-4 mb-8">
+            {/* Direct link card — always works */}
+            <a href="https://vercel.com/nunubaby-6829s-projects/jkissllc/analytics"
+              target="_blank" rel="noopener noreferrer"
+              className="glass-card rounded-2xl p-8 flex items-center justify-between gap-6 transition-all hover:border-red-500 block"
+              style={{ textDecoration: 'none' }}>
+              <div>
+                <p className="text-lg font-black text-white mb-1">View Full Analytics Dashboard ↗</p>
+                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
+                  All your visitor data, page views, referrers, countries, and devices are live in Vercel.
+                </p>
+              </div>
+              <div className="shrink-0 w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
+                style={{ background: 'rgba(224,0,42,.12)', border: '1px solid rgba(224,0,42,.25)' }}>↗</div>
+            </a>
+
+            {/* Token fix instructions */}
+            <div className="rounded-2xl p-6" style={{ background: 'rgba(255,180,0,.05)', border: '1px solid rgba(255,180,0,.2)' }}>
+              <p className="text-sm font-black text-white mb-2">⚠ In-page analytics requires a Personal Access Token</p>
+              <p className="text-sm leading-relaxed mb-4" style={{ color: 'var(--muted)' }}>
+                The current <code className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,.07)' }}>VERCEL_TOKEN</code> is
+                a project-linked CI token (<code className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,.07)' }}>vcp_</code> prefix) which doesn&apos;t have analytics API access.
+                Replace it with a Personal Access Token:
+              </p>
+              <ol className="text-sm space-y-1.5 list-decimal list-inside" style={{ color: 'var(--muted)' }}>
+                <li>Go to <strong className="text-white">vercel.com/account/tokens</strong></li>
+                <li>Click <strong className="text-white">Create Token</strong> → give it a name like &quot;jkissllc analytics&quot;</li>
+                <li>Copy the token (starts with a different prefix, not <code className="text-xs">vcp_</code>)</li>
+                <li>In Vercel Dashboard → jkissllc → Settings → Environment Variables → update <code className="text-xs">VERCEL_TOKEN</code></li>
+                <li>Redeploy once</li>
+              </ol>
             </div>
           </div>
         )}
