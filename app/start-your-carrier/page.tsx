@@ -337,12 +337,18 @@ export default function StartYourCarrierPage() {
   return (
     <main style={{ background: 'var(--bg)', color: 'var(--text)' }}>
 
-      {/* ── Nav back ── */}
+      {/* ── Nav ── */}
       <div className="fixed top-0 left-0 right-0 z-50" style={{ background: 'rgba(11,11,12,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/" className="text-xl font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em', textDecoration: 'none' }}>
             J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
           </Link>
+          <nav className="hidden md:flex items-center gap-8">
+            {[['Services', '/#services'], ['About', '/#about'], ['Coverage', '/#coverage'], ['Contact', '/#contact']].map(([label, href]) => (
+              <Link key={href} href={href} className="text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)', textDecoration: 'none' }}>{label}</Link>
+            ))}
+            <Link href="/start-your-carrier" className="text-sm font-bold" style={{ color: '#ff6680', textDecoration: 'none' }}>Start a Carrier</Link>
+          </nav>
           <Link href="/#contact" className="btn" style={{ padding: '10px 20px', fontSize: '13px' }}>Get a Quote</Link>
         </div>
       </div>
