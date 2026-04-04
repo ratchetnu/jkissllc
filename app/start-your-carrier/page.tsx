@@ -403,6 +403,124 @@ export default function StartYourCarrierPage() {
         </div>
       </section>
 
+      {/* ── Earnings Potential ── */}
+      <section className="py-24 px-6" style={{ borderBottom: '1px solid var(--line)' }}>
+        <div className="max-w-4xl mx-auto">
+          <FadeUp>
+            <div className="label mb-4">What You Can Earn</div>
+            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Box Truck Earnings — Final Mile Furniture &amp; Appliance Delivery</h2>
+            <p className="text-base mb-3" style={{ color: 'var(--muted)' }}>
+              Furniture and appliance final-mile delivery is one of the most consistent revenue streams for box truck owner-operators. Local logistics companies contract with independent carriers daily — no load board, no long-haul, home every night. Numbers below are gross revenue before expenses, sourced from ZipRecruiter and Indeed job listings (March 2026).
+            </p>
+            <p className="text-xs mb-12" style={{ color: 'rgba(255,255,255,.35)' }}>
+              Source: ZipRecruiter March 2026 salary data · Indeed owner-operator job listings · Industry per-stop averages. Gross figures — see expense breakdown below.
+            </p>
+          </FadeUp>
+
+          {/* Per-stop breakdown */}
+          <FadeUp delay={40}>
+            <div className="glass-card p-6 mb-6" style={{ borderRadius: '18px' }}>
+              <p className="text-xs font-bold uppercase tracking-widest mb-4" style={{ color: 'var(--muted)', letterSpacing: '0.1em' }}>How You Get Paid — Per Stop Rate</p>
+              <div className="grid sm:grid-cols-3 gap-4">
+                <div>
+                  <p className="text-2xl font-black mb-1" style={{ color: 'var(--red)', letterSpacing: '-0.03em' }}>$75–$95</p>
+                  <p className="text-xs font-semibold text-white mb-1">Per Stop (Gross)</p>
+                  <p className="text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>Industry average per residential delivery stop for furniture/appliance final-mile work.</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-black mb-1" style={{ color: 'var(--red)', letterSpacing: '-0.03em' }}>5–10</p>
+                  <p className="text-xs font-semibold text-white mb-1">Stops Per Day (Local Route)</p>
+                  <p className="text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>Typical daily stop count on a local DFW route. White-glove installs may be fewer stops at higher pay.</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-black mb-1" style={{ color: 'var(--red)', letterSpacing: '-0.03em' }}>$375–$950</p>
+                  <p className="text-xs font-semibold text-white mb-1">Gross Per Day</p>
+                  <p className="text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>Daily gross range based on stop count × per-stop rate. High end reflects full route with white-glove stops.</p>
+                </div>
+              </div>
+            </div>
+          </FadeUp>
+
+          {/* Earnings table */}
+          <FadeUp delay={80}>
+            <div className="overflow-x-auto mb-8">
+              <table className="w-full text-sm" style={{ borderCollapse: 'separate', borderSpacing: '0 6px' }}>
+                <thead>
+                  <tr>
+                    <th className="text-left pb-3 text-xs font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '16px' }}>Timeframe</th>
+                    <th className="text-left pb-3 text-xs font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '16px' }}>Entry / Low</th>
+                    <th className="text-left pb-3 text-xs font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '16px' }}>Average</th>
+                    <th className="text-left pb-3 text-xs font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '16px' }}>Experienced / High</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { period: 'Per Day', low: '$375 – $500', avg: '$600 – $800', high: '$950 – $1,500' },
+                    { period: 'Per Week (5 days)', low: '$961 – $1,875', avg: '$2,201 – $2,403', high: '$3,500 – $5,000' },
+                    { period: 'Per Month', low: '$3,846 – $7,500', avg: '$8,804 – $9,539', high: '$14,000 – $20,000' },
+                    { period: 'Per Year (Gross)', low: '$50,000 – $75,000', avg: '$114,472', high: '$150,000 – $250,000' },
+                  ].map((row, i) => (
+                    <tr key={i}>
+                      <td className="py-3 px-4 font-black text-white text-xs rounded-l-xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', borderRight: 'none' }}>{row.period}</td>
+                      <td className="py-3 px-4 text-xs" style={{ background: 'rgba(255,255,255,.03)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)', color: 'var(--muted)' }}>{row.low}</td>
+                      <td className="py-3 px-4 text-xs font-bold" style={{ background: 'rgba(255,255,255,.03)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)', color: '#fff' }}>{row.avg}</td>
+                      <td className="py-3 px-4 text-xs font-bold rounded-r-xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', borderLeft: 'none', color: '#4ade80' }}>{row.high}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </FadeUp>
+
+          {/* Who's hiring */}
+          <FadeUp delay={120}>
+            <div className="mb-8">
+              <p className="text-sm font-bold text-white mb-4">Who Contracts Local Box Truck Owner-Operators</p>
+              <div className="grid sm:grid-cols-2 gap-3">
+                {[
+                  { name: 'J.B. Hunt Final Mile', desc: 'Contracts owner-ops for furniture set-up and delivery for major retailers. Weekly settlements. Home daily.' },
+                  { name: 'Ryder Last Mile', desc: 'White-glove furniture and appliance delivery. 26 ft box truck with liftgate required. Weekly pay.' },
+                  { name: 'HomeDeliveryLink', desc: 'Regional network connecting retailers with local owner-operators for last-mile home delivery.' },
+                  { name: 'PTG Logistics (Best Buy)', desc: 'Appliance and electronics delivery/install. Active DFW market. Pays per stop or daily rate.' },
+                  { name: 'UST Logistical Systems', desc: 'White-glove delivery and installation. Minimum 2 years experience preferred. Weekly settlements.' },
+                  { name: 'Direct Impact Logistics', desc: 'Final-mile furniture delivery network. LLC required. Contract-based, routes assigned weekly.' },
+                ].map((co, i) => (
+                  <div key={i} className="p-4 rounded-2xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+                    <p className="text-xs font-black text-white mb-1">{co.name}</p>
+                    <p className="text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>{co.desc}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </FadeUp>
+
+          {/* Expense reality check */}
+          <FadeUp delay={160}>
+            <div className="p-6 rounded-2xl" style={{ background: 'rgba(224,0,42,.05)', border: '1px solid rgba(224,0,42,.2)' }}>
+              <p className="text-sm font-black text-white mb-4">Expense Reality Check — What Comes Out Before You Profit</p>
+              <div className="grid sm:grid-cols-2 gap-x-8 gap-y-3">
+                {[
+                  { item: 'Fuel', cost: '$150 – $350 / week' },
+                  { item: 'Commercial Insurance', cost: '$400 – $800 / month' },
+                  { item: 'Truck Payment / Lease', cost: '$800 – $2,000 / month' },
+                  { item: 'Helper / Second Man', cost: '$150 – $250 / day (if needed)' },
+                  { item: 'Maintenance & Repairs', cost: '$200 – $500 / month avg' },
+                  { item: 'ELD Subscription', cost: '$35 – $75 / month' },
+                ].map((exp, i) => (
+                  <div key={i} className="flex items-center justify-between gap-4 py-1" style={{ borderBottom: '1px solid rgba(255,255,255,.06)' }}>
+                    <p className="text-xs font-semibold text-white">{exp.item}</p>
+                    <p className="text-xs shrink-0" style={{ color: '#ff6680' }}>{exp.cost}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs mt-4 leading-relaxed" style={{ color: 'rgba(255,255,255,.4)' }}>
+                After expenses, a well-run owner-operator doing 5 days/week of local furniture and appliance delivery typically nets <strong style={{ color: 'rgba(255,255,255,.7)' }}>$55,000 – $110,000 per year</strong>. Top operators running full routes with a helper on large installs can exceed that.
+              </p>
+            </div>
+          </FadeUp>
+        </div>
+      </section>
+
       {/* ── Startup Checklist ── */}
       <section className="py-24 px-6">
         <div className="max-w-4xl mx-auto">
