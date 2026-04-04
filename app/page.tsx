@@ -358,6 +358,54 @@ export default function Home() {
         </div>
       </section>
 
+      {/* ── ClaimGuard Help Ad ── */}
+      <section className="py-20 px-6" style={{ background: 'rgba(255,255,255,.015)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
+        <div className="max-w-6xl mx-auto">
+          <FadeUp>
+            <a href="https://www.claimguardhelp.com" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', display: 'block' }}>
+              <div className="rounded-3xl p-10 md:p-14 transition-all hover:scale-[1.01]" style={{ background: 'linear-gradient(135deg, #030d1a 0%, #071a30 50%, #0b0b0c 100%)', border: '1px solid rgba(30,120,255,.3)', cursor: 'pointer' }}>
+                <div className="grid md:grid-cols-2 gap-10 items-center">
+                  <div>
+                    <div className="inline-block text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full mb-6" style={{ background: 'rgba(30,120,255,.15)', border: '1px solid rgba(30,120,255,.3)', color: '#4d9fff', letterSpacing: '0.12em' }}>
+                      Partner Resource
+                    </div>
+                    <h2 className="text-3xl md:text-4xl font-black text-white mb-5" style={{ letterSpacing: '-0.04em', lineHeight: 1.1 }}>
+                      Got a Claim Denied?<br />
+                      <span style={{ color: '#4d9fff' }}>We Can Help.</span>
+                    </h2>
+                    <p className="text-base leading-relaxed mb-8" style={{ color: 'rgba(255,255,255,.55)' }}>
+                      Independent contractors and owner-operators get stuck with denied claims, delayed payments, and confusing paperwork every day.
+                      <strong className="text-white"> ClaimGuard Help</strong> is built specifically for contractors who need someone in their corner — not a lawyer, not an insurance company — just straight answers and real help getting what you're owed.
+                    </p>
+                    <div className="inline-flex items-center gap-2 font-bold text-sm px-6 py-3 rounded-xl transition-colors" style={{ background: '#1e78ff', color: '#fff', borderRadius: '12px' }}>
+                      Get Help with Your Claim →
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    {[
+                      { icon: '🚫', title: 'Claim Denied?', desc: 'Understand why and what your options are to fight back.' },
+                      { icon: '💸', title: 'Unpaid Invoices', desc: 'Brokers and carriers stiffing you on payment? Know your rights.' },
+                      { icon: '📄', title: 'Confusing Paperwork', desc: 'We break down the forms, filings, and deadlines in plain English.' },
+                      { icon: '⚡', title: 'Fast Answers', desc: 'No waiting. Get guidance on your situation right away.' },
+                    ].map((card) => (
+                      <div key={card.title} className="p-5 rounded-2xl" style={{ background: 'rgba(30,120,255,.07)', border: '1px solid rgba(30,120,255,.15)' }}>
+                        <span className="text-2xl mb-3 block">{card.icon}</span>
+                        <p className="text-sm font-black text-white mb-1">{card.title}</p>
+                        <p className="text-xs leading-relaxed" style={{ color: 'rgba(255,255,255,.45)' }}>{card.desc}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="mt-8 pt-8 flex items-center gap-2 text-xs" style={{ borderTop: '1px solid rgba(30,120,255,.15)', color: 'rgba(255,255,255,.3)' }}>
+                  <span style={{ color: '#4d9fff' }}>claimguardhelp.com</span>
+                  <span>· Independent contractor claims assistance</span>
+                </div>
+              </div>
+            </a>
+          </FadeUp>
+        </div>
+      </section>
+
       {/* ── Contact ── */}
       <section id="contact" className="py-24 px-6">
         <div className="max-w-6xl mx-auto">
