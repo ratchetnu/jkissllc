@@ -319,6 +319,43 @@ export default function Home() {
         </div>
       </section>
 
+      {/* ── Start Your Carrier Guide Promo ── */}
+      <section className="py-24 px-6" style={{ borderTop: '1px solid var(--line)' }}>
+        <div className="max-w-6xl mx-auto">
+          <div className="rounded-3xl overflow-hidden p-10 md:p-14" style={{ background: 'linear-gradient(135deg, #1a0508 0%, #0b0b0c 60%)', border: '1px solid rgba(224,0,42,.25)' }}>
+            <div className="grid md:grid-cols-2 gap-10 items-center">
+              <FadeUp>
+                <div className="label mb-5">Free Industry Guide</div>
+                <h2 className="text-3xl md:text-4xl font-black text-white mb-5" style={{ letterSpacing: '-0.04em', lineHeight: 1.1 }}>
+                  Starting a Motor Carrier<br />
+                  Business in <span style={{ color: 'var(--red)' }}>Texas?</span>
+                </h2>
+                <p className="text-base leading-relaxed mb-8" style={{ color: 'var(--muted)' }}>
+                  We put together a complete guide based on 8+ years running freight in DFW. Every federal and state requirement, insurance minimums, IFTA, IRP, ELD rules, drug testing — plus a monthly, quarterly, and annual compliance calendar so you never miss a deadline.
+                </p>
+                <a href="/start-your-carrier" className="btn" style={{ width: 'fit-content' }}>Read the Free Guide →</a>
+              </FadeUp>
+              <FadeUp delay={100}>
+                <div className="grid grid-cols-2 gap-4">
+                  {[
+                    { icon: '📋', title: '12-Step Startup Checklist', desc: 'USDOT, authority, BOC-3, insurance, IRP, IFTA and more' },
+                    { icon: '🛡️', title: 'Insurance Requirements', desc: 'Federal & Texas minimums broken down by vehicle type and cargo' },
+                    { icon: '📅', title: 'Compliance Calendar', desc: 'Monthly, quarterly, and annual checkpoints to stay audit-ready' },
+                    { icon: '🔗', title: 'Official Agency Links', desc: 'Direct links to FMCSA, TxDMV, UCR, IFTA, and more' },
+                  ].map((card, i) => (
+                    <div key={card.title} className="glass-card p-5" style={{ borderRadius: '16px' }}>
+                      <span className="text-2xl mb-3 block">{card.icon}</span>
+                      <p className="text-sm font-black text-white mb-1" style={{ letterSpacing: '-0.01em' }}>{card.title}</p>
+                      <p className="text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>{card.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </FadeUp>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ── Contact ── */}
       <section id="contact" className="py-24 px-6">
         <div className="max-w-6xl mx-auto">
