@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
 
   try {
     await resend.emails.send({
-      from: 'J Kiss LLC Website <onboarding@resend.dev>',
+      from: 'J Kiss LLC <info@jkissllc.com>',
       to: ['info@jkissllc.com', 'timmothy@jkissllc.com'],
       replyTo: email,
       subject: `New Quote Request — ${service || 'General Inquiry'}`,
