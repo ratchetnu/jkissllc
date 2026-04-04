@@ -179,6 +179,81 @@ const ANNUAL = [
   'Confirm ELD provider subscription is active and device firmware is updated',
 ]
 
+const BOX_TRUCK_COMPARE = [
+  {
+    req: 'CDL Required',
+    under: 'No — standard driver\'s license',
+    over: 'Yes — Class B CDL minimum',
+    underOk: true,
+    overOk: false,
+  },
+  {
+    req: 'USDOT Number',
+    under: 'Yes — if interstate & over 10,001 lbs',
+    over: 'Yes — required',
+    underOk: false,
+    overOk: false,
+  },
+  {
+    req: 'DOT Medical Card',
+    under: 'Yes — required if over 10,001 lbs GVWR',
+    over: 'Yes — required',
+    underOk: false,
+    overOk: false,
+  },
+  {
+    req: 'Operating Authority',
+    under: 'Yes — required for for-hire interstate',
+    over: 'Yes — required',
+    underOk: false,
+    overOk: false,
+  },
+  {
+    req: 'ELD / Hours of Service',
+    under: 'Required if interstate 10,001+ lbs. Short-haul exemption available within 150-mile radius.',
+    over: 'Full ELD & HOS rules apply — no short-haul exemption if over 150 miles',
+    underOk: true,
+    overOk: false,
+  },
+  {
+    req: 'IFTA (Fuel Tax)',
+    under: 'NOT required — under 26,001 lbs exempt',
+    over: 'Required — quarterly filings',
+    underOk: true,
+    overOk: false,
+  },
+  {
+    req: 'IRP Apportioned Plates',
+    under: 'NOT required — under 26,001 lbs exempt',
+    over: 'Required for interstate operations',
+    underOk: true,
+    overOk: false,
+  },
+  {
+    req: 'Insurance Minimum (Interstate)',
+    under: '$750,000 CSL — brokers often require $1M on COI',
+    over: '$750,000 CSL — same federal minimum',
+    underOk: false,
+    overOk: false,
+  },
+  {
+    req: 'UCR Registration',
+    under: 'Required if for-hire interstate & over 10,001 lbs',
+    over: 'Required',
+    underOk: false,
+    overOk: false,
+  },
+]
+
+const AUTHORITY_TIMELINE = [
+  { day: 'Day 1–3', event: 'Submit USDOT + Operating Authority application', note: 'Pay $300 non-refundable fee. 21-day protest period starts immediately.' },
+  { day: 'Day 1–3', event: 'File BOC-3 process agent', note: 'Must be done same week as authority application. Authority will not activate without it.' },
+  { day: 'Day 1–7', event: 'Secure insurance & insurer files MCS-90 with FMCSA', note: 'Your insurance provider files electronically. Can take 3–7 business days to show in FMCSA system.' },
+  { day: 'Day 21', event: '21-day protest period ends', note: 'If no protests filed, FMCSA reviews your application for activation.' },
+  { day: 'Day 21–30', event: 'Authority activates — status changes to "Active"', note: 'FMCSA confirms BOC-3 on file + insurance on file + protest period complete. Check at safer.fmcsa.dot.gov.' },
+  { day: 'After Active', event: 'Register UCR, IRP (if applicable), IFTA (if applicable)', note: 'These can be done during the waiting period but are enforced once you start operating.' },
+]
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function StartYourCarrierPage() {
@@ -270,6 +345,140 @@ export default function StartYourCarrierPage() {
               </FadeUp>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* ── Authority Activation Timeline ── */}
+      <section className="py-20 px-6" style={{ background: 'rgba(255,255,255,.015)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
+        <div className="max-w-4xl mx-auto">
+          <FadeUp>
+            <div className="label mb-4">How Long Does It Take?</div>
+            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Authority Activation Timeline</h2>
+            <p className="text-base mb-10" style={{ color: 'var(--muted)' }}>
+              Most carriers see their authority go "Active" within <strong style={{ color: '#fff' }}>3 to 6 weeks</strong> from the date of application. The 21-day protest period is mandatory — there is no way to skip it. The most common reason for delays is missing insurance or BOC-3 filings.
+            </p>
+          </FadeUp>
+          <div className="relative">
+            {/* Timeline line */}
+            <div className="absolute left-5 top-0 bottom-0 w-px hidden sm:block" style={{ background: 'rgba(224,0,42,.25)' }} />
+            <div className="space-y-4">
+              {AUTHORITY_TIMELINE.map((item, i) => (
+                <FadeUp key={i} delay={i * 60}>
+                  <div className="sm:pl-14 relative">
+                    {/* Dot */}
+                    <div className="hidden sm:flex absolute left-0 top-5 w-10 h-10 rounded-full items-center justify-center text-xs font-black shrink-0" style={{ background: 'rgba(224,0,42,.15)', border: '2px solid rgba(224,0,42,.4)', color: 'var(--red)' }}>
+                      {i + 1}
+                    </div>
+                    <div className="glass-card p-5" style={{ borderRadius: '14px' }}>
+                      <div className="flex flex-wrap items-center gap-3 mb-2">
+                        <span className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ background: 'rgba(224,0,42,.12)', border: '1px solid rgba(224,0,42,.3)', color: 'var(--red)' }}>{item.day}</span>
+                        <p className="text-sm font-black text-white">{item.event}</p>
+                      </div>
+                      <p className="text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>{item.note}</p>
+                    </div>
+                  </div>
+                </FadeUp>
+              ))}
+            </div>
+          </div>
+          <FadeUp delay={400}>
+            <div className="mt-8 p-5 rounded-2xl" style={{ background: 'rgba(224,0,42,.06)', border: '1px solid rgba(224,0,42,.2)' }}>
+              <p className="text-sm font-bold text-white mb-1">Pro Tip: Check Your Status</p>
+              <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
+                Monitor your application at{' '}
+                <a href="https://safer.fmcsa.dot.gov" target="_blank" rel="noopener noreferrer" style={{ color: '#ff6680' }}>safer.fmcsa.dot.gov</a>
+                {' '}using your USDOT number. Status will show as <strong style={{ color: '#fff' }}>"Pending"</strong> until all three conditions are met: BOC-3 on file, insurance on file, and protest period complete. If it's been over 30 days and still Pending, call FMCSA at 1-800-832-5660.
+              </p>
+            </div>
+          </FadeUp>
+        </div>
+      </section>
+
+      {/* ── Box Truck Requirements ── */}
+      <section className="py-24 px-6">
+        <div className="max-w-4xl mx-auto">
+          <FadeUp>
+            <div className="label mb-4">Box Truck Operators</div>
+            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Know Your Weight Class</h2>
+            <p className="text-base mb-3" style={{ color: 'var(--muted)' }}>
+              Box truck requirements split at the <strong style={{ color: '#fff' }}>26,001 lb GVWR line</strong>. GVWR is the manufacturer's max operating weight — not what your truck actually weighs loaded. Check your door jamb sticker. Most 16–24 ft box trucks fall under 26,000 lbs. Most 26 ft trucks sit right at or just over it.
+            </p>
+            <p className="text-sm mb-10" style={{ color: 'rgba(255,255,255,.4)' }}>
+              GVWR is set by the manufacturer and printed on the door jamb sticker — it does not change based on what you're carrying.
+            </p>
+          </FadeUp>
+
+          {/* Weight class cards */}
+          <div className="grid sm:grid-cols-2 gap-4 mb-10">
+            <FadeUp>
+              <div className="p-6 rounded-2xl h-full" style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.12)' }}>
+                <div className="text-2xl mb-3">📦</div>
+                <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--muted)' }}>Typical box trucks</p>
+                <p className="text-2xl font-black text-white mb-2" style={{ letterSpacing: '-0.03em' }}>Under 26,000 lbs</p>
+                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
+                  16 ft, 20 ft, and most 24 ft box trucks. No CDL required. Fewer federal requirements — but USDOT, insurance, and operating authority still apply for interstate for-hire work.
+                </p>
+              </div>
+            </FadeUp>
+            <FadeUp delay={80}>
+              <div className="p-6 rounded-2xl h-full" style={{ background: 'rgba(224,0,42,.05)', border: '1px solid rgba(224,0,42,.2)' }}>
+                <div className="text-2xl mb-3">🚛</div>
+                <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: 'rgba(255,102,128,.7)' }}>26 ft trucks & larger</p>
+                <p className="text-2xl font-black text-white mb-2" style={{ letterSpacing: '-0.03em' }}>Over 26,000 lbs</p>
+                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
+                  Most 26 ft box trucks and anything larger. Class B CDL required. Full FMCSA compliance including IFTA, IRP apportioned plates, and mandatory ELD with no short-haul exemption beyond 150 miles.
+                </p>
+              </div>
+            </FadeUp>
+          </div>
+
+          {/* Comparison table */}
+          <FadeUp delay={100}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" style={{ borderCollapse: 'separate', borderSpacing: '0 6px' }}>
+                <thead>
+                  <tr>
+                    <th className="text-left pb-3 text-xs font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '16px' }}>Requirement</th>
+                    <th className="text-left pb-3 text-xs font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '16px' }}>Under 26,000 lbs</th>
+                    <th className="text-left pb-3 text-xs font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '16px' }}>Over 26,000 lbs</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {BOX_TRUCK_COMPARE.map((row, i) => (
+                    <tr key={i}>
+                      <td className="py-3 px-4 font-bold text-white text-xs rounded-l-xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', borderRight: 'none', whiteSpace: 'nowrap' }}>{row.req}</td>
+                      <td className="py-3 px-4 text-xs rounded-none" style={{ background: 'rgba(255,255,255,.03)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)', color: row.underOk ? '#4ade80' : 'var(--muted)' }}>{row.under}</td>
+                      <td className="py-3 px-4 text-xs rounded-r-xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', borderLeft: 'none', color: row.overOk ? '#4ade80' : 'var(--muted)' }}>{row.over}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </FadeUp>
+
+          {/* Key notes */}
+          <FadeUp delay={200}>
+            <div className="mt-8 space-y-4">
+              <div className="p-5 rounded-2xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+                <p className="text-sm font-bold text-white mb-1">Short-Haul ELD Exemption (Under 26,000 lbs)</p>
+                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
+                  If your drivers operate within a <strong style={{ color: '#fff' }}>150 air-mile radius</strong> of their home terminal and return to that terminal within 14 hours, they may qualify for the short-haul exemption — meaning paper logs or time records instead of an ELD. You still need to track Hours of Service. This exemption applies per driver, per day.
+                </p>
+              </div>
+              <div className="p-5 rounded-2xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+                <p className="text-sm font-bold text-white mb-1">Broker Insurance Expectations vs. Federal Minimums</p>
+                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
+                  The federal minimum for non-hazardous interstate freight is <strong style={{ color: '#fff' }}>$750,000 CSL</strong>. However, most load boards and freight brokers require <strong style={{ color: '#fff' }}>$1,000,000 liability</strong> on your Certificate of Insurance (COI) before they will assign you loads — regardless of your truck size. Budget for $1M coverage from day one.
+                </p>
+              </div>
+              <div className="p-5 rounded-2xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+                <p className="text-sm font-bold text-white mb-1">DOT Medical Card — Non-CDL Drivers</p>
+                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
+                  Even without a CDL requirement, drivers operating vehicles over <strong style={{ color: '#fff' }}>10,001 lbs GVWR in interstate commerce</strong> must carry a valid DOT medical examiner's certificate. This requires a physical from an FMCSA-registered medical examiner and must be renewed every 24 months (or more frequently if the examiner requires it).
+                </p>
+              </div>
+            </div>
+          </FadeUp>
         </div>
       </section>
 
