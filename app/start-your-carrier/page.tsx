@@ -251,6 +251,86 @@ const AUTHORITY_TIMELINE = [
   { day: 'After Active', event: 'Register UCR, IRP (if applicable), IFTA (if applicable)', note: 'These can be done during the waiting period but are enforced once you start operating.' },
 ]
 
+const STARTUP_COSTS = [
+  { item: 'LLC / Business Formation (TX)', low: '$300', high: '$500', note: 'TX Secretary of State filing fee + registered agent (first year)' },
+  { item: 'EIN (Federal Tax ID)', low: '$0', high: '$0', note: 'Free from IRS online — same day' },
+  { item: 'USDOT Number', low: '$0', high: '$0', note: 'Free through FMCSA registration' },
+  { item: 'Operating Authority', low: '$300', high: '$300', note: 'Non-refundable FMCSA filing fee' },
+  { item: 'BOC-3 Process Agent', low: '$25', high: '$75', note: 'One-time fee through a process agent service' },
+  { item: 'Commercial Insurance (1st month)', low: '$400', high: '$800', note: 'Down payment to activate policy; required before authority activates' },
+  { item: 'UCR Registration', low: '$59', high: '$175', note: 'Annual fee based on fleet size (1–2 trucks)' },
+  { item: 'IRP Apportioned Plates', low: '$1,500', high: '$1,800', note: 'Required for 26,001+ lbs trucks running interstate' },
+  { item: 'Box Truck (Used, 16–24 ft)', low: '$12,000', high: '$35,000', note: 'Purchase price; liftgate adds $2,000–$5,000 if not included' },
+  { item: 'Box Truck (26 ft, Used)', low: '$20,000', high: '$55,000', note: 'Or lease at $725–$995/month' },
+  { item: 'Equipment (dolly, blankets, straps)', low: '$500', high: '$1,200', note: 'Appliance dolly, furniture blankets, ratchet straps, hand truck' },
+  { item: 'ELD Device + First Month', low: '$150', high: '$300', note: 'Device purchase or lease + first subscription month' },
+  { item: 'Drug Testing (Pre-employment)', low: '$50', high: '$75', note: 'Required per driver before first run' },
+  { item: 'DOT Physical (Medical Card)', low: '$75', high: '$150', note: 'Per driver; find an FMCSA-certified examiner' },
+  { item: 'Operating Reserve (3 months)', low: '$3,000', high: '$6,000', note: 'Fuel, insurance, unexpected repairs before revenue is consistent' },
+]
+
+const EQUIPMENT_LIST = [
+  { category: 'Delivery Equipment', items: ['Appliance hand truck / dolly (2-wheel & 4-wheel)', 'Furniture dolly (4-wheel flat)', 'Stair-climbing dolly (for multi-floor deliveries)', 'Ratchet straps (6–8 minimum)', 'Furniture moving blankets / pads (12–24)', 'Stretch wrap / shrink wrap', 'Rubber bands and furniture bands', 'Cargo bars / load bars (keep items from shifting)'] },
+  { category: 'Truck Requirements', items: ['26 ft box truck with liftgate (most logistics companies require this)', 'Liftgate rated for 2,500+ lbs', 'Interior tie-down rails or E-track', 'Rear door lock', 'Clean interior — no stains, debris, or damage'] },
+  { category: 'White-Glove & Install', items: ['Drill / power screwdriver', 'Basic hand tool kit (Allen keys, screwdrivers, pliers)', 'Level', 'Boot covers / shoe covers for customer homes', 'Zip ties and cable management for appliance installs', 'Haul-away bags (some contracts include removing old items)'] },
+  { category: 'Driver & Safety', items: ['High-visibility vest', 'Steel-toe or composite-toe boots', 'Work gloves', 'First aid kit', 'Fire extinguisher (DOT-required in cab)', 'Reflective triangles or flares (3 minimum)'] },
+  { category: 'Admin & Compliance', items: ['ELD device mounted and operational', 'Printed IFTA license (if applicable)', 'IRP cab card', 'Insurance certificate (keep copy in truck)', 'USDOT number displayed on both sides of truck (min. 2-inch letters)', 'Driver qualification file copy (CDL, medical card, drug test)'] },
+]
+
+const COMMON_MISTAKES = [
+  { mistake: 'Operating while authority is still "Pending"', consequence: 'Federal violation — fines up to $16,000 per day. Your authority must show "Active" before you haul a single load for hire.' },
+  { mistake: 'Letting your insurance lapse even one day', consequence: 'FMCSA revokes your operating authority automatically. Reinstatement requires new filings and a waiting period. Brokers will not load you.' },
+  { mistake: 'Missing the IFTA quarterly filing deadline', consequence: 'Late penalties plus interest. Repeat violations can trigger an FMCSA compliance review or audit.' },
+  { mistake: 'Skipping UCR renewal (due Jan 1)', consequence: 'Operating without current UCR is a federal violation. TxDMV will not renew your IRP plates without it.' },
+  { mistake: 'Not displaying USDOT number on truck', consequence: 'Roadside inspection violation. Number must be on both sides of the vehicle in 2-inch minimum lettering.' },
+  { mistake: 'Hiring a driver before completing pre-employment drug test', consequence: 'FMCSA violation. Driver cannot operate a CMV until drug test results are cleared.' },
+  { mistake: 'No Driver Qualification file before first run', consequence: 'If you\'re audited, missing DQ files are one of the most common violations that result in fines or out-of-service orders.' },
+  { mistake: 'Skipping the DOT physical', consequence: 'Operating without a valid medical examiner\'s certificate is a federal violation for all CMV drivers over 10,001 lbs.' },
+  { mistake: 'Using a personal bank account for business', consequence: 'Pierces LLC protection. Complicates taxes. If audited, the IRS and FMCSA expect a clear business/personal money separation.' },
+  { mistake: 'Not setting aside money for quarterly taxes', consequence: 'IRS underpayment penalties plus a large tax bill you didn\'t budget for. Set aside 25–30% of net income every week.' },
+]
+
+const FAQ = [
+  { q: 'Can I operate while my authority is "Pending"?', a: 'No. You cannot haul for hire in interstate commerce until your status shows "Active" in the FMCSA system. Operating while Pending is a federal violation with fines up to $16,000 per day.' },
+  { q: 'Do I need a CDL to drive a box truck?', a: 'Only if the box truck\'s GVWR exceeds 26,000 lbs — then a Class B CDL is required. Under 26,000 lbs GVWR, a standard driver\'s license is sufficient, but a DOT medical card is still required for interstate operations over 10,001 lbs.' },
+  { q: 'How long does it take to get operating authority?', a: 'Typically 3–6 weeks from the date of application. The 21-day protest period is mandatory and cannot be shortened. Your authority won\'t activate until the protest period ends AND your insurance and BOC-3 are on file with FMCSA.' },
+  { q: 'Do I need IFTA if I only run in Texas?', a: 'No. IFTA is only required for vehicles over 26,000 lbs GVWR that cross state lines. If your truck is under 26,000 lbs or you only operate within Texas, IFTA does not apply.' },
+  { q: 'What happens if my insurance lapses?', a: 'FMCSA will revoke your operating authority the same day the lapse is reported. You must reinstate insurance, refile with FMCSA, and wait for reinstatement. This can take days to weeks and will cause you to lose contracts.' },
+  { q: 'Do I need a helper for furniture and appliance delivery?', a: 'Most logistics companies require a two-person team for white-glove furniture and appliance delivery. Some lighter loads can be done solo. Budget $150–$250/day for a helper if required.' },
+  { q: 'Can I run personal loads (my own goods) without authority?', a: 'Yes. Operating authority is only required when you are hauling freight for hire (someone else\'s goods for compensation). Hauling only your own goods does not require operating authority, though USDOT registration may still apply.' },
+  { q: 'What is a carrier packet and why do I need one?', a: 'A carrier packet is a set of documents brokers and logistics companies require before assigning you loads. It typically includes your W-9, certificate of insurance (COI), signed broker-carrier agreement, USDOT/authority confirmation, and voided check for direct deposit. Have it ready before you start pitching for work.' },
+  { q: 'How do I get my USDOT number displayed on my truck?', a: 'Your USDOT number must appear on both sides of the vehicle in contrasting color, minimum 2-inch lettering. Magnetic signs are allowed. Vinyl lettering from any sign shop works. Must be visible and legible from 50 feet.' },
+  { q: 'Do I need a separate truck for business, or can I use my personal vehicle?', a: 'Commercial vehicles registered under your business are cleanest for liability and tax purposes. If using a vehicle you also use personally, you must keep a mileage log separating business vs. personal use.' },
+]
+
+const GLOSSARY = [
+  { term: 'GVWR', def: 'Gross Vehicle Weight Rating. The manufacturer\'s maximum allowable operating weight for a vehicle — printed on the door jamb sticker. Does not change based on what you\'re carrying.' },
+  { term: 'CSL', def: 'Combined Single Limit. A type of insurance coverage that covers bodily injury and property damage under one combined limit (e.g., $750,000 CSL).' },
+  { term: 'HOS', def: 'Hours of Service. FMCSA rules that limit how many hours a driver can operate a CMV in a day and week. Enforced via ELD for most drivers.' },
+  { term: 'ELD', def: 'Electronic Logging Device. A device connected to your truck\'s engine that automatically records driving time to track HOS compliance. Required for most CMV drivers.' },
+  { term: 'IFTA', def: 'International Fuel Tax Agreement. A multi-state fuel tax agreement for carriers operating in 2+ states. You file one quarterly return with Texas instead of separate returns for each state.' },
+  { term: 'IRP', def: 'International Registration Plan. An apportioned license plate program that lets interstate carriers register once (in their base state) and operate in all 48 contiguous states.' },
+  { term: 'UCR', def: 'Unified Carrier Registration. An annual federal registration fee for interstate carriers. Fee is based on fleet size. Must be renewed by January 1 each year.' },
+  { term: 'BOC-3', def: 'A filing with FMCSA that designates a legal process agent in every state where you operate. Required before operating authority can activate. Filed through a process agent service.' },
+  { term: 'MCS-90', def: 'The form your insurance company files with FMCSA to prove you carry the required liability insurance. Your insurer files this directly — you don\'t file it yourself.' },
+  { term: 'DQ File', def: 'Driver Qualification File. A folder of required documents for each driver: CDL, DOT medical card, MVR, drug test results, employment history, and signed consent forms.' },
+  { term: 'CMV', def: 'Commercial Motor Vehicle. Any vehicle used in commerce that exceeds 10,001 lbs GVWR, carries 9+ passengers for hire, or transports hazardous materials.' },
+  { term: 'MVR', def: 'Motor Vehicle Record. A driving history report from the DMV. Required for all drivers before hire and annually thereafter.' },
+  { term: 'CSA', def: 'Compliance, Safety, Accountability. FMCSA\'s safety measurement system that scores carriers on inspections, violations, and crashes. Brokers and shippers check your CSA score.' },
+  { term: 'SMS', def: 'Safety Measurement System. The FMCSA tool that calculates and displays your CSA scores. Check yours at safer.fmcsa.dot.gov.' },
+  { term: 'COI', def: 'Certificate of Insurance. A document from your insurer proving your coverage. Brokers require a current COI before assigning loads — most require $1M liability minimum.' },
+  { term: 'Per Diem', def: 'A daily allowance for meals and incidentals while away from home. DOT-regulated drivers can deduct 80% of meals using the per diem method on their taxes.' },
+]
+
+const FIRST_CONTRACT_STEPS = [
+  { step: '01', title: 'Build Your Carrier Packet', desc: 'Before you pitch to anyone, have these ready: W-9, Certificate of Insurance (COI) showing $1M liability, signed carrier authority page from FMCSA, voided check for ACH payment setup, and your LLC documents. Most logistics companies have an online carrier onboarding portal.' },
+  { step: '02', title: 'Apply Directly to Final-Mile Networks', desc: 'These companies actively recruit local owner-operators: J.B. Hunt Final Mile Services (jbhunt.com/final-mile), Ryder Last Mile (ryder.com), HomeDeliveryLink (homedeliverylink.com), UST Logistical Systems, and Direct Impact Logistics. Apply online — most have a "Become a Carrier" page.' },
+  { step: '03', title: 'Register on Load Boards', desc: 'DAT One and Truckstop.com are the two largest. DAT subscription starts around $45/month. Truckstop starts at $42/month. Filter by equipment type (straight box truck / 26 ft) and region (DFW). Most brokers on these boards require 3–6 months of active authority before assigning loads.' },
+  { step: '04', title: 'Contact Local Warehouses and 3PLs Directly', desc: 'Call or email local warehouses, distribution centers, and third-party logistics companies in DFW. Ask if they use contract carriers for last-mile delivery. This is how long-term relationships get built — direct contact beats load boards for consistent local work.' },
+  { step: '05', title: 'Wait Out the 3-Month New Authority Window', desc: 'Many brokers require 90 days of active authority before assigning loads. Use this time to get your carrier packet ready, build relationships, and start with direct contracts. Some final-mile networks (like J.B. Hunt) work with new authorities.' },
+  { step: '06', title: 'Negotiate Your Rate', desc: 'For furniture/appliance delivery, standard rate is $75–$95 per stop. Ask for the rate sheet before signing any carrier agreement. Understand whether the pay is per stop, per day flat, or percentage of gross. Get everything in writing before your first run.' },
+]
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function StartYourCarrierPage() {
@@ -521,6 +601,61 @@ export default function StartYourCarrierPage() {
         </div>
       </section>
 
+      {/* ── Startup Costs ── */}
+      <section className="py-24 px-6" style={{ background: 'rgba(255,255,255,.015)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
+        <div className="max-w-4xl mx-auto">
+          <FadeUp>
+            <div className="label mb-4">How Much Do You Need?</div>
+            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Startup Cost Breakdown</h2>
+            <p className="text-base mb-3" style={{ color: 'var(--muted)' }}>
+              Total startup cost for a box truck owner-operator runs <strong style={{ color: '#fff' }}>$20,000–$65,000</strong> depending on whether you buy or lease your truck. The compliance costs alone (authority, insurance deposit, UCR, plates) run $2,500–$4,000 before you touch a load.
+            </p>
+            <p className="text-xs mb-10" style={{ color: 'rgba(255,255,255,.35)' }}>
+              Figures are estimates as of 2026. Truck prices vary widely by age, condition, and market. Insurance premiums vary by driving record and coverage level.
+            </p>
+          </FadeUp>
+          <FadeUp delay={60}>
+            <div className="overflow-x-auto mb-8">
+              <table className="w-full text-xs" style={{ borderCollapse: 'separate', borderSpacing: '0 5px' }}>
+                <thead>
+                  <tr>
+                    <th className="text-left pb-3 font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '14px', fontSize: '10px' }}>Item</th>
+                    <th className="text-left pb-3 font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '14px', fontSize: '10px' }}>Low Est.</th>
+                    <th className="text-left pb-3 font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '14px', fontSize: '10px' }}>High Est.</th>
+                    <th className="text-left pb-3 font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '14px', fontSize: '10px' }}>Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {STARTUP_COSTS.map((row, i) => (
+                    <tr key={i}>
+                      <td className="py-3 px-4 font-bold text-white rounded-l-xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', borderRight: 'none', whiteSpace: 'nowrap' }}>{row.item}</td>
+                      <td className="py-3 px-4" style={{ background: 'rgba(255,255,255,.03)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)', color: '#4ade80', fontWeight: 700 }}>{row.low}</td>
+                      <td className="py-3 px-4" style={{ background: 'rgba(255,255,255,.03)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)', color: '#ff6680', fontWeight: 700 }}>{row.high}</td>
+                      <td className="py-3 px-4 rounded-r-xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', borderLeft: 'none', color: 'var(--muted)' }}>{row.note}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </FadeUp>
+          <FadeUp delay={120}>
+            <div className="grid sm:grid-cols-3 gap-4">
+              {[
+                { label: 'Compliance Only (no truck)', amount: '$2,500 – $4,000', note: 'Authority, insurance deposit, BOC-3, UCR, LLC formation' },
+                { label: 'With Used Box Truck (16–24 ft)', amount: '$20,000 – $45,000', note: 'Includes truck purchase, compliance, equipment, 3-month reserve' },
+                { label: 'With Used 26 ft Box Truck', amount: '$35,000 – $75,000', note: 'Includes truck, IRP plates, full compliance, equipment, reserve' },
+              ].map((s, i) => (
+                <div key={i} className="glass-card p-5 text-center" style={{ borderRadius: '16px' }}>
+                  <p className="text-xs font-bold mb-2 uppercase tracking-widest" style={{ color: 'var(--muted)' }}>{s.label}</p>
+                  <p className="text-xl font-black mb-2" style={{ color: 'var(--red)', letterSpacing: '-0.03em' }}>{s.amount}</p>
+                  <p className="text-xs leading-relaxed" style={{ color: 'rgba(255,255,255,.35)' }}>{s.note}</p>
+                </div>
+              ))}
+            </div>
+          </FadeUp>
+        </div>
+      </section>
+
       {/* ── Startup Checklist ── */}
       <section className="py-24 px-6">
         <div className="max-w-4xl mx-auto">
@@ -612,6 +747,36 @@ export default function StartYourCarrierPage() {
         </div>
       </section>
 
+      {/* ── Equipment Checklist ── */}
+      <section className="py-24 px-6">
+        <div className="max-w-4xl mx-auto">
+          <FadeUp>
+            <div className="label mb-4">What You Need in the Truck</div>
+            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Equipment Checklist</h2>
+            <p className="text-base mb-12" style={{ color: 'var(--muted)' }}>
+              Most logistics companies will inspect your truck and equipment before assigning routes. Missing items can get you pulled from a contract on your first day. Have everything on this list before you take your first load.
+            </p>
+          </FadeUp>
+          <div className="grid sm:grid-cols-2 gap-6">
+            {EQUIPMENT_LIST.map((cat, i) => (
+              <FadeUp key={cat.category} delay={i * 60}>
+                <div className="glass-card p-6 h-full" style={{ borderRadius: '18px' }}>
+                  <p className="text-xs font-black uppercase tracking-widest mb-4" style={{ color: 'var(--red)', letterSpacing: '0.1em' }}>{cat.category}</p>
+                  <ul className="space-y-2">
+                    {cat.items.map((item, j) => (
+                      <li key={j} className="flex items-start gap-2 text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>
+                        <span className="mt-0.5 shrink-0" style={{ color: 'var(--red)' }}>✓</span>
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </FadeUp>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ── Insurance Summary ── */}
       <section className="py-20 px-6" style={{ background: 'rgba(255,255,255,.015)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
         <div className="max-w-4xl mx-auto">
@@ -641,6 +806,94 @@ export default function StartYourCarrierPage() {
             <p className="mt-8 text-sm" style={{ color: 'rgba(255,255,255,.4)' }}>
               CSL = Combined Single Limit. Your insurer files Form MCS-90 directly with FMCSA. Coverage must be active before your operating authority goes "Active."
             </p>
+          </FadeUp>
+        </div>
+      </section>
+
+      {/* ── First Contract ── */}
+      <section className="py-24 px-6">
+        <div className="max-w-4xl mx-auto">
+          <FadeUp>
+            <div className="label mb-4">Finding Work</div>
+            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>How to Get Your First Contract</h2>
+            <p className="text-base mb-12" style={{ color: 'var(--muted)' }}>
+              Getting your authority is step one. Getting paid is step two. Here's how to land your first contract — and what you need ready before you make contact with any logistics company.
+            </p>
+          </FadeUp>
+          <div className="space-y-5">
+            {FIRST_CONTRACT_STEPS.map((s, i) => (
+              <FadeUp key={s.step} delay={i * 50}>
+                <div className="glass-card p-6" style={{ borderRadius: '16px' }}>
+                  <div className="flex gap-4 items-start">
+                    <div className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center font-black text-xs" style={{ background: 'rgba(224,0,42,.12)', border: '1px solid rgba(224,0,42,.25)', color: 'var(--red)' }}>{s.step}</div>
+                    <div>
+                      <p className="text-sm font-black text-white mb-2" style={{ letterSpacing: '-0.01em' }}>{s.title}</p>
+                      <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>{s.desc}</p>
+                    </div>
+                  </div>
+                </div>
+              </FadeUp>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Taxes ── */}
+      <section className="py-24 px-6" style={{ background: 'rgba(255,255,255,.015)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
+        <div className="max-w-4xl mx-auto">
+          <FadeUp>
+            <div className="label mb-4">Tax Planning</div>
+            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Taxes for Owner-Operators</h2>
+            <p className="text-base mb-10" style={{ color: 'var(--muted)' }}>
+              As an owner-operator, you are self-employed. Nobody withholds taxes for you. Most new carriers get blindsided by their first tax bill. Here's what you need to know before you earn your first dollar.
+            </p>
+          </FadeUp>
+          <div className="grid sm:grid-cols-2 gap-6 mb-8">
+            {[
+              { title: 'Self-Employment Tax', value: '15.3%', detail: '12.4% Social Security + 2.9% Medicare on all net self-employment income. You pay both the employer and employee share. You can deduct half of SE tax on your return.' },
+              { title: 'Federal Income Tax', value: '10–22%', detail: 'Depends on your taxable income after deductions. Most owner-operators with $60K–$100K net income fall in the 22% bracket.' },
+              { title: 'Quarterly Estimated Tax', value: '4× per year', detail: 'Due: April 15, June 15, Sep 15, Jan 15. If you expect to owe $1,000+ in taxes, you must pay quarterly or face IRS underpayment penalties.' },
+              { title: 'Set Aside Weekly', value: '25–30%', detail: 'Set aside 25–30% of your net income every single week into a separate savings account. Pay yourself from the rest. Never mix this money with operating funds.' },
+            ].map((card, i) => (
+              <FadeUp key={card.title} delay={i * 60}>
+                <div className="glass-card p-6" style={{ borderRadius: '16px' }}>
+                  <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--muted)' }}>{card.title}</p>
+                  <p className="text-3xl font-black mb-3" style={{ color: 'var(--red)', letterSpacing: '-0.04em' }}>{card.value}</p>
+                  <p className="text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>{card.detail}</p>
+                </div>
+              </FadeUp>
+            ))}
+          </div>
+          <FadeUp delay={240}>
+            <div className="glass-card p-6" style={{ borderRadius: '18px' }}>
+              <p className="text-sm font-black text-white mb-4">Key Tax Deductions for Owner-Operators (2026)</p>
+              <div className="grid sm:grid-cols-2 gap-x-8 gap-y-2">
+                {[
+                  'Fuel (actual cost or 72.5¢/mile standard rate)',
+                  'Commercial insurance premiums',
+                  'Truck loan interest or lease payments',
+                  'Truck depreciation (100% bonus depreciation available through 2029)',
+                  'Maintenance and repairs',
+                  'ELD subscription and device',
+                  'Drug testing program fees',
+                  'DOT physicals',
+                  'Licensing and permit fees (UCR, IRP, IFTA)',
+                  'Cell phone (business use %)',
+                  'Load board subscriptions (DAT, Truckstop)',
+                  'Meals per diem — 80% deductible when away from home',
+                  'Accountant / bookkeeper fees',
+                  'Home office (if you manage dispatch from home)',
+                ].map((item, i) => (
+                  <div key={i} className="flex items-center gap-2 py-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,.05)' }}>
+                    <span className="shrink-0 text-xs" style={{ color: 'var(--red)' }}>✓</span>
+                    <p className="text-xs" style={{ color: 'var(--muted)' }}>{item}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs mt-5 leading-relaxed" style={{ color: 'rgba(255,255,255,.35)' }}>
+                Keep every receipt and log every business mile. Use accounting software (QuickBooks Self-Employed, Wave) from day one. A trucking-specialized accountant or tax service (ATBS, Owner Operator Services) is worth the cost — they typically save more than they charge.
+              </p>
+            </div>
           </FadeUp>
         </div>
       </section>
@@ -709,6 +962,72 @@ export default function StartYourCarrierPage() {
               </div>
             </div>
           </FadeUp>
+        </div>
+      </section>
+
+      {/* ── Common Mistakes ── */}
+      <section className="py-20 px-6" style={{ borderTop: '1px solid var(--line)' }}>
+        <div className="max-w-4xl mx-auto">
+          <FadeUp>
+            <div className="label mb-4">Avoid These Pitfalls</div>
+            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>10 Common Mistakes New Carriers Make</h2>
+            <p className="text-base mb-10 leading-relaxed" style={{ color: 'var(--muted)' }}>
+              These mistakes cost new carriers money, violations, and sometimes their operating authority. Read each one before you haul your first load.
+            </p>
+          </FadeUp>
+          <div className="space-y-4">
+            {COMMON_MISTAKES.map((item, i) => (
+              <FadeUp key={i} delay={i * 40}>
+                <div className="rounded-2xl p-5" style={{ background: 'rgba(224,0,42,.06)', border: '1px solid rgba(224,0,42,.2)' }}>
+                  <p className="text-sm font-black text-white mb-2">⚠ {item.mistake}</p>
+                  <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>{item.consequence}</p>
+                </div>
+              </FadeUp>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── FAQ ── */}
+      <section className="py-20 px-6" style={{ background: 'rgba(255,255,255,.015)', borderTop: '1px solid var(--line)' }}>
+        <div className="max-w-4xl mx-auto">
+          <FadeUp>
+            <div className="label mb-4">Frequently Asked Questions</div>
+            <h2 className="text-3xl font-black text-white mb-10" style={{ letterSpacing: '-0.04em' }}>Questions New Carriers Ask</h2>
+          </FadeUp>
+          <div className="space-y-4">
+            {FAQ.map((item, i) => (
+              <FadeUp key={i} delay={i * 40}>
+                <div className="glass-card p-6 rounded-2xl">
+                  <p className="text-sm font-black text-white mb-3">Q: {item.q}</p>
+                  <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>{item.a}</p>
+                </div>
+              </FadeUp>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Glossary ── */}
+      <section className="py-20 px-6" style={{ borderTop: '1px solid var(--line)' }}>
+        <div className="max-w-4xl mx-auto">
+          <FadeUp>
+            <div className="label mb-4">Industry Terms</div>
+            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Glossary</h2>
+            <p className="text-base mb-10 leading-relaxed" style={{ color: 'var(--muted)' }}>
+              Every acronym and term you'll encounter when starting and running a motor carrier business.
+            </p>
+          </FadeUp>
+          <div className="grid sm:grid-cols-2 gap-4">
+            {GLOSSARY.map((item, i) => (
+              <FadeUp key={i} delay={i * 30}>
+                <div className="glass-card p-5 rounded-2xl h-full">
+                  <p className="text-sm font-black mb-2" style={{ color: 'var(--red)' }}>{item.term}</p>
+                  <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>{item.def}</p>
+                </div>
+              </FadeUp>
+            ))}
+          </div>
         </div>
       </section>
 
