@@ -5,57 +5,91 @@ function checkAuth(req: NextRequest): boolean {
   return !!pw && pw === process.env.ADMIN_PASSWORD
 }
 
+async function redis(url: string, token: string, ...args: string[]) {
+  const res = await fetch(`${url}/${args.map(encodeURIComponent).join('/')}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    cache: 'no-store',
+  })
+  return res.json()
+}
+
 export async function GET(req: NextRequest) {
   if (!checkAuth(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const token = process.env.VERCEL_TOKEN
-  const projectId = process.env.VERCEL_PROJECT_ID
+  const url = process.env.UPSTASH_REDIS_REST_URL
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN
 
-  if (!token || !projectId) {
-    return NextResponse.json({ error: 'VERCEL_TOKEN and VERCEL_PROJECT_ID must be set' }, { status: 500 })
+  if (!url || !token) {
+    return NextResponse.json({ error: 'UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be set' }, { status: 500 })
   }
 
   const { searchParams } = req.nextUrl
   const range = searchParams.get('range') ?? '30d'
+  const days = range === '7d' ? 7 : range === '90d' ? 90 : 30
 
-  const now = Date.now()
-  const rangeMs: Record<string, number> = {
-    '7d': 7 * 24 * 60 * 60 * 1000,
-    '30d': 30 * 24 * 60 * 60 * 1000,
-    '90d': 90 * 24 * 60 * 60 * 1000,
-  }
-  const from = now - (rangeMs[range] ?? rangeMs['30d'])
-  const to = now
-
-  const base = 'https://vercel.com/api/web/insights/stats'
-  const params = new URLSearchParams({
-    projectId,
-    from: String(from),
-    to: String(to),
-    environment: 'production',
-    filter: '{}',
-  })
-
-  const headers = { Authorization: `Bearer ${token}` }
-
-  async function fetchStat(endpoint: string) {
-    try {
-      const res = await fetch(`${base}/${endpoint}?${params}`, { headers })
-      if (!res.ok) return null
-      return res.json()
-    } catch {
-      return null
-    }
+  // Build list of daily keys
+  const dailyKeys: string[] = []
+  for (let i = 0; i < days; i++) {
+    const d = new Date()
+    d.setDate(d.getDate() - i)
+    dailyKeys.push(d.toISOString().slice(0, 10))
   }
 
-  const [pageviews, visitors, referrers, paths] = await Promise.all([
-    fetchStat('pageviews'),
-    fetchStat('visitors'),
-    fetchStat('referrers'),
-    fetchStat('paths'),
+  const [
+    totalPvResult,
+    pathsResult,
+    referrersResult,
+    totalUvResult,
+    ...dailyPvResults
+  ] = await Promise.all([
+    redis(url, token, 'GET', 'pv:total'),
+    redis(url, token, 'HGETALL', 'pv:paths'),
+    redis(url, token, 'HGETALL', 'pv:referrers'),
+    redis(url, token, 'PFCOUNT', 'uv:total'),
+    ...dailyKeys.map(d => redis(url, token, 'GET', `pv:day:${d}`)),
   ])
 
-  return NextResponse.json({ pageviews, visitors, referrers, paths, range })
+  // Sum pageviews for range
+  const rangePageviews = dailyPvResults.reduce((sum: number, r: { result: string | null }) => {
+    return sum + (parseInt(r?.result ?? '0') || 0)
+  }, 0)
+
+  // Count unique visitors in range using individual day HyperLogLog counts
+  const dailyUvResults = await Promise.all(
+    dailyKeys.map(d => redis(url, token, 'PFCOUNT', `uv:day:${d}`))
+  )
+  const rangeVisitors = dailyUvResults.reduce((sum: number, r: { result: number }) => {
+    return sum + (r?.result ?? 0)
+  }, 0)
+
+  // Parse HGETALL into sorted array
+  function parseHash(result: { result: string[] | null }): { key: string; total: number }[] {
+    const arr = result?.result ?? []
+    const out: { key: string; total: number }[] = []
+    for (let i = 0; i < arr.length; i += 2) {
+      out.push({ key: arr[i], total: parseInt(arr[i + 1]) || 0 })
+    }
+    return out.sort((a, b) => b.total - a.total)
+  }
+
+  // Daily chart data
+  const daily = dailyKeys.map((date, i) => ({
+    date,
+    pageviews: parseInt(dailyPvResults[i]?.result ?? '0') || 0,
+    visitors: dailyUvResults[i]?.result ?? 0,
+  })).reverse()
+
+  return NextResponse.json({
+    totalPageviews: totalPvResult?.result ? parseInt(totalPvResult.result) : 0,
+    totalVisitors: totalUvResult?.result ?? 0,
+    rangePageviews,
+    rangeVisitors,
+    paths: parseHash(pathsResult).slice(0, 10),
+    referrers: parseHash(referrersResult).slice(0, 10),
+    daily,
+    range,
+  })
 }

@@ -3,27 +3,38 @@
 import { useState, useEffect, useCallback } from 'react'
 
 const STORAGE_KEY = 'jk_admin_pw'
-
 type Range = '7d' | '30d' | '90d'
 
+interface DayData { date: string; pageviews: number; visitors: number }
+interface RowData { key: string; total: number }
 interface AnalyticsData {
-  pageviews: { total: number; data?: { key: string; total: number }[] } | null
-  visitors: { total: number; data?: { key: string; total: number }[] } | null
-  referrers: { data?: { key: string; total: number }[] } | null
-  paths: { data?: { key: string; total: number }[] } | null
+  totalPageviews: number
+  totalVisitors: number
+  rangePageviews: number
+  rangeVisitors: number
+  paths: RowData[]
+  referrers: RowData[]
+  daily: DayData[]
   range: string
 }
 
-// ── Input style ───────────────────────────────────────────────────────────────
 const iStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '12px 14px',
-  background: 'rgba(255,255,255,.05)',
-  border: '1px solid rgba(255,255,255,.10)',
-  borderRadius: '10px',
-  color: '#f3f4f6',
-  fontSize: '14px',
-  outline: 'none',
+  width: '100%', padding: '12px 14px',
+  background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.10)',
+  borderRadius: '10px', color: '#f3f4f6', fontSize: '14px', outline: 'none',
+}
+
+function MiniBar({ data, field }: { data: DayData[]; field: 'pageviews' | 'visitors' }) {
+  const max = Math.max(...data.map(d => d[field]), 1)
+  return (
+    <div className="flex items-end gap-0.5 h-16 w-full">
+      {data.map(d => (
+        <div key={d.date} className="flex-1 rounded-sm transition-all"
+          style={{ height: `${(d[field] / max) * 100}%`, background: 'var(--red)', opacity: 0.7, minHeight: '2px' }}
+          title={`${d.date}: ${d[field]}`} />
+      ))}
+    </div>
+  )
 }
 
 export default function AdminPage() {
@@ -37,7 +48,6 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  // Restore session
   useEffect(() => {
     const saved = sessionStorage.getItem(STORAGE_KEY)
     if (saved) { setPassword(saved); setAuthed(true) }
@@ -51,8 +61,9 @@ export default function AdminPage() {
         headers: { 'x-admin-password': pw },
       })
       if (res.status === 401) { setAuthed(false); return }
-      if (!res.ok) throw new Error('Failed to load analytics')
-      setAnalytics(await res.json())
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      setAnalytics(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error loading data')
     } finally {
@@ -88,13 +99,6 @@ export default function AdminPage() {
     }
   }
 
-  function handleLogout() {
-    sessionStorage.removeItem(STORAGE_KEY)
-    setAuthed(false)
-    setPassword('')
-    setAnalytics(null)
-  }
-
   // ── Login ─────────────────────────────────────────────────────────────────
   if (!authed) {
     return (
@@ -106,15 +110,8 @@ export default function AdminPage() {
           </p>
           <p className="text-sm mb-6" style={{ color: 'var(--muted)' }}>Admin — enter password to continue</p>
           <form onSubmit={handleLogin} className="flex flex-col gap-4">
-            <input
-              type="password"
-              placeholder="Admin password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              style={iStyle}
-              required
-              autoFocus
-            />
+            <input type="password" placeholder="Admin password" value={password}
+              onChange={e => setPassword(e.target.value)} style={iStyle} required autoFocus />
             {authError && <p className="text-sm" style={{ color: '#f87171' }}>{authError}</p>}
             <button type="submit" disabled={authLoading} className="btn w-full" style={{ justifyContent: 'center' }}>
               {authLoading ? 'Checking…' : 'Sign In →'}
@@ -126,11 +123,7 @@ export default function AdminPage() {
   }
 
   // ── Dashboard ─────────────────────────────────────────────────────────────
-  const totalVisitors = analytics?.visitors?.total ?? null
-  const totalPageviews = analytics?.pageviews?.total ?? null
-  const topPaths = analytics?.paths?.data?.slice(0, 8) ?? []
-  const topReferrers = analytics?.referrers?.data?.slice(0, 8) ?? []
-  const noData = !loading && analytics && totalVisitors === null && totalPageviews === null
+  const noUpstash = error.includes('UPSTASH')
 
   return (
     <main className="min-h-screen px-6 py-10" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
@@ -142,10 +135,9 @@ export default function AdminPage() {
             <p className="text-2xl font-black text-white" style={{ letterSpacing: '-0.04em' }}>
               J Kiss <span style={{ color: 'var(--red)' }}>LLC</span> — Analytics
             </p>
-            <p className="text-sm mt-0.5" style={{ color: 'var(--muted)' }}>Site visitor dashboard · jkissllc.com</p>
+            <p className="text-sm mt-0.5" style={{ color: 'var(--muted)' }}>Live visitor dashboard · jkissllc.com</p>
           </div>
           <div className="flex items-center gap-3">
-            {/* Range selector */}
             <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,.1)' }}>
               {(['7d', '30d', '90d'] as Range[]).map(r => (
                 <button key={r} onClick={() => setRange(r)}
@@ -160,146 +152,111 @@ export default function AdminPage() {
               ))}
             </div>
             <button onClick={() => fetchAnalytics(password, range)}
-              className="px-4 py-2 text-sm font-semibold rounded-xl transition-colors"
+              className="px-4 py-2 text-sm font-semibold rounded-xl"
               style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>
               ↻
             </button>
-            <button onClick={handleLogout}
-              className="px-4 py-2 text-sm font-semibold rounded-xl transition-colors"
+            <button onClick={() => { sessionStorage.removeItem(STORAGE_KEY); setAuthed(false); setPassword(''); setAnalytics(null) }}
+              className="px-4 py-2 text-sm font-semibold rounded-xl"
               style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>
               Sign Out
             </button>
           </div>
         </div>
 
-        {/* Loading */}
-        {loading && (
-          <div className="text-center py-20 text-sm" style={{ color: 'var(--muted)' }}>Loading analytics…</div>
+        {loading && <div className="text-center py-20 text-sm" style={{ color: 'var(--muted)' }}>Loading…</div>}
+
+        {/* Upstash not configured */}
+        {noUpstash && !loading && (
+          <div className="glass-card rounded-2xl p-8 text-center">
+            <p className="text-lg font-black text-white mb-3">One More Step</p>
+            <p className="text-sm leading-relaxed max-w-lg mx-auto mb-5" style={{ color: 'var(--muted)' }}>
+              Add a free Upstash Redis database to enable live analytics:
+            </p>
+            <ol className="text-sm space-y-2 text-left inline-block" style={{ color: 'var(--muted)' }}>
+              <li>1. Go to <strong className="text-white">vercel.com → jkissllc project → Storage tab</strong></li>
+              <li>2. Click <strong className="text-white">Create Database → Upstash Redis</strong></li>
+              <li>3. Name it anything → <strong className="text-white">Create & Connect to Project</strong></li>
+              <li>4. Redeploy once — that&apos;s it</li>
+            </ol>
+          </div>
         )}
 
-        {/* Error */}
-        {error && !loading && (
-          <div className="rounded-2xl p-6 text-sm text-center mb-8"
+        {/* Generic error */}
+        {error && !noUpstash && !loading && (
+          <div className="rounded-2xl p-5 text-sm text-center mb-6"
             style={{ background: 'rgba(224,0,42,.08)', border: '1px solid rgba(224,0,42,.2)', color: '#f87171' }}>
             {error}
           </div>
         )}
 
-        {/* Setup prompt — token needs to be a Personal Access Token */}
-        {noData && !error && (
-          <div className="space-y-4 mb-8">
-            {/* Direct link card — always works */}
-            <a href="https://vercel.com/nunubaby-6829s-projects/jkissllc/analytics"
-              target="_blank" rel="noopener noreferrer"
-              className="glass-card rounded-2xl p-8 flex items-center justify-between gap-6 transition-all hover:border-red-500 block"
-              style={{ textDecoration: 'none' }}>
-              <div>
-                <p className="text-lg font-black text-white mb-1">View Full Analytics Dashboard ↗</p>
-                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
-                  All your visitor data, page views, referrers, countries, and devices are live in Vercel.
-                </p>
-              </div>
-              <div className="shrink-0 w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
-                style={{ background: 'rgba(224,0,42,.12)', border: '1px solid rgba(224,0,42,.25)' }}>↗</div>
-            </a>
-
-            {/* Token fix instructions */}
-            <div className="rounded-2xl p-6" style={{ background: 'rgba(255,180,0,.05)', border: '1px solid rgba(255,180,0,.2)' }}>
-              <p className="text-sm font-black text-white mb-2">⚠ In-page analytics requires a Personal Access Token</p>
-              <p className="text-sm leading-relaxed mb-4" style={{ color: 'var(--muted)' }}>
-                The current <code className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,.07)' }}>VERCEL_TOKEN</code> is
-                a project-linked CI token (<code className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,.07)' }}>vcp_</code> prefix) which doesn&apos;t have analytics API access.
-                Replace it with a Personal Access Token:
-              </p>
-              <ol className="text-sm space-y-1.5 list-decimal list-inside" style={{ color: 'var(--muted)' }}>
-                <li>Go to <strong className="text-white">vercel.com/account/tokens</strong></li>
-                <li>Click <strong className="text-white">Create Token</strong> → give it a name like &quot;jkissllc analytics&quot;</li>
-                <li>Copy the token (starts with a different prefix, not <code className="text-xs">vcp_</code>)</li>
-                <li>In Vercel Dashboard → jkissllc → Settings → Environment Variables → update <code className="text-xs">VERCEL_TOKEN</code></li>
-                <li>Redeploy once</li>
-              </ol>
-            </div>
-          </div>
-        )}
-
-        {/* Stat cards */}
-        {!loading && analytics && !noData && (
+        {/* Live dashboard */}
+        {!loading && !error && analytics && (
           <>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
+            {/* Stat cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               {[
-                { label: 'Unique Visitors', value: totalVisitors, sub: `Last ${range}` },
-                { label: 'Page Views', value: totalPageviews, sub: `Last ${range}` },
-                {
-                  label: 'Avg Daily Visitors',
-                  value: totalVisitors != null
-                    ? Math.round(totalVisitors / parseInt(range))
-                    : null,
-                  sub: 'Per day',
-                },
+                { label: `Visitors (${range})`, value: analytics.rangeVisitors },
+                { label: `Page Views (${range})`, value: analytics.rangePageviews },
+                { label: 'All-Time Visitors', value: analytics.totalVisitors },
+                { label: 'All-Time Page Views', value: analytics.totalPageviews },
               ].map(card => (
                 <div key={card.label} className="glass-card p-6 text-center" style={{ borderRadius: '16px' }}>
                   <p className="text-4xl font-black mb-1" style={{ color: 'var(--red)', letterSpacing: '-0.04em' }}>
-                    {card.value != null ? card.value.toLocaleString() : '—'}
+                    {card.value.toLocaleString()}
                   </p>
-                  <p className="text-sm font-semibold text-white">{card.label}</p>
-                  <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>{card.sub}</p>
+                  <p className="text-xs font-semibold" style={{ color: 'var(--muted)' }}>{card.label}</p>
                 </div>
               ))}
             </div>
 
-            <div className="grid md:grid-cols-2 gap-6">
-              {/* Top pages */}
-              <div className="glass-card rounded-2xl overflow-hidden">
-                <div className="px-6 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,.06)' }}>
-                  <p className="text-sm font-black text-white">Top Pages</p>
+            {/* Daily chart */}
+            {analytics.daily.length > 0 && (
+              <div className="glass-card rounded-2xl p-6 mb-6">
+                <p className="text-sm font-black text-white mb-4">Daily Page Views — Last {range}</p>
+                <MiniBar data={analytics.daily} field="pageviews" />
+                <div className="flex justify-between mt-2 text-xs" style={{ color: 'rgba(255,255,255,.2)' }}>
+                  <span>{analytics.daily[0]?.date}</span>
+                  <span>{analytics.daily[analytics.daily.length - 1]?.date}</span>
                 </div>
-                {topPaths.length === 0 ? (
-                  <p className="px-6 py-8 text-sm text-center" style={{ color: 'var(--muted)' }}>No page data yet</p>
-                ) : (
-                  <div className="divide-y" style={{ '--divide-color': 'rgba(255,255,255,.04)' } as React.CSSProperties}>
-                    {topPaths.map((p, i) => (
-                      <div key={p.key} className="flex items-center justify-between px-6 py-3 gap-4">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <span className="text-xs font-bold w-4 shrink-0 text-center" style={{ color: 'rgba(255,255,255,.25)' }}>{i + 1}</span>
-                          <span className="text-sm truncate text-white font-medium">{p.key || '/'}</span>
-                        </div>
-                        <span className="text-sm font-black shrink-0" style={{ color: 'var(--red)' }}>
-                          {p.total.toLocaleString()}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
+            )}
 
-              {/* Top referrers */}
-              <div className="glass-card rounded-2xl overflow-hidden">
-                <div className="px-6 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,.06)' }}>
-                  <p className="text-sm font-black text-white">Top Referrers</p>
-                </div>
-                {topReferrers.length === 0 ? (
-                  <p className="px-6 py-8 text-sm text-center" style={{ color: 'var(--muted)' }}>No referrer data yet</p>
-                ) : (
-                  <div className="divide-y" style={{ '--divide-color': 'rgba(255,255,255,.04)' } as React.CSSProperties}>
-                    {topReferrers.map((r, i) => (
-                      <div key={r.key} className="flex items-center justify-between px-6 py-3 gap-4">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <span className="text-xs font-bold w-4 shrink-0 text-center" style={{ color: 'rgba(255,255,255,.25)' }}>{i + 1}</span>
-                          <span className="text-sm truncate text-white font-medium">{r.key || 'Direct'}</span>
-                        </div>
-                        <span className="text-sm font-black shrink-0" style={{ color: 'var(--red)' }}>
-                          {r.total.toLocaleString()}
-                        </span>
-                      </div>
-                    ))}
+            {/* Top pages + referrers */}
+            <div className="grid md:grid-cols-2 gap-6">
+              {[
+                { title: 'Top Pages', rows: analytics.paths },
+                { title: 'Top Referrers', rows: analytics.referrers },
+              ].map(({ title, rows }) => (
+                <div key={title} className="glass-card rounded-2xl overflow-hidden">
+                  <div className="px-6 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,.06)' }}>
+                    <p className="text-sm font-black text-white">{title}</p>
                   </div>
-                )}
-              </div>
+                  {rows.length === 0 ? (
+                    <p className="px-6 py-8 text-sm text-center" style={{ color: 'var(--muted)' }}>No data yet — visit the site to start tracking</p>
+                  ) : (
+                    rows.map((row, i) => {
+                      const maxVal = rows[0].total
+                      return (
+                        <div key={row.key} className="relative px-6 py-3" style={{ borderBottom: i < rows.length - 1 ? '1px solid rgba(255,255,255,.04)' : 'none' }}>
+                          <div className="absolute inset-0 left-0" style={{ width: `${(row.total / maxVal) * 100}%`, background: 'rgba(224,0,42,.06)', borderRadius: '0' }} />
+                          <div className="relative flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <span className="text-xs font-bold w-4 text-center shrink-0" style={{ color: 'rgba(255,255,255,.25)' }}>{i + 1}</span>
+                              <span className="text-sm truncate text-white font-medium">{row.key || '/'}</span>
+                            </div>
+                            <span className="text-sm font-black shrink-0" style={{ color: 'var(--red)' }}>{row.total.toLocaleString()}</span>
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              ))}
             </div>
 
-            {/* Footer note */}
-            <p className="mt-8 text-xs text-center" style={{ color: 'rgba(255,255,255,.2)' }}>
-              Data sourced from Vercel Web Analytics · <a href="https://vercel.com/analytics" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors" style={{ color: 'rgba(255,255,255,.35)' }}>Open full dashboard ↗</a>
+            <p className="mt-6 text-xs text-center" style={{ color: 'rgba(255,255,255,.2)' }}>
+              Tracked via jkissllc.com · Visitor counts use privacy-friendly HyperLogLog estimation · No cookies stored
             </p>
           </>
         )}

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { Analytics } from '@vercel/analytics/react'
+import PageTracker from './components/PageTracker'
 import './globals.css'
 
 const SITE_URL = 'https://www.jkissllc.com'
@@ -68,6 +69,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
         {children}
         <Analytics />
+        <PageTracker />
       </body>
     </html>
   )
