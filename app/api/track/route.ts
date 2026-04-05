@@ -9,8 +9,8 @@ async function redis(url: string, token: string, ...args: string[]) {
 }
 
 export async function POST(req: NextRequest) {
-  const url = process.env.UPSTASH_REDIS_REST_URL
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN
+  const url = process.env.KV_REST_API_URL
+  const token = process.env.KV_REST_API_TOKEN
   if (!url || !token) return NextResponse.json({ ok: false }, { status: 500 })
 
   try {
