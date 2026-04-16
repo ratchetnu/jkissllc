@@ -99,26 +99,59 @@ export default function AdminPage() {
     }
   }
 
+  function handleSignOut() {
+    sessionStorage.removeItem(STORAGE_KEY)
+    setAuthed(false)
+    setPassword('')
+    setAnalytics(null)
+  }
+
+  // ── Persistent top header (shown on both login and dashboard) ─────────────
+  const PortalHeader = () => (
+    <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4"
+      style={{ background: 'rgba(11,11,12,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
+      <a href="/" className="text-xl font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
+        J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+      </a>
+      {authed ? (
+        <button onClick={handleSignOut}
+          className="text-sm font-semibold px-4 py-2 rounded-xl transition hover:text-white"
+          style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>
+          Sign Out
+        </button>
+      ) : (
+        <a href="/"
+          className="text-sm font-semibold px-4 py-2 rounded-xl transition hover:text-white"
+          style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>
+          ← Back to Home
+        </a>
+      )}
+    </header>
+  )
+
   // ── Login ─────────────────────────────────────────────────────────────────
   if (!authed) {
     return (
-      <main className="flex min-h-screen items-center justify-center px-6"
-        style={{ background: 'var(--bg)', color: 'var(--text)' }}>
-        <div className="glass-card w-full max-w-sm p-8" style={{ borderRadius: '20px' }}>
-          <p className="text-xl font-black text-white mb-1" style={{ letterSpacing: '-0.03em' }}>
-            J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
-          </p>
-          <p className="text-sm mb-6" style={{ color: 'var(--muted)' }}>Admin — enter password to continue</p>
-          <form onSubmit={handleLogin} className="flex flex-col gap-4">
-            <input type="password" placeholder="Admin password" value={password}
-              onChange={e => setPassword(e.target.value)} style={iStyle} required autoFocus />
-            {authError && <p className="text-sm" style={{ color: '#f87171' }}>{authError}</p>}
-            <button type="submit" disabled={authLoading} className="btn w-full" style={{ justifyContent: 'center' }}>
-              {authLoading ? 'Checking…' : 'Sign In →'}
-            </button>
-          </form>
-        </div>
-      </main>
+      <>
+        <PortalHeader />
+        <main className="flex min-h-screen items-center justify-center px-6 pt-20"
+          style={{ background: 'var(--bg)', color: 'var(--text)' }}>
+          <div className="glass-card w-full max-w-sm p-8" style={{ borderRadius: '20px' }}>
+            <p className="text-xl font-black text-white mb-1" style={{ letterSpacing: '-0.03em' }}>
+              J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+            </p>
+            <p className="text-sm mb-6" style={{ color: 'var(--muted)' }}>Admin — enter password to continue</p>
+            <form onSubmit={handleLogin} className="flex flex-col gap-4">
+              <input type="password" placeholder="Admin password" value={password}
+                onChange={e => setPassword(e.target.value)} style={iStyle} required autoFocus />
+              {authError && <p className="text-sm" style={{ color: '#f87171' }}>{authError}</p>}
+              <button type="submit" disabled={authLoading} className="btn w-full" style={{ justifyContent: 'center' }}>
+                {authLoading ? 'Checking…' : 'Sign In →'}
+              </button>
+            </form>
+          </div>
+        </main>
+      </>
     )
   }
 
@@ -126,14 +159,16 @@ export default function AdminPage() {
   const noUpstash = error.includes('UPSTASH')
 
   return (
-    <main className="min-h-screen px-6 py-10" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
-      <div className="max-w-6xl mx-auto">
+    <>
+      <PortalHeader />
+      <main className="min-h-screen px-6 pt-24 pb-10" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
+        <div className="max-w-6xl mx-auto">
 
-        {/* Header */}
+        {/* Page title + range selector */}
         <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
           <div>
             <p className="text-2xl font-black text-white" style={{ letterSpacing: '-0.04em' }}>
-              J Kiss <span style={{ color: 'var(--red)' }}>LLC</span> — Analytics
+              Analytics
             </p>
             <p className="text-sm mt-0.5" style={{ color: 'var(--muted)' }}>Live visitor dashboard · jkissllc.com</p>
           </div>
@@ -155,11 +190,6 @@ export default function AdminPage() {
               className="px-4 py-2 text-sm font-semibold rounded-xl"
               style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>
               ↻
-            </button>
-            <button onClick={() => { sessionStorage.removeItem(STORAGE_KEY); setAuthed(false); setPassword(''); setAnalytics(null) }}
-              className="px-4 py-2 text-sm font-semibold rounded-xl"
-              style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>
-              Sign Out
             </button>
           </div>
         </div>
@@ -260,7 +290,8 @@ export default function AdminPage() {
             </p>
           </>
         )}
-      </div>
-    </main>
+        </div>
+      </main>
+    </>
   )
 }

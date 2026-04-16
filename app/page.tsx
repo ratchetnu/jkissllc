@@ -102,6 +102,7 @@ function Nav() {
             <a key={href} href={href} className="text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)' }}>{label}</a>
           ))}
           <a href="/start-your-carrier" className="text-sm font-bold transition hover:text-white" style={{ color: '#ff6680' }}>Start a Carrier</a>
+          <a href="/admin" className="text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)' }}>Admin</a>
         </nav>
 
         <a href="#contact" className="hidden md:inline-flex btn" style={{ padding: '10px 20px', fontSize: '13px' }}>Get a Quote</a>
@@ -121,6 +122,7 @@ function Nav() {
             <a key={href} href={href} className="text-base font-medium py-2" style={{ color: 'var(--muted)' }} onClick={() => setOpen(false)}>{label}</a>
           ))}
           <a href="/start-your-carrier" className="text-base font-bold py-2" style={{ color: '#ff6680' }} onClick={() => setOpen(false)}>Start a Carrier</a>
+          <a href="/admin" className="text-base font-medium py-2" style={{ color: 'var(--muted)' }} onClick={() => setOpen(false)}>Admin</a>
           <a href="#contact" className="btn mt-2" onClick={() => setOpen(false)}>Get a Quote</a>
         </div>
       )}
@@ -143,7 +145,9 @@ export default function Home() {
         <div className="absolute right-0 bottom-0 top-0 w-full md:w-3/5 flex items-end md:items-center justify-center md:justify-end pointer-events-none" style={{ opacity: 0.95 }}>
           <Image src="/images/hero.png" alt="J Kiss LLC delivery truck" width={700} height={900} className="object-contain object-bottom md:object-right-bottom" priority style={{ maxHeight: '95vh', width: 'auto' }} />
         </div>
-        {/* Left fade so text stays readable */}
+        {/* Mobile overlay — dark layer so text is always readable over truck image */}
+        <div className="absolute inset-0 md:hidden" style={{ background: 'rgba(11,11,12,0.72)' }} />
+        {/* Left fade — desktop: left-to-right directional fade */}
         <div className="absolute inset-0 hidden md:block" style={{ background: 'linear-gradient(90deg, rgba(11,11,12,1) 0%, rgba(11,11,12,0.85) 40%, rgba(11,11,12,0.2) 70%, transparent 100%)' }} />
 
         <div className="relative max-w-6xl mx-auto px-6 pt-32 pb-24">
