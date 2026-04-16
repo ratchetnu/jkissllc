@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-
-function checkAuth(req: NextRequest): boolean {
-  const pw = req.headers.get('x-admin-password')
-  return !!pw && pw === process.env.ADMIN_PASSWORD
-}
+import { requireSession } from '../_lib/session'
 
 async function redis(url: string, token: string, ...args: string[]) {
   const res = await fetch(`${url}/${args.map(encodeURIComponent).join('/')}`, {
@@ -15,7 +11,7 @@ async function redis(url: string, token: string, ...args: string[]) {
 }
 
 export async function GET(req: NextRequest) {
-  if (!checkAuth(req)) {
+  if (!(await requireSession(req))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

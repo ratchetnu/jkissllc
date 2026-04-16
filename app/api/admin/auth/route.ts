@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createSessionToken, setSessionCookie } from '../_lib/session'
 
-// Rate limiter: max 5 failed attempts per 15 minutes per IP
+// Rate limiter: max 5 failed attempts per 15 minutes per IP.
+// In-memory — resets on cold start, but acceptable for a small admin surface.
 const attempts = new Map<string, { count: number; resetAt: number }>()
 const MAX_ATTEMPTS = 5
 const WINDOW_MS = 15 * 60 * 1000
 
 function getIP(req: NextRequest): string {
   return (
-    req.headers.get('x-forwarded-for')?.split(',')[0].trim() ??
-    req.headers.get('x-real-ip') ??
+    req.headers.get('x-vercel-forwarded-for')?.split(',')[0].trim() ||
+    req.headers.get('x-real-ip') ||
+    req.headers.get('x-forwarded-for')?.split(',')[0].trim() ||
     'unknown'
   )
 }
@@ -44,18 +47,32 @@ export async function POST(req: NextRequest) {
   if (isRateLimited(ip)) {
     return NextResponse.json(
       { valid: false, error: 'Too many attempts. Try again in 15 minutes.' },
-      { status: 429 }
+      { status: 429 },
     )
   }
 
   const { password } = await req.json()
-  if (!password) return NextResponse.json({ valid: false }, { status: 400 })
-
-  if (password === process.env.ADMIN_PASSWORD) {
-    clearFailures(ip)
-    return NextResponse.json({ valid: true })
+  if (!password || typeof password !== 'string') {
+    return NextResponse.json({ valid: false }, { status: 400 })
   }
 
-  recordFailure(ip)
-  return NextResponse.json({ valid: false }, { status: 401 })
+  if (password !== process.env.ADMIN_PASSWORD) {
+    recordFailure(ip)
+    return NextResponse.json({ valid: false }, { status: 401 })
+  }
+
+  clearFailures(ip)
+
+  try {
+    const token = await createSessionToken()
+    const res = NextResponse.json({ valid: true })
+    setSessionCookie(res, token)
+    return res
+  } catch (err) {
+    console.error('[admin/auth]', err)
+    return NextResponse.json(
+      { valid: false, error: 'Server misconfigured (ADMIN_SESSION_SECRET missing).' },
+      { status: 500 },
+    )
+  }
 }

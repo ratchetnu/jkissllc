@@ -22,11 +22,13 @@ export const metadata: Metadata = {
     title: 'J Kiss LLC — Freight & Last-Mile Delivery | DFW',
     description: 'Licensed freight and last-mile delivery across Dallas–Fort Worth. Trusted by Lowe\'s, Rooms To Go, Living Spaces, RH, Nebraska Furniture Mart, and XPO Logistics.',
     siteName: 'J Kiss LLC',
+    images: [{ url: '/og-image.jpg', width: 1200, height: 630, alt: 'J Kiss LLC — Freight & Last-Mile Delivery' }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'J Kiss LLC — Freight & Last-Mile Delivery | DFW',
     description: 'Licensed freight and last-mile delivery across Dallas–Fort Worth.',
+    images: ['/og-image.jpg'],
   },
   alternates: {
     canonical: SITE_URL,

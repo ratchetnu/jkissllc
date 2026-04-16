@@ -9,6 +9,11 @@ export const metadata: Metadata = {
     title: 'How to Start a Motor Carrier Business in Texas',
     description: 'Step-by-step guide: USDOT, operating authority, insurance, IFTA, IRP, ELD, drug testing, and a full compliance calendar.',
     url: 'https://www.jkissllc.com/start-your-carrier',
+    images: [{ url: '/og-image.jpg', width: 1200, height: 630, alt: 'J Kiss LLC — Start Your Motor Carrier' }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    images: ['/og-image.jpg'],
   },
 }
 

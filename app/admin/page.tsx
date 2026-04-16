@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from 'react'
 
-const STORAGE_KEY = 'jk_admin_pw'
 type Range = '7d' | '30d' | '90d'
 
 interface DayData { date: string; pageviews: number; visitors: number }
@@ -49,17 +48,18 @@ export default function AdminPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    const saved = sessionStorage.getItem(STORAGE_KEY)
-    if (saved) { setPassword(saved); setAuthed(true) }
+    // Check session on mount — reads httpOnly cookie via server endpoint.
+    fetch('/api/admin/session')
+      .then(r => r.json())
+      .then(d => { if (d.authed) setAuthed(true) })
+      .catch(() => {})
   }, [])
 
-  const fetchAnalytics = useCallback(async (pw: string, r: Range) => {
+  const fetchAnalytics = useCallback(async (r: Range) => {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch(`/api/admin/analytics?range=${r}`, {
-        headers: { 'x-admin-password': pw },
-      })
+      const res = await fetch(`/api/admin/analytics?range=${r}`, { credentials: 'same-origin' })
       if (res.status === 401) { setAuthed(false); return }
       const data = await res.json()
       if (data.error) throw new Error(data.error)
@@ -72,8 +72,8 @@ export default function AdminPage() {
   }, [])
 
   useEffect(() => {
-    if (authed && password) fetchAnalytics(password, range)
-  }, [authed, password, range, fetchAnalytics])
+    if (authed) fetchAnalytics(range)
+  }, [authed, range, fetchAnalytics])
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
@@ -84,10 +84,11 @@ export default function AdminPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
+        credentials: 'same-origin',
       })
       const data = await res.json()
       if (res.ok && data.valid) {
-        sessionStorage.setItem(STORAGE_KEY, password)
+        setPassword('')
         setAuthed(true)
       } else {
         setAuthError(data.error ?? 'Incorrect password')
@@ -99,8 +100,12 @@ export default function AdminPage() {
     }
   }
 
-  function handleSignOut() {
-    sessionStorage.removeItem(STORAGE_KEY)
+  async function handleSignOut() {
+    try {
+      await fetch('/api/admin/logout', { method: 'POST', credentials: 'same-origin' })
+    } catch {
+      // best-effort — clear locally regardless
+    }
     setAuthed(false)
     setPassword('')
     setAnalytics(null)
@@ -186,7 +191,7 @@ export default function AdminPage() {
                 </button>
               ))}
             </div>
-            <button onClick={() => fetchAnalytics(password, range)}
+            <button onClick={() => fetchAnalytics(range)}
               className="px-4 py-2 text-sm font-semibold rounded-xl"
               style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>
               ↻
