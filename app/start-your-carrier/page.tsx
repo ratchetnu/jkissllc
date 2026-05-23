@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 
 function useFadeUp() {
@@ -259,48 +259,103 @@ const STARTUP_COSTS = [
   { item: 'BOC-3 Process Agent', low: '$25', high: '$75', note: 'One-time fee through a process agent service' },
   { item: 'Commercial Insurance (1st month)', low: '$400', high: '$800', note: 'Down payment to activate policy; required before authority activates' },
   { item: 'UCR Registration', low: '$59', high: '$175', note: 'Annual fee based on fleet size (1–2 trucks)' },
-  { item: 'IRP Apportioned Plates', low: '$1,500', high: '$1,800', note: 'Required for 26,001+ lbs trucks running interstate' },
+  { item: 'IRP Plates (if over 26K lbs)', low: '$1,500', high: '$1,800', note: 'Only required if your box truck exceeds 26,000 lbs GVWR and runs interstate' },
   { item: 'Box Truck (Used, 16–24 ft)', low: '$12,000', high: '$35,000', note: 'Purchase price; liftgate adds $2,000–$5,000 if not included' },
   { item: 'Box Truck (26 ft, Used)', low: '$20,000', high: '$55,000', note: 'Or lease at $725–$995/month' },
-  { item: 'Equipment (dolly, blankets, straps)', low: '$500', high: '$1,200', note: 'Appliance dolly, furniture blankets, ratchet straps, hand truck' },
-  { item: 'ELD Device + First Month', low: '$150', high: '$300', note: 'Device purchase or lease + first subscription month' },
+  { item: 'Delivery Equipment (dolly, blankets, straps)', low: '$500', high: '$1,200', note: 'Appliance dolly, furniture blankets, ratchet straps, hand truck' },
+  { item: 'ELD Device + First Month', low: '$150', high: '$300', note: 'May qualify for 150-mile short-haul exemption on local routes' },
   { item: 'Drug Testing (Pre-employment)', low: '$50', high: '$75', note: 'Required per driver before first run' },
-  { item: 'DOT Physical (Medical Card)', low: '$75', high: '$150', note: 'Per driver; find an FMCSA-certified examiner' },
+  { item: 'DOT Physical (Medical Card)', low: '$75', high: '$150', note: 'Required for interstate CMV drivers over 10,001 lbs' },
   { item: 'Operating Reserve (3 months)', low: '$3,000', high: '$6,000', note: 'Fuel, insurance, unexpected repairs before revenue is consistent' },
+]
+
+const SEMI_STARTUP_COSTS = [
+  { item: 'LLC / Business Formation (TX)', low: '$300', high: '$500', note: 'TX Secretary of State filing fee + registered agent (first year)' },
+  { item: 'EIN (Federal Tax ID)', low: '$0', high: '$0', note: 'Free from IRS online — same day' },
+  { item: 'USDOT Number', low: '$0', high: '$0', note: 'Free through FMCSA registration' },
+  { item: 'Operating Authority', low: '$300', high: '$300', note: 'Non-refundable FMCSA filing fee' },
+  { item: 'BOC-3 Process Agent', low: '$25', high: '$75', note: 'One-time fee through a process agent service' },
+  { item: 'Commercial Insurance (1st month)', low: '$800', high: '$1,800', note: 'Semi insurance is significantly higher than box truck — shop multiple carriers' },
+  { item: 'Cargo Insurance', low: '$150', high: '$350', note: 'Per month; most brokers require $100K minimum cargo coverage' },
+  { item: 'UCR Registration', low: '$59', high: '$175', note: 'Annual fee based on fleet size' },
+  { item: 'IRP Apportioned Plates', low: '$1,500', high: '$2,500', note: 'Required for all semi interstate operations — no exemption' },
+  { item: 'IFTA License', low: '$0', high: '$10', note: 'Free to register with TX Comptroller; quarterly filings required thereafter' },
+  { item: 'Semi-Truck / Tractor (Used)', low: '$40,000', high: '$120,000', note: 'Or finance/lease at $1,500–$3,500/month; sleeper cabs cost more' },
+  { item: 'Dry Van Trailer (Used)', low: '$15,000', high: '$45,000', note: 'Or lease at $300–$600/month; required for most dry van freight' },
+  { item: 'ELD Device + First Month', low: '$150', high: '$350', note: 'Full HOS compliance required — no short-haul exemption on most OTR runs' },
+  { item: 'Class A CDL Testing / School', low: '$3,000', high: '$8,000', note: 'If not already licensed. Skills test fee alone is $200–$400 at a state CDL site.' },
+  { item: 'Drug Testing (Pre-employment)', low: '$50', high: '$75', note: 'Required per driver before first run' },
+  { item: 'DOT Physical (Medical Card)', low: '$75', high: '$150', note: 'Required for all CDL drivers' },
+  { item: 'Operating Reserve (3 months)', low: '$5,000', high: '$10,000', note: 'Fuel, repairs, deadhead miles, and slow freight weeks — semi overhead is higher' },
 ]
 
 const EQUIPMENT_LIST = [
   { category: 'Delivery Equipment', items: ['Appliance hand truck / dolly (2-wheel & 4-wheel)', 'Furniture dolly (4-wheel flat)', 'Stair-climbing dolly (for multi-floor deliveries)', 'Ratchet straps (6–8 minimum)', 'Furniture moving blankets / pads (12–24)', 'Stretch wrap / shrink wrap', 'Rubber bands and furniture bands', 'Cargo bars / load bars (keep items from shifting)'] },
-  { category: 'Truck Requirements', items: ['26 ft box truck with liftgate (most logistics companies require this)', 'Liftgate rated for 2,500+ lbs', 'Interior tie-down rails or E-track', 'Rear door lock', 'Clean interior — no stains, debris, or damage'] },
+  { category: 'Box Truck Requirements', items: ['26 ft box truck with liftgate (most logistics companies require this)', 'Liftgate rated for 2,500+ lbs', 'Interior tie-down rails or E-track', 'Rear door lock', 'Clean interior — no stains, debris, or damage'] },
   { category: 'White-Glove & Install', items: ['Drill / power screwdriver', 'Basic hand tool kit (Allen keys, screwdrivers, pliers)', 'Level', 'Boot covers / shoe covers for customer homes', 'Zip ties and cable management for appliance installs', 'Haul-away bags (some contracts include removing old items)'] },
   { category: 'Driver & Safety', items: ['High-visibility vest', 'Steel-toe or composite-toe boots', 'Work gloves', 'First aid kit', 'Fire extinguisher (DOT-required in cab)', 'Reflective triangles or flares (3 minimum)'] },
-  { category: 'Admin & Compliance', items: ['ELD device mounted and operational', 'Printed IFTA license (if applicable)', 'IRP cab card', 'Insurance certificate (keep copy in truck)', 'USDOT number displayed on both sides of truck (min. 2-inch letters)', 'Driver qualification file copy (CDL, medical card, drug test)'] },
+  { category: 'Admin & Compliance', items: ['ELD device mounted and operational', 'IRP cab card (if over 26K lbs and running interstate)', 'IFTA license copy in cab (if over 26K lbs)', 'Insurance certificate (keep copy in truck)', 'USDOT number displayed on both sides of truck (min. 2-inch letters)', 'Driver qualification file copy (CDL if applicable, medical card, drug test)'] },
+]
+
+const SEMI_EQUIPMENT_LIST = [
+  { category: 'Tractor Requirements', items: ['Class 8 tractor in good mechanical condition', 'Valid annual DOT inspection sticker', 'All lights operational (headlights, brake lights, marker lights)', 'Functional air brake system with no leaks', 'USDOT and MC number on both cab doors (min. 2-inch lettering)', 'Fire extinguisher (5 lb minimum, DOT-required in cab)'] },
+  { category: 'Trailer Equipment', items: ['Dry van trailer (53 ft standard; 48 ft accepted on some loads)', 'Load bars / cargo bars (2–4 minimum)', 'Ratchet straps and edge protectors', 'Dock plate or yard ramp access (if no dock at pickup)', 'Rear lights and brake lights all functional', 'Trailer annual inspection current'] },
+  { category: 'In-Cab Essentials', items: ['ELD device mounted and connected to engine (FMCSA-registered)', 'Paper log backup (7 days minimum)', 'Permits folder: registration, insurance, IFTA license, IRP cab card, BOC-3 reference', 'Pre-trip / post-trip inspection checklist', 'Fuel receipts log (required for IFTA quarterly filing)', 'GPS / routing app (Google Maps, PC*MILER, or similar)'] },
+  { category: 'Driver Safety', items: ['DOT reflective triangles (3 required)', 'Road flares or LED emergency lights', 'High-visibility safety vest', 'Work gloves', 'First aid kit', 'Jump cables or lithium jump pack'] },
+  { category: 'Tools & Roadside', items: ['Tire pressure gauge and thumper', 'Basic hand tools (wrenches, pliers, zip ties)', 'Extra coolant, oil, and DEF fluid', 'Tire chains (if running northern states in winter)', 'Flashlight / headlamp'] },
+  { category: 'Admin & Compliance (Required)', items: ['IFTA fuel license (required — keep copy in cab)', 'IRP apportioned cab card (required for interstate operation)', 'Drug testing consortium card / documentation', 'Current DOT medical examiner\'s certificate', 'Class A CDL in wallet', 'Insurance certificate (liability + cargo)'] },
 ]
 
 const COMMON_MISTAKES = [
   { mistake: 'Operating while authority is still "Pending"', consequence: 'Federal violation — fines up to $16,000 per day. Your authority must show "Active" before you haul a single load for hire.' },
   { mistake: 'Letting your insurance lapse even one day', consequence: 'FMCSA revokes your operating authority automatically. Reinstatement requires new filings and a waiting period. Brokers will not load you.' },
-  { mistake: 'Missing the IFTA quarterly filing deadline', consequence: 'Late penalties plus interest. Repeat violations can trigger an FMCSA compliance review or audit.' },
   { mistake: 'Skipping UCR renewal (due Jan 1)', consequence: 'Operating without current UCR is a federal violation. TxDMV will not renew your IRP plates without it.' },
   { mistake: 'Not displaying USDOT number on truck', consequence: 'Roadside inspection violation. Number must be on both sides of the vehicle in 2-inch minimum lettering.' },
   { mistake: 'Hiring a driver before completing pre-employment drug test', consequence: 'FMCSA violation. Driver cannot operate a CMV until drug test results are cleared.' },
   { mistake: 'No Driver Qualification file before first run', consequence: 'If you\'re audited, missing DQ files are one of the most common violations that result in fines or out-of-service orders.' },
   { mistake: 'Skipping the DOT physical', consequence: 'Operating without a valid medical examiner\'s certificate is a federal violation for all CMV drivers over 10,001 lbs.' },
+  { mistake: 'Assuming the short-haul ELD exemption applies automatically', consequence: 'You must qualify each day — return to home terminal within 14 hours, stay within 150 air miles. If you extend a run, you\'re out of exemption and must use an ELD.' },
   { mistake: 'Using a personal bank account for business', consequence: 'Pierces LLC protection. Complicates taxes. If audited, the IRS and FMCSA expect a clear business/personal money separation.' },
   { mistake: 'Not setting aside money for quarterly taxes', consequence: 'IRS underpayment penalties plus a large tax bill you didn\'t budget for. Set aside 25–30% of net income every week.' },
+]
+
+const SEMI_COMMON_MISTAKES = [
+  { mistake: 'Operating while authority is still "Pending"', consequence: 'Federal violation — fines up to $16,000 per day. Your authority must show "Active" before you haul a single load for hire.' },
+  { mistake: 'Letting your insurance lapse even one day', consequence: 'FMCSA revokes your operating authority automatically. Semi insurance lapses also void your cargo coverage — brokers and shippers will drop you immediately.' },
+  { mistake: 'Missing the IFTA quarterly filing deadline', consequence: 'Late penalties plus interest. Jan 31, Apr 30, Jul 31, Oct 31 are hard deadlines. Repeated violations trigger FMCSA compliance reviews.' },
+  { mistake: 'Operating interstate without IRP plates', consequence: 'Each state you enter without valid apportioned plates can issue a citation. Fines range from $100 to $1,000+ per state depending on violation severity.' },
+  { mistake: 'Running without a valid Class A CDL', consequence: 'Federal violation. Out-of-service order on the spot. Your carrier authority can be suspended. Personal fines up to $5,000 per violation.' },
+  { mistake: 'ELD / HOS violations', consequence: 'Hours of Service violations are among the top FMCSA enforcement actions. Roadside inspections check your ELD — violations stay on your CSA score for 3 years.' },
+  { mistake: 'Skipping UCR renewal (due Jan 1)', consequence: 'Operating without current UCR is a federal violation and will block your IRP plate renewal.' },
+  { mistake: 'Not displaying USDOT number on both cab doors', consequence: 'Roadside inspection violation. Must be contrasting color, minimum 2-inch letters, visible from 50 feet.' },
+  { mistake: 'No Driver Qualification file before first run', consequence: 'Top audit violation. Missing DQ files — CDL, medical card, MVR, drug test — result in fines and potential out-of-service orders.' },
+  { mistake: 'Not tracking fuel receipts for IFTA', consequence: 'IFTA requires you to report actual fuel purchased by state. Missing receipts mean you can\'t prove tax paid — auditors will assess the highest possible rate.' },
 ]
 
 const FAQ = [
   { q: 'Can I operate while my authority is "Pending"?', a: 'No. You cannot haul for hire in interstate commerce until your status shows "Active" in the FMCSA system. Operating while Pending is a federal violation with fines up to $16,000 per day.' },
   { q: 'Do I need a CDL to drive a box truck?', a: 'Only if the box truck\'s GVWR exceeds 26,000 lbs — then a Class B CDL is required. Under 26,000 lbs GVWR, a standard driver\'s license is sufficient, but a DOT medical card is still required for interstate operations over 10,001 lbs.' },
+  { q: 'Do I need IFTA for my box truck?', a: 'No — if your box truck is under 26,000 lbs GVWR. IFTA only applies to vehicles over 26,000 lbs that cross state lines. Most 16–24 ft box trucks are under this threshold. Check your door jamb GVWR sticker to confirm.' },
+  { q: 'Do I need IRP plates for a box truck?', a: 'No — if your box truck is under 26,000 lbs GVWR. IRP apportioned plates are only required for commercial vehicles over 26,000 lbs running interstate. Under that weight, standard Texas plates are fine.' },
   { q: 'How long does it take to get operating authority?', a: 'Typically 3–6 weeks from the date of application. The 21-day protest period is mandatory and cannot be shortened. Your authority won\'t activate until the protest period ends AND your insurance and BOC-3 are on file with FMCSA.' },
-  { q: 'Do I need IFTA if I only run in Texas?', a: 'No. IFTA is only required for vehicles over 26,000 lbs GVWR that cross state lines. If your truck is under 26,000 lbs or you only operate within Texas, IFTA does not apply.' },
   { q: 'What happens if my insurance lapses?', a: 'FMCSA will revoke your operating authority the same day the lapse is reported. You must reinstate insurance, refile with FMCSA, and wait for reinstatement. This can take days to weeks and will cause you to lose contracts.' },
   { q: 'Do I need a helper for furniture and appliance delivery?', a: 'Most logistics companies require a two-person team for white-glove furniture and appliance delivery. Some lighter loads can be done solo. Budget $150–$250/day for a helper if required.' },
-  { q: 'Can I run personal loads (my own goods) without authority?', a: 'Yes. Operating authority is only required when you are hauling freight for hire (someone else\'s goods for compensation). Hauling only your own goods does not require operating authority, though USDOT registration may still apply.' },
-  { q: 'What is a carrier packet and why do I need one?', a: 'A carrier packet is a set of documents brokers and logistics companies require before assigning you loads. It typically includes your W-9, certificate of insurance (COI), signed broker-carrier agreement, USDOT/authority confirmation, and voided check for direct deposit. Have it ready before you start pitching for work.' },
+  { q: 'What is a carrier packet and why do I need one?', a: 'A carrier packet is a set of documents brokers and logistics companies require before assigning you loads. It typically includes your W-9, Certificate of Insurance (COI) showing $1M liability, signed broker-carrier agreement, USDOT/authority confirmation, and voided check for direct deposit. Have it ready before you start pitching for work.' },
   { q: 'How do I get my USDOT number displayed on my truck?', a: 'Your USDOT number must appear on both sides of the vehicle in contrasting color, minimum 2-inch lettering. Magnetic signs are allowed. Vinyl lettering from any sign shop works. Must be visible and legible from 50 feet.' },
-  { q: 'Do I need a separate truck for business, or can I use my personal vehicle?', a: 'Commercial vehicles registered under your business are cleanest for liability and tax purposes. If using a vehicle you also use personally, you must keep a mileage log separating business vs. personal use.' },
+  { q: 'Can I run personal loads (my own goods) without authority?', a: 'Yes. Operating authority is only required when you are hauling freight for hire. Hauling only your own goods does not require operating authority, though USDOT registration may still apply if the vehicle exceeds 10,001 lbs.' },
+]
+
+const SEMI_FAQ = [
+  { q: 'Do I need a Class A CDL to operate a semi?', a: 'Yes — always. A Class A CDL is required for any combination vehicle where the GCWR exceeds 26,001 lbs and the trailer GVWR exceeds 10,000 lbs. You must pass the CDL knowledge tests, skills test (pre-trip inspection, basic controls, road test), and hold a current DOT medical card.' },
+  { q: 'Is IFTA required for semi operators?', a: 'Yes — no exceptions for semis. IFTA is required for all vehicles over 26,000 lbs GVWR operating in 2 or more IFTA jurisdictions. File quarterly with the Texas Comptroller. Deadlines: Jan 31, Apr 30, Jul 31, Oct 31.' },
+  { q: 'Do I need IRP plates for a semi?', a: 'Yes — required for all interstate semi operations. Register through TxDMV. IRP plates cover all 48 contiguous states under a single registration. You\'ll receive a cab card listing all registered states — keep it in the truck at all times.' },
+  { q: 'Can I operate while my authority is "Pending"?', a: 'No. You cannot haul for hire in interstate commerce until your status shows "Active" in the FMCSA system. Operating while Pending is a federal violation with fines up to $16,000 per day.' },
+  { q: 'How long does it take to get operating authority?', a: 'Typically 3–6 weeks. The 21-day protest period is mandatory. Your authority won\'t activate until the protest period ends AND your insurance (MCS-90) and BOC-3 are both on file with FMCSA.' },
+  { q: 'Does the ELD short-haul exemption apply to semi drivers?', a: 'Rarely. The 150-mile short-haul exemption requires returning to your home terminal within 14 hours and staying within 150 air miles. Most OTR semi runs exceed these limits. If you operate within those bounds consistently, you may qualify — but you must track it per day.' },
+  { q: 'What insurance do I need as a semi owner-operator?', a: 'At minimum: $750,000 CSL liability (most brokers require $1M), cargo insurance (typically $100K — some shippers require more), and physical damage on your tractor and trailer. Budget $800–$1,800/month for liability alone. Shop at least 3 carriers.' },
+  { q: 'What is a carrier packet for a semi owner-operator?', a: 'Same concept as box truck but also includes your cargo insurance COI, IFTA license, and IRP cab card copies. Most large brokers (DAT, CH Robinson, Coyote) have online onboarding portals where you upload these documents before your first load.' },
+  { q: 'How do I find freight as a new authority?', a: 'DAT One and Truckstop.com for spot loads. Most brokers require 3–6 months active authority. In the meantime, contact regional brokers directly — Echo, Coyote, TQL — and ask for a new carrier setup. Some will work with new authorities on shorter regional lanes.' },
+  { q: 'What are deadhead miles and why do they matter?', a: 'Deadhead miles are miles you drive without a load (empty). They cost fuel and time without generating revenue. Experienced semi owner-operators plan their lanes to minimize deadhead — ideally under 15% of total miles. High deadhead kills profitability fast.' },
 ]
 
 const GLOSSARY = [
@@ -331,9 +386,90 @@ const FIRST_CONTRACT_STEPS = [
   { step: '06', title: 'Negotiate Your Rate', desc: 'For furniture/appliance delivery, standard rate is $75–$95 per stop. Ask for the rate sheet before signing any carrier agreement. Understand whether the pay is per stop, per day flat, or percentage of gross. Get everything in writing before your first run.' },
 ]
 
+const SEMI_FIRST_CONTRACT_STEPS = [
+  { step: '01', title: 'Build Your Carrier Packet', desc: 'Before you contact any broker, have these ready: W-9, COI showing $1M liability + $100K cargo, signed carrier authority page from FMCSA, IFTA license copy, IRP cab card copy, voided check for ACH setup, and your LLC documents. Large brokers have online portals — upload everything before you call.' },
+  { step: '02', title: 'Register on DAT One and Truckstop.com', desc: 'These are the two largest load boards for semi owner-operators. DAT subscription starts around $45/month. Truckstop starts at $42/month. Filter by dry van, flatbed, or reefer equipment type and your region (DFW, TX, Southeast). Most brokers require 3–6 months active authority before assigning loads.' },
+  { step: '03', title: 'Contact Regional Brokers Directly', desc: 'Reach out to Echo Global Logistics, Coyote Logistics, TQL (Total Quality Logistics), and CH Robinson. Ask to be set up as a new carrier. Some will work with new authorities on shorter lanes (Texas to Oklahoma, Texas to Louisiana) while you build your record.' },
+  { step: '04', title: 'Identify Your Home Lane', desc: 'Pick 2–3 consistent lanes out of DFW where you can build broker relationships and minimize deadhead. DFW to Houston, DFW to Dallas to Memphis, and DFW to Atlanta are strong dry van lanes. Consistency on a lane means better rates and preferred carrier status over time.' },
+  { step: '05', title: 'Wait Out the 3-Month Authority Window', desc: 'Most brokers on DAT require 90 days of active authority. Use this time to build your carrier packet, set up your lane strategy, and get on preferred carrier lists with direct broker contacts. Landstar and some other carriers have lease-on programs that open after 6 months.' },
+  { step: '06', title: 'Negotiate Per-Mile Rate — Don\'t Take the First Offer', desc: 'Dry van spot rates fluctuate with the market. Check DAT rate analytics or Truckstop rate tools before accepting a load. Current dry van averages in the $0.55–$0.70/mile range (all-in). Know your cost per mile (~$0.35–$0.50) before you negotiate so you know your floor.' },
+]
+
+type Tab = 'box-truck' | 'semi'
+
+const BOX_TRUCK_SECTIONS = [
+  { id: 'bt-requirements', label: 'Requirements' },
+  { id: 'bt-earnings', label: 'Earnings' },
+  { id: 'startup-costs', label: 'Startup Costs' },
+  { id: 'startup-checklist', label: 'Checklist' },
+  { id: 'equipment', label: 'Equipment' },
+  { id: 'insurance', label: 'Insurance' },
+  { id: 'calendar', label: 'Calendar' },
+  { id: 'first-contract', label: 'First Contract' },
+  { id: 'faq', label: 'FAQ' },
+  { id: 'glossary', label: 'Glossary' },
+]
+
+const SEMI_SECTIONS = [
+  { id: 'semi-requirements', label: 'Requirements' },
+  { id: 'semi-earnings', label: 'Earnings' },
+  { id: 'startup-costs', label: 'Startup Costs' },
+  { id: 'startup-checklist', label: 'Checklist' },
+  { id: 'equipment', label: 'Equipment' },
+  { id: 'insurance', label: 'Insurance' },
+  { id: 'calendar', label: 'Calendar' },
+  { id: 'first-contract', label: 'First Contract' },
+  { id: 'faq', label: 'FAQ' },
+  { id: 'glossary', label: 'Glossary' },
+]
+
+const SEMI_KEY_REQS = [
+  { icon: '📋', title: 'Class A CDL Required', desc: 'Mandatory for any combination vehicle with GCWR over 26,001 lbs where the trailer GVWR exceeds 10,000 lbs. No exceptions. Must pass CDL skills test and medical exam.' },
+  { icon: '⛽', title: 'IFTA — Quarterly Filing', desc: 'International Fuel Tax Agreement. File quarterly with Texas Comptroller. Deadlines: Jan 31, Apr 30, Jul 31, Oct 31. Late filing triggers penalties plus interest.' },
+  { icon: '🪪', title: 'IRP Apportioned Plates', desc: 'Required for all interstate semi operations. Register through TxDMV. Single registration covers all 48 contiguous states. Cost: $1,500–$2,500 depending on GVWR and states operated.' },
+  { icon: '📱', title: 'Full ELD & HOS Compliance', desc: '11-hour driving limit, 14-hour on-duty window, 70-hour/8-day rule. Most OTR semi runs do not qualify for the 150-mile short-haul ELD exemption.' },
+  { icon: '🏥', title: 'DOT Medical Card', desc: 'Required for all CDL drivers. Renewed every 24 months minimum (or more frequently per examiner). Issued by an FMCSA-certified medical examiner.' },
+  { icon: '💰', title: '$750K–$1M Liability Insurance', desc: 'Federal minimum is $750K CSL for non-hazardous freight. Most brokers and shippers require $1M on your COI. Budget $800–$1,800/month for commercial truck insurance.' },
+  { icon: '📦', title: 'Cargo Insurance', desc: 'Most brokers require $100K cargo insurance in addition to liability. Some require more depending on freight type. Add $150–$350/month to your insurance budget.' },
+  { icon: '🚦', title: 'Drug & Alcohol Testing — Full Program', desc: 'Full FMCSA drug and alcohol testing consortium required. Pre-employment, random (50% drug / 10% alcohol annually), post-accident, reasonable suspicion, return-to-duty.' },
+]
+
+const SEMI_EARNINGS_TABLE = [
+  { period: 'Per Mile (OTR Dry Van)', low: '$0.45 – $0.55', avg: '$0.58 – $0.68', high: '$0.75 – $0.90+' },
+  { period: 'Per Day (Solo OTR)', low: '$250 – $375', avg: '$450 – $600', high: '$700 – $1,100' },
+  { period: 'Per Week (5 days)', low: '$1,500 – $2,200', avg: '$2,800 – $3,500', high: '$4,500 – $6,500' },
+  { period: 'Per Year (Gross)', low: '$70,000 – $95,000', avg: '$130,000 – $175,000', high: '$200,000 – $280,000+' },
+]
+
+const SEMI_BROKERS = [
+  { name: 'DAT One', desc: 'Largest load board. Dry van, reefer, flatbed, step-deck. Subscription ~$45/month. Most brokers require 6–12 months active authority.' },
+  { name: 'Truckstop.com', desc: 'Major load board with rate analytics. ~$42/month. Filter by equipment type and lane. Good for finding consistent lanes early.' },
+  { name: 'J.B. Hunt 360°', desc: 'Digital freight matching platform. Direct contracts available for contracted lanes. Preferred for owner-operators with good safety scores.' },
+  { name: 'Echo Global Logistics', desc: 'Mid-sized broker with consistent dry van freight across TX, OK, AR, and surrounding states. Active DFW lanes.' },
+  { name: 'Coyote Logistics', desc: 'Large national broker. Dry van and reefer. Pays within 30 days or QuickPay with 2% fee. Good lane density in the Southeast and Midwest.' },
+  { name: 'Landstar (LEAM)', desc: 'Owner-operator focused. Lease-on program requires 6 months authority minimum. High pay, higher standards — good long-term play.' },
+]
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
+function scrollTo(id: string) {
+  const el = document.getElementById(id)
+  if (!el) return
+  const offset = 145 // main nav (73px) + tab bar (~72px)
+  const top = el.getBoundingClientRect().top + window.scrollY - offset
+  window.scrollTo({ top, behavior: 'smooth' })
+}
+
 export default function StartYourCarrierPage() {
+  const [activeTab, setActiveTab] = useState<Tab>('box-truck')
+
+  function switchTab(tab: Tab) {
+    setActiveTab(tab)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const sections = activeTab === 'box-truck' ? BOX_TRUCK_SECTIONS : SEMI_SECTIONS
+
   return (
     <main style={{ background: 'var(--bg)', color: 'var(--text)' }}>
 
@@ -386,8 +522,49 @@ export default function StartYourCarrierPage() {
         </div>
       </div>
 
+      {/* ── Tab Bar ── */}
+      <div className="sticky z-40" style={{ top: '73px', background: 'rgba(11,11,12,0.97)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
+        <div className="max-w-6xl mx-auto px-6">
+          {/* Vehicle type tabs */}
+          <div className="flex items-center gap-1 pt-3 pb-2">
+            <button
+              onClick={() => switchTab('box-truck')}
+              className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition-all"
+              style={{
+                background: activeTab === 'box-truck' ? 'var(--red)' : 'rgba(255,255,255,.05)',
+                color: activeTab === 'box-truck' ? '#fff' : 'var(--muted)',
+                border: activeTab === 'box-truck' ? 'none' : '1px solid rgba(255,255,255,.08)',
+              }}>
+              📦 Box Truck
+            </button>
+            <button
+              onClick={() => switchTab('semi')}
+              className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition-all"
+              style={{
+                background: activeTab === 'semi' ? 'var(--red)' : 'rgba(255,255,255,.05)',
+                color: activeTab === 'semi' ? '#fff' : 'var(--muted)',
+                border: activeTab === 'semi' ? 'none' : '1px solid rgba(255,255,255,.08)',
+              }}>
+              🚚 Semi / CDL Truck
+            </button>
+          </div>
+          {/* Section jump nav */}
+          <div className="flex items-center gap-1 pb-3 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+            {sections.map(s => (
+              <button
+                key={s.id}
+                onClick={() => scrollTo(s.id)}
+                className="shrink-0 px-3 py-1 rounded-lg text-xs font-semibold transition-colors hover:text-white"
+                style={{ color: 'rgba(255,255,255,.35)', background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.06)' }}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {/* ── Box Truck Requirements ── */}
-      <section className="py-24 px-6" style={{ borderBottom: '1px solid var(--line)' }}>
+      {activeTab === 'box-truck' && <section id="bt-requirements" className="py-24 px-6" style={{ borderBottom: '1px solid var(--line)' }}>
         <div className="max-w-4xl mx-auto">
           <FadeUp>
             <div className="label mb-4">Start Here — Know Your Vehicle</div>
@@ -487,10 +664,67 @@ export default function StartYourCarrierPage() {
             </div>
           </FadeUp>
         </div>
-      </section>
+      </section>}
+
+      {/* ── Semi Requirements ── */}
+      {activeTab === 'semi' && <section id="semi-requirements" className="py-24 px-6" style={{ borderBottom: '1px solid var(--line)' }}>
+        <div className="max-w-4xl mx-auto">
+          <FadeUp>
+            <div className="label mb-4">Semi / CDL Truck — Know Your Requirements</div>
+            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>
+              Full CDL Compliance — <span style={{ color: 'var(--red)' }}>Class A Required</span>
+            </h2>
+            <p className="text-base mb-10" style={{ color: 'var(--muted)' }}>
+              Operating a semi or combination vehicle comes with the full weight of FMCSA compliance. There are no IFTA exemptions, no IRP exemptions, and most OTR routes don't qualify for the short-haul ELD exception. Know what you're getting into before you register.
+            </p>
+          </FadeUp>
+
+          {/* Key requirements grid */}
+          <div className="grid sm:grid-cols-2 gap-4 mb-10">
+            {SEMI_KEY_REQS.map((req, i) => (
+              <FadeUp key={i} delay={i * 40}>
+                <div className="p-5 rounded-2xl h-full" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.1)' }}>
+                  <div className="flex items-start gap-3">
+                    <span className="text-xl shrink-0">{req.icon}</span>
+                    <div>
+                      <p className="text-sm font-black text-white mb-1" style={{ letterSpacing: '-0.01em' }}>{req.title}</p>
+                      <p className="text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>{req.desc}</p>
+                    </div>
+                  </div>
+                </div>
+              </FadeUp>
+            ))}
+          </div>
+
+          {/* Semi vs Box Truck key differences callout */}
+          <FadeUp delay={200}>
+            <div className="p-6 rounded-2xl" style={{ background: 'rgba(224,0,42,.06)', border: '1px solid rgba(224,0,42,.2)' }}>
+              <p className="text-sm font-black text-white mb-4">What Semi Adds vs. Box Truck Under 26K lbs</p>
+              <div className="grid sm:grid-cols-2 gap-3">
+                {[
+                  { item: 'Class A CDL', note: 'Required — no exceptions' },
+                  { item: 'IFTA Quarterly Filing', note: 'Box trucks under 26K lbs are exempt' },
+                  { item: 'IRP Apportioned Plates', note: 'Box trucks under 26K lbs are exempt' },
+                  { item: 'Full ELD (no short-haul on OTR)', note: 'Box trucks often qualify for 150-mi exemption' },
+                  { item: 'Higher Insurance Cost', note: '$800–$1,800/mo vs $400–$800/mo for box truck' },
+                  { item: 'Cargo Insurance', note: 'Brokers typically require $100K cargo separately' },
+                ].map((d, i) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <span style={{ color: '#ff6680', marginTop: '2px', fontSize: '10px' }}>▲</span>
+                    <div>
+                      <p className="text-xs font-bold text-white">{d.item}</p>
+                      <p className="text-xs" style={{ color: 'var(--muted)' }}>{d.note}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </FadeUp>
+        </div>
+      </section>}
 
       {/* ── Earnings Potential ── */}
-      <section className="py-24 px-6" style={{ borderBottom: '1px solid var(--line)' }}>
+      {activeTab === 'box-truck' && <section id="bt-earnings" className="py-24 px-6" style={{ borderBottom: '1px solid var(--line)' }}>
         <div className="max-w-4xl mx-auto">
           <FadeUp>
             <div className="label mb-4">What You Can Earn</div>
@@ -605,16 +839,97 @@ export default function StartYourCarrierPage() {
             </div>
           </FadeUp>
         </div>
-      </section>
+      </section>}
+
+      {/* ── Semi Earnings ── */}
+      {activeTab === 'semi' && <section id="semi-earnings" className="py-24 px-6" style={{ borderBottom: '1px solid var(--line)' }}>
+        <div className="max-w-4xl mx-auto">
+          <FadeUp>
+            <div className="label mb-4">What You Can Earn</div>
+            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Semi / OTR Earnings — Dry Van &amp; Regional</h2>
+            <p className="text-base mb-3" style={{ color: 'var(--muted)' }}>
+              Semi owner-operators running OTR or regional routes have higher gross revenue potential than box trucks — but also higher overhead (fuel, truck payment, tires, maintenance). These numbers reflect dry van solo owner-operators. Team runs and specialized freight can exceed these figures significantly.
+            </p>
+            <p className="text-xs mb-12" style={{ color: 'rgba(255,255,255,.35)' }}>
+              Gross figures before expenses. Per-mile rates reflect current dry van spot market. Owner-operator overhead runs $0.35–$0.55/mile after all costs.
+            </p>
+          </FadeUp>
+
+          <FadeUp delay={40}>
+            <div className="overflow-x-auto mb-8">
+              <table className="w-full text-sm" style={{ borderCollapse: 'separate', borderSpacing: '0 6px' }}>
+                <thead>
+                  <tr>
+                    <th className="text-left pb-3 text-xs font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '16px' }}>Timeframe</th>
+                    <th className="text-left pb-3 text-xs font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '16px' }}>Low</th>
+                    <th className="text-left pb-3 text-xs font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '16px' }}>Average</th>
+                    <th className="text-left pb-3 text-xs font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,.3)', paddingLeft: '16px' }}>High</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {SEMI_EARNINGS_TABLE.map((row, i) => (
+                    <tr key={i}>
+                      <td className="py-3 px-4 font-black text-white text-xs rounded-l-xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', borderRight: 'none' }}>{row.period}</td>
+                      <td className="py-3 px-4 text-xs" style={{ background: 'rgba(255,255,255,.03)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)', color: 'var(--muted)' }}>{row.low}</td>
+                      <td className="py-3 px-4 text-xs font-bold" style={{ background: 'rgba(255,255,255,.03)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)', color: '#fff' }}>{row.avg}</td>
+                      <td className="py-3 px-4 text-xs font-bold rounded-r-xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', borderLeft: 'none', color: '#4ade80' }}>{row.high}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </FadeUp>
+
+          <FadeUp delay={80}>
+            <div className="mb-8">
+              <p className="text-sm font-bold text-white mb-4">Brokers & Load Boards for Semi Owner-Operators</p>
+              <div className="grid sm:grid-cols-2 gap-3">
+                {SEMI_BROKERS.map((co, i) => (
+                  <div key={i} className="p-4 rounded-2xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+                    <p className="text-xs font-black text-white mb-1">{co.name}</p>
+                    <p className="text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>{co.desc}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </FadeUp>
+
+          <FadeUp delay={120}>
+            <div className="p-6 rounded-2xl" style={{ background: 'rgba(224,0,42,.05)', border: '1px solid rgba(224,0,42,.2)' }}>
+              <p className="text-sm font-black text-white mb-4">Expense Reality Check — Semi Owner-Operator</p>
+              <div className="grid sm:grid-cols-2 gap-x-8 gap-y-3">
+                {[
+                  { item: 'Diesel Fuel', cost: '$600 – $1,200 / week' },
+                  { item: 'Commercial Insurance', cost: '$800 – $1,800 / month' },
+                  { item: 'Truck Payment / Lease', cost: '$1,500 – $3,500 / month' },
+                  { item: 'Trailer Lease (if applicable)', cost: '$300 – $600 / month' },
+                  { item: 'Maintenance & Tires', cost: '$500 – $1,500 / month avg' },
+                  { item: 'ELD + Comms Subscription', cost: '$75 – $150 / month' },
+                ].map((exp, i) => (
+                  <div key={i} className="flex items-center justify-between gap-4 py-1" style={{ borderBottom: '1px solid rgba(255,255,255,.06)' }}>
+                    <p className="text-xs font-semibold text-white">{exp.item}</p>
+                    <p className="text-xs shrink-0" style={{ color: '#ff6680' }}>{exp.cost}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs mt-4 leading-relaxed" style={{ color: 'rgba(255,255,255,.4)' }}>
+                Net income after all expenses for a solo OTR semi owner-operator typically runs <strong style={{ color: 'rgba(255,255,255,.7)' }}>$70,000 – $140,000 per year</strong>. High-earning operators run consistent contracted lanes and minimize deadhead miles.
+              </p>
+            </div>
+          </FadeUp>
+        </div>
+      </section>}
 
       {/* ── Startup Costs ── */}
-      <section className="py-24 px-6" style={{ background: 'rgba(255,255,255,.015)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
+      <section id="startup-costs" className="py-24 px-6" style={{ background: 'rgba(255,255,255,.015)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
         <div className="max-w-4xl mx-auto">
           <FadeUp>
             <div className="label mb-4">How Much Do You Need?</div>
             <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Startup Cost Breakdown</h2>
             <p className="text-base mb-3" style={{ color: 'var(--muted)' }}>
-              Total startup cost for a box truck owner-operator runs <strong style={{ color: '#fff' }}>$20,000–$65,000</strong> depending on whether you buy or lease your truck. The compliance costs alone (authority, insurance deposit, UCR, plates) run $2,500–$4,000 before you touch a load.
+              {activeTab === 'box-truck'
+                ? <span>Total startup cost for a box truck owner-operator runs <strong style={{ color: '#fff' }}>$20,000–$65,000</strong> depending on whether you buy or lease your truck. The compliance costs alone (authority, insurance deposit, UCR) run $2,500–$3,500 before you touch a load. Trucks under 26K lbs skip IRP plates and IFTA entirely.</span>
+                : <span>Total startup cost for a semi owner-operator runs <strong style={{ color: '#fff' }}>$70,000–$200,000+</strong> depending on tractor/trailer purchase vs. lease. Compliance costs (authority, insurance deposit, IRP, IFTA, UCR) run $4,000–$6,000 before your first load. A Class A CDL is required — budget for CDL school if you don't already have one.</span>}
             </p>
             <p className="text-xs mb-10" style={{ color: 'rgba(255,255,255,.35)' }}>
               Figures are estimates as of 2026. Truck prices vary widely by age, condition, and market. Insurance premiums vary by driving record and coverage level.
@@ -632,7 +947,7 @@ export default function StartYourCarrierPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {STARTUP_COSTS.map((row, i) => (
+                  {(activeTab === 'box-truck' ? STARTUP_COSTS : SEMI_STARTUP_COSTS).map((row, i) => (
                     <tr key={i}>
                       <td className="py-3 px-4 font-bold text-white rounded-l-xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', borderRight: 'none', whiteSpace: 'nowrap' }}>{row.item}</td>
                       <td className="py-3 px-4" style={{ background: 'rgba(255,255,255,.03)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)', color: '#4ade80', fontWeight: 700 }}>{row.low}</td>
@@ -663,14 +978,30 @@ export default function StartYourCarrierPage() {
       </section>
 
       {/* ── Startup Checklist ── */}
-      <section className="py-24 px-6">
+      <section id="startup-checklist" className="py-24 px-6">
         <div className="max-w-4xl mx-auto">
           <FadeUp>
             <div className="label mb-4">Step-by-Step Startup</div>
             <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Getting Your Authority: 12 Steps</h2>
-            <p className="text-base mb-14" style={{ color: 'var(--muted)' }}>
+            <p className="text-base mb-6" style={{ color: 'var(--muted)' }}>
               Follow these in order. Steps 3–5 must happen in parallel — your authority won't activate until FMCSA has both your insurance filing and your BOC-3 on file.
             </p>
+            {activeTab === 'semi' && (
+              <div className="flex items-start gap-3 p-4 rounded-xl mb-10" style={{ background: 'rgba(250,204,21,.07)', border: '1px solid rgba(250,204,21,.2)' }}>
+                <span style={{ color: '#facc15', fontSize: '18px' }}>🚚</span>
+                <p className="text-xs leading-relaxed" style={{ color: 'rgba(255,255,255,.6)' }}>
+                  <strong style={{ color: '#facc15' }}>Semi / CDL Note:</strong> Steps 7 (IFTA) and 6 (IRP plates) are required for all semi operators — no weight exemptions. Step 9 (ELD) applies in full — the 150-mile short-haul exemption rarely applies to OTR routes. A Class A CDL is required before operating any combination vehicle.
+                </p>
+              </div>
+            )}
+            {activeTab === 'box-truck' && (
+              <div className="flex items-start gap-3 p-4 rounded-xl mb-10" style={{ background: 'rgba(74,222,128,.07)', border: '1px solid rgba(74,222,128,.2)' }}>
+                <span style={{ fontSize: '18px' }}>📦</span>
+                <p className="text-xs leading-relaxed" style={{ color: 'rgba(255,255,255,.6)' }}>
+                  <strong style={{ color: '#4ade80' }}>Box Truck Note:</strong> If your truck is under 26,000 lbs GVWR, skip Steps 6 (IRP plates) and 7 (IFTA) — they do not apply. Step 9 (ELD) may qualify for the 150-mile short-haul exemption if you run local DFW routes. No CDL required under 26K lbs.
+                </p>
+              </div>
+            )}
           </FadeUp>
 
           <div className="space-y-6">
@@ -754,17 +1085,21 @@ export default function StartYourCarrierPage() {
       </section>
 
       {/* ── Equipment Checklist ── */}
-      <section className="py-24 px-6">
+      <section id="equipment" className="py-24 px-6">
         <div className="max-w-4xl mx-auto">
           <FadeUp>
             <div className="label mb-4">What You Need in the Truck</div>
-            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Equipment Checklist</h2>
+            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>
+              {activeTab === 'box-truck' ? 'Box Truck Equipment Checklist' : 'Semi / OTR Equipment Checklist'}
+            </h2>
             <p className="text-base mb-12" style={{ color: 'var(--muted)' }}>
-              Most logistics companies will inspect your truck and equipment before assigning routes. Missing items can get you pulled from a contract on your first day. Have everything on this list before you take your first load.
+              {activeTab === 'box-truck'
+                ? 'Most logistics companies will inspect your truck and equipment before assigning routes. Missing items can get you pulled from a contract on your first day. Have everything on this list before you take your first load.'
+                : 'Roadside inspectors and brokers can spot an unprepared operator fast. Have every compliance document in the truck, all safety equipment in place, and your ELD connected and calibrated before your first run.'}
             </p>
           </FadeUp>
           <div className="grid sm:grid-cols-2 gap-6">
-            {EQUIPMENT_LIST.map((cat, i) => (
+            {(activeTab === 'box-truck' ? EQUIPMENT_LIST : SEMI_EQUIPMENT_LIST).map((cat, i) => (
               <FadeUp key={cat.category} delay={i * 60}>
                 <div className="glass-card p-6 h-full" style={{ borderRadius: '18px' }}>
                   <p className="text-xs font-black uppercase tracking-widest mb-4" style={{ color: 'var(--red)', letterSpacing: '0.1em' }}>{cat.category}</p>
@@ -784,7 +1119,7 @@ export default function StartYourCarrierPage() {
       </section>
 
       {/* ── Insurance Summary ── */}
-      <section className="py-20 px-6" style={{ background: 'rgba(255,255,255,.015)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
+      <section id="insurance" className="py-20 px-6" style={{ background: 'rgba(255,255,255,.015)', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
         <div className="max-w-4xl mx-auto">
           <FadeUp>
             <div className="label mb-4">Insurance Requirements</div>
@@ -817,17 +1152,21 @@ export default function StartYourCarrierPage() {
       </section>
 
       {/* ── First Contract ── */}
-      <section className="py-24 px-6">
+      <section id="first-contract" className="py-24 px-6">
         <div className="max-w-4xl mx-auto">
           <FadeUp>
             <div className="label mb-4">Finding Work</div>
-            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>How to Get Your First Contract</h2>
+            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>
+              {activeTab === 'box-truck' ? 'How to Get Your First Contract' : 'How to Land Your First Load'}
+            </h2>
             <p className="text-base mb-12" style={{ color: 'var(--muted)' }}>
-              Getting your authority is step one. Getting paid is step two. Here's how to land your first contract — and what you need ready before you make contact with any logistics company.
+              {activeTab === 'box-truck'
+                ? 'Getting your authority is step one. Getting paid is step two. Here\'s how to land your first contract — and what you need ready before you make contact with any logistics company.'
+                : 'Authority is just your license to operate. Revenue comes from brokers, load boards, and direct relationships. Here\'s how to get your first load — and what every semi owner-operator needs ready before picking up the phone.'}
             </p>
           </FadeUp>
           <div className="space-y-5">
-            {FIRST_CONTRACT_STEPS.map((s, i) => (
+            {(activeTab === 'box-truck' ? FIRST_CONTRACT_STEPS : SEMI_FIRST_CONTRACT_STEPS).map((s, i) => (
               <FadeUp key={s.step} delay={i * 50}>
                 <div className="glass-card p-6" style={{ borderRadius: '16px' }}>
                   <div className="flex gap-4 items-start">
@@ -905,7 +1244,7 @@ export default function StartYourCarrierPage() {
       </section>
 
       {/* ── Compliance Calendar ── */}
-      <section className="py-24 px-6">
+      <section id="calendar" className="py-24 px-6">
         <div className="max-w-4xl mx-auto">
           <FadeUp>
             <div className="label mb-4">Ongoing Compliance</div>
@@ -976,13 +1315,15 @@ export default function StartYourCarrierPage() {
         <div className="max-w-4xl mx-auto">
           <FadeUp>
             <div className="label mb-4">Avoid These Pitfalls</div>
-            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>10 Common Mistakes New Carriers Make</h2>
+            <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>
+              {activeTab === 'box-truck' ? '10 Common Mistakes New Box Truck Carriers Make' : '10 Common Mistakes New Semi Operators Make'}
+            </h2>
             <p className="text-base mb-10 leading-relaxed" style={{ color: 'var(--muted)' }}>
               These mistakes cost new carriers money, violations, and sometimes their operating authority. Read each one before you haul your first load.
             </p>
           </FadeUp>
           <div className="space-y-4">
-            {COMMON_MISTAKES.map((item, i) => (
+            {(activeTab === 'box-truck' ? COMMON_MISTAKES : SEMI_COMMON_MISTAKES).map((item, i) => (
               <FadeUp key={i} delay={i * 40}>
                 <div className="rounded-2xl p-5" style={{ background: 'rgba(224,0,42,.06)', border: '1px solid rgba(224,0,42,.2)' }}>
                   <p className="text-sm font-black text-white mb-2">⚠ {item.mistake}</p>
@@ -995,14 +1336,14 @@ export default function StartYourCarrierPage() {
       </section>
 
       {/* ── FAQ ── */}
-      <section className="py-20 px-6" style={{ background: 'rgba(255,255,255,.015)', borderTop: '1px solid var(--line)' }}>
+      <section id="faq" className="py-20 px-6" style={{ background: 'rgba(255,255,255,.015)', borderTop: '1px solid var(--line)' }}>
         <div className="max-w-4xl mx-auto">
           <FadeUp>
             <div className="label mb-4">Frequently Asked Questions</div>
             <h2 className="text-3xl font-black text-white mb-10" style={{ letterSpacing: '-0.04em' }}>Questions New Carriers Ask</h2>
           </FadeUp>
           <div className="space-y-4">
-            {FAQ.map((item, i) => (
+            {(activeTab === 'box-truck' ? FAQ : SEMI_FAQ).map((item, i) => (
               <FadeUp key={i} delay={i * 40}>
                 <div className="glass-card p-6 rounded-2xl">
                   <p className="text-sm font-black text-white mb-3">Q: {item.q}</p>
@@ -1015,7 +1356,7 @@ export default function StartYourCarrierPage() {
       </section>
 
       {/* ── Glossary ── */}
-      <section className="py-20 px-6" style={{ borderTop: '1px solid var(--line)' }}>
+      <section id="glossary" className="py-20 px-6" style={{ borderTop: '1px solid var(--line)' }}>
         <div className="max-w-4xl mx-auto">
           <FadeUp>
             <div className="label mb-4">Industry Terms</div>

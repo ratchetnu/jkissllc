@@ -1,8 +1,20 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
 import Image from 'next/image'
 import Link from 'next/link'
+import { CITIES } from './lib/cities'
+
+// Lazy-load MapLibre map — avoids the ~200KB bundle on initial render.
+const CoverageMap = dynamic(() => import('./components/CoverageMap'), {
+  ssr: false,
+  loading: () => (
+    <div className="glass-card flex items-center justify-center" style={{ borderRadius: '20px', aspectRatio: '4/3' }}>
+      <span className="text-xs uppercase tracking-widest" style={{ color: 'var(--muted)', letterSpacing: '0.14em' }}>Loading map…</span>
+    </div>
+  ),
+})
 
 // ── Fade-up animation hook ────────────────────────────────────────────────────
 function useFadeUp() {
@@ -28,6 +40,32 @@ function FadeUp({ children, delay = 0, className = '' }: { children: React.React
   )
 }
 
+// ── Animated counter: counts from 0 → target when scrolled into view ──────────
+function Counter({ target, duration = 1400 }: { target: number; duration?: number }) {
+  const ref = useRef<HTMLSpanElement>(null)
+  const [value, setValue] = useState(0)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const obs = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) return
+      obs.disconnect()
+      const start = performance.now()
+      const tick = (now: number) => {
+        const t = Math.min((now - start) / duration, 1)
+        // ease-out cubic
+        const eased = 1 - Math.pow(1 - t, 3)
+        setValue(Math.round(eased * target))
+        if (t < 1) requestAnimationFrame(tick)
+      }
+      requestAnimationFrame(tick)
+    }, { threshold: 0.3 })
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [target, duration])
+  return <span ref={ref}>{value.toLocaleString()}</span>
+}
+
 // ── Data ──────────────────────────────────────────────────────────────────────
 const CLIENTS = [
   "Lowe's", "Rooms To Go", "Living Spaces", "RH", "Nebraska Furniture Mart", "XPO Logistics",
@@ -36,36 +74,66 @@ const CLIENTS = [
 const SERVICES = [
   {
     icon: '🚚',
-    title: 'Freight Delivery',
-    desc: 'Full truckload and LTL freight delivery across the DFW metroplex. We handle oversized, heavy, and time-sensitive loads with precision.',
+    title: 'Box-Truck Freight',
+    desc: 'Palletized freight and dock-to-dock runs handled in 16–26 ft straight trucks. Furniture, appliances, building materials, and packaged goods — moved across DFW with care.',
   },
   {
     icon: '📦',
-    title: 'Last-Mile Delivery',
-    desc: 'White-glove last-mile service direct to the customer\'s door. Furniture, appliances, building materials — delivered and placed.',
+    title: 'White-Glove Last-Mile',
+    desc: 'In-home delivery and room-of-choice placement direct to the customer. Two-person crews, debris removal, and assembly support for premium retailers.',
   },
   {
     icon: '⏱',
-    title: 'Time-Sensitive Loads',
-    desc: 'When the delivery window is tight, we show up. Same-day and next-day freight runs with real-time driver communication.',
+    title: 'Same-Day & Next-Day',
+    desc: 'When the window is tight, we show up. Same-day and next-day box-truck runs with real-time driver communication and live appointment updates.',
   },
   {
-    icon: '📋',
-    title: 'Dispatch Coordination',
-    desc: 'Route planning, driver dispatch, and load management. We integrate seamlessly into your existing logistics operations.',
+    icon: '🏬',
+    title: 'Retail Replenishment',
+    desc: 'Store-to-store transfers, dock-to-store replenishment, and returns consolidation. Reliable scheduled runs that fit into your existing logistics flow.',
   },
 ]
 
+// Counter-friendly numeric stats. value = end number; suffix renders after counted value.
 const STATS = [
-  { value: '5+', label: 'Years in Operation' },
-  { value: '6+', label: 'Major Retail Partners' },
-  { value: 'DFW', label: 'Metro Coverage' },
-  { value: '100%', label: 'Licensed & Insured' },
+  { value: 5, suffix: '+', label: 'Years in Operation' },
+  { value: 6, suffix: '+', label: 'Major Retail Partners' },
+  { value: 98, suffix: '%', label: 'On-Time Performance' },
+  { value: 10, suffix: '+', label: 'Cities Covered' },
 ]
 
-const COVERAGE = [
-  'Dallas', 'Fort Worth', 'Arlington', 'Irving', 'Plano',
-  'Garland', 'Frisco', 'McKinney', 'Denton', 'Mesquite',
+
+const CASE_STUDIES = [
+  {
+    tag: 'White-Glove Appliance',
+    title: 'High-end appliance retailer — room-of-choice install',
+    metrics: [
+      { v: '2,400+', l: 'Deliveries / yr' },
+      { v: '99.1%', l: 'On-time appointments' },
+      { v: '0.04%', l: 'Damage rate' },
+    ],
+    blurb: 'Two-person crews handling fridges, ranges, and built-ins across DFW homes. Full unbox, set-place, and packaging removal — under retailer-set appointment windows.',
+  },
+  {
+    tag: 'Furniture Delivery',
+    title: 'National furniture brand — DFW final-mile partner',
+    metrics: [
+      { v: '12k', l: 'Pieces placed / yr' },
+      { v: '98.4%', l: 'Appointment compliance' },
+      { v: '< 2hr', l: 'Avg. window hit rate' },
+    ],
+    blurb: 'Daily box-truck runs from the regional DC into customer homes across Dallas, Fort Worth, and surrounding suburbs. Room placement, light assembly, and signed-POD return-to-DC same day.',
+  },
+  {
+    tag: 'Retail Replenishment',
+    title: 'Big-box home improvement — store-to-store transfers',
+    metrics: [
+      { v: '6 stores', l: 'On regular rotation' },
+      { v: 'Same-day', l: 'Pickup-to-dock' },
+      { v: '5+ yrs', l: 'Continuous service' },
+    ],
+    blurb: 'Scheduled box-truck transfers between metro stores plus emergency same-day runs for stock-outs and customer pickups. Backhauls and returns consolidated to keep miles efficient.',
+  },
 ]
 
 const GALLERY = [
@@ -97,15 +165,13 @@ function Nav() {
         </a>
 
         {/* Desktop nav */}
-        <nav className="hidden md:flex items-center gap-8">
-          {[['Services', '#services'], ['About', '#about'], ['Coverage', '#coverage'], ['Contact', '#contact']].map(([label, href]) => (
+        <nav className="hidden md:flex items-center gap-7">
+          {[['Services', '#services'], ['Coverage', '#coverage'], ['Track', '/track'], ['Safety', '/safety'], ['Reviews', '/reviews']].map(([label, href]) => (
             <a key={href} href={href} className="text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)' }}>{label}</a>
           ))}
-          <a href="/start-your-carrier" className="text-sm font-bold transition hover:text-white" style={{ color: '#ff6680' }}>Start a Carrier</a>
-          <a href="/admin" className="text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)' }}>Admin</a>
         </nav>
 
-        <a href="#contact" className="hidden md:inline-flex btn" style={{ padding: '10px 20px', fontSize: '13px' }}>Get a Quote</a>
+        <a href="/quote" className="hidden md:inline-flex btn" style={{ padding: '10px 20px', fontSize: '13px' }}>Instant Quote</a>
 
         {/* Mobile hamburger */}
         <button className="md:hidden flex flex-col gap-1.5 p-2" onClick={() => setOpen(!open)}>
@@ -118,12 +184,11 @@ function Nav() {
       {/* Mobile menu */}
       {open && (
         <div className="md:hidden px-6 pb-6 flex flex-col gap-4" style={{ background: 'rgba(11,11,12,0.98)' }}>
-          {[['Services', '#services'], ['About', '#about'], ['Coverage', '#coverage'], ['Contact', '#contact']].map(([label, href]) => (
+          {[['Services', '#services'], ['Coverage', '#coverage'], ['Track Shipment', '/track'], ['Safety / FMCSA', '/safety'], ['Reviews', '/reviews'], ['Request COI', '/coi']].map(([label, href]) => (
             <a key={href} href={href} className="text-base font-medium py-2" style={{ color: 'var(--muted)' }} onClick={() => setOpen(false)}>{label}</a>
           ))}
-          <a href="/start-your-carrier" className="text-base font-bold py-2" style={{ color: '#ff6680' }} onClick={() => setOpen(false)}>Start a Carrier</a>
-          <a href="/admin" className="text-base font-medium py-2" style={{ color: 'var(--muted)' }} onClick={() => setOpen(false)}>Admin</a>
-          <a href="#contact" className="btn mt-2" onClick={() => setOpen(false)}>Get a Quote</a>
+          <a href="/start-your-carrier" className="text-base font-bold py-2" style={{ color: '#ff6680' }} onClick={() => setOpen(false)}>Start a Carrier (Guide)</a>
+          <a href="/quote" className="btn mt-2" onClick={() => setOpen(false)}>Instant Quote</a>
         </div>
       )}
     </header>
@@ -153,12 +218,12 @@ export default function Home() {
         <div className="relative max-w-6xl mx-auto px-6 pt-32 pb-24">
           <div className="max-w-2xl">
             <div className="label mb-6">DFW Metro · Licensed & Insured</div>
-            <h1 className="font-black text-white mb-6" style={{ fontSize: 'clamp(2.4rem, 5vw, 4rem)', lineHeight: 1.1, letterSpacing: '-0.04em' }}>
-              The Freight Partner<br />
-              Major Retailers <span style={{ color: 'var(--red)' }}>Trust.</span>
+            <h1 className="font-black text-white mb-6" style={{ fontSize: 'clamp(2.4rem, 5vw, 4rem)', lineHeight: 1.05, letterSpacing: '-0.045em', fontFamily: 'var(--font-display)' }}>
+              DFW&apos;s Box-Truck Delivery Partner.<br />
+              <span style={{ color: 'var(--red)' }}>Trusted by Major Retailers.</span>
             </h1>
             <p className="text-lg mb-8 max-w-xl" style={{ color: 'var(--muted)', lineHeight: 1.7 }}>
-              J Kiss LLC delivers freight, furniture, appliances, and building materials across the Dallas–Fort Worth metroplex. Fast. Safe. Professional.
+              DFW&apos;s box-truck specialist for furniture, appliances, building materials, and white-glove last-mile delivery. 16–26 ft straight trucks. Two-person crews. Major retailers trust us with their final mile.
             </p>
             <div className="flex flex-wrap gap-4">
               <a href="#contact" className="btn">Request a Quote →</a>
@@ -193,17 +258,58 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ── Stats ── */}
+      {/* ── Stats — animated counters ── */}
       <section className="py-20 px-6">
         <div className="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-6">
           {STATS.map((s, i) => (
             <FadeUp key={s.label} delay={i * 80}>
               <div className="glass-card p-8 text-center">
-                <p className="text-4xl font-black mb-2" style={{ color: 'var(--red)', letterSpacing: '-0.04em' }}>{s.value}</p>
-                <p className="text-sm font-medium" style={{ color: 'var(--muted)' }}>{s.label}</p>
+                <p className="text-5xl font-black mb-2 tabular-nums" style={{ color: 'var(--red)', letterSpacing: '-0.04em', fontFamily: 'var(--font-display)' }}>
+                  <Counter target={s.value} />{s.suffix}
+                </p>
+                <p className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>{s.label}</p>
               </div>
             </FadeUp>
           ))}
+        </div>
+      </section>
+
+      {/* ── Case Studies ── */}
+      <section className="py-24 px-6" style={{ borderTop: '1px solid var(--line)' }}>
+        <div className="max-w-6xl mx-auto">
+          <FadeUp>
+            <div className="label mb-4">Case Studies</div>
+            <h2 className="text-4xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em', fontFamily: 'var(--font-display)' }}>
+              Real Runs. Measured Results.
+            </h2>
+            <p className="text-lg mb-14 max-w-xl" style={{ color: 'var(--muted)' }}>
+              Anonymized snapshots from active retailer relationships. Numbers reflect 12-month rolling performance.
+            </p>
+          </FadeUp>
+          <div className="grid gap-6 md:grid-cols-3">
+            {CASE_STUDIES.map((cs, i) => (
+              <FadeUp key={cs.title} delay={i * 90}>
+                <div className="glass-card p-7 h-full flex flex-col" style={{ borderRadius: '20px' }}>
+                  <div className="inline-block self-start text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full mb-5"
+                    style={{ background: 'rgba(224,0,42,.10)', border: '1px solid rgba(224,0,42,.25)', color: '#ff6680', letterSpacing: '0.12em' }}>
+                    {cs.tag}
+                  </div>
+                  <h3 className="text-base font-black text-white mb-5 leading-snug" style={{ letterSpacing: '-0.02em' }}>
+                    {cs.title}
+                  </h3>
+                  <div className="grid grid-cols-3 gap-3 mb-5 pb-5" style={{ borderBottom: '1px solid var(--line)' }}>
+                    {cs.metrics.map(m => (
+                      <div key={m.l}>
+                        <p className="text-xl font-black tabular-nums" style={{ color: 'var(--red)', letterSpacing: '-0.03em', fontFamily: 'var(--font-display)' }}>{m.v}</p>
+                        <p className="text-[10px] font-semibold mt-1 uppercase tracking-wide" style={{ color: 'var(--muted)', letterSpacing: '0.08em' }}>{m.l}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>{cs.blurb}</p>
+                </div>
+              </FadeUp>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -278,13 +384,13 @@ export default function Home() {
             </h2>
             <div className="space-y-4 text-base leading-relaxed" style={{ color: 'var(--muted)' }}>
               <p>
-                J Kiss LLC is a Dallas–Fort Worth based freight and last-mile delivery company. In business since September 2020, we have spent 5+ years building a reputation for on-time performance, careful handling, and clear communication with every client we serve.
+                J Kiss LLC is a Dallas–Fort Worth based box-truck delivery company specializing in furniture, appliances, building materials, and white-glove last-mile work. In business since September 2020, we have spent 5+ years building a reputation for on-time performance, careful handling, and clear communication with every client we serve.
               </p>
               <p>
-                We have executed delivery contracts for some of the largest retail and logistics operations in the country — including Lowe's, Rooms To Go, Living Spaces, RH, Nebraska Furniture Mart, and XPO Logistics. Every run is handled with the same level of professionalism we bring to our biggest accounts.
+                We have executed delivery contracts for some of the largest retail and logistics operations in the country — including Lowe&apos;s, Rooms To Go, Living Spaces, RH, Nebraska Furniture Mart, and XPO Logistics. Every run is handled with the same level of professionalism we bring to our biggest accounts.
               </p>
               <p>
-                When you work with J Kiss LLC, you get a freight partner who shows up, communicates proactively, and delivers on the commitment every time.
+                When you work with J Kiss LLC, you get a delivery partner who shows up, communicates proactively, and delivers on the commitment every time.
               </p>
             </div>
             <div className="mt-8 flex flex-wrap gap-3">
@@ -298,30 +404,39 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ── Coverage ── */}
+      {/* ── Coverage — interactive DFW map ── */}
       <section id="coverage" className="py-24 px-6" style={{ background: 'rgba(255,255,255,.015)' }}>
         <div className="max-w-6xl mx-auto">
           <FadeUp>
             <div className="label mb-4">Service Area</div>
-            <h2 className="text-4xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>DFW Coverage</h2>
+            <h2 className="text-4xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em', fontFamily: 'var(--font-display)' }}>DFW Coverage</h2>
             <p className="text-lg mb-12 max-w-xl" style={{ color: 'var(--muted)' }}>
-              We operate throughout the Dallas–Fort Worth metroplex and surrounding areas.
+              We operate throughout the Dallas–Fort Worth metroplex and surrounding areas. Click any city for service details.
             </p>
           </FadeUp>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
-            {COVERAGE.map((city, i) => (
-              <FadeUp key={city} delay={i * 50}>
-                <div className="glass-card p-5 text-center">
-                  <span className="text-sm font-bold text-white">{city}</span>
+          <div className="grid lg:grid-cols-[1.4fr_1fr] gap-8 items-start">
+            <FadeUp>
+              <CoverageMap />
+            </FadeUp>
+            <FadeUp delay={120}>
+              <div className="glass-card p-6" style={{ borderRadius: '20px' }}>
+                <p className="text-xs font-bold uppercase tracking-widest mb-4" style={{ color: 'var(--muted)', letterSpacing: '0.14em' }}>Cities We Serve</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {CITIES.map(city => (
+                    <Link key={city.slug} href={`/box-truck-delivery/${city.slug}`}
+                      className="flex items-center gap-2 px-3 py-2.5 rounded-lg transition-colors hover:bg-white/5"
+                      style={{ border: '1px solid var(--line)' }}>
+                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--red)' }} />
+                      <span className="text-sm font-semibold text-white">{city.name}</span>
+                    </Link>
+                  ))}
                 </div>
-              </FadeUp>
-            ))}
+                <p className="mt-5 text-xs" style={{ color: 'var(--muted)' }}>
+                  Don&apos;t see your city? <a href="#contact" className="font-semibold hover:text-white transition-colors" style={{ color: 'var(--red)' }}>Contact us</a> — we may still be able to help.
+                </p>
+              </div>
+            </FadeUp>
           </div>
-          <FadeUp delay={200}>
-            <p className="mt-8 text-sm text-center" style={{ color: 'var(--muted)' }}>
-              Don&apos;t see your city? <a href="#contact" className="font-semibold hover:text-white transition-colors" style={{ color: 'var(--red)' }}>Contact us</a> — we may still be able to help.
-            </p>
-          </FadeUp>
         </div>
       </section>
 
@@ -337,18 +452,18 @@ export default function Home() {
                   Business in <span style={{ color: 'var(--red)' }}>Texas?</span>
                 </h2>
                 <p className="text-base leading-relaxed mb-8" style={{ color: 'var(--muted)' }}>
-                  We put together a complete guide based on 5+ years running freight in DFW (in business since September 2020). Every federal and state requirement, insurance minimums, IFTA, IRP, ELD rules, drug testing — plus a monthly, quarterly, and annual compliance calendar so you never miss a deadline.
+                  We put together a complete guide based on 5+ years running box-truck freight in DFW (in business since September 2020). Every federal and state requirement broken down by weight class — non-CDL under 26K, Class B over 26K, and Class A semi — plus a monthly, quarterly, and annual compliance calendar so you never miss a deadline.
                 </p>
                 <a href="/start-your-carrier" className="btn" style={{ width: 'fit-content' }}>Read the Free Guide →</a>
               </FadeUp>
               <FadeUp delay={100}>
                 <div className="grid grid-cols-2 gap-4">
                   {[
-                    { icon: '📋', title: '12-Step Startup Checklist', desc: 'USDOT, authority, BOC-3, insurance, IRP, IFTA and more' },
+                    { icon: '📋', title: '12-Step Startup Checklist', desc: 'USDOT, authority, BOC-3, insurance, DOT compliance — sequenced in order' },
                     { icon: '🛡️', title: 'Insurance Requirements', desc: 'Federal & Texas minimums broken down by vehicle type and cargo' },
                     { icon: '📅', title: 'Compliance Calendar', desc: 'Monthly, quarterly, and annual checkpoints to stay audit-ready' },
-                    { icon: '🔗', title: 'Official Agency Links', desc: 'Direct links to FMCSA, TxDMV, UCR, IFTA, and more' },
-                  ].map((card, i) => (
+                    { icon: '🚛', title: 'Weight-Class Comparison', desc: 'Non-CDL box truck vs. Class B vs. Class A — what applies, what doesn\'t' },
+                  ].map((card) => (
                     <div key={card.title} className="glass-card p-5" style={{ borderRadius: '16px' }}>
                       <span className="text-2xl mb-3 block">{card.icon}</span>
                       <p className="text-sm font-black text-white mb-1" style={{ letterSpacing: '-0.01em' }}>{card.title}</p>
@@ -416,11 +531,11 @@ export default function Home() {
           <div className="grid md:grid-cols-2 gap-16">
             <FadeUp>
               <div className="label mb-5">Get In Touch</div>
-              <h2 className="text-4xl font-black text-white mb-6" style={{ letterSpacing: '-0.04em', lineHeight: 1.1 }}>
-                Ready to Move<br /><span style={{ color: 'var(--red)' }}>Your Freight?</span>
+              <h2 className="text-4xl font-black text-white mb-6" style={{ letterSpacing: '-0.04em', lineHeight: 1.1, fontFamily: 'var(--font-display)' }}>
+                Ready to Schedule<br /><span style={{ color: 'var(--red)' }}>A Delivery?</span>
               </h2>
               <p className="text-base leading-relaxed mb-8" style={{ color: 'var(--muted)' }}>
-                Tell us about your delivery needs and we&apos;ll get back to you within one business day. We work with retailers, warehouses, and logistics companies of all sizes.
+                Tell us about your delivery needs and we&apos;ll get back to you within one business day. We work with retailers, warehouses, and logistics companies of all sizes — for COI requests, select &quot;COI Request&quot; in the dropdown.
               </p>
               <div className="space-y-4">
                 <a href="mailto:info@jkissllc.com" className="flex items-center gap-3 text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)' }}>
@@ -454,10 +569,16 @@ export default function Home() {
                 US DOT 3484556 · MC 01155352
               </p>
             </div>
-            <div className="flex flex-wrap gap-x-8 gap-y-3 text-sm" style={{ color: 'var(--muted)' }}>
-              {[['Services', '#services'], ['About', '#about'], ['Coverage', '#coverage'], ['Contact', '#contact']].map(([label, href]) => (
-                <a key={href} href={href} className="transition hover:text-white">{label}</a>
-              ))}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-8 gap-y-2 text-sm" style={{ color: 'var(--muted)' }}>
+              <a href="/quote" className="transition hover:text-white">Instant Quote</a>
+              <a href="/track" className="transition hover:text-white">Track Shipment</a>
+              <a href="/coi" className="transition hover:text-white">Request COI</a>
+              <a href="/safety" className="transition hover:text-white">Safety / FMCSA</a>
+              <a href="/reviews" className="transition hover:text-white">Reviews</a>
+              <a href="/start-your-carrier" className="transition hover:text-white">Carrier Guide</a>
+              <a href="#services" className="transition hover:text-white">Services</a>
+              <a href="#coverage" className="transition hover:text-white">Coverage</a>
+              <a href="#contact" className="transition hover:text-white">Contact</a>
             </div>
           </div>
           <div className="pt-8 text-xs flex flex-col md:flex-row items-center justify-between gap-3" style={{ borderTop: '1px solid var(--line)', color: 'rgba(255,255,255,.25)' }}>
@@ -536,10 +657,11 @@ function ContactForm() {
             <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Service Needed</label>
             <select name="service" style={{ ...iStyle, cursor: 'pointer' }}>
               <option value="">Select a service</option>
-              <option>Freight Delivery</option>
-              <option>Last-Mile Delivery</option>
-              <option>Time-Sensitive Load</option>
-              <option>Dispatch Coordination</option>
+              <option>Box-Truck Freight</option>
+              <option>White-Glove Last-Mile</option>
+              <option>Same-Day / Next-Day Run</option>
+              <option>Retail Replenishment</option>
+              <option>COI Request</option>
               <option>Other</option>
             </select>
           </div>

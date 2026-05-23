@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "maplibre-gl/dist/maplibre-gl.css";
 
 :root {
   --bg: #0b0b0c;
@@ -7,6 +8,10 @@
   --muted: #b5b7bd;
   --red: #E0002A;
   --line: rgba(255,255,255,.10);
+  /* Fallbacks — overridden by next/font CSS vars when fonts load */
+  --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
 }
 
 * { box-sizing: border-box; }
@@ -15,9 +20,19 @@ html { scroll-behavior: smooth; }
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'ss01', 'cv11';
 }
+
+/* Display font for all section headings + hero. Individual elements can still override. */
+h1, h2, h3, .display { font-family: var(--font-display); font-feature-settings: 'ss01'; }
+
+/* Monospace numerals where they appear alongside data */
+.tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* Numeric label styling — used for DOT/MC and counters */
+.font-mono, [class*="font-mono"] { font-family: var(--font-mono); }
 
 .btn {
   display: inline-flex;
@@ -87,4 +102,52 @@ body {
 .fade-up.visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* ── MapLibre map customizations ─────────────────────────────────────────── */
+.maplibregl-ctrl-attrib {
+  background: rgba(11,11,12,0.6) !important;
+  color: rgba(255,255,255,0.5) !important;
+  font-size: 10px !important;
+}
+.maplibregl-ctrl-attrib a { color: rgba(255,255,255,0.7) !important; }
+.maplibregl-ctrl-attrib-button { background-color: rgba(255,255,255,0.06) !important; }
+
+/* City markers */
+.jk-city-marker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  cursor: pointer;
+  transform: translateX(-7px); /* center the dot on the lat/lon */
+  pointer-events: auto;
+}
+.jk-city-dot {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #E0002A;
+  box-shadow: 0 0 0 3px rgba(224,0,42,.20), 0 0 12px rgba(224,0,42,.45);
+  transition: transform 0.18s, box-shadow 0.18s;
+  flex-shrink: 0;
+}
+.jk-city-label {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 12px;
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.85), 0 0 8px rgba(0,0,0,0.6);
+  letter-spacing: -0.01em;
+  transition: font-size 0.18s, color 0.18s;
+  white-space: nowrap;
+}
+.jk-city-marker:hover .jk-city-dot {
+  transform: scale(1.35);
+  box-shadow: 0 0 0 5px rgba(224,0,42,.25), 0 0 18px rgba(224,0,42,.7);
+}
+.jk-city-marker:hover .jk-city-label {
+  font-size: 14px;
+  color: #fff;
 }

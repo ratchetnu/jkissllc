@@ -1,15 +1,20 @@
 import type { Metadata } from 'next'
 import { Analytics } from '@vercel/analytics/react'
+import { Inter, Space_Grotesk, JetBrains_Mono } from 'next/font/google'
 import PageTracker from './components/PageTracker'
 import './globals.css'
+
+const inter = Inter({ subsets: ['latin'], variable: '--font-body', display: 'swap' })
+const display = Space_Grotesk({ subsets: ['latin'], variable: '--font-display', display: 'swap', weight: ['500', '600', '700'] })
+const mono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono', display: 'swap' })
 
 const SITE_URL = 'https://www.jkissllc.com'
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: 'J Kiss LLC — Freight & Last-Mile Delivery | Dallas–Fort Worth',
-  description: 'J Kiss LLC is a licensed freight and last-mile delivery company serving the Dallas–Fort Worth metroplex. Trusted by Lowe\'s, Rooms To Go, Living Spaces, RH, Nebraska Furniture Mart, and XPO Logistics. US DOT 3484556.',
-  keywords: 'freight delivery DFW, last-mile delivery Dallas, freight contractor Texas, logistics Dallas Fort Worth, furniture delivery Dallas, appliance delivery DFW, XPO contractor, Lowes delivery contractor',
+  title: 'J Kiss LLC — Box-Truck Delivery | Dallas–Fort Worth',
+  description: 'J Kiss LLC is DFW\'s box-truck delivery specialist — furniture, appliances, building materials, and white-glove last-mile. 16–26 ft straight trucks. Trusted by Lowe\'s, Rooms To Go, Living Spaces, RH, Nebraska Furniture Mart, and XPO Logistics. US DOT 3484556.',
+  keywords: 'box truck delivery DFW, white-glove last-mile Dallas, furniture delivery Dallas, appliance delivery DFW, box truck contractor Texas, room of choice delivery Dallas, straight truck delivery DFW, retail replenishment Dallas, Lowes delivery contractor, Rooms To Go delivery',
   authors: [{ name: 'J Kiss LLC' }],
   robots: {
     index: true,
@@ -19,15 +24,15 @@ export const metadata: Metadata = {
   openGraph: {
     type: 'website',
     url: SITE_URL,
-    title: 'J Kiss LLC — Freight & Last-Mile Delivery | DFW',
-    description: 'Licensed freight and last-mile delivery across Dallas–Fort Worth. Trusted by Lowe\'s, Rooms To Go, Living Spaces, RH, Nebraska Furniture Mart, and XPO Logistics.',
+    title: 'J Kiss LLC — Box-Truck Delivery | DFW',
+    description: 'Box-truck specialist for furniture, appliances, building materials, and white-glove last-mile delivery across Dallas–Fort Worth. Trusted by Lowe\'s, Rooms To Go, Living Spaces, RH, Nebraska Furniture Mart, and XPO Logistics.',
     siteName: 'J Kiss LLC',
-    images: [{ url: '/og-image.jpg', width: 1200, height: 630, alt: 'J Kiss LLC — Freight & Last-Mile Delivery' }],
+    images: [{ url: '/og-image.jpg', width: 1200, height: 630, alt: 'J Kiss LLC — Box-Truck Delivery' }],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'J Kiss LLC — Freight & Last-Mile Delivery | DFW',
-    description: 'Licensed freight and last-mile delivery across Dallas–Fort Worth.',
+    title: 'J Kiss LLC — Box-Truck Delivery | DFW',
+    description: 'Box-truck specialist for white-glove last-mile delivery across Dallas–Fort Worth.',
     images: ['/og-image.jpg'],
   },
   alternates: {
@@ -37,7 +42,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${inter.variable} ${display.variable} ${mono.variable}`}>
       <body>
         {/* LocalBusiness structured data for Google */}
         <script
@@ -45,26 +50,41 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           dangerouslySetInnerHTML={{
             __html: JSON.stringify({
               '@context': 'https://schema.org',
-              '@type': 'LocalBusiness',
+              '@type': 'MovingCompany',
               name: 'J Kiss LLC',
-              description: 'Licensed freight and last-mile delivery company serving the Dallas–Fort Worth metroplex.',
+              description: 'Box-truck delivery specialist serving the Dallas–Fort Worth metroplex. White-glove last-mile, furniture, appliances, and building materials.',
               url: SITE_URL,
               email: 'info@jkissllc.com',
-              areaServed: {
-                '@type': 'AdministrativeArea',
-                name: 'Dallas–Fort Worth Metroplex',
-              },
+              identifier: [
+                { '@type': 'PropertyValue', propertyID: 'USDOT', value: '3484556' },
+                { '@type': 'PropertyValue', propertyID: 'MC', value: '01155352' },
+              ],
+              areaServed: [
+                { '@type': 'AdministrativeArea', name: 'Dallas–Fort Worth Metroplex' },
+                { '@type': 'City', name: 'Dallas' },
+                { '@type': 'City', name: 'Fort Worth' },
+                { '@type': 'City', name: 'Arlington' },
+                { '@type': 'City', name: 'Plano' },
+                { '@type': 'City', name: 'Frisco' },
+                { '@type': 'City', name: 'McKinney' },
+                { '@type': 'City', name: 'Irving' },
+                { '@type': 'City', name: 'Garland' },
+                { '@type': 'City', name: 'Denton' },
+                { '@type': 'City', name: 'Mesquite' },
+              ],
               address: {
                 '@type': 'PostalAddress',
                 addressRegion: 'TX',
                 addressCountry: 'US',
               },
               knowsAbout: [
-                'Freight Delivery',
-                'Last-Mile Delivery',
-                'Logistics',
+                'Box Truck Delivery',
+                'White-Glove Last-Mile Delivery',
                 'Furniture Delivery',
                 'Appliance Delivery',
+                'Building Materials Delivery',
+                'Retail Replenishment',
+                'Room-of-Choice Placement',
               ],
             }),
           }}

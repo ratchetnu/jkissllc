@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSessionToken, setSessionCookie } from '../_lib/session'
+import { redis } from '../../../lib/redis'
 
-// Rate limiter: max 5 failed attempts per 15 minutes per IP.
-// In-memory — resets on cold start, but acceptable for a small admin surface.
-const attempts = new Map<string, { count: number; resetAt: number }>()
+// Failed-login limiter: max 5 failed attempts per 15 minutes per IP.
+// Backed by Upstash Redis so the count is shared across all serverless
+// instances — an in-memory Map is per-instance and is trivially bypassed by an
+// attacker spreading requests across instances or waiting out cold starts.
 const MAX_ATTEMPTS = 5
 const WINDOW_MS = 15 * 60 * 1000
 
@@ -16,25 +18,34 @@ function getIP(req: NextRequest): string {
   )
 }
 
-function isRateLimited(ip: string): boolean {
-  const now = Date.now()
-  const entry = attempts.get(ip)
-  if (!entry || now > entry.resetAt) return false
-  return entry.count >= MAX_ATTEMPTS
-}
+const failKey = (ip: string) => `rl:adminfail:${ip}`
 
-function recordFailure(ip: string): void {
-  const now = Date.now()
-  const entry = attempts.get(ip)
-  if (!entry || now > entry.resetAt) {
-    attempts.set(ip, { count: 1, resetAt: now + WINDOW_MS })
-  } else {
-    entry.count++
+// All three helpers fail open on a Redis error: a cache hiccup must neither
+// lock the admin out nor hard-fail the login.
+async function isRateLimited(ip: string): Promise<boolean> {
+  try {
+    const raw = await redis.get(failKey(ip))
+    return raw != null && parseInt(raw, 10) >= MAX_ATTEMPTS
+  } catch {
+    return false
   }
 }
 
-function clearFailures(ip: string): void {
-  attempts.delete(ip)
+async function recordFailure(ip: string): Promise<void> {
+  try {
+    const count = await redis.incr(failKey(ip))
+    if (count === 1) await redis.pexpire(failKey(ip), WINDOW_MS)
+  } catch {
+    /* best-effort limiter */
+  }
+}
+
+async function clearFailures(ip: string): Promise<void> {
+  try {
+    await redis.del(failKey(ip))
+  } catch {
+    /* best-effort limiter */
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -44,7 +55,7 @@ export async function POST(req: NextRequest) {
 
   const ip = getIP(req)
 
-  if (isRateLimited(ip)) {
+  if (await isRateLimited(ip)) {
     return NextResponse.json(
       { valid: false, error: 'Too many attempts. Try again in 15 minutes.' },
       { status: 429 },
@@ -57,11 +68,11 @@ export async function POST(req: NextRequest) {
   }
 
   if (password !== process.env.ADMIN_PASSWORD) {
-    recordFailure(ip)
+    await recordFailure(ip)
     return NextResponse.json({ valid: false }, { status: 401 })
   }
 
-  clearFailures(ip)
+  await clearFailures(ip)
 
   try {
     const token = await createSessionToken()

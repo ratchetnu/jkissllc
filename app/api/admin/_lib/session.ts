@@ -19,7 +19,11 @@ function b64urlToBytes(str: string): Uint8Array {
 }
 
 function getSecret(): string {
-  const secret = process.env.ADMIN_SESSION_SECRET ?? process.env.ADMIN_PASSWORD
+  // Dedicated signing secret only — never fall back to ADMIN_PASSWORD. Sharing
+  // them would make the login password and the token-signing key one value:
+  // rotating the password would silently break sessions, and anyone who
+  // learned the password could forge admin session tokens offline.
+  const secret = process.env.ADMIN_SESSION_SECRET
   if (!secret || secret.length < 16) {
     throw new Error('ADMIN_SESSION_SECRET missing or too short (min 16 chars).')
   }

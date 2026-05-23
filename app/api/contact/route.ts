@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
+import { rateLimit } from '../../lib/rate-limit'
 
 function escapeHtml(value: unknown): string {
   if (typeof value !== 'string') return ''
@@ -17,6 +18,11 @@ function isValidEmail(email: unknown): email is string {
 }
 
 export async function POST(request: NextRequest) {
+  // Public form — rate-limit per IP so it can't be used as an email-spam relay.
+  if (await rateLimit(request, 'contact', 5, 10 * 60_000)) {
+    return NextResponse.json({ error: 'Too many submissions. Please wait a few minutes and try again.' }, { status: 429 })
+  }
+
   const { name, company, email, phone, service, message } = await request.json()
 
   if (!name || !email || typeof name !== 'string' || !isValidEmail(email)) {
