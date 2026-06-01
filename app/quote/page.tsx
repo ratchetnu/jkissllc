@@ -9,13 +9,18 @@ export default function QuotePage() {
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
   const [estimate, setEstimate] = useState<Estimate | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
+  const [service, setService] = useState('dock-to-dock')
+  const isJunk = service === 'junk-removal'
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setStatus('sending')
     setErrorMsg('')
     const form = e.currentTarget
-    const data = Object.fromEntries(new FormData(form))
+    const data = Object.fromEntries(new FormData(form)) as Record<string, string>
+    // Junk removal is single-site — mirror the job ZIP into deliveryZip so the
+    // route validation/lookup passes and distance resolves to 0.
+    if (data.serviceType === 'junk-removal') data.deliveryZip = data.pickupZip
     try {
       const res = await fetch('/api/quote', {
         method: 'POST',
@@ -23,8 +28,9 @@ export default function QuotePage() {
         body: JSON.stringify(data),
       })
       const j = await res.json()
-      if (res.ok && j.estimate) {
-        setEstimate(j.estimate)
+      if (res.ok && (j.estimate || j.requested)) {
+        // Delivery returns a price range; junk removal returns a request ack only.
+        setEstimate(j.estimate ?? null)
         setStatus('sent')
         form.reset()
       } else {
@@ -62,7 +68,9 @@ export default function QuotePage() {
             <span style={{ color: 'var(--red)' }}>In 30 Seconds.</span>
           </h1>
           <p className="text-lg mb-10" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>
-            Enter pickup and delivery ZIPs, load details, and service type. We&apos;ll compute a price range right away and ops will follow up with a firm number within 1 business day.
+            {isJunk
+              ? 'Tell us the job site, what needs to go, and how soon. Junk removal is priced per job, so ops will send you a custom quote within 1 business day.'
+              : 'Enter pickup and delivery ZIPs, load details, and service type. We’ll compute a price range right away and ops will follow up with a firm number within 1 business day.'}
           </p>
 
           {status === 'sent' && estimate ? (
@@ -82,39 +90,78 @@ export default function QuotePage() {
                 </p>
               </div>
               <div className="mt-8 flex justify-center gap-3 flex-wrap">
-                <button onClick={() => { setStatus('idle'); setEstimate(null) }} className="btn-ghost">Get Another Quote</button>
+                <button onClick={() => { setStatus('idle'); setEstimate(null); setService('dock-to-dock') }} className="btn-ghost">Get Another Quote</button>
+                <Link href="/" className="btn">← Back to Home</Link>
+              </div>
+            </div>
+          ) : status === 'sent' ? (
+            <div className="glass-card p-10 text-center" style={{ borderRadius: '20px' }}>
+              <div className="text-5xl mb-5">✓</div>
+              <h2 className="text-2xl font-black text-white mb-3" style={{ letterSpacing: '-0.02em' }}>Request Received</h2>
+              <p className="text-base leading-relaxed mb-2" style={{ color: 'var(--muted)' }}>
+                Thanks — we&apos;ve got your junk removal details. Because every job is different, our team will review what&apos;s involved and email you a custom quote within 1 business day.
+              </p>
+              <p className="text-sm" style={{ color: 'rgba(255,255,255,.4)' }}>
+                Need it handled fast? Call or email us at info@jkissllc.com.
+              </p>
+              <div className="mt-8 flex justify-center gap-3 flex-wrap">
+                <button onClick={() => { setStatus('idle'); setEstimate(null); setService('dock-to-dock') }} className="btn-ghost">Submit Another Request</button>
                 <Link href="/" className="btn">← Back to Home</Link>
               </div>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="glass-card p-8 space-y-5" style={{ borderRadius: '20px' }}>
               <div>
-                <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>1. Route</p>
-                <div className="grid sm:grid-cols-2 gap-4">
+                <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>{isJunk ? '1. Job Location' : '1. Route'}</p>
+                {isJunk ? (
                   <div>
-                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Pickup ZIP*</label>
+                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Job ZIP*</label>
                     <input name="pickupZip" required maxLength={5} placeholder="75201" pattern="\d{5}" style={iStyle} />
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Delivery ZIP*</label>
-                    <input name="deliveryZip" required maxLength={5} placeholder="76102" pattern="\d{5}" style={iStyle} />
+                ) : (
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Pickup ZIP*</label>
+                      <input name="pickupZip" required maxLength={5} placeholder="75201" pattern="\d{5}" style={iStyle} />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Delivery ZIP*</label>
+                      <input name="deliveryZip" required maxLength={5} placeholder="76102" pattern="\d{5}" style={iStyle} />
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
-                <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>2. Load</p>
-                <div className="grid sm:grid-cols-2 gap-4">
+                <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>{isJunk ? '2. Load Size' : '2. Load'}</p>
+                {isJunk ? (
                   <div>
-                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Pallets</label>
-                    <input name="pallets" type="number" min={0} max={20} defaultValue={1} style={iStyle} />
+                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Estimated Load Size</label>
+                    <select name="loadSize" defaultValue="quarter" style={{ ...iStyle, cursor: 'pointer' }}>
+                      <option value="few-items">A few items</option>
+                      <option value="quarter">About a quarter truck</option>
+                      <option value="half">About a half truck</option>
+                      <option value="three-quarter">About three-quarter truck</option>
+                      <option value="full">Full truck load</option>
+                      <option value="multiple">More than one truck</option>
+                    </select>
+                    <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Just a rough guess — pricing depends on the items, access, and disposal fees. Describe the job in Notes and we&apos;ll send a custom quote.</p>
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Total Weight (lbs)</label>
-                    <input name="weight" type="number" min={0} max={20000} step={50} placeholder="2000" style={iStyle} />
-                  </div>
-                </div>
-                <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Box-truck capacity is ~10,000 lb usable payload. Larger loads contact ops for multi-truck options.</p>
+                ) : (
+                  <>
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Pallets</label>
+                        <input name="pallets" type="number" min={0} max={20} defaultValue={1} style={iStyle} />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Total Weight (lbs)</label>
+                        <input name="weight" type="number" min={0} max={20000} step={50} placeholder="2000" style={iStyle} />
+                      </div>
+                    </div>
+                    <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Box-truck capacity is ~10,000 lb usable payload. Larger loads contact ops for multi-truck options.</p>
+                  </>
+                )}
               </div>
 
               <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
@@ -122,10 +169,11 @@ export default function QuotePage() {
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Service Type</label>
-                    <select name="serviceType" defaultValue="dock-to-dock" style={{ ...iStyle, cursor: 'pointer' }}>
+                    <select name="serviceType" value={service} onChange={(e) => setService(e.target.value)} style={{ ...iStyle, cursor: 'pointer' }}>
                       <option value="dock-to-dock">Dock-to-Dock</option>
                       <option value="last-mile-curbside">Last-Mile Curbside</option>
                       <option value="white-glove">White-Glove (room-of-choice)</option>
+                      <option value="junk-removal">Junk Removal</option>
                     </select>
                   </div>
                   <div>
@@ -164,17 +212,19 @@ export default function QuotePage() {
               </div>
 
               <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
-                <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Notes (optional)</label>
-                <textarea name="notes" rows={3} placeholder="Special handling, appointment requirements, dock conditions, etc." style={{ ...iStyle, resize: 'vertical' }} />
+                <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>{isJunk ? 'What needs to go?' : 'Notes (optional)'}</label>
+                <textarea name="notes" rows={3} placeholder={isJunk ? 'e.g. garage cleanout, old appliances & furniture, construction debris, stairs/elevator access, anything heavy or hazardous…' : 'Special handling, appointment requirements, dock conditions, etc.'} style={{ ...iStyle, resize: 'vertical' }} />
               </div>
 
               {status === 'error' && <p className="text-sm" style={{ color: '#f87171' }}>{errorMsg}</p>}
 
               <button type="submit" disabled={status === 'sending'} className="btn w-full" style={{ justifyContent: 'center' }}>
-                {status === 'sending' ? 'Computing…' : 'Get My Estimate →'}
+                {status === 'sending' ? (isJunk ? 'Sending…' : 'Computing…') : (isJunk ? 'Request My Quote →' : 'Get My Estimate →')}
               </button>
               <p className="text-xs text-center" style={{ color: 'rgba(255,255,255,.4)' }}>
-                Estimate is non-binding. Final quote depends on appointment windows, dock conditions, and handling needs.
+                {isJunk
+                  ? 'No instant price for junk removal — every job is different. We’ll review the details and send a custom quote within 1 business day.'
+                  : 'Estimate is non-binding. Final quote depends on appointment windows, dock conditions, and handling needs.'}
               </p>
             </form>
           )}

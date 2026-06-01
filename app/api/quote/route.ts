@@ -79,9 +79,21 @@ export async function POST(request: NextRequest) {
   const body = await request.json()
   const {
     pickupZip, deliveryZip,
-    pallets, weight, serviceType, timing,
+    pallets, weight, serviceType, timing, loadSize,
     name, email, phone, company, notes,
   } = body
+
+  // Junk removal is priced per job, not by distance/pallets — collect the lead
+  // and let ops send a custom quote rather than showing a misleading number.
+  const isJunk = serviceType === 'junk-removal'
+  const LOAD_LABELS: Record<string, string> = {
+    'few-items': 'A few items',
+    quarter: 'About a quarter truck',
+    half: 'About a half truck',
+    'three-quarter': 'About three-quarter truck',
+    full: 'Full truck load',
+    multiple: 'More than one truck',
+  }
 
   // Validate
   if (!isValidEmail(email) || !name) {
@@ -100,15 +112,19 @@ export async function POST(request: NextRequest) {
   }
   const miles = distanceMiles(from, to)
 
-  // Compute estimate
-  const serviceMult = PRICING.serviceMult[serviceType] ?? 1.0
-  const timeMult = PRICING.timeMult[timing] ?? 1.0
-  const point =
-    (PRICING.base + miles * PRICING.perMile + palletCount * PRICING.perPallet) *
-    serviceMult *
-    timeMult
-  const low = Math.round((point * PRICING.rangeLow) / 5) * 5
-  const high = Math.round((point * PRICING.rangeHigh) / 5) * 5
+  // Compute estimate (delivery only — junk removal is quoted by hand)
+  let low = 0
+  let high = 0
+  if (!isJunk) {
+    const serviceMult = PRICING.serviceMult[serviceType] ?? 1.0
+    const timeMult = PRICING.timeMult[timing] ?? 1.0
+    const point =
+      (PRICING.base + miles * PRICING.perMile + palletCount * PRICING.perPallet) *
+      serviceMult *
+      timeMult
+    low = Math.round((point * PRICING.rangeLow) / 5) * 5
+    high = Math.round((point * PRICING.rangeHigh) / 5) * 5
+  }
   const distanceLabel = `${Math.round(miles)} mi`
 
   const safe = {
@@ -120,6 +136,7 @@ export async function POST(request: NextRequest) {
     weight:       String(lbs),
     serviceType:  escapeHtml(serviceType),
     timing:       escapeHtml(timing),
+    loadSize:     escapeHtml(LOAD_LABELS[loadSize] ?? loadSize) || '—',
     name:         escapeHtml(name),
     email:        escapeHtml(email),
     phone:        escapeHtml(phone) || '—',
@@ -130,26 +147,39 @@ export async function POST(request: NextRequest) {
   const resend = new Resend(process.env.RESEND_API_KEY)
 
   try {
-    // Notify ops
-    await resend.emails.send({
-      from: 'J Kiss LLC <info@jkissllc.com>',
-      to: ['info@jkissllc.com', 'timmothy@jkissllc.com'],
-      replyTo: email as string,
-      subject: `Quote Request — ${safe.pickupLabel} → ${safe.deliveryLabel} (${distanceLabel})`,
-      html: `
-        <div style="font-family:sans-serif;max-width:640px;margin:0 auto">
-          <h2 style="color:#E0002A;margin-bottom:4px">Instant Quote Request</h2>
-          <p style="color:#666;margin-top:0">Submitted via jkissllc.com/quote · Customer was shown $${low.toLocaleString()}–$${high.toLocaleString()}</p>
-
-          <h3 style="margin-bottom:8px">Route</h3>
-          <table style="width:100%;border-collapse:collapse">
+    // Junk-removal leads carry a job location + load-size hint; delivery quotes
+    // carry the full route + the price range the customer was shown.
+    const jobRows = isJunk
+      ? `
+            <tr><td style="padding:6px 0;color:#999;width:140px">Job Location</td><td style="padding:6px 0;font-weight:600">${safe.pickupLabel}</td></tr>
+            <tr><td style="padding:6px 0;color:#999">Est. Load Size</td><td style="padding:6px 0">${safe.loadSize}</td></tr>
+            <tr><td style="padding:6px 0;color:#999">Timing</td><td style="padding:6px 0">${safe.timing}</td></tr>`
+      : `
             <tr><td style="padding:6px 0;color:#999;width:140px">Pickup</td><td style="padding:6px 0;font-weight:600">${safe.pickupLabel}</td></tr>
             <tr><td style="padding:6px 0;color:#999">Delivery</td><td style="padding:6px 0;font-weight:600">${safe.deliveryLabel}</td></tr>
             <tr><td style="padding:6px 0;color:#999">Distance</td><td style="padding:6px 0;font-weight:600">${distanceLabel}</td></tr>
             <tr><td style="padding:6px 0;color:#999">Pallets</td><td style="padding:6px 0">${safe.pallets}</td></tr>
             <tr><td style="padding:6px 0;color:#999">Weight</td><td style="padding:6px 0">${safe.weight} lbs</td></tr>
             <tr><td style="padding:6px 0;color:#999">Service Type</td><td style="padding:6px 0">${safe.serviceType}</td></tr>
-            <tr><td style="padding:6px 0;color:#999">Timing</td><td style="padding:6px 0">${safe.timing}</td></tr>
+            <tr><td style="padding:6px 0;color:#999">Timing</td><td style="padding:6px 0">${safe.timing}</td></tr>`
+
+    // Notify ops
+    await resend.emails.send({
+      from: 'J Kiss LLC <info@jkissllc.com>',
+      to: ['info@jkissllc.com', 'timmothy@jkissllc.com'],
+      replyTo: email as string,
+      subject: isJunk
+        ? `Junk Removal Request — ${safe.pickupLabel} (${safe.loadSize})`
+        : `Quote Request — ${safe.pickupLabel} → ${safe.deliveryLabel} (${distanceLabel})`,
+      html: `
+        <div style="font-family:sans-serif;max-width:640px;margin:0 auto">
+          <h2 style="color:#E0002A;margin-bottom:4px">${isJunk ? 'Junk Removal Request' : 'Instant Quote Request'}</h2>
+          <p style="color:#666;margin-top:0">${isJunk
+            ? 'Submitted via jkissllc.com/quote · Needs a custom quote (no instant price shown)'
+            : `Submitted via jkissllc.com/quote · Customer was shown $${low.toLocaleString()}–$${high.toLocaleString()}`}</p>
+
+          <h3 style="margin-bottom:8px">${isJunk ? 'Job' : 'Route'}</h3>
+          <table style="width:100%;border-collapse:collapse">${jobRows}
           </table>
 
           <h3 style="margin-top:20px;margin-bottom:8px">Customer</h3>
@@ -160,11 +190,16 @@ export async function POST(request: NextRequest) {
             <tr><td style="padding:6px 0;color:#999">Phone</td><td style="padding:6px 0">${safe.phone}</td></tr>
           </table>
 
-          <p style="color:#999;margin:18px 0 6px 0">Notes</p>
+          <p style="color:#999;margin:18px 0 6px 0">${isJunk ? 'What needs to go' : 'Notes'}</p>
           <p style="background:#f9f9f9;padding:14px;border-radius:8px;margin:0;white-space:pre-wrap">${safe.notes}</p>
         </div>
       `,
     })
+
+    // Junk removal: no instant price — acknowledge the request only.
+    if (isJunk) {
+      return NextResponse.json({ ok: true, requested: true })
+    }
 
     return NextResponse.json({
       ok: true,
