@@ -62,10 +62,13 @@ export default function QuotePage() {
 
       <section className="pt-32 pb-20 px-6">
         <div className="max-w-3xl mx-auto">
-          <div className="label mb-6">Instant Estimate</div>
+          <div className="label mb-6">{isJunk ? 'Request a Quote' : 'Instant Estimate'}</div>
           <h1 className="text-4xl md:text-5xl font-black text-white mb-5" style={{ letterSpacing: '-0.045em', lineHeight: 1.05, fontFamily: 'var(--font-display)' }}>
-            Get a Box-Truck Quote<br />
-            <span style={{ color: 'var(--red)' }}>In 30 Seconds.</span>
+            {isJunk ? (
+              <>Get a Junk Removal Quote<br /><span style={{ color: 'var(--red)' }}>Priced for the Job.</span></>
+            ) : (
+              <>Get a Box-Truck Quote<br /><span style={{ color: 'var(--red)' }}>In 30 Seconds.</span></>
+            )}
           </h1>
           <p className="text-lg mb-10" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>
             {isJunk
