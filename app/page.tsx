@@ -4,6 +4,10 @@ import { useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import Image from 'next/image'
 import Link from 'next/link'
+import {
+  Truck, PackageCheck, Zap, Store, Trash2, KeyRound, ClipboardList, ShieldCheck, CalendarDays,
+  Ban, DollarSign, FileText, Mail, User, CheckCircle2, BadgeCheck,
+} from 'lucide-react'
 import { CITIES } from './lib/cities'
 
 // Lazy-load MapLibre map — avoids the ~200KB bundle on initial render.
@@ -35,6 +39,38 @@ function FadeUp({ children, delay = 0, className = '' }: { children: React.React
   const ref = useFadeUp()
   return (
     <div ref={ref} className={`fade-up ${className}`} style={{ transitionDelay: `${delay}ms` }}>
+      {children}
+    </div>
+  )
+}
+
+// ── Scroll progress bar ───────────────────────────────────────────────────────
+function ScrollProgress() {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const onScroll = () => {
+      const el = ref.current
+      if (!el) return
+      const max = document.documentElement.scrollHeight - window.innerHeight
+      el.style.transform = `scaleX(${max > 0 ? window.scrollY / max : 0})`
+    }
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    window.addEventListener('resize', onScroll)
+    return () => { window.removeEventListener('scroll', onScroll); window.removeEventListener('resize', onScroll) }
+  }, [])
+  return <div ref={ref} className="scroll-progress" style={{ width: '100%', transform: 'scaleX(0)' }} />
+}
+
+// ── Spotlight card: tracks cursor to position the radial sheen ────────────────
+function SpotlightCard({ children, className = '', blue = false, style }: { children: React.ReactNode; className?: string; blue?: boolean; style?: React.CSSProperties }) {
+  function onMove(e: React.MouseEvent<HTMLDivElement>) {
+    const r = e.currentTarget.getBoundingClientRect()
+    e.currentTarget.style.setProperty('--mx', `${e.clientX - r.left}px`)
+    e.currentTarget.style.setProperty('--my', `${e.clientY - r.top}px`)
+  }
+  return (
+    <div onMouseMove={onMove} className={`spotlight-card ${blue ? 'spotlight-blue' : ''} ${className}`} style={style}>
       {children}
     </div>
   )
@@ -73,24 +109,34 @@ const CLIENTS = [
 
 const SERVICES = [
   {
-    icon: '🚚',
+    Icon: Truck,
     title: 'Box-Truck Freight',
     desc: 'Palletized freight and dock-to-dock runs handled in 16–26 ft straight trucks. Furniture, appliances, building materials, and packaged goods — moved across DFW with care.',
   },
   {
-    icon: '📦',
+    Icon: PackageCheck,
     title: 'White-Glove Last-Mile',
     desc: 'In-home delivery and room-of-choice placement direct to the customer. Two-person crews, debris removal, and assembly support for premium retailers.',
   },
   {
-    icon: '⏱',
+    Icon: Zap,
     title: 'Same-Day & Next-Day',
     desc: 'When the window is tight, we show up. Same-day and next-day box-truck runs with real-time driver communication and live appointment updates.',
   },
   {
-    icon: '🏬',
+    Icon: Store,
     title: 'Retail Replenishment',
     desc: 'Store-to-store transfers, dock-to-store replenishment, and returns consolidation. Reliable scheduled runs that fit into your existing logistics flow.',
+  },
+  {
+    Icon: Trash2,
+    title: 'Junk Removal',
+    desc: 'Single-item pickups to full-property hauls. Furniture, appliances, construction debris, and estate clear-outs — loaded, hauled, and disposed of responsibly so you don\'t lift a thing.',
+  },
+  {
+    Icon: KeyRound,
+    title: 'Eviction & Property Cleanouts',
+    desc: 'Fast, discreet cleanouts for landlords and property managers. Units, garages, and foreclosures cleared down to broom-clean — coordinated around your turnover timeline.',
   },
 ]
 
@@ -199,16 +245,19 @@ function Nav() {
 export default function Home() {
   return (
     <main id="top" className="min-h-screen" style={{ background: 'var(--bg)' }}>
+      <ScrollProgress />
       <Nav />
 
       {/* ── Hero ── */}
       <section className="relative min-h-screen flex items-center overflow-hidden">
         {/* Background */}
         <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg, #0b0b0c 0%, #1a0508 100%)' }} />
-        <div className="absolute inset-0" style={{ background: 'radial-gradient(circle at 20% 50%, rgba(224,0,42,0.18), transparent 55%)' }} />
+        {/* Animated gradient mesh + drifting route grid */}
+        <div className="absolute inset-0 hero-mesh" />
+        <div className="absolute inset-0 hero-grid" />
         {/* Truck image — right side */}
         <div className="absolute right-0 bottom-0 top-0 w-full md:w-3/5 flex items-end md:items-center justify-center md:justify-end pointer-events-none" style={{ opacity: 0.95 }}>
-          <Image src="/images/hero.png" alt="J Kiss LLC delivery truck" width={700} height={900} className="object-contain object-bottom md:object-right-bottom" priority style={{ maxHeight: '95vh', width: 'auto' }} />
+          <Image src="/images/hero.webp" alt="J Kiss LLC delivery truck" width={700} height={900} className="object-contain object-bottom md:object-right-bottom" priority style={{ maxHeight: '95vh', width: 'auto' }} />
         </div>
         {/* Mobile overlay — dark layer so text is always readable over truck image */}
         <div className="absolute inset-0 md:hidden" style={{ background: 'rgba(11,11,12,0.72)' }} />
@@ -219,14 +268,14 @@ export default function Home() {
           <div className="max-w-2xl">
             <div className="label mb-6">DFW Metro · Licensed & Insured</div>
             <h1 className="font-black text-white mb-6" style={{ fontSize: 'clamp(2.4rem, 5vw, 4rem)', lineHeight: 1.05, letterSpacing: '-0.045em', fontFamily: 'var(--font-display)' }}>
-              DFW&apos;s Box-Truck Delivery Partner.<br />
-              <span style={{ color: 'var(--red)' }}>Trusted by Major Retailers.</span>
+              Delivery, Junk Removal &amp; Cleanouts.<br />
+              <span className="grad-red">Done Right Across DFW.</span>
             </h1>
             <p className="text-lg mb-8 max-w-xl" style={{ color: 'var(--muted)', lineHeight: 1.7 }}>
-              DFW&apos;s box-truck specialist for furniture, appliances, building materials, and white-glove last-mile delivery. 16–26 ft straight trucks. Two-person crews. Major retailers trust us with their final mile.
+              J Kiss LLC handles box-truck freight and white-glove last-mile delivery, plus junk removal and eviction &amp; property cleanouts across Dallas–Fort Worth. 16–26 ft straight trucks, two-person crews, and the reliability major retailers already trust.
             </p>
             <div className="flex flex-wrap gap-4">
-              <a href="#contact" className="btn">Request a Quote →</a>
+              <a href="/quote" className="btn">Get an Instant Quote →</a>
               <a href="#services" className="btn-ghost">Our Services</a>
             </div>
 
@@ -246,12 +295,14 @@ export default function Home() {
             <p className="text-center text-xs font-bold uppercase tracking-widest mb-8" style={{ color: 'rgba(255,255,255,.3)', letterSpacing: '0.14em' }}>
               Trusted by major retailers &amp; logistics companies
             </p>
-            <div className="flex flex-wrap items-center justify-center gap-x-10 gap-y-4">
-              {CLIENTS.map((name) => (
-                <span key={name} className="text-base font-black uppercase tracking-wide transition-colors hover:text-white"
-                  style={{ color: 'rgba(255,255,255,.25)', letterSpacing: '0.06em', fontSize: '13px' }}>
-                  {name}
-                </span>
+            <div className="marquee">
+              {/* Two identical tracks → seamless infinite loop */}
+              {[0, 1].map((track) => (
+                <div key={track} className="marquee-track" aria-hidden={track === 1}>
+                  {CLIENTS.map((name) => (
+                    <span key={`${track}-${name}`} className="marquee-logo">{name}</span>
+                  ))}
+                </div>
               ))}
             </div>
           </FadeUp>
@@ -263,12 +314,12 @@ export default function Home() {
         <div className="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-6">
           {STATS.map((s, i) => (
             <FadeUp key={s.label} delay={i * 80}>
-              <div className="glass-card p-8 text-center">
-                <p className="text-5xl font-black mb-2 tabular-nums" style={{ color: 'var(--red)', letterSpacing: '-0.04em', fontFamily: 'var(--font-display)' }}>
+              <SpotlightCard className="glass-card p-8 text-center h-full">
+                <p className="text-5xl font-black mb-2 tabular-nums grad-red" style={{ letterSpacing: '-0.04em', fontFamily: 'var(--font-display)' }}>
                   <Counter target={s.value} />{s.suffix}
                 </p>
                 <p className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>{s.label}</p>
-              </div>
+              </SpotlightCard>
             </FadeUp>
           ))}
         </div>
@@ -289,7 +340,7 @@ export default function Home() {
           <div className="grid gap-6 md:grid-cols-3">
             {CASE_STUDIES.map((cs, i) => (
               <FadeUp key={cs.title} delay={i * 90}>
-                <div className="glass-card p-7 h-full flex flex-col" style={{ borderRadius: '20px' }}>
+                <SpotlightCard className="glass-card p-7 h-full flex flex-col" style={{ borderRadius: '20px' }}>
                   <div className="inline-block self-start text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full mb-5"
                     style={{ background: 'rgba(224,0,42,.10)', border: '1px solid rgba(224,0,42,.25)', color: '#ff6680', letterSpacing: '0.12em' }}>
                     {cs.tag}
@@ -306,7 +357,7 @@ export default function Home() {
                     ))}
                   </div>
                   <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>{cs.blurb}</p>
-                </div>
+                </SpotlightCard>
               </FadeUp>
             ))}
           </div>
@@ -320,17 +371,19 @@ export default function Home() {
             <div className="label mb-4">What We Do</div>
             <h2 className="text-4xl font-black mb-4 text-white" style={{ letterSpacing: '-0.04em' }}>Our Services</h2>
             <p className="text-lg mb-14 max-w-xl" style={{ color: 'var(--muted)' }}>
-              From warehouse pickup to final-mile placement, we handle the full delivery chain.
+              From freight and final-mile delivery to junk removal and full property cleanouts — we handle the heavy lifting end to end.
             </p>
           </FadeUp>
           <div className="grid gap-6 sm:grid-cols-2">
             {SERVICES.map((s, i) => (
               <FadeUp key={s.title} delay={i * 80}>
-                <div className="glass-card p-8 h-full" style={{ borderRadius: '20px' }}>
-                  <span className="text-3xl mb-4 block">{s.icon}</span>
+                <SpotlightCard className="glass-card p-8 h-full" style={{ borderRadius: '20px' }}>
+                  <span className="mb-5 inline-flex h-12 w-12 items-center justify-center rounded-xl" style={{ background: 'rgba(224,0,42,.12)', border: '1px solid rgba(224,0,42,.25)' }}>
+                    <s.Icon size={24} strokeWidth={1.75} color="#ff6680" />
+                  </span>
                   <h3 className="text-lg font-black text-white mb-3" style={{ letterSpacing: '-0.02em' }}>{s.title}</h3>
                   <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>{s.desc}</p>
-                </div>
+                </SpotlightCard>
               </FadeUp>
             ))}
           </div>
@@ -367,7 +420,7 @@ export default function Home() {
               {/* Credentials badge */}
               <div className="absolute bottom-6 left-6 right-6 glass-card p-5" style={{ borderRadius: '14px' }}>
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 text-lg" style={{ background: 'var(--red)' }}>✓</div>
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: 'var(--red)' }}><BadgeCheck size={20} strokeWidth={2} color="#fff" /></div>
                   <div>
                     <p className="text-sm font-bold text-white">Fully Licensed &amp; Insured</p>
                     <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>DOT 3484556 · MC 01155352</p>
@@ -384,13 +437,13 @@ export default function Home() {
             </h2>
             <div className="space-y-4 text-base leading-relaxed" style={{ color: 'var(--muted)' }}>
               <p>
-                J Kiss LLC is a Dallas–Fort Worth based box-truck delivery company specializing in furniture, appliances, building materials, and white-glove last-mile work. In business since September 2020, we have spent 5+ years building a reputation for on-time performance, careful handling, and clear communication with every client we serve.
+                J Kiss LLC is a Dallas–Fort Worth based company specializing in box-truck freight, white-glove last-mile delivery, junk removal, and eviction &amp; property cleanouts. In business since September 2020, we have spent 5+ years building a reputation for on-time performance, careful handling, and clear communication with every client we serve.
               </p>
               <p>
                 We have executed delivery contracts for some of the largest retail and logistics operations in the country — including Lowe&apos;s, Rooms To Go, Living Spaces, RH, Nebraska Furniture Mart, and XPO Logistics. Every run is handled with the same level of professionalism we bring to our biggest accounts.
               </p>
               <p>
-                When you work with J Kiss LLC, you get a delivery partner who shows up, communicates proactively, and delivers on the commitment every time.
+                When you work with J Kiss LLC, you get a partner who shows up, communicates proactively, and delivers on the commitment every time — whatever the job.
               </p>
             </div>
             <div className="mt-8 flex flex-wrap gap-3">
@@ -459,16 +512,18 @@ export default function Home() {
               <FadeUp delay={100}>
                 <div className="grid grid-cols-2 gap-4">
                   {[
-                    { icon: '📋', title: '12-Step Startup Checklist', desc: 'USDOT, authority, BOC-3, insurance, DOT compliance — sequenced in order' },
-                    { icon: '🛡️', title: 'Insurance Requirements', desc: 'Federal & Texas minimums broken down by vehicle type and cargo' },
-                    { icon: '📅', title: 'Compliance Calendar', desc: 'Monthly, quarterly, and annual checkpoints to stay audit-ready' },
-                    { icon: '🚛', title: 'Weight-Class Comparison', desc: 'Non-CDL box truck vs. Class B vs. Class A — what applies, what doesn\'t' },
+                    { Icon: ClipboardList, title: '12-Step Startup Checklist', desc: 'USDOT, authority, BOC-3, insurance, DOT compliance — sequenced in order' },
+                    { Icon: ShieldCheck, title: 'Insurance Requirements', desc: 'Federal & Texas minimums broken down by vehicle type and cargo' },
+                    { Icon: CalendarDays, title: 'Compliance Calendar', desc: 'Monthly, quarterly, and annual checkpoints to stay audit-ready' },
+                    { Icon: Truck, title: 'Weight-Class Comparison', desc: 'Non-CDL box truck vs. Class B vs. Class A — what applies, what doesn\'t' },
                   ].map((card) => (
-                    <div key={card.title} className="glass-card p-5" style={{ borderRadius: '16px' }}>
-                      <span className="text-2xl mb-3 block">{card.icon}</span>
+                    <SpotlightCard key={card.title} className="glass-card p-5" style={{ borderRadius: '16px' }}>
+                      <span className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-lg" style={{ background: 'rgba(224,0,42,.12)', border: '1px solid rgba(224,0,42,.22)' }}>
+                        <card.Icon size={20} strokeWidth={1.75} color="#ff6680" />
+                      </span>
                       <p className="text-sm font-black text-white mb-1" style={{ letterSpacing: '-0.01em' }}>{card.title}</p>
                       <p className="text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>{card.desc}</p>
-                    </div>
+                    </SpotlightCard>
                   ))}
                 </div>
               </FadeUp>
@@ -502,16 +557,18 @@ export default function Home() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     {[
-                      { icon: '🚫', title: 'Claim Denied?', desc: 'Understand why and what your options are to fight back.' },
-                      { icon: '💸', title: 'Unpaid Invoices', desc: 'Brokers and carriers stiffing you on payment? Know your rights.' },
-                      { icon: '📄', title: 'Confusing Paperwork', desc: 'We break down the forms, filings, and deadlines in plain English.' },
-                      { icon: '⚡', title: 'Fast Answers', desc: 'No waiting. Get guidance on your situation right away.' },
+                      { Icon: Ban, title: 'Claim Denied?', desc: 'Understand why and what your options are to fight back.' },
+                      { Icon: DollarSign, title: 'Unpaid Invoices', desc: 'Brokers and carriers stiffing you on payment? Know your rights.' },
+                      { Icon: FileText, title: 'Confusing Paperwork', desc: 'We break down the forms, filings, and deadlines in plain English.' },
+                      { Icon: Zap, title: 'Fast Answers', desc: 'No waiting. Get guidance on your situation right away.' },
                     ].map((card) => (
-                      <div key={card.title} className="p-5 rounded-2xl" style={{ background: 'rgba(30,120,255,.07)', border: '1px solid rgba(30,120,255,.15)' }}>
-                        <span className="text-2xl mb-3 block">{card.icon}</span>
+                      <SpotlightCard key={card.title} blue className="p-5 rounded-2xl" style={{ background: 'rgba(30,120,255,.07)', border: '1px solid rgba(30,120,255,.15)' }}>
+                        <span className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-lg" style={{ background: 'rgba(30,120,255,.12)', border: '1px solid rgba(30,120,255,.25)' }}>
+                          <card.Icon size={20} strokeWidth={1.75} color="#4d9fff" />
+                        </span>
                         <p className="text-sm font-black text-white mb-1">{card.title}</p>
                         <p className="text-xs leading-relaxed" style={{ color: 'rgba(255,255,255,.45)' }}>{card.desc}</p>
-                      </div>
+                      </SpotlightCard>
                     ))}
                   </div>
                 </div>
@@ -532,18 +589,18 @@ export default function Home() {
             <FadeUp>
               <div className="label mb-5">Get In Touch</div>
               <h2 className="text-4xl font-black text-white mb-6" style={{ letterSpacing: '-0.04em', lineHeight: 1.1, fontFamily: 'var(--font-display)' }}>
-                Ready to Schedule<br /><span style={{ color: 'var(--red)' }}>A Delivery?</span>
+                Ready to Get<br /><span className="grad-red">Started?</span>
               </h2>
               <p className="text-base leading-relaxed mb-8" style={{ color: 'var(--muted)' }}>
-                Tell us about your delivery needs and we&apos;ll get back to you within one business day. We work with retailers, warehouses, and logistics companies of all sizes — for COI requests, select &quot;COI Request&quot; in the dropdown.
+                Tell us what you need — delivery, junk removal, eviction cleanout, or anything in between — and we&apos;ll get back to you within one business day. We work with retailers, property managers, warehouses, and logistics companies of all sizes. For COI requests, select &quot;COI Request&quot; in the dropdown.
               </p>
               <div className="space-y-4">
                 <a href="mailto:info@jkissllc.com" className="flex items-center gap-3 text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)' }}>
-                  <span className="w-9 h-9 rounded-xl flex items-center justify-center text-base shrink-0" style={{ background: 'rgba(224,0,42,.12)', border: '1px solid rgba(224,0,42,.25)' }}>✉</span>
+                  <span className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(224,0,42,.12)', border: '1px solid rgba(224,0,42,.25)' }}><Mail size={17} strokeWidth={1.75} color="#ff6680" /></span>
                   info@jkissllc.com
                 </a>
                 <a href="mailto:timmothy@jkissllc.com" className="flex items-center gap-3 text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)' }}>
-                  <span className="w-9 h-9 rounded-xl flex items-center justify-center text-base shrink-0" style={{ background: 'rgba(224,0,42,.12)', border: '1px solid rgba(224,0,42,.25)' }}>👤</span>
+                  <span className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(224,0,42,.12)', border: '1px solid rgba(224,0,42,.25)' }}><User size={17} strokeWidth={1.75} color="#ff6680" /></span>
                   timmothy@jkissllc.com
                 </a>
               </div>
@@ -629,7 +686,7 @@ function ContactForm() {
     <div className="glass-card p-8">
       {status === 'sent' ? (
         <div className="text-center py-8">
-          <div className="text-4xl mb-4">✓</div>
+          <div className="mb-4 flex justify-center"><CheckCircle2 size={44} strokeWidth={1.75} color="#ff6680" /></div>
           <p className="text-lg font-black text-white mb-2">Message sent!</p>
           <p className="text-sm" style={{ color: 'var(--muted)' }}>We&apos;ll get back to you within one business day.</p>
         </div>
@@ -661,13 +718,15 @@ function ContactForm() {
               <option>White-Glove Last-Mile</option>
               <option>Same-Day / Next-Day Run</option>
               <option>Retail Replenishment</option>
+              <option>Junk Removal</option>
+              <option>Eviction / Property Cleanout</option>
               <option>COI Request</option>
               <option>Other</option>
             </select>
           </div>
           <div>
             <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Message</label>
-            <textarea name="message" rows={4} placeholder="Tell us about your delivery needs..." style={{ ...iStyle, resize: 'vertical' }} />
+            <textarea name="message" rows={4} placeholder="Tell us about your job — what, where, and when..." style={{ ...iStyle, resize: 'vertical' }} />
           </div>
           {status === 'error' && (
             <p className="text-sm text-red-400">Something went wrong. Please email us directly at info@jkissllc.com</p>
