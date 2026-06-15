@@ -7,7 +7,6 @@ const MC = '01155352'
 
 const SAFER_SNAPSHOT_URL = `https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=${USDOT}`
 const SMS_URL = `https://ai.fmcsa.dot.gov/SMS/Carrier/${USDOT}/Overview.aspx`
-const LICENSING_URL = `https://li-public.fmcsa.dot.gov/LIVIEW/PKG_REGISTRATION.prc_reg_detail?pn_dotno=${USDOT}`
 
 export const metadata: Metadata = {
   title: 'Safety & Authority | J Kiss LLC — USDOT 3484556',
@@ -80,8 +79,8 @@ export default function SafetyPage() {
           </div>
           <p className="mt-4 text-xs" style={{ color: 'rgba(255,255,255,.4)' }}>
             Data above reflects active FMCSA registration. Verify current values on{' '}
-            <a href={LICENSING_URL} target="_blank" rel="noopener noreferrer" className="font-semibold transition hover:text-white" style={{ color: 'var(--red)' }}>
-              FMCSA Licensing &amp; Insurance ↗
+            <a href={SAFER_SNAPSHOT_URL} target="_blank" rel="noopener noreferrer" className="font-semibold transition hover:text-white" style={{ color: 'var(--red)' }}>
+              FMCSA SAFER Snapshot ↗
             </a>
           </p>
         </div>
