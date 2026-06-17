@@ -189,6 +189,12 @@ const GALLERY = [
   { src: '/images/delivery-action.jpg', alt: 'Delivery in progress' },
   { src: '/images/warehouse2.jpg', alt: 'Freight staged for delivery' },
   { src: '/images/delivered.jpg', alt: 'Completed delivery' },
+  { src: '/images/junk-curbside-haul.jpg', alt: 'Curbside junk and furniture removal' },
+  { src: '/images/junk-property-cleanout.jpg', alt: 'Full property cleanout and debris removal' },
+  { src: '/images/junk-garage-cleanout.jpg', alt: 'Garage and storage unit cleanout' },
+  { src: '/images/junk-yard-debris.jpg', alt: 'Yard debris and bulk junk haul-away' },
+  { src: '/images/junk-estate-cleanout.jpg', alt: 'Estate cleanout — furniture, boxes, and appliances' },
+  { src: '/images/junk-shed-cleanout.jpg', alt: 'Shed and backyard cleanout' },
 ]
 
 // ── Nav ───────────────────────────────────────────────────────────────────────
