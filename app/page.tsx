@@ -6,7 +6,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import {
   Truck, PackageCheck, Zap, Store, Trash2, KeyRound, ClipboardList, ShieldCheck, CalendarDays,
-  Ban, DollarSign, FileText, Mail, User, CheckCircle2, BadgeCheck,
+  Ban, DollarSign, FileText, Mail, User, CheckCircle2, BadgeCheck, ArrowRight, Phone,
 } from 'lucide-react'
 import { CITIES } from './lib/cities'
 
@@ -132,11 +132,13 @@ const SERVICES = [
     Icon: Trash2,
     title: 'Junk Removal',
     desc: 'Single-item pickups to full-property hauls. Furniture, appliances, construction debris, and estate clear-outs — loaded, hauled, and disposed of responsibly so you don\'t lift a thing.',
+    cta: { label: 'Book Junk Removal', href: '/?service=Junk%20Removal#contact' },
   },
   {
     Icon: KeyRound,
     title: 'Eviction & Property Cleanouts',
     desc: 'Fast, discreet cleanouts for landlords and property managers. Units, garages, and foreclosures cleared down to broom-clean — coordinated around your turnover timeline.',
+    cta: { label: 'Book a Cleanout', href: '/?service=Eviction%20%2F%20Property%20Cleanout#contact' },
   },
 ]
 
@@ -389,6 +391,11 @@ export default function Home() {
                   </span>
                   <h3 className="text-lg font-black text-white mb-3" style={{ letterSpacing: '-0.02em' }}>{s.title}</h3>
                   <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>{s.desc}</p>
+                  {s.cta && (
+                    <a href={s.cta.href} className="inline-flex items-center gap-1.5 mt-5 text-sm font-bold transition hover:text-white" style={{ color: '#ff6680' }}>
+                      {s.cta.label} <ArrowRight size={15} strokeWidth={2.25} />
+                    </a>
+                  )}
                 </SpotlightCard>
               </FadeUp>
             ))}
@@ -555,7 +562,7 @@ export default function Home() {
                     </h2>
                     <p className="text-base leading-relaxed mb-8" style={{ color: 'rgba(255,255,255,.55)' }}>
                       Independent contractors and owner-operators get stuck with denied claims, delayed payments, and confusing paperwork every day.
-                      <strong className="text-white"> ClaimGuard Help</strong> is built specifically for contractors who need someone in their corner — not a lawyer, not an insurance company — just straight answers and real help getting what you're owed.
+                      <strong className="text-white"> ClaimGuard Help</strong> is built specifically for contractors who need someone in their corner — not a lawyer, not an insurance company — just straight answers and real help getting what you&apos;re owed.
                     </p>
                     <div className="inline-flex items-center gap-2 font-bold text-sm px-6 py-3 rounded-xl transition-colors" style={{ background: '#1e78ff', color: '#fff', borderRadius: '12px' }}>
                       Get Help with Your Claim →
@@ -601,6 +608,10 @@ export default function Home() {
                 Tell us what you need — delivery, junk removal, eviction cleanout, or anything in between — and we&apos;ll get back to you within one business day. We work with retailers, property managers, warehouses, and logistics companies of all sizes. For COI requests, select &quot;COI Request&quot; in the dropdown.
               </p>
               <div className="space-y-4">
+                <a href="tel:+18179094312" className="flex items-center gap-3 text-base font-bold text-white transition hover:opacity-80">
+                  <span className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'var(--red)' }}><Phone size={17} strokeWidth={2} color="#fff" /></span>
+                  Call or text (817) 909-4312
+                </a>
                 <a href="mailto:info@jkissllc.com" className="flex items-center gap-3 text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)' }}>
                   <span className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(224,0,42,.12)', border: '1px solid rgba(224,0,42,.25)' }}><Mail size={17} strokeWidth={1.75} color="#ff6680" /></span>
                   info@jkissllc.com
@@ -647,6 +658,7 @@ export default function Home() {
           <div className="pt-8 text-xs flex flex-col md:flex-row items-center justify-between gap-3" style={{ borderTop: '1px solid var(--line)', color: 'rgba(255,255,255,.25)' }}>
             <p>© {new Date().getFullYear()} J Kiss LLC. All rights reserved.</p>
             <div className="flex gap-4">
+              <a href="tel:+18179094312" className="transition hover:text-white">(817) 909-4312</a>
               <a href="mailto:info@jkissllc.com" className="transition hover:text-white">info@jkissllc.com</a>
               <a href="mailto:timmothy@jkissllc.com" className="transition hover:text-white">timmothy@jkissllc.com</a>
             </div>
@@ -660,6 +672,14 @@ export default function Home() {
 // ── Contact Form ──────────────────────────────────────────────────────────────
 function ContactForm() {
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+  const [service, setService] = useState('')
+
+  // Pre-select the service when arriving from a "Book …" link (e.g. /?service=Junk%20Removal#contact)
+  useEffect(() => {
+    const preset = new URLSearchParams(window.location.search).get('service')
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing form state from URL on mount
+    if (preset) setService(preset)
+  }, [])
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -718,7 +738,7 @@ function ContactForm() {
           </div>
           <div>
             <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Service Needed</label>
-            <select name="service" style={{ ...iStyle, cursor: 'pointer' }}>
+            <select name="service" value={service} onChange={(e) => setService(e.target.value)} style={{ ...iStyle, cursor: 'pointer' }}>
               <option value="">Select a service</option>
               <option>Box-Truck Freight</option>
               <option>White-Glove Last-Mile</option>
