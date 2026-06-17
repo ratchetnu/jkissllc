@@ -9,10 +9,10 @@ type LookupResult =
 
 const STATUS_ORDER = ['created', 'dispatched', 'out-for-delivery', 'delivered']
 const STATUS_LABEL_MAP: Record<string, string> = {
-  'created': 'Booked',
-  'dispatched': 'Dispatched',
-  'out-for-delivery': 'Out for Delivery',
-  'delivered': 'Delivered',
+  'created': 'Scheduled',
+  'dispatched': 'On The Way',
+  'out-for-delivery': 'Crew On Site',
+  'delivered': 'Complete',
 }
 
 function relative(ts: number) {
@@ -72,17 +72,17 @@ export default function TrackPage() {
 
       <section className="pt-32 pb-20 px-6">
         <div className="max-w-2xl mx-auto">
-          <div className="label mb-6">Shipment Tracking</div>
+          <div className="label mb-6">Pickup Tracking</div>
           <h1 className="text-4xl md:text-5xl font-black text-white mb-5" style={{ letterSpacing: '-0.045em', lineHeight: 1.05, fontFamily: 'var(--font-display)' }}>
-            Where&apos;s My <span style={{ color: 'var(--red)' }}>Delivery?</span>
+            Where&apos;s My <span style={{ color: 'var(--red)' }}>Pickup?</span>
           </h1>
           <p className="text-base mb-8" style={{ color: 'var(--muted)' }}>
-            Enter your BOL or PO number and the name on the booking to see live status. Updated as our drivers move through dispatch, pickup, and delivery.
+            Enter your job code and the name on the booking to see live status. Updated as our crew schedules, loads up, and clears your junk.
           </p>
 
           <form onSubmit={handleSubmit} className="glass-card p-6 mb-8" style={{ borderRadius: '20px' }}>
-            <label className="block text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.14em' }}>BOL or PO Number</label>
-            <input name="bol" required placeholder="JK-12345" style={iStyle} autoFocus />
+            <label className="block text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.14em' }}>Job Code</label>
+            <input name="bol" required placeholder="JK-1042" style={iStyle} autoFocus />
             <label className="block text-xs font-bold uppercase tracking-widest mb-3 mt-4" style={{ color: 'var(--muted)', letterSpacing: '0.14em' }}>Name on the Booking</label>
             <input name="name" required placeholder="Customer or company name" maxLength={200}
               style={{ ...iStyle, textTransform: 'none', letterSpacing: 'normal', fontFamily: 'inherit' }} />
@@ -90,7 +90,7 @@ export default function TrackPage() {
               The customer or company name on the booking — this confirms the shipment is yours.
             </p>
             <button type="submit" disabled={status === 'looking'} className="btn w-full mt-4" style={{ justifyContent: 'center' }}>
-              {status === 'looking' ? 'Looking…' : 'Track Shipment →'}
+              {status === 'looking' ? 'Looking…' : 'Track My Pickup →'}
             </button>
             {status === 'error' && <p className="text-sm mt-4" style={{ color: '#f87171' }}>{errorMsg}</p>}
           </form>
@@ -100,7 +100,7 @@ export default function TrackPage() {
             <div className="glass-card p-8" style={{ borderRadius: '20px' }}>
               <div className="flex items-baseline justify-between flex-wrap gap-2 mb-1">
                 <p className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)', letterSpacing: '0.14em' }}>
-                  BOL · <span style={{ fontFamily: 'var(--font-mono)' }}>{result.bol}</span>
+                  JOB · <span style={{ fontFamily: 'var(--font-mono)' }}>{result.bol}</span>
                 </p>
                 <p className="text-xs" style={{ color: 'rgba(255,255,255,.4)' }}>updated {relative(result.updatedAt)}</p>
               </div>
@@ -138,7 +138,8 @@ export default function TrackPage() {
             <div className="glass-card p-8 text-center" style={{ borderRadius: '20px' }}>
               <p className="text-2xl font-black text-white mb-2" style={{ fontFamily: 'var(--font-display)' }}>Not found</p>
               <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
-                No shipment matches BOL <span className="font-mono" style={{ color: '#fff' }}>{result.bol}</span> with that name. Double-check both the number and the name on the booking, or contact ops at{' '}
+                No pickup matches job code <span className="font-mono" style={{ color: '#fff' }}>{result.bol}</span> with that name. Double-check both the code and the name on the booking, or text us at{' '}
+                <a href="tel:+18179094312" className="font-semibold transition hover:text-white" style={{ color: 'var(--red)' }}>(817) 909-4312</a> or{' '}
                 <a href="mailto:info@jkissllc.com" className="font-semibold transition hover:text-white" style={{ color: 'var(--red)' }}>info@jkissllc.com</a>.
               </p>
             </div>

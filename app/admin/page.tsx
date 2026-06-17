@@ -34,10 +34,10 @@ interface Shipment {
 
 const SHIPMENT_STATUSES: ShipmentStatus[] = ['created', 'dispatched', 'out-for-delivery', 'delivered']
 const SHIPMENT_LABEL: Record<ShipmentStatus, string> = {
-  'created': 'Booked',
-  'dispatched': 'Dispatched',
-  'out-for-delivery': 'Out for Delivery',
-  'delivered': 'Delivered',
+  'created': 'Scheduled',
+  'dispatched': 'On The Way',
+  'out-for-delivery': 'Crew On Site',
+  'delivered': 'Complete',
 }
 
 export const iStyle: React.CSSProperties = {

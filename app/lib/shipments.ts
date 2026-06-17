@@ -50,15 +50,15 @@ export async function listShipments(limit = 100): Promise<Shipment[]> {
 }
 
 export const STATUS_LABEL: Record<ShipmentStatus, string> = {
-  'created': 'Booked',
-  'dispatched': 'Dispatched',
-  'out-for-delivery': 'Out for Delivery',
-  'delivered': 'Delivered',
+  'created': 'Scheduled',
+  'dispatched': 'On The Way',
+  'out-for-delivery': 'Crew On Site',
+  'delivered': 'Complete',
 }
 
 export const STATUS_DESC: Record<ShipmentStatus, string> = {
-  'created': 'Your shipment is booked and assigned. Driver dispatch will follow.',
-  'dispatched': 'Driver has picked up your shipment and is en route.',
-  'out-for-delivery': 'On the truck. Delivery in progress today.',
-  'delivered': 'Delivered. Proof of delivery is on file with our ops team.',
+  'created': 'Your pickup is booked and on the schedule. We\'ll confirm your arrival window before the crew heads out.',
+  'dispatched': 'Crew is loaded up and on the way to your location.',
+  'out-for-delivery': 'Crew is on site loading and hauling your items away.',
+  'delivered': 'All done — everything\'s hauled off and disposed of responsibly. Thanks for choosing J Kiss.',
 }

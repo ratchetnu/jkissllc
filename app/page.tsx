@@ -645,7 +645,7 @@ export default function Home() {
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-8 gap-y-2 text-sm" style={{ color: 'var(--muted)' }}>
               <a href="/quote" className="transition hover:text-white">Instant Quote</a>
-              <a href="/track" className="transition hover:text-white">Track Shipment</a>
+              <a href="/track" className="transition hover:text-white">Track My Pickup</a>
               <a href="/coi" className="transition hover:text-white">Request COI</a>
               <a href="/safety" className="transition hover:text-white">Safety / FMCSA</a>
               <a href="/reviews" className="transition hover:text-white">Reviews</a>
@@ -749,6 +749,21 @@ function ContactForm() {
               <option>COI Request</option>
               <option>Other</option>
             </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Your Budget <span style={{ color: 'rgba(255,255,255,.35)', fontWeight: 400 }}>(optional)</span></label>
+            <select name="budget" style={{ ...iStyle, cursor: 'pointer' }}>
+              <option value="">Select a budget range</option>
+              <option>Under $150</option>
+              <option>$150 – $300</option>
+              <option>$300 – $600</option>
+              <option>$600 – $1,000</option>
+              <option>$1,000+</option>
+              <option>Not sure — need a quote</option>
+            </select>
+            <p className="text-xs mt-1.5" style={{ color: 'rgba(255,255,255,.4)' }}>
+              A ballpark helps us plan the right crew and truck. Final price depends on the load, access, and disposal fees — this isn&apos;t a locked-in quote.
+            </p>
           </div>
           <div>
             <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Message</label>

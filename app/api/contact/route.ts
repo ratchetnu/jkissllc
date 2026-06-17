@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Too many submissions. Please wait a few minutes and try again.' }, { status: 429 })
   }
 
-  const { name, company, email, phone, service, message } = await request.json()
+  const { name, company, email, phone, service, budget, message } = await request.json()
 
   if (!name || !email || typeof name !== 'string' || !isValidEmail(email)) {
     return NextResponse.json({ error: 'Name and a valid email are required.' }, { status: 400 })
@@ -39,6 +39,7 @@ export async function POST(request: NextRequest) {
     email: escapeHtml(email),
     phone: escapeHtml(phone) || '—',
     service: escapeHtml(service) || '—',
+    budget: escapeHtml(budget) || '—',
     message: escapeHtml(message) || '—',
   }
 
@@ -61,6 +62,7 @@ export async function POST(request: NextRequest) {
             <tr><td style="padding:8px 0;color:#999">Email</td><td style="padding:8px 0"><a href="mailto:${safe.email}">${safe.email}</a></td></tr>
             <tr><td style="padding:8px 0;color:#999">Phone</td><td style="padding:8px 0">${safe.phone}</td></tr>
             <tr><td style="padding:8px 0;color:#999">Service</td><td style="padding:8px 0">${safe.service}</td></tr>
+            <tr><td style="padding:8px 0;color:#999">Budget</td><td style="padding:8px 0">${safe.budget}${safe.budget === '—' ? '' : ' <span style="color:#999;font-size:12px">(customer estimate — not quoted)</span>'}</td></tr>
           </table>
           <hr style="border:1px solid #eee;margin:20px 0"/>
           <p style="color:#999;margin-bottom:6px">Message</p>
