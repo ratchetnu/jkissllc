@@ -124,6 +124,9 @@ export default function BookingClient({
   const verified = !!b.customerTimeVerifiedAt && !!b.selectedDate && !!b.selectedWindow
   const confirmed = b.status === 'confirmed' || b.status === 'completed'
   const completed = b.status === 'completed'
+  // When ops set a single available date, it's the fixed service date — show it
+  // and have the customer choose only the arrival time.
+  const serviceDate = b.selectedDate || (b.availableDates.length === 1 ? b.availableDates[0] : '')
 
   const heading = completed
     ? 'Your service is complete'
@@ -156,7 +159,9 @@ export default function BookingClient({
                 ? 'Thank you for choosing J Kiss LLC. We hope to work with you again.'
                 : verified
                   ? 'Your service time has been verified. J Kiss LLC will contact you if any adjustment is needed.'
-                  : 'Your booking is almost confirmed. Please verify the service date and arrival window below.'}
+                  : serviceDate
+                    ? `Your service is scheduled for ${fmtDate(serviceDate)}. Please choose the arrival time that works best for you and confirm below.`
+                    : 'Your booking is almost confirmed. Please verify the service date and arrival window below.'}
           </p>
           <p className="text-sm mb-6" style={{ color: 'rgba(255,255,255,.45)' }}>
             Booking <span className="font-mono">{b.bookingNumber}</span>
@@ -175,6 +180,8 @@ export default function BookingClient({
             <p className={sectionLabel} style={sectionLabelStyle}>Booking Details</p>
             <Row k="Customer" v={b.customerName} />
             <Row k="Service" v={SERVICE_LABELS[b.serviceType] ?? b.serviceType} />
+            <Row k="Service Date" v={serviceDate ? fmtDate(serviceDate) : undefined} />
+            <Row k="Arrival Window" v={b.selectedWindow ?? undefined} />
             <Row k="Invoice Date" v={b.invoiceDate} />
             <Row k="Pickup" v={b.pickupAddress} />
             <Row k="Drop-off" v={b.dropoffAddress} />
@@ -357,8 +364,9 @@ function VerifyCard({ b, token, policy, onUpdated, verified }: {
   b: CustomerBooking; token: string; policy: { version: number; text: string }
   onUpdated: (b: CustomerBooking) => void; verified: boolean
 }) {
+  const onlyDate = b.availableDates.length === 1 ? b.availableDates[0] : ''
   const [editing, setEditing] = useState(!verified)
-  const [date, setDate] = useState(b.selectedDate ?? '')
+  const [date, setDate] = useState(b.selectedDate || onlyDate)
   const [win, setWin] = useState(b.selectedWindow ?? '')
   const [agree, setAgree] = useState(false)
   const [showPolicy, setShowPolicy] = useState(false)
@@ -407,7 +415,7 @@ function VerifyCard({ b, token, policy, onUpdated, verified }: {
 
   return (
     <form onSubmit={submit} className="glass-card p-6 mb-5" style={{ borderRadius: '18px', borderColor: 'rgba(224,0,42,.3)' }}>
-      <p className={sectionLabel} style={sectionLabelStyle}>Verify Your Service Time</p>
+      <p className={sectionLabel} style={sectionLabelStyle}>{onlyDate ? 'Set Your Arrival Time' : 'Verify Your Service Time'}</p>
 
       {!hasOptions ? (
         <p className="text-sm" style={{ color: 'var(--muted)' }}>
@@ -415,22 +423,35 @@ function VerifyCard({ b, token, policy, onUpdated, verified }: {
         </p>
       ) : (
         <>
-          <label style={labelStyle}>Service Date *</label>
-          <div className="flex flex-wrap gap-2 mb-4">
-            {b.availableDates.map(d => (
-              <button type="button" key={d} onClick={() => setDate(d)}
-                className="px-4 py-2.5 rounded-xl text-sm font-semibold transition"
-                style={{
-                  background: date === d ? 'var(--red)' : 'rgba(255,255,255,.05)',
-                  border: `1px solid ${date === d ? 'var(--red)' : 'rgba(255,255,255,.1)'}`,
-                  color: date === d ? '#fff' : 'var(--text)',
-                }}>
-                {fmtDate(d)}
-              </button>
-            ))}
-          </div>
+          {onlyDate ? (
+            <div className="mb-5">
+              <label style={labelStyle}>Service Date</label>
+              <div className="px-4 py-3 rounded-xl flex items-center gap-2"
+                style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)' }}>
+                <span style={{ color: 'var(--red)' }}>📅</span>
+                <span className="text-sm font-bold text-white">{fmtDate(onlyDate)}</span>
+              </div>
+            </div>
+          ) : (
+            <>
+              <label style={labelStyle}>Service Date *</label>
+              <div className="flex flex-wrap gap-2 mb-4">
+                {b.availableDates.map(d => (
+                  <button type="button" key={d} onClick={() => setDate(d)}
+                    className="px-4 py-2.5 rounded-xl text-sm font-semibold transition"
+                    style={{
+                      background: date === d ? 'var(--red)' : 'rgba(255,255,255,.05)',
+                      border: `1px solid ${date === d ? 'var(--red)' : 'rgba(255,255,255,.1)'}`,
+                      color: date === d ? '#fff' : 'var(--text)',
+                    }}>
+                    {fmtDate(d)}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
-          <label style={labelStyle}>Arrival Window *</label>
+          <label style={labelStyle}>{onlyDate ? 'What time should we arrive? *' : 'Arrival Window *'}</label>
           <div className="flex flex-wrap gap-2 mb-5">
             {b.availableWindows.map(w => (
               <button type="button" key={w} onClick={() => setWin(w)}
