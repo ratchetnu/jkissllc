@@ -221,6 +221,12 @@ export default function QuotePage() {
                     <input name="phone" type="tel" placeholder="(555) 000-0000" style={iStyle} />
                   </div>
                 </div>
+                <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)', lineHeight: 1.5 }}>
+                  By providing your phone number, you agree to receive booking and service-related text messages
+                  (confirmations, scheduling, and updates) from J Kiss LLC at the number provided, including messages
+                  sent by autodialer. Consent is not a condition of purchase. Message &amp; data rates may apply.
+                  Reply STOP to opt out, HELP for help.
+                </p>
               </div>
 
               <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
@@ -237,6 +243,11 @@ export default function QuotePage() {
                 {isJobBased
                   ? 'No instant price — every job is different. We’ll review the details and send a custom quote within 1 business day.'
                   : 'Estimate is non-binding. Final quote depends on appointment windows, dock conditions, and handling needs.'}
+              </p>
+              <p className="text-xs text-center" style={{ color: 'rgba(255,255,255,.3)' }}>
+                By submitting, you agree to our{' '}
+                <a href="/terms" className="underline" style={{ color: 'rgba(255,255,255,.55)' }}>Terms</a> and{' '}
+                <a href="/privacy" className="underline" style={{ color: 'rgba(255,255,255,.55)' }}>Privacy Policy</a>.
               </p>
             </form>
           )}
