@@ -83,9 +83,13 @@ export async function POST(request: NextRequest) {
     name, email, phone, company, notes,
   } = body
 
-  // Junk removal is priced per job, not by distance/pallets — collect the lead
-  // and let ops send a custom quote rather than showing a misleading number.
+  // Junk removal and eviction/property cleanouts are priced per job, not by
+  // distance/pallets — collect the lead and let ops send a custom quote rather
+  // than showing a misleading number.
   const isJunk = serviceType === 'junk-removal'
+  const isEviction = serviceType === 'eviction'
+  const isJobBased = isJunk || isEviction
+  const jobLabel = isEviction ? 'Property Cleanout' : 'Junk Removal'
   const LOAD_LABELS: Record<string, string> = {
     'few-items': 'A few items',
     quarter: 'About a quarter truck',
@@ -112,10 +116,10 @@ export async function POST(request: NextRequest) {
   }
   const miles = distanceMiles(from, to)
 
-  // Compute estimate (delivery only — junk removal is quoted by hand)
+  // Compute estimate (delivery only — job-based services are quoted by hand)
   let low = 0
   let high = 0
-  if (!isJunk) {
+  if (!isJobBased) {
     const serviceMult = PRICING.serviceMult[serviceType] ?? 1.0
     const timeMult = PRICING.timeMult[timing] ?? 1.0
     const point =
@@ -149,7 +153,7 @@ export async function POST(request: NextRequest) {
   try {
     // Junk-removal leads carry a job location + load-size hint; delivery quotes
     // carry the full route + the price range the customer was shown.
-    const jobRows = isJunk
+    const jobRows = isJobBased
       ? `
             <tr><td style="padding:6px 0;color:#999;width:140px">Job Location</td><td style="padding:6px 0;font-weight:600">${safe.pickupLabel}</td></tr>
             <tr><td style="padding:6px 0;color:#999">Est. Load Size</td><td style="padding:6px 0">${safe.loadSize}</td></tr>
@@ -168,17 +172,17 @@ export async function POST(request: NextRequest) {
       from: 'J Kiss LLC <info@jkissllc.com>',
       to: ['info@jkissllc.com', 'timmothy@jkissllc.com'],
       replyTo: email as string,
-      subject: isJunk
-        ? `Junk Removal Request — ${safe.pickupLabel} (${safe.loadSize})`
+      subject: isJobBased
+        ? `${jobLabel} Request — ${safe.pickupLabel} (${safe.loadSize})`
         : `Quote Request — ${safe.pickupLabel} → ${safe.deliveryLabel} (${distanceLabel})`,
       html: `
         <div style="font-family:sans-serif;max-width:640px;margin:0 auto">
-          <h2 style="color:#E0002A;margin-bottom:4px">${isJunk ? 'Junk Removal Request' : 'Instant Quote Request'}</h2>
-          <p style="color:#666;margin-top:0">${isJunk
+          <h2 style="color:#E0002A;margin-bottom:4px">${isJobBased ? `${jobLabel} Request` : 'Instant Quote Request'}</h2>
+          <p style="color:#666;margin-top:0">${isJobBased
             ? 'Submitted via jkissllc.com/quote · Needs a custom quote (no instant price shown)'
             : `Submitted via jkissllc.com/quote · Customer was shown $${low.toLocaleString()}–$${high.toLocaleString()}`}</p>
 
-          <h3 style="margin-bottom:8px">${isJunk ? 'Job' : 'Route'}</h3>
+          <h3 style="margin-bottom:8px">${isJobBased ? 'Job' : 'Route'}</h3>
           <table style="width:100%;border-collapse:collapse">${jobRows}
           </table>
 
@@ -190,14 +194,14 @@ export async function POST(request: NextRequest) {
             <tr><td style="padding:6px 0;color:#999">Phone</td><td style="padding:6px 0">${safe.phone}</td></tr>
           </table>
 
-          <p style="color:#999;margin:18px 0 6px 0">${isJunk ? 'What needs to go' : 'Notes'}</p>
+          <p style="color:#999;margin:18px 0 6px 0">${isJobBased ? 'What needs to go' : 'Notes'}</p>
           <p style="background:#f9f9f9;padding:14px;border-radius:8px;margin:0;white-space:pre-wrap">${safe.notes}</p>
         </div>
       `,
     })
 
-    // Junk removal: no instant price — acknowledge the request only.
-    if (isJunk) {
+    // Job-based services: no instant price — acknowledge the request only.
+    if (isJobBased) {
       return NextResponse.json({ ok: true, requested: true })
     }
 
