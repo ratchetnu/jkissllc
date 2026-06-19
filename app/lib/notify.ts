@@ -21,7 +21,7 @@ export async function sendConfirmationLink(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
   if (hasEmail(b)) { await emailConfirmationLink(b); out.email = true }
   if (hasSms(b)) {
-    const msg = `J Kiss LLC: Hi ${b.customerName}, you're almost booked (${b.bookingNumber}). Verify your service date & arrival window and view your invoice here: ${bookingLink(b.token)}`
+    const msg = `J KISS LLC: Hi ${b.customerName}, you're almost booked (${b.bookingNumber}). Verify your service date & arrival window and view your invoice here: ${bookingLink(b.token)} Reply STOP to opt out, HELP for help.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
   return out
