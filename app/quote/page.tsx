@@ -115,7 +115,30 @@ export default function QuotePage() {
           ) : (
             <form onSubmit={handleSubmit} className="glass-card p-8 space-y-5" style={{ borderRadius: '20px' }}>
               <div>
-                <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>{isJunk ? '1. Job Location' : '1. Route'}</p>
+                <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>1. Service</p>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Service Type</label>
+                    <select name="serviceType" value={service} onChange={(e) => setService(e.target.value)} style={{ ...iStyle, cursor: 'pointer' }}>
+                      <option value="dock-to-dock">Dock-to-Dock</option>
+                      <option value="last-mile-curbside">Last-Mile Curbside</option>
+                      <option value="white-glove">White-Glove (room-of-choice)</option>
+                      <option value="junk-removal">Junk Removal</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Timing</label>
+                    <select name="timing" defaultValue="standard" style={{ ...iStyle, cursor: 'pointer' }}>
+                      <option value="standard">Standard (2–4 business days)</option>
+                      <option value="next-day">Next-Day</option>
+                      <option value="same-day">Same-Day</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
+                <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>{isJunk ? '2. Job Location' : '2. Route'}</p>
                 {isJunk ? (
                   <div>
                     <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Job ZIP*</label>
@@ -136,7 +159,7 @@ export default function QuotePage() {
               </div>
 
               <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
-                <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>{isJunk ? '2. Load Size' : '2. Load'}</p>
+                <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>{isJunk ? '3. Load Size' : '3. Load'}</p>
                 {isJunk ? (
                   <div>
                     <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Estimated Load Size</label>
@@ -165,29 +188,6 @@ export default function QuotePage() {
                     <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Box-truck capacity is ~10,000 lb usable payload. Larger loads contact ops for multi-truck options.</p>
                   </>
                 )}
-              </div>
-
-              <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
-                <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>3. Service</p>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Service Type</label>
-                    <select name="serviceType" value={service} onChange={(e) => setService(e.target.value)} style={{ ...iStyle, cursor: 'pointer' }}>
-                      <option value="dock-to-dock">Dock-to-Dock</option>
-                      <option value="last-mile-curbside">Last-Mile Curbside</option>
-                      <option value="white-glove">White-Glove (room-of-choice)</option>
-                      <option value="junk-removal">Junk Removal</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Timing</label>
-                    <select name="timing" defaultValue="standard" style={{ ...iStyle, cursor: 'pointer' }}>
-                      <option value="standard">Standard (2–4 business days)</option>
-                      <option value="next-day">Next-Day</option>
-                      <option value="same-day">Same-Day</option>
-                    </select>
-                  </div>
-                </div>
               </div>
 
               <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
