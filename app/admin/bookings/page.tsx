@@ -317,11 +317,19 @@ function BookingForm({ booking, onClose, onSaved }: { booking?: Booking; onClose
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   const edit = !!booking
+  const np = (booking?.customerName ?? '').trim().split(/\s+/).filter(Boolean)
+  const firstName = np[0] ?? ''
+  const lastName = np.slice(1).join(' ')
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setSaving(true); setErr('')
     const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>
+    // Combine first/last into the stored customerName; normalize the checkbox.
+    const fn = (f.customerFirstName ?? '').trim(); const ln = (f.customerLastName ?? '').trim()
+    f.customerName = `${fn} ${ln}`.trim()
+    delete f.customerFirstName; delete f.customerLastName
+    f.collectInPerson = 'collectInPerson' in f ? 'true' : 'false'
     try {
       if (edit) {
         await patch(booking!.token, { action: 'update', fields: f })
@@ -340,10 +348,11 @@ function BookingForm({ booking, onClose, onSaved }: { booking?: Booking; onClose
     <form onSubmit={submit} className="glass-card p-5 space-y-3" style={{ borderRadius: '16px', borderColor: 'rgba(224,0,42,.3)' }}>
       <p className="text-sm font-bold text-white">{edit ? `Edit ${booking!.bookingNumber}` : 'New Booking'}</p>
       <div className="grid sm:grid-cols-2 gap-3">
-        <div><label style={lab}>Customer Name *</label><input name="customerName" required defaultValue={booking?.customerName} style={iStyle} /></div>
-        <div><label style={lab}>Service Type</label><select name="serviceType" defaultValue={booking?.serviceType ?? 'moving'} style={{ ...iStyle, cursor: 'pointer' }}>{SERVICE_TYPES.map(s => <option key={s} value={s}>{SERVICE_LABELS[s]}</option>)}</select></div>
+        <div><label style={lab}>First Name *</label><input name="customerFirstName" required defaultValue={firstName} style={iStyle} /></div>
+        <div><label style={lab}>Last Name</label><input name="customerLastName" defaultValue={lastName} style={iStyle} /></div>
         <div><label style={lab}>Phone</label><input name="customerPhone" defaultValue={booking?.customerPhone} style={iStyle} /></div>
         <div><label style={lab}>Email</label><input name="customerEmail" defaultValue={booking?.customerEmail} style={iStyle} /></div>
+        <div><label style={lab}>Service Type</label><select name="serviceType" defaultValue={booking?.serviceType ?? 'moving'} style={{ ...iStyle, cursor: 'pointer' }}>{SERVICE_TYPES.map(s => <option key={s} value={s}>{SERVICE_LABELS[s]}</option>)}</select></div>
         <div><label style={lab}>Invoice #</label><input name="invoiceNumber" defaultValue={booking?.invoiceNumber} style={iStyle} /></div>
         <div><label style={lab}>Invoice Date</label><input name="invoiceDate" defaultValue={booking?.invoiceDate} placeholder="June 16, 2026" style={iStyle} /></div>
         <div><label style={lab}>Invoice Amount ($)</label><input name="invoiceAmount" inputMode="decimal" defaultValue={dollars(booking?.invoiceAmountCents)} placeholder="550.00" style={iStyle} /></div>
@@ -358,8 +367,12 @@ function BookingForm({ booking, onClose, onSaved }: { booking?: Booking; onClose
       <div><label style={lab}>Items (one per line)</label><textarea name="items" rows={3} defaultValue={booking?.items?.join('\n')} placeholder={'40 boxes\nRefrigerator\nDresser\nCouch\nGrill'} style={{ ...iStyle, resize: 'vertical' }} /></div>
       <div className="grid sm:grid-cols-2 gap-3">
         <div><label style={lab}>Available Dates (one per line, YYYY-MM-DD)</label><textarea name="availableDates" rows={3} defaultValue={booking?.availableDates?.join('\n')} placeholder={'2026-06-26'} style={{ ...iStyle, resize: 'vertical' }} /></div>
-        <div><label style={lab}>Arrival Windows (one per line)</label><textarea name="availableWindows" rows={3} defaultValue={booking?.availableWindows?.join('\n')} placeholder={'8am–10am\n10am–12pm\n12pm–2pm\n2pm–4pm\n4pm–6pm'} style={{ ...iStyle, resize: 'vertical' }} /></div>
+        <div><label style={lab}>Arrival Windows (one per line)</label><textarea name="availableWindows" rows={4} defaultValue={booking?.availableWindows?.join('\n')} placeholder={'8am–9am\n9am–10am\n10am–11am\n11am–12pm\n12pm–1pm\n1pm–2pm'} style={{ ...iStyle, resize: 'vertical' }} /></div>
       </div>
+      <label className="flex items-center gap-2.5 text-sm py-1" style={{ color: 'var(--text)' }}>
+        <input type="checkbox" name="collectInPerson" defaultChecked={!!booking?.collectInPerson} style={{ width: 18, height: 18, accentColor: '#E0002A', flexShrink: 0 }} />
+        Collect balance in person — show remaining balance as optional on the link (due at end of service), don&apos;t require online payment
+      </label>
       <div><label style={lab}>Internal Notes (ops only)</label><textarea name="internalNotes" rows={2} defaultValue={booking?.internalNotes} style={{ ...iStyle, resize: 'vertical' }} /></div>
       {err && <p className="text-sm" style={{ color: '#f87171' }}>{err}</p>}
       <div className="flex gap-2">

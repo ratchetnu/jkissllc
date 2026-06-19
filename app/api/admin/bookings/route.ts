@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
       invoiceAmountCents: dollarsToCents(body.invoiceAmount ?? 0),
       depositAmountCents: dollarsToCents(body.depositAmount ?? 0),
       amountPaidCents: 0,
+      collectInPerson: body.collectInPerson === true || body.collectInPerson === 'true' || body.collectInPerson === 'on',
       crewSize: num(body.crewSize),
       estimatedHours: num(body.estimatedHours),
       availableDates: strList(body.availableDates, 60),

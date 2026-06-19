@@ -94,6 +94,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if ('selectedDate' in f) b.selectedDate = str(f.selectedDate, 20)
       if ('selectedWindow' in f) b.selectedWindow = str(f.selectedWindow, 40)
       if ('internalNotes' in f) b.internalNotes = str(f.internalNotes, 2000)
+      if ('collectInPerson' in f) b.collectInPerson = f.collectInPerson === true || f.collectInPerson === 'true' || f.collectInPerson === 'on'
       if (f.status && (Object.keys(STATUS_SET) as BookingStatus[]).includes(f.status)) b.status = f.status as BookingStatus
       break
     }

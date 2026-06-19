@@ -115,6 +115,7 @@ export type Booking = {
   invoiceAmountCents: number
   depositAmountCents: number
   amountPaidCents: number      // sum of confirmed payments applied to invoice
+  collectInPerson?: boolean    // hide online payment on the link (balance collected in person)
 
   // Job detail (display only)
   crewSize?: number

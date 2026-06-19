@@ -26,6 +26,7 @@ export type CustomerBooking = {
   invoiceAmountCents: number
   depositAmountCents: number
   amountPaidCents: number
+  collectInPerson?: boolean
   crewSize?: number
   estimatedHours?: number
   availableDates: string[]
@@ -196,13 +197,13 @@ export default function BookingClient({
             )}
           </div>
 
-          {/* ── Payment ─────────────────────────────────────────────────── */}
-          <PaymentCard b={b} token={token} onChange={refresh} disabled={cancelled} />
-
           {/* ── Verify date/time + agreement ────────────────────────────── */}
           {!cancelled && (
             <VerifyCard b={b} token={token} policy={policy} onUpdated={setB} verified={verified} />
           )}
+
+          {/* ── Payment (shown under the booking time) ──────────────────── */}
+          <PaymentCard b={b} token={token} onChange={refresh} disabled={cancelled} />
 
           {/* ── Confirmation record ─────────────────────────────────────── */}
           {verified && (
@@ -250,7 +251,7 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
 
   return (
     <div className="glass-card p-6 mb-5" style={{ borderRadius: '18px' }}>
-      <p className={sectionLabel} style={sectionLabelStyle}>Payment</p>
+      <p className={sectionLabel} style={sectionLabelStyle}>{b.collectInPerson && balance > 0 ? 'Remaining Balance — Optional' : 'Payment'}</p>
       <Row k="Invoice Total" v={usd(b.invoiceAmountCents)} />
       {b.depositAmountCents > 0 && <Row k="Deposit" v={usd(b.depositAmountCents)} />}
       <Row k="Amount Paid" v={usd(b.amountPaidCents)} />
@@ -267,14 +268,22 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
         <p className="text-sm font-semibold" style={{ color: '#34d399' }}>✓ Paid in full — thank you!</p>
       ) : disabled ? null : (
         <>
+          {b.collectInPerson && (
+            <div className="rounded-xl px-4 py-3 mb-4 text-sm" style={{ background: 'rgba(52,211,153,.08)', border: '1px solid rgba(52,211,153,.25)', color: 'var(--text)', lineHeight: 1.6 }}>
+              {b.amountPaidCents > 0 && <>✓ Deposit of <strong>{usd(b.amountPaidCents)}</strong> received. </>}
+              Your remaining balance of <strong>{usd(balance)}</strong> is due at the end of services. Paying now is <strong>optional</strong>.
+            </div>
+          )}
           <div className="flex flex-col gap-3">
-            {depositDue > 0 && depositDue < balance && (
+            {!b.collectInPerson && depositDue > 0 && depositDue < balance && (
               <button onClick={() => pay('deposit')} disabled={!!busy} className="btn w-full" style={{ justifyContent: 'center' }}>
                 {busy === 'deposit' ? 'Starting…' : `Pay Deposit — ${usd(grossUp(depositDue).total)}`}
               </button>
             )}
-            <button onClick={() => pay('full')} disabled={!!busy} className="btn w-full" style={{ justifyContent: 'center' }}>
-              {busy === 'full' ? 'Starting…' : `Pay ${depositDue > 0 && depositDue < balance ? 'Full Balance' : 'Now'} — ${usd(grossUp(balance).total)}`}
+            <button onClick={() => pay('full')} disabled={!!busy} className={`w-full ${b.collectInPerson ? 'btn-ghost' : 'btn'}`} style={{ justifyContent: 'center' }}>
+              {busy === 'full' ? 'Starting…' : b.collectInPerson
+                ? `Pay Remaining Balance Now (optional) — ${usd(grossUp(balance).total)}`
+                : `Pay ${depositDue > 0 && depositDue < balance ? 'Full Balance' : 'Now'} — ${usd(grossUp(balance).total)}`}
             </button>
           </div>
           <p className="text-xs mt-3" style={{ color: 'rgba(255,255,255,.4)' }}>
@@ -283,7 +292,7 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
           {err && <p className="text-sm mt-3" style={{ color: '#f87171' }}>{err}</p>}
 
           <div className="mt-5 pt-5" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
-            <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text)' }}>Prefer no card fee? Pay by Zelle or Apple Pay</p>
+            <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text)' }}>Prefer no card fee? Pay by Zelle or Apple Pay {b.collectInPerson && <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span>}</p>
             <p className="text-sm" style={{ color: 'var(--muted)' }}>
               Zelle: <span className="font-mono text-white">jkissbiz@gmail.com</span><br />
               Apple Pay / Apple Cash: <span className="font-mono text-white">817-909-4312</span>
