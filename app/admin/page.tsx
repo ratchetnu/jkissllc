@@ -189,11 +189,17 @@ export default function AdminPage() {
         J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
       </a>
       {authed ? (
-        <button onClick={handleSignOut}
-          className="text-sm font-semibold px-4 py-2 rounded-xl transition hover:text-white"
-          style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>
-          Sign Out
-        </button>
+        <div className="flex items-center gap-1.5 text-sm font-semibold">
+          <a href="/admin/bookings" className="px-3 py-2 rounded-xl transition hover:text-white"
+            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Bookings</a>
+          <a href="/admin/policy" className="px-3 py-2 rounded-xl transition hover:text-white"
+            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Policy</a>
+          <button onClick={handleSignOut}
+            className="px-4 py-2 rounded-xl transition hover:text-white"
+            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>
+            Sign Out
+          </button>
+        </div>
       ) : (
         <a href="/"
           className="text-sm font-semibold px-4 py-2 rounded-xl transition hover:text-white"
