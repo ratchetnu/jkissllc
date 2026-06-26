@@ -1,8 +1,9 @@
 import type { Booking } from './bookings'
 import { SERVICE_LABELS, fmtUSD, balanceDueCents } from './bookings'
 import {
-  bookingLink,
+  bookingLink, receiptLink,
   emailConfirmationLink, emailTimeVerifiedCustomer, emailBookingConfirmedCustomer, emailJobCompletedCustomer,
+  emailPaidInFullCustomer,
 } from './booking-emails'
 import { sendSms, smsConfigured, toE164 } from './sms'
 
@@ -42,6 +43,18 @@ export async function notifyBookingConfirmed(b: Booking): Promise<Channels> {
   if (hasEmail(b)) { await emailBookingConfirmedCustomer(b); out.email = true }
   if (hasSms(b)) {
     const msg = `J Kiss LLC: You're officially booked (${b.bookingNumber})! ${SERVICE_LABELS[b.serviceType]} on ${b.selectedDate}, ${b.selectedWindow}. Balance due: ${fmtUSD(balanceDueCents(b))}. ${bookingLink(b.token)}`
+    out.sms = await sendSms(b.customerPhone, msg)
+  }
+  return out
+}
+
+// Fired once an invoice flips to paid-in-full: sends the final paid receipt link
+// (which also carries the optional review prompt).
+export async function notifyPaidInFull(b: Booking): Promise<Channels> {
+  const out: Channels = { email: false, sms: false }
+  if (hasEmail(b)) { await emailPaidInFullCustomer(b); out.email = true }
+  if (hasSms(b)) {
+    const msg = `J Kiss LLC: Paid in full — thank you, ${b.customerName}! Your receipt (${b.bookingNumber}) is here: ${receiptLink(b.token)}`
     out.sms = await sendSms(b.customerPhone, msg)
   }
   return out

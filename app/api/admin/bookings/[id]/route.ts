@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireSession } from '../../_lib/session'
 import {
   getBookingByToken, saveBooking, deleteBooking, recompute, balanceDueCents, dollarsToCents,
+  paymentSummaryStatus,
   SERVICE_TYPES, type Booking, type ServiceType, type Payment, type PaymentMethod, type PaymentType,
   type BookingStatus,
 } from '../../../../lib/bookings'
 import { getPolicyVersion, getCurrentPolicy } from '../../../../lib/policy'
-import { sendConfirmationLink, notifyJobCompleted, notifyBookingConfirmed } from '../../../../lib/notify'
+import { sendConfirmationLink, notifyJobCompleted, notifyBookingConfirmed, notifyPaidInFull } from '../../../../lib/notify'
 import { emailOpsPaymentReceived, emailPaymentReceiptCustomer } from '../../../../lib/booking-emails'
 
 const METHODS: PaymentMethod[] = ['stripe', 'zelle', 'apple_cash', 'cash', 'other']
@@ -69,6 +70,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body = await req.json().catch(() => ({}))
   const action: string = body.action ?? 'update'
   const wasConfirmed = b.status === 'confirmed'
+  const wasPaidInFull = paymentSummaryStatus(b) === 'paid_in_full'
   let extra: Record<string, unknown> = {}
 
   switch (action) {
@@ -181,6 +183,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // Side-effect notifications after persistence.
   if (action === 'mark-completed') await notifyJobCompleted(b)
   if (!wasConfirmed && b.status === 'confirmed' && action !== 'send-link') await notifyBookingConfirmed(b)
+  // On the transition to paid-in-full, send the customer their final paid receipt
+  // link (which carries the optional review prompt).
+  if (!wasPaidInFull && paymentSummaryStatus(b) === 'paid_in_full') await notifyPaidInFull(b)
 
   return NextResponse.json({ ok: true, booking: b, ...extra })
 }

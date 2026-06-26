@@ -16,6 +16,15 @@ export function bookingLink(token: string): string {
   return `${siteUrl()}/booking/${token}`
 }
 
+export function receiptLink(token: string): string {
+  return `${siteUrl()}/booking/${token}/receipt`
+}
+
+// Where the "Leave a Review" button points. Override with GOOGLE_REVIEW_URL.
+export function reviewUrl(): string {
+  return process.env.GOOGLE_REVIEW_URL || 'https://g.page/r/jkissllc/review'
+}
+
 function esc(v: unknown): string {
   if (v === null || v === undefined) return ''
   return String(v)
@@ -133,6 +142,23 @@ export async function emailJobCompletedCustomer(b: Booking): Promise<void> {
     ${moneyBlock(b)}
     <p style="font-size:14px;line-height:1.6;margin-top:16px">We'd love a review, and we're here whenever you need us again.</p>`
   await send({ to: [b.customerEmail], subject: `Thanks from J Kiss LLC — ${b.bookingNumber}`, html: shell('Job complete', body) })
+}
+
+export async function emailPaidInFullCustomer(b: Booking): Promise<void> {
+  if (!b.customerEmail) return
+  const receipt = receiptLink(b.token)
+  const body = `
+    <p style="font-size:15px;line-height:1.6">Thank you, ${esc(b.customerName)} — your invoice is <strong>paid in full</strong>. We appreciate your business!</p>
+    <p style="text-align:center;margin:24px 0">
+      <a href="${receipt}" style="background:${RED};color:#fff;font-weight:700;text-decoration:none;padding:14px 28px;border-radius:10px;display:inline-block">View Your Paid Receipt →</a>
+    </p>
+    ${moneyBlock(b)}
+    <div style="margin-top:22px;background:#fafafa;border:1px solid #eee;border-radius:12px;padding:18px;text-align:center">
+      <p style="margin:0 0 6px;font-size:15px;font-weight:700">How did we do?</p>
+      <p style="margin:0 0 14px;font-size:13px;color:#666;line-height:1.55">A quick review means the world to a small business — about 30 seconds. (Totally optional.)</p>
+      <a href="${reviewUrl()}" style="background:#0b0b0c;color:#fff;font-weight:700;text-decoration:none;padding:11px 22px;border-radius:9px;display:inline-block;font-size:14px">Leave a Review →</a>
+    </div>`
+  await send({ to: [b.customerEmail], subject: `Paid in full — your J Kiss LLC receipt (${b.bookingNumber})`, html: shell('Paid in full — thank you!', body) })
 }
 
 // ── Ops-facing ───────────────────────────────────────────────────────────────

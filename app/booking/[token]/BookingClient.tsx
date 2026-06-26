@@ -265,7 +265,13 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
       </div>
 
       {balance <= 0 ? (
-        <p className="text-sm font-semibold" style={{ color: '#34d399' }}>✓ Paid in full — thank you!</p>
+        <>
+          <p className="text-sm font-semibold mb-3" style={{ color: '#34d399' }}>✓ Paid in full — thank you!</p>
+          <a href={`/booking/${token}/receipt`} target="_blank" rel="noreferrer" className="btn w-full" style={{ justifyContent: 'center' }}>
+            View Your Paid Receipt →
+          </a>
+          <p className="text-xs mt-2 text-center" style={{ color: 'var(--muted)' }}>Print, save a PDF, or leave us a quick review.</p>
+        </>
       ) : disabled ? null : (
         <>
           {b.collectInPerson && (
