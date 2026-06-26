@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useIdleLogout } from './useIdleLogout'
 
 const iStyle: React.CSSProperties = {
   width: '100%', padding: '12px 14px',
@@ -45,6 +46,9 @@ export default function AdminGate({ title, children }: { title: string; children
     setAuthed(false)
   }
 
+  // Auto sign-out after 10 minutes of inactivity.
+  useIdleLogout(authed, signOut)
+
   const Header = () => (
     <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-5 py-3.5"
       style={{ background: 'rgba(11,11,12,0.96)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
@@ -52,6 +56,7 @@ export default function AdminGate({ title, children }: { title: string; children
         J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
       </a>
       <div className="flex items-center gap-1.5 text-xs font-semibold">
+        <a href="/" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Home</a>
         <a href="/admin/bookings" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Bookings</a>
         <a href="/admin/policy" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Policy</a>
         <a href="/admin" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Analytics</a>

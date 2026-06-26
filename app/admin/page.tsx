@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useIdleLogout } from './useIdleLogout'
 
 type Range = '7d' | '30d' | '90d'
 type Tab = 'analytics' | 'shipments'
@@ -181,6 +182,9 @@ export default function AdminPage() {
     setAnalytics(null)
   }
 
+  // Auto sign-out after 10 minutes of inactivity.
+  useIdleLogout(authed, handleSignOut)
+
   // ── Persistent top header (shown on both login and dashboard) ─────────────
   const PortalHeader = () => (
     <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4"
@@ -190,6 +194,8 @@ export default function AdminPage() {
       </a>
       {authed ? (
         <div className="flex items-center gap-1.5 text-sm font-semibold">
+          <a href="/" className="px-3 py-2 rounded-xl transition hover:text-white"
+            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Home</a>
           <a href="/admin/bookings" className="px-3 py-2 rounded-xl transition hover:text-white"
             style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Bookings</a>
           <a href="/admin/policy" className="px-3 py-2 rounded-xl transition hover:text-white"
