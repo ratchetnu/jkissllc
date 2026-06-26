@@ -155,8 +155,8 @@ export async function emailPaidInFullCustomer(b: Booking): Promise<void> {
     ${moneyBlock(b)}
     <div style="margin-top:22px;background:#fafafa;border:1px solid #eee;border-radius:12px;padding:18px;text-align:center">
       <p style="margin:0 0 6px;font-size:15px;font-weight:700">How did we do?</p>
-      <p style="margin:0 0 14px;font-size:13px;color:#666;line-height:1.55">A quick review means the world to a small business — about 30 seconds. (Totally optional.)</p>
-      <a href="${reviewUrl()}" style="background:#0b0b0c;color:#fff;font-weight:700;text-decoration:none;padding:11px 22px;border-radius:9px;display:inline-block;font-size:14px">Leave a Review →</a>
+      <p style="margin:0 0 14px;font-size:13px;color:#666;line-height:1.55">Leave a quick star rating right on your receipt — about 30 seconds. (Totally optional.)</p>
+      <a href="${receipt}#review" style="background:#0b0b0c;color:#fff;font-weight:700;text-decoration:none;padding:11px 22px;border-radius:9px;display:inline-block;font-size:14px">Leave a Review →</a>
     </div>`
   await send({ to: [b.customerEmail], subject: `Paid in full — your J Kiss LLC receipt (${b.bookingNumber})`, html: shell('Paid in full — thank you!', body) })
 }
@@ -208,6 +208,16 @@ export async function emailOpsPaymentReceived(b: Booking, p: Payment): Promise<v
     ['Stripe Session', p.stripeSessionId],
   ])}${opsCustomerRows(b)}${moneyBlock(b)}`
   await send({ to: OPS, subject: `Payment received — ${b.bookingNumber} (${fmtUSD(p.amountCents)})`, html: shell('Stripe payment received', body) })
+}
+
+export async function emailOpsReviewLeft(b: Booking, rating: number, text?: string): Promise<void> {
+  const stars = '★★★★★'.slice(0, rating) + '☆☆☆☆☆'.slice(0, 5 - rating)
+  const body = `<p style="font-size:15px">A customer left a review on the website.</p>${rows([
+    ['Rating', `${stars} (${rating}/5)`],
+    ['Review', text || '(no comment)'],
+  ])}${opsCustomerRows(b)}
+    <p style="font-size:13px;margin-top:14px">Manage it in the admin: <a href="${siteUrl()}/admin/reviews">/admin/reviews</a></p>`
+  await send({ to: OPS, subject: `New ${rating}★ review — ${b.bookingNumber} (${b.customerName})`, html: shell('New customer review', body) })
 }
 
 export async function emailOpsManualPaymentSubmitted(b: Booking, p: Payment): Promise<void> {

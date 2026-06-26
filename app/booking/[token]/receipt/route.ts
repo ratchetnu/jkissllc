@@ -3,7 +3,8 @@ import {
   getBookingByToken, balanceDueCents, fmtUSD,
   SERVICE_LABELS, PAYMENT_METHOD_LABEL, paymentSummaryStatus,
 } from '../../../lib/bookings'
-import { reviewUrl, siteUrl } from '../../../lib/booking-emails'
+import { siteUrl } from '../../../lib/booking-emails'
+import { getReview } from '../../../lib/site-reviews'
 
 function esc(v: unknown): string {
   if (v === null || v === undefined) return ''
@@ -49,8 +50,16 @@ const HEAD = `<style>
   .review h3 { margin:0 0 6px; font-size:18px; font-weight:800; }
   .review p { margin:0 0 16px; font-size:14px; color:#cfcfcf; line-height:1.55; }
   .review .stars { font-size:22px; letter-spacing:3px; color:#FFC93C; margin-bottom:10px; }
-  .review a.cta { display:inline-block; background:#E0002A; color:#fff; text-decoration:none; padding:13px 26px; border-radius:10px; font-weight:800; font-size:15px; }
+  .review a.cta { display:inline-block; background:#E0002A; color:#fff; text-decoration:none; padding:13px 26px; border-radius:10px; font-weight:800; font-size:15px; cursor:pointer; }
   .review .opt { display:block; margin-top:12px; font-size:12px; color:#888; }
+  .rstars { font-size:32px; letter-spacing:8px; cursor:pointer; user-select:none; margin:4px 0 2px; }
+  .rstars span { color:#555; transition:color .1s; }
+  .rstars span.on { color:#FFC93C; }
+  .rform { margin-top:8px; }
+  .rform textarea { width:100%; margin-top:12px; padding:12px 14px; border-radius:10px; border:1px solid #333; background:#141416; color:#fff; font-size:14px; font-family:inherit; resize:vertical; min-height:70px; }
+  .rform .err { color:#ff8a9a; font-size:13px; margin-top:8px; min-height:18px; }
+  .review .stars2 { font-size:26px; letter-spacing:4px; color:#FFC93C; margin-bottom:8px; }
+  .review blockquote { margin:0 0 12px; font-size:14px; color:#ddd; font-style:italic; }
   .ft { padding: 16px 28px; border-top: 1px solid #eee; font-size: 11px; color: #999; text-align: center; }
   .btn { display:inline-block; background:#E0002A; color:#fff; text-decoration:none; padding:10px 18px; border-radius:8px; font-weight:700; font-size:13px; border:none; cursor:pointer; }
   .toolbar { max-width:720px; margin:0 auto 14px; text-align:right; }
@@ -79,6 +88,57 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
 <div class="ft">J Kiss LLC · (817) 909-4312 · info@jkissllc.com · US DOT 3484556 / MC 01155352</div></div></body></html>`
     return new NextResponse(html, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
   }
+
+  const existing = await getReview(token)
+  const firstName = esc(b.customerName.split(' ')[0] || 'there')
+  const reviewSection = existing
+    ? `<div class="review" id="review">
+        <div class="stars2">${'★'.repeat(existing.rating)}${'☆'.repeat(5 - existing.rating)}</div>
+        <h3>Thanks for the review!</h3>
+        ${existing.text ? `<blockquote>“${esc(existing.text)}”</blockquote>` : ''}
+        <span class="opt">Your feedback helps J Kiss LLC grow.</span>
+      </div>`
+    : `<div class="review" id="review">
+        <h3>How did we do, ${firstName}?</h3>
+        <p>Tap the stars and (optionally) tell us about your experience — it posts right here on our site.</p>
+        <div class="rstars" id="rstars" role="radiogroup" aria-label="Star rating">
+          <span data-v="1">★</span><span data-v="2">★</span><span data-v="3">★</span><span data-v="4">★</span><span data-v="5">★</span>
+        </div>
+        <div class="rform">
+          <textarea id="rtext" maxlength="1000" placeholder="What went well? (optional)"></textarea>
+          <div class="err" id="rerr"></div>
+          <a class="cta" id="rsubmit">Submit Review →</a>
+          <span class="opt">Totally optional — your receipt is yours to keep either way.</span>
+        </div>
+      </div>`
+  const reviewScript = existing ? '' : `<script>
+(function(){
+  var rating=0;
+  var stars=Array.prototype.slice.call(document.querySelectorAll('#rstars span'));
+  function paint(n){ stars.forEach(function(s){ s.classList.toggle('on', Number(s.getAttribute('data-v'))<=n); }); }
+  stars.forEach(function(s){
+    s.addEventListener('click', function(){ rating=Number(s.getAttribute('data-v')); paint(rating); });
+    s.addEventListener('mouseenter', function(){ paint(Number(s.getAttribute('data-v'))); });
+  });
+  var sr=document.getElementById('rstars');
+  if(sr) sr.addEventListener('mouseleave', function(){ paint(rating); });
+  var btn=document.getElementById('rsubmit');
+  if(btn) btn.addEventListener('click', function(){
+    var err=document.getElementById('rerr');
+    if(!rating){ err.textContent='Please tap a star rating first.'; return; }
+    err.textContent=''; btn.textContent='Submitting…'; btn.style.pointerEvents='none';
+    fetch('/api/booking/${esc(b.token)}/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rating:rating,text:(document.getElementById('rtext').value||'')})})
+      .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+      .then(function(o){
+        if(!o.ok) throw new Error(o.j.error||'Could not submit your review.');
+        var box=document.getElementById('review');
+        var filled='★★★★★'.slice(0,rating)+'☆☆☆☆☆'.slice(0,5-rating);
+        box.innerHTML='<div class="stars2">'+filled+'</div><h3>Thanks for the review!</h3><span class="opt">Your feedback helps J Kiss LLC grow.</span>';
+      })
+      .catch(function(e){ err.textContent=e.message; btn.textContent='Submit Review →'; btn.style.pointerEvents='auto'; });
+  });
+})();
+</script>`
 
   const items = b.items.length ? `<ul class="items">${b.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul>` : ''
   const confirmed = b.payments.filter(p => p.status === 'confirmed').sort((a, c) => (a.confirmedAt ?? a.createdAt) - (c.confirmedAt ?? c.createdAt))
@@ -127,16 +187,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
       </table>
       <div class="paidbar"><span class="lbl">Balance Due</span><span class="amt">${fmtUSD(balanceDueCents(b))}</span></div>
 
-      <div class="review">
-        <div class="stars">★★★★★</div>
-        <h3>How did we do, ${esc(b.customerName.split(' ')[0] || 'there')}?</h3>
-        <p>If J Kiss LLC took care of you, a quick review means the world to a small business — it takes about 30 seconds.</p>
-        <a class="cta" href="${esc(reviewUrl())}" target="_blank" rel="noreferrer">Leave a Review →</a>
-        <span class="opt">Totally optional — your receipt is yours to keep either way.</span>
-      </div>
+      ${reviewSection}
     </div>
     <div class="ft">J Kiss LLC · (817) 909-4312 · info@jkissllc.com · US DOT 3484556 / MC 01155352 · Generated ${fmtTs(Date.now())}</div>
   </div>
+  ${reviewScript}
 </body></html>`
 
   return new NextResponse(html, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } })

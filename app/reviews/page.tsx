@@ -1,12 +1,27 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { getReviews } from '../lib/reviews'
+import { listReviews, displayName, aggregate } from '../lib/site-reviews'
 
 const SITE_URL = 'https://www.jkissllc.com'
 
+export const dynamic = 'force-dynamic'
+
+type DisplayReview = { authorName: string; authorPhotoUrl?: string | null; rating: number; text?: string; timeAgo: string; publishedAtUnix: number }
+
+function relativeTime(ts: number): string {
+  const days = Math.floor((Date.now() - ts) / 86_400_000)
+  if (days <= 0) return 'Today'
+  if (days === 1) return 'Yesterday'
+  if (days < 7) return `${days} days ago`
+  if (days < 30) return `${Math.floor(days / 7)} week${days < 14 ? '' : 's'} ago`
+  if (days < 365) return `${Math.floor(days / 30)} month${days < 60 ? '' : 's'} ago`
+  return `${Math.floor(days / 365)} year${days < 730 ? '' : 's'} ago`
+}
+
 export const metadata: Metadata = {
   title: 'Customer Reviews | J Kiss LLC — DFW Box-Truck Delivery',
-  description: 'Real Google Business Profile reviews for J Kiss LLC. Box-truck and white-glove delivery feedback from DFW customers.',
+  description: 'Real reviews from J Kiss LLC customers. Box-truck and white-glove delivery feedback from DFW.',
   alternates: { canonical: `${SITE_URL}/reviews` },
 }
 
@@ -23,7 +38,22 @@ function Stars({ rating }: { rating: number }) {
 }
 
 export default async function ReviewsPage() {
-  const data = await getReviews()
+  // On-site reviews (collected from paid receipts) are the primary source. If a
+  // Google Business Profile is configured later, those are used as a fallback.
+  const site = (await listReviews()).filter(r => !r.hidden)
+  const google = site.length === 0 ? await getReviews() : null
+
+  const data: { reviews: DisplayReview[]; rating: number; totalRatings: number; source: 'site' | 'google' } | null =
+    site.length > 0
+      ? {
+          reviews: site.map(r => ({ authorName: displayName(r.authorName), rating: r.rating, text: r.text, timeAgo: relativeTime(r.createdAt), publishedAtUnix: r.createdAt })),
+          rating: aggregate(site).rating,
+          totalRatings: aggregate(site).count,
+          source: 'site',
+        }
+      : google && google.reviews.length > 0
+        ? { reviews: google.reviews, rating: google.rating, totalRatings: google.totalRatings, source: 'google' }
+        : null
 
   // Build schema.org markup with aggregateRating + nested Review entities
   const jsonLd = data && data.reviews.length > 0 ? {
@@ -85,9 +115,9 @@ export default async function ReviewsPage() {
                   <div className="text-2xl mt-1"><Stars rating={data.rating} /></div>
                 </div>
                 <div className="flex-1 min-w-[200px]">
-                  <p className="text-sm font-semibold text-white">{data.totalRatings.toLocaleString()} Google reviews</p>
+                  <p className="text-sm font-semibold text-white">{data.totalRatings.toLocaleString()} {data.source === 'google' ? 'Google reviews' : `customer review${data.totalRatings === 1 ? '' : 's'}`}</p>
                   <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>
-                    Pulled live from our Google Business Profile · refreshed every 24 hours
+                    {data.source === 'google' ? 'Pulled live from our Google Business Profile · refreshed every 24 hours' : 'From verified J Kiss LLC customers after a completed, paid job'}
                   </p>
                 </div>
               </div>
@@ -116,15 +146,7 @@ export default async function ReviewsPage() {
             <div className="glass-card p-10 text-center" style={{ borderRadius: '20px' }}>
               <p className="text-xl font-black text-white mb-3" style={{ fontFamily: 'var(--font-display)' }}>Reviews coming soon</p>
               <p className="text-sm leading-relaxed max-w-lg mx-auto" style={{ color: 'var(--muted)' }}>
-                Live Google reviews will appear here once the Google Places API is configured (env vars{' '}
-                <code style={{ background: 'rgba(255,255,255,.08)', padding: '2px 6px', borderRadius: '4px', fontFamily: 'var(--font-mono)' }}>GOOGLE_PLACES_API_KEY</code>{' '}
-                and{' '}
-                <code style={{ background: 'rgba(255,255,255,.08)', padding: '2px 6px', borderRadius: '4px', fontFamily: 'var(--font-mono)' }}>GOOGLE_PLACE_ID</code>).
-              </p>
-              <p className="text-sm mt-5">
-                <a href="https://g.page/r/jkissllc/review" target="_blank" rel="noopener noreferrer" className="font-semibold transition hover:text-white" style={{ color: 'var(--red)' }}>
-                  Leave us a Google review ↗
-                </a>
+                We just launched on-site reviews. After your next completed J Kiss LLC job, you&apos;ll be able to leave a star rating right from your receipt — and it&apos;ll show up here.
               </p>
             </div>
           )}
