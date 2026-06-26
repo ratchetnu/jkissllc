@@ -235,7 +235,7 @@ function BookingDetail({ b, onBack, onEdit, onChanged }: { b: Booking; onBack: (
         </div>
         {b.payments.length > 0 && (
           <div className="mt-4 space-y-1.5">
-            {b.payments.map(p => <PaymentRow key={p.id} p={p} onConfirm={() => run('confirm-payment', { paymentId: p.id })} busy={busy === 'confirm-payment'} />)}
+            {b.payments.map(p => <PaymentRow key={p.id} p={p} onConfirm={() => run('confirm-payment', { paymentId: p.id })} onVoid={() => run('void-payment', { paymentId: p.id }, `Remove this ${usd(p.amountCents)} payment record? It will be subtracted from Amount Paid. Do this only if it was entered by mistake or duplicates a payment already recorded.`)} busy={busy === 'confirm-payment' || busy === 'void-payment'} />)}
           </div>
         )}
         {pendingPayments.length > 0 && <p className="text-xs mt-2" style={{ color: '#fbbf24' }}>⚠ {pendingPayments.length} customer-reported payment(s) need confirmation.</p>}
@@ -281,14 +281,26 @@ function BookingDetail({ b, onBack, onEdit, onChanged }: { b: Booking; onBack: (
     </div>
   )
 
-  function PaymentRow({ p, onConfirm, busy }: { p: Payment; onConfirm: () => void; busy: boolean }) {
+  function PaymentRow({ p, onConfirm, onVoid, busy }: { p: Payment; onConfirm: () => void; onVoid: () => void; busy: boolean }) {
+    // A customer-reported payment that matches the amount of a payment already
+    // confirmed is almost certainly the same money reported twice — confirming
+    // it would double-count. Flag it so the admin voids instead of confirms.
+    const likelyDuplicate = p.status === 'sent_by_customer' &&
+      b.payments.some(q => q.id !== p.id && q.status === 'confirmed' && q.amountCents === p.amountCents)
+    const confirmDup = () => {
+      if (confirm(`Heads up: a confirmed ${usd(p.amountCents)} payment is already on this booking. If this is the SAME payment the customer is re-reporting, press Cancel and use "Void" instead — confirming will double-count it.\n\nConfirm anyway as a separate payment?`)) onConfirm()
+    }
     return (
       <div className="flex items-center justify-between gap-2 text-xs p-2 rounded-lg" style={{ background: 'rgba(255,255,255,.03)' }}>
         <span style={{ color: 'var(--muted)' }}>
           {usd(p.amountCents)} · {p.method} · {p.type} · <span style={{ color: p.status === 'confirmed' ? '#34d399' : '#fbbf24' }}>{p.status.replace(/_/g, ' ')}</span>
           {p.feeCents > 0 && <> · fee {usd(p.feeCents)}</>}
+          {likelyDuplicate && <span style={{ color: '#fbbf24' }}> · ⚠ possible duplicate</span>}
         </span>
-        {p.status === 'sent_by_customer' && <button onClick={onConfirm} disabled={busy} className="font-bold px-2 py-1 rounded" style={{ background: 'var(--red)', color: '#fff' }}>Confirm</button>}
+        <span className="flex items-center gap-1.5 shrink-0">
+          {p.status === 'sent_by_customer' && <button onClick={likelyDuplicate ? confirmDup : onConfirm} disabled={busy} className="font-bold px-2 py-1 rounded" style={{ background: 'var(--red)', color: '#fff' }}>Confirm</button>}
+          <button onClick={onVoid} disabled={busy} className="font-semibold px-2 py-1 rounded" style={{ background: 'rgba(224,0,42,.08)', border: '1px solid rgba(224,0,42,.3)', color: '#ff6680' }}>Void</button>
+        </span>
       </div>
     )
   }

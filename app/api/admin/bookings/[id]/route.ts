@@ -112,10 +112,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       // Confirm a customer-reported (pending) manual payment.
       const p = b.payments.find(x => x.id === body.paymentId)
       if (!p) return NextResponse.json({ error: 'payment not found' }, { status: 404 })
+      if (p.status === 'confirmed') return NextResponse.json({ error: 'Already confirmed.' }, { status: 400 })
       p.status = 'confirmed'
       p.confirmedAt = Date.now()
       if (str(body.note, 500)) p.note = `${p.note ? p.note + ' · ' : ''}${str(body.note, 500)}`
       await sendReceipts(b, p)
+      break
+    }
+    case 'void-payment': {
+      // Remove a payment record (e.g. a customer re-reported a payment that was
+      // already recorded — confirming it would double-count). Recompute drops it
+      // from Amount Paid. Logged to the audit trail for chargeback evidence.
+      const idx = b.payments.findIndex(x => x.id === body.paymentId)
+      if (idx === -1) return NextResponse.json({ error: 'payment not found' }, { status: 404 })
+      const [removed] = b.payments.splice(idx, 1)
+      const stamp = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })
+      const why = str(body.reason, 200)
+      b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[${stamp}] Voided payment: $${(removed.amountCents / 100).toFixed(2)} · ${removed.method} · ${removed.type} · ${removed.status}${why ? ` — ${why}` : ''}`
       break
     }
     case 'record-payment':
