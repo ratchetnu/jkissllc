@@ -34,6 +34,10 @@ h1, h2, h3, .display { font-family: var(--font-display); font-feature-settings: 
 /* Numeric label styling — used for DOT/MC and counters */
 .font-mono, [class*="font-mono"] { font-family: var(--font-mono); }
 
+/* Button components live in @layer components so Tailwind utilities (hidden,
+   w-full, md:inline-flex, …) still override them — in Tailwind v4 unlayered CSS
+   otherwise wins over the utilities layer regardless of source order. */
+@layer components {
 .btn {
   display: inline-flex;
   align-items: center;
@@ -72,6 +76,7 @@ h1, h2, h3, .display { font-family: var(--font-display); font-feature-settings: 
   white-space: nowrap;
 }
 .btn-ghost:hover { background: rgba(255,255,255,.09); }
+}
 
 .glass-card {
   background: rgba(255,255,255,.03);
