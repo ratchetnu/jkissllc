@@ -179,6 +179,9 @@ function BookingDetail({ b, onBack, onEdit, onChanged }: { b: Booking; onBack: (
       if (action === 'send-link' && j.channels) {
         const ch = [j.channels.email && 'email', j.channels.sms && 'text'].filter(Boolean)
         setMsg(ch.length ? `Confirmation link sent via ${ch.join(' + ')}.` : 'No email/phone on file — add contact info and retry.')
+      } else if (action === 'send-receipt' && j.channels) {
+        const ch = [j.channels.email && 'email', j.channels.sms && 'text'].filter(Boolean)
+        setMsg(ch.length ? `Receipt sent via ${ch.join(' + ')}.` : 'No email on file — use Copy Receipt Link to send it manually.')
       } else setMsg('Done.')
       await onChanged()
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') }
@@ -187,6 +190,12 @@ function BookingDetail({ b, onBack, onEdit, onChanged }: { b: Booking; onBack: (
 
   function copyLink() {
     navigator.clipboard?.writeText(link).then(() => setMsg('Link copied.'), () => setMsg(link))
+  }
+
+  const receiptUrl = link ? `${link}/receipt` : ''
+  const paidInFull = b.invoiceAmountCents > 0 && b.amountPaidCents >= b.invoiceAmountCents
+  function copyReceipt() {
+    navigator.clipboard?.writeText(receiptUrl).then(() => setMsg('Receipt link copied — paste it to the customer.'), () => setMsg(receiptUrl))
   }
 
   async function del() {
@@ -233,6 +242,16 @@ function BookingDetail({ b, onBack, onEdit, onChanged }: { b: Booking; onBack: (
           {b.depositAmountCents > b.amountPaidCents && <ActBtn label="Mark Deposit Paid" busy={busy === 'mark-deposit-paid'} onClick={() => run('mark-deposit-paid')} />}
           {balanceDue(b) > 0 && <ActBtn label="Mark Paid in Full" busy={busy === 'mark-paid-full'} onClick={() => run('mark-paid-full')} />}
         </div>
+        {paidInFull && (
+          <div className="mt-4 pt-4" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
+            <p className="text-xs font-semibold mb-2" style={{ color: '#34d399' }}>✓ Paid in full — final receipt is ready to share.</p>
+            <div className="flex flex-wrap gap-2">
+              <ActBtn label="Copy Receipt Link" onClick={copyReceipt} />
+              {b.customerEmail && <ActBtn label="Email Receipt" primary busy={busy === 'send-receipt'} onClick={() => run('send-receipt')} />}
+            </div>
+            <a href={receiptUrl} target="_blank" rel="noreferrer" className="block text-xs mt-2 font-mono break-all" style={{ color: 'var(--red)' }}>{receiptUrl}</a>
+          </div>
+        )}
         {b.payments.length > 0 && (
           <div className="mt-4 space-y-1.5">
             {b.payments.map(p => <PaymentRow key={p.id} p={p} onConfirm={() => run('confirm-payment', { paymentId: p.id })} onVoid={() => run('void-payment', { paymentId: p.id }, `Remove this ${usd(p.amountCents)} payment record? It will be subtracted from Amount Paid. Do this only if it was entered by mistake or duplicates a payment already recorded.`)} busy={busy === 'confirm-payment' || busy === 'void-payment'} />)}

@@ -155,6 +155,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       await sendReceipts(b, p)
       break
     }
+    case 'send-receipt': {
+      // Re-send the final paid receipt link (email + SMS if configured). Useful
+      // when SMS isn't available yet and the link must go out manually too.
+      if (paymentSummaryStatus(b) !== 'paid_in_full') {
+        return NextResponse.json({ error: 'The paid receipt is available once the invoice is paid in full.' }, { status: 400 })
+      }
+      const channels = await notifyPaidInFull(b)
+      extra = { channels }
+      break
+    }
     case 'mark-completed': {
       b.status = 'completed'
       b.completedAt = Date.now()
