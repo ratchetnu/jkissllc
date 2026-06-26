@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 export const COOKIE_NAME = 'jk_admin_session'
-const SESSION_TTL_MS = 2 * 60 * 60 * 1000 // 2 hours
+const SESSION_TTL_MS = 2 * 60 * 60 * 1000 // 2 hours — absolute cap, never slides
+const IDLE_TTL_MS = 10 * 60 * 1000 // 10 minutes of inactivity — slides forward on activity
+
+type SessionPayload = { iat: number; exp: number; idleExp?: number }
 
 function b64url(bytes: ArrayBuffer | Uint8Array): string {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
@@ -49,31 +52,51 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0
 }
 
-export async function createSessionToken(): Promise<string> {
-  const payload = { iat: Date.now(), exp: Date.now() + SESSION_TTL_MS }
+async function signPayload(payload: SessionPayload): Promise<string> {
   const payloadB64 = b64url(new TextEncoder().encode(JSON.stringify(payload)))
   const sig = await hmac(payloadB64)
   return `${payloadB64}.${sig}`
 }
 
-export async function verifySessionToken(token: string | undefined | null): Promise<boolean> {
-  if (!token) return false
+// Verify the signature and return the payload, or null if tampered/malformed.
+async function parseToken(token: string | undefined | null): Promise<SessionPayload | null> {
+  if (!token) return null
   const parts = token.split('.')
-  if (parts.length !== 2) return false
+  if (parts.length !== 2) return null
   const [payloadB64, sig] = parts
-
   const expected = await hmac(payloadB64)
-  if (!timingSafeEqual(sig, expected)) return false
-
+  if (!timingSafeEqual(sig, expected)) return null
   try {
-    const payload = JSON.parse(new TextDecoder().decode(b64urlToBytes(payloadB64))) as {
-      exp?: number
-    }
-    if (!payload.exp || Date.now() > payload.exp) return false
-    return true
+    return JSON.parse(new TextDecoder().decode(b64urlToBytes(payloadB64))) as SessionPayload
   } catch {
-    return false
+    return null
   }
+}
+
+function isLive(p: SessionPayload, now = Date.now()): boolean {
+  if (!p.exp || now > p.exp) return false // absolute 2h cap
+  if (p.idleExp && now > p.idleExp) return false // idle timeout (legacy tokens w/o idleExp pass until refreshed)
+  return true
+}
+
+export async function createSessionToken(): Promise<string> {
+  const now = Date.now()
+  return signPayload({ iat: now, exp: now + SESSION_TTL_MS, idleExp: now + IDLE_TTL_MS })
+}
+
+export async function verifySessionToken(token: string | undefined | null): Promise<boolean> {
+  const p = await parseToken(token)
+  return !!p && isLive(p)
+}
+
+// Given a still-live token, return one with the idle window slid forward (capped
+// by the absolute exp). Returns null if the token is invalid or already lapsed —
+// callers use this in middleware to keep an active admin session alive.
+export async function slideSessionToken(token: string | undefined | null): Promise<string | null> {
+  const p = await parseToken(token)
+  if (!p || !isLive(p)) return null
+  const idleExp = Math.min(p.exp, Date.now() + IDLE_TTL_MS)
+  return signPayload({ iat: p.iat, exp: p.exp, idleExp })
 }
 
 export function setSessionCookie(res: NextResponse, token: string): void {

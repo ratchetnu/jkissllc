@@ -14,9 +14,18 @@ export function useIdleLogout(enabled: boolean, onIdle: () => void, timeoutMs = 
   useEffect(() => {
     if (!enabled) return
     let timer: ReturnType<typeof setTimeout>
+    let lastPing = 0
     const reset = () => {
       clearTimeout(timer)
       timer = setTimeout(() => onIdleRef.current(), timeoutMs)
+      // Heartbeat: while the admin is active, ping the session route (throttled
+      // to once per third of the window) so middleware slides the server-side
+      // idle timeout forward to match the client timer.
+      const now = Date.now()
+      if (now - lastPing > timeoutMs / 3) {
+        lastPing = now
+        fetch('/api/admin/session', { credentials: 'same-origin' }).catch(() => {})
+      }
     }
     ACTIVITY_EVENTS.forEach(e => window.addEventListener(e, reset, { passive: true }))
     reset()
