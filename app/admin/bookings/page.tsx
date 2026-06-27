@@ -21,6 +21,30 @@ const STATUS_LABEL: Record<string, string> = {
 const usd = (c: number) => ((c || 0) / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 const fmtTs = (ts?: number) => ts ? new Date(ts).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '—'
 const balanceDue = (b: Booking) => Math.max(0, b.invoiceAmountCents - b.amountPaidCents)
+
+// ISO yyyy-mm-dd → "Jun 27, 2026" (parsed LOCAL so it never slips a day).
+function fmtISO(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  if (!y || !m || !d) return iso
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+// Service date for the detail view: the customer's confirmed pick if they've
+// verified, otherwise the date(s) the admin scheduled (awaiting confirmation).
+function serviceDateLong(b: Booking): string {
+  if (b.selectedDate) return `${fmtISO(b.selectedDate)}${b.selectedWindow ? ` · ${b.selectedWindow}` : ''} (confirmed)`
+  const ds = b.availableDates ?? []
+  if (ds.length === 1) return `${fmtISO(ds[0])} · awaiting customer confirmation`
+  if (ds.length > 1) return `${ds.length} dates offered · awaiting customer pick`
+  return 'Not set'
+}
+// Compact version for the list rows.
+function serviceDateShort(b: Booking): string {
+  if (b.selectedDate) return `${fmtISO(b.selectedDate)}${b.selectedWindow ? ` ${b.selectedWindow}` : ''}`
+  const ds = b.availableDates ?? []
+  if (ds.length === 1) return fmtISO(ds[0])
+  if (ds.length > 1) return `${ds.length} dates`
+  return '—'
+}
 function paySummary(b: Booking): string {
   const p = b.amountPaidCents
   if (p <= 0) return 'Unpaid'
@@ -180,7 +204,7 @@ function BookingCard({ b, onClick }: { b: Booking; onClick: () => void }) {
       </div>
       <div className="flex items-center justify-between text-xs" style={{ color: 'var(--muted)' }}>
         <span>{paySummary(b)} · Bal {usd(balanceDue(b))}</span>
-        <span>{b.selectedDate || '—'} {b.selectedWindow || ''}</span>
+        <span>{serviceDateShort(b)}</span>
       </div>
     </button>
   )
@@ -248,7 +272,7 @@ function BookingDetail({ b, onBack, onEdit, onChanged }: { b: Booking; onBack: (
         </div>
         <KV k="Phone" v={b.customerPhone} /><KV k="Email" v={b.customerEmail} />
         <KV k="Pickup" v={b.pickupAddress} /><KV k="Drop-off" v={b.dropoffAddress} /><KV k="Job Site" v={b.jobSiteAddress} />
-        <KV k="Service Date" v={b.selectedDate ? `${b.selectedDate} · ${b.selectedWindow ?? ''}` : 'Not verified'} />
+        <KV k="Service Date" v={serviceDateLong(b)} />
         {b.description && <p className="text-sm mt-3" style={{ color: 'var(--muted)' }}>{b.description}</p>}
         {b.items.length > 0 && <ul className="text-sm mt-2 space-y-0.5" style={{ color: 'var(--muted)' }}>{b.items.map((i, n) => <li key={n}>• {i}</li>)}</ul>}
       </div>
