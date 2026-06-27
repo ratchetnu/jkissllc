@@ -189,6 +189,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   if (action !== 'mark-completed' && action !== 'cancel') recompute(b)
+  // Confirming a payment locks the booking in: if there's a single scheduled date
+  // and the customer hasn't picked one yet, that date becomes the confirmed
+  // service date (so it reads "confirmed" everywhere, not "awaiting customer").
+  if (!b.selectedDate && b.amountPaidCents > 0 && b.availableDates.length === 1) {
+    b.selectedDate = b.availableDates[0]
+  }
   await saveBooking(b)
 
   // Side-effect notifications after persistence.

@@ -33,7 +33,7 @@ function fmtISO(iso: string): string {
 function serviceDateLong(b: Booking): string {
   if (b.selectedDate) return `${fmtISO(b.selectedDate)}${b.selectedWindow ? ` · ${b.selectedWindow}` : ''} (confirmed)`
   const ds = b.availableDates ?? []
-  if (ds.length === 1) return `${fmtISO(ds[0])} · awaiting customer confirmation`
+  if (ds.length === 1) return `${fmtISO(ds[0])} · ${b.amountPaidCents > 0 ? '(confirmed)' : 'awaiting customer confirmation'}`
   if (ds.length > 1) return `${ds.length} dates offered · awaiting customer pick`
   return 'Not set'
 }
