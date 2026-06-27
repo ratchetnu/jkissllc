@@ -93,6 +93,9 @@ export const PAYMENT_SUMMARY_LABEL: Record<PaymentSummaryStatus, string> = {
   paid_in_full: 'Paid in Full',
 }
 
+// A photo attached to an invoice (stored in Vercel Blob; we keep the URL + label).
+export type InvoicePhoto = { url: string; name?: string }
+
 // ── Booking record ───────────────────────────────────────────────────────────
 export type Booking = {
   token: string                // secure random — the customer link key
@@ -112,6 +115,7 @@ export type Booking = {
   jobSiteAddress?: string
   description?: string
   items: string[]
+  invoicePhotos?: InvoicePhoto[]   // photos attached to the invoice (Blob URLs)
   invoiceAmountCents: number
   depositAmountCents: number
   amountPaidCents: number      // sum of confirmed payments applied to invoice
@@ -231,10 +235,29 @@ function normalize(b: Booking): Booking {
   b.payments = Array.isArray(b.payments) ? b.payments : []
   b.availableDates = Array.isArray(b.availableDates) ? b.availableDates : []
   b.availableWindows = Array.isArray(b.availableWindows) ? b.availableWindows : []
+  if (b.invoicePhotos !== undefined) b.invoicePhotos = sanitizePhotos(b.invoicePhotos)
   b.amountPaidCents = b.amountPaidCents || 0
   b.depositAmountCents = b.depositAmountCents || 0
   b.invoiceAmountCents = b.invoiceAmountCents || 0
   return b
+}
+
+// Validate/clean invoice-photo input from the admin form. Only accepts objects
+// with an https Blob URL; caps the count and label length so a bad payload can't
+// bloat the record.
+export function sanitizePhotos(v: unknown): InvoicePhoto[] {
+  if (!Array.isArray(v)) return []
+  const out: InvoicePhoto[] = []
+  for (const item of v) {
+    if (!item || typeof item !== 'object') continue
+    const url = String((item as { url?: unknown }).url ?? '').trim()
+    if (!/^https:\/\/\S+$/i.test(url) || url.length > 1000) continue
+    const rawName = (item as { name?: unknown }).name
+    const name = typeof rawName === 'string' ? rawName.trim().slice(0, 120) : undefined
+    out.push(name ? { url, name } : { url })
+    if (out.length >= 20) break
+  }
+  return out
 }
 
 // ── Derivations ──────────────────────────────────────────────────────────────

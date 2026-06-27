@@ -23,6 +23,7 @@ export type CustomerBooking = {
   jobSiteAddress?: string
   description?: string
   items: string[]
+  invoicePhotos?: { url: string; name?: string }[]
   invoiceAmountCents: number
   depositAmountCents: number
   amountPaidCents: number
@@ -195,6 +196,16 @@ export default function BookingClient({
                 {b.items.map((it, i) => <li key={i}>• {it}</li>)}
               </ul>
             )}
+            {b.invoicePhotos && b.invoicePhotos.length > 0 && (
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mt-4">
+                {b.invoicePhotos.map((p, i) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', aspectRatio: '1 / 1', borderRadius: 10, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}>
+                    <img src={p.url} alt={p.name ?? `Photo ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* ── Verify date/time + agreement ────────────────────────────── */}
@@ -300,7 +311,7 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
           <div className="mt-5 pt-5" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
             <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text)' }}>Prefer no card fee? Pay by Zelle or Apple Pay {b.collectInPerson && <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span>}</p>
             <p className="text-sm" style={{ color: 'var(--muted)' }}>
-              Zelle: <span className="font-mono text-white">jkissbiz@gmail.com</span><br />
+              Zelle: <span className="font-mono text-white">817-909-4312</span><br />
               Apple Pay / Apple Cash: <span className="font-mono text-white">817-909-4312</span>
             </p>
             <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Please include your invoice number ({b.invoiceNumber ?? b.bookingNumber}) in the payment memo.</p>

@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { upload } from '@vercel/blob/client'
 import AdminGate from '../AdminGate'
-import type { Booking, Payment } from '../../lib/bookings'
+import type { Booking, Payment, InvoicePhoto } from '../../lib/bookings'
 
 // ── Local label maps + helpers (avoid bundling server lib runtime) ───────────
 const SERVICE_LABELS: Record<string, string> = {
@@ -47,6 +48,34 @@ async function patch(token: string, body: Record<string, unknown>) {
   const j = await res.json()
   if (!res.ok) throw new Error(j.error ?? 'Action failed')
   return j
+}
+
+// ISO yyyy-mm-dd → "Fri, Jun 27" (parsed as a LOCAL date so it never slips a day).
+function fmtDateLabel(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  if (!y || !m || !d) return iso
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
+// Shrink a phone photo before upload so receipts stay light. Best-effort: any
+// failure (e.g. HEIC that the browser can't decode to a canvas) returns the
+// original file untouched.
+async function downscaleImage(file: File, maxDim = 1600, quality = 0.82): Promise<Blob | File> {
+  if (!file.type.startsWith('image/') || file.type === 'image/gif') return file
+  try {
+    const bitmap = await createImageBitmap(file)
+    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height))
+    if (scale >= 1) { bitmap.close?.(); return file }
+    const w = Math.round(bitmap.width * scale), h = Math.round(bitmap.height * scale)
+    const canvas = document.createElement('canvas')
+    canvas.width = w; canvas.height = h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) { bitmap.close?.(); return file }
+    ctx.drawImage(bitmap, 0, 0, w, h)
+    bitmap.close?.()
+    const out = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/jpeg', quality))
+    return out ?? file
+  } catch { return file }
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
@@ -352,15 +381,49 @@ function BookingForm({ booking, onClose, onSaved }: { booking?: Booking; onClose
   const firstName = np[0] ?? ''
   const lastName = np.slice(1).join(' ')
 
+  // Invoice date defaults to today (long form, matching the stored display style).
+  const todayLong = useMemo(() => new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }), [])
+
+  // Calendar-driven service dates (the customer picks from these).
+  const [dates, setDates] = useState<string[]>(booking?.availableDates ?? [])
+  const [newDate, setNewDate] = useState('')
+  function addDate(d: string) {
+    if (!d) return
+    setDates(prev => (prev.includes(d) ? prev : [...prev, d].sort()))
+    setNewDate('')
+  }
+
+  // Invoice photos — uploaded straight to Vercel Blob, stored as URLs.
+  const [photos, setPhotos] = useState<InvoicePhoto[]>(booking?.invoicePhotos ?? [])
+  const [uploading, setUploading] = useState(false)
+  const [uploadErr, setUploadErr] = useState('')
+  async function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? [])
+    e.target.value = ''
+    if (!files.length) return
+    setUploadErr(''); setUploading(true)
+    try {
+      for (const file of files) {
+        const body = await downscaleImage(file)
+        const blob = await upload(file.name, body, { access: 'public', handleUploadUrl: '/api/admin/blob-upload' })
+        setPhotos(prev => [...prev, { url: blob.url, name: file.name }])
+      }
+    } catch (e) {
+      setUploadErr(e instanceof Error ? e.message : 'Upload failed — make sure Blob storage is connected.')
+    } finally { setUploading(false) }
+  }
+
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setSaving(true); setErr('')
-    const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>
+    const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, unknown>
     // Combine first/last into the stored customerName; normalize the checkbox.
-    const fn = (f.customerFirstName ?? '').trim(); const ln = (f.customerLastName ?? '').trim()
+    const fn = String(f.customerFirstName ?? '').trim(); const ln = String(f.customerLastName ?? '').trim()
     f.customerName = `${fn} ${ln}`.trim()
     delete f.customerFirstName; delete f.customerLastName
     f.collectInPerson = 'collectInPerson' in f ? 'true' : 'false'
+    f.availableDates = dates.join('\n')
+    f.invoicePhotos = photos
     try {
       if (edit) {
         await patch(booking!.token, { action: 'update', fields: f })
@@ -374,41 +437,84 @@ function BookingForm({ booking, onClose, onSaved }: { booking?: Booking; onClose
   }
 
   const dollars = (c?: number) => c ? (c / 100).toFixed(2) : ''
+  // Bigger touch targets + 16px font (stops iOS from zooming on focus) = easy on mobile.
+  const fStyle: React.CSSProperties = { ...iStyle, fontSize: '16px', padding: '12px 14px' }
+  const dateStyle: React.CSSProperties = { ...fStyle, width: 'auto', cursor: 'pointer', colorScheme: 'dark' }
 
   return (
-    <form onSubmit={submit} className="glass-card p-5 space-y-3" style={{ borderRadius: '16px', borderColor: 'rgba(224,0,42,.3)' }}>
+    <form onSubmit={submit} className="glass-card p-5 space-y-4" style={{ borderRadius: '16px', borderColor: 'rgba(224,0,42,.3)' }}>
       <p className="text-sm font-bold text-white">{edit ? `Edit ${booking!.bookingNumber}` : 'New Booking'}</p>
       <div className="grid sm:grid-cols-2 gap-3">
-        <div><label style={lab}>First Name *</label><input name="customerFirstName" required defaultValue={firstName} style={iStyle} /></div>
-        <div><label style={lab}>Last Name</label><input name="customerLastName" defaultValue={lastName} style={iStyle} /></div>
-        <div><label style={lab}>Phone</label><input name="customerPhone" defaultValue={booking?.customerPhone} style={iStyle} /></div>
-        <div><label style={lab}>Email</label><input name="customerEmail" defaultValue={booking?.customerEmail} style={iStyle} /></div>
-        <div><label style={lab}>Service Type</label><select name="serviceType" defaultValue={booking?.serviceType ?? 'moving'} style={{ ...iStyle, cursor: 'pointer' }}>{SERVICE_TYPES.map(s => <option key={s} value={s}>{SERVICE_LABELS[s]}</option>)}</select></div>
-        <div><label style={lab}>Invoice #</label><input name="invoiceNumber" defaultValue={booking?.invoiceNumber} style={iStyle} /></div>
-        <div><label style={lab}>Invoice Date</label><input name="invoiceDate" defaultValue={booking?.invoiceDate} placeholder="June 16, 2026" style={iStyle} /></div>
-        <div><label style={lab}>Invoice Amount ($)</label><input name="invoiceAmount" inputMode="decimal" defaultValue={dollars(booking?.invoiceAmountCents)} placeholder="550.00" style={iStyle} /></div>
-        <div><label style={lab}>Deposit ($)</label><input name="depositAmount" inputMode="decimal" defaultValue={dollars(booking?.depositAmountCents)} placeholder="150.00" style={iStyle} /></div>
-        <div><label style={lab}>Crew Size</label><input name="crewSize" inputMode="numeric" defaultValue={booking?.crewSize ?? ''} placeholder="2" style={iStyle} /></div>
-        <div><label style={lab}>Estimated Hours</label><input name="estimatedHours" inputMode="numeric" defaultValue={booking?.estimatedHours ?? ''} placeholder="5" style={iStyle} /></div>
+        <div><label style={lab}>First Name *</label><input name="customerFirstName" required autoCapitalize="words" defaultValue={firstName} style={fStyle} /></div>
+        <div><label style={lab}>Last Name</label><input name="customerLastName" autoCapitalize="words" defaultValue={lastName} style={fStyle} /></div>
+        <div><label style={lab}>Phone</label><input name="customerPhone" type="tel" inputMode="tel" autoComplete="tel" defaultValue={booking?.customerPhone} style={fStyle} /></div>
+        <div><label style={lab}>Email</label><input name="customerEmail" type="email" inputMode="email" autoCapitalize="none" autoComplete="email" defaultValue={booking?.customerEmail} style={fStyle} /></div>
+        <div><label style={lab}>Service Type</label><select name="serviceType" defaultValue={booking?.serviceType ?? 'moving'} style={{ ...fStyle, cursor: 'pointer' }}>{SERVICE_TYPES.map(s => <option key={s} value={s}>{SERVICE_LABELS[s]}</option>)}</select></div>
+        <div><label style={lab}>Invoice #</label><input name="invoiceNumber" defaultValue={booking?.invoiceNumber} style={fStyle} /></div>
+        <div><label style={lab}>Invoice Date</label><input name="invoiceDate" defaultValue={booking?.invoiceDate ?? todayLong} placeholder="June 16, 2026" style={fStyle} /></div>
+        <div><label style={lab}>Invoice Amount ($)</label><input name="invoiceAmount" inputMode="decimal" defaultValue={dollars(booking?.invoiceAmountCents)} placeholder="550.00" style={fStyle} /></div>
+        <div><label style={lab}>Deposit ($)</label><input name="depositAmount" inputMode="decimal" defaultValue={dollars(booking?.depositAmountCents)} placeholder="150.00" style={fStyle} /></div>
+        <div><label style={lab}>Crew Size</label><input name="crewSize" inputMode="numeric" defaultValue={booking?.crewSize ?? ''} placeholder="2" style={fStyle} /></div>
+        <div><label style={lab}>Estimated Hours</label><input name="estimatedHours" inputMode="numeric" defaultValue={booking?.estimatedHours ?? ''} placeholder="5" style={fStyle} /></div>
       </div>
-      <div><label style={lab}>Pickup Address</label><input name="pickupAddress" defaultValue={booking?.pickupAddress} style={iStyle} /></div>
-      <div><label style={lab}>Drop-off Address</label><input name="dropoffAddress" defaultValue={booking?.dropoffAddress} style={iStyle} /></div>
-      <div><label style={lab}>Job Site Address (if single-site)</label><input name="jobSiteAddress" defaultValue={booking?.jobSiteAddress} style={iStyle} /></div>
-      <div><label style={lab}>Description</label><textarea name="description" rows={2} defaultValue={booking?.description} style={{ ...iStyle, resize: 'vertical' }} /></div>
-      <div><label style={lab}>Items (one per line)</label><textarea name="items" rows={3} defaultValue={booking?.items?.join('\n')} placeholder={'40 boxes\nRefrigerator\nDresser\nCouch\nGrill'} style={{ ...iStyle, resize: 'vertical' }} /></div>
+      <div><label style={lab}>Pickup Address</label><input name="pickupAddress" defaultValue={booking?.pickupAddress} style={fStyle} /></div>
+      <div><label style={lab}>Drop-off Address</label><input name="dropoffAddress" defaultValue={booking?.dropoffAddress} style={fStyle} /></div>
+      <div><label style={lab}>Job Site Address (if single-site)</label><input name="jobSiteAddress" defaultValue={booking?.jobSiteAddress} style={fStyle} /></div>
+      <div><label style={lab}>Description</label><textarea name="description" rows={2} defaultValue={booking?.description} style={{ ...fStyle, resize: 'vertical' }} /></div>
+      <div><label style={lab}>Items (one per line)</label><textarea name="items" rows={3} defaultValue={booking?.items?.join('\n')} placeholder={'40 boxes\nRefrigerator\nDresser\nCouch\nGrill'} style={{ ...fStyle, resize: 'vertical' }} /></div>
+
+      {/* ── Invoice photos ─────────────────────────────────────────── */}
+      <div>
+        <label style={lab}>Invoice Photos</label>
+        <label className="btn-ghost" style={{ padding: '12px 18px', fontSize: 14, cursor: uploading ? 'wait' : 'pointer', display: 'inline-flex' }}>
+          {uploading ? 'Uploading…' : photos.length ? '+ Add More Photos' : '+ Add Photos'}
+          <input type="file" accept="image/*" multiple onChange={onPickFiles} disabled={uploading} style={{ display: 'none' }} />
+        </label>
+        {uploadErr && <p className="text-sm mt-2" style={{ color: '#f87171' }}>{uploadErr}</p>}
+        {photos.length > 0 && (
+          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mt-3">
+            {photos.map(p => (
+              <div key={p.url} style={{ position: 'relative', aspectRatio: '1 / 1', borderRadius: 10, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={p.url} alt={p.name ?? ''} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <button type="button" onClick={() => setPhotos(prev => prev.filter(x => x.url !== p.url))} aria-label="Remove photo"
+                  style={{ position: 'absolute', top: 4, right: 4, width: 26, height: 26, borderRadius: 999, border: 'none', background: 'rgba(0,0,0,.65)', color: '#fff', cursor: 'pointer', fontSize: 16, lineHeight: '26px' }}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Service date(s) via calendar ───────────────────────────── */}
       <div className="grid sm:grid-cols-2 gap-3">
-        <div><label style={lab}>Available Dates (one per line, YYYY-MM-DD)</label><textarea name="availableDates" rows={3} defaultValue={booking?.availableDates?.join('\n')} placeholder={'2026-06-26'} style={{ ...iStyle, resize: 'vertical' }} /></div>
-        <div><label style={lab}>Arrival Windows (one per line)</label><textarea name="availableWindows" rows={4} defaultValue={booking?.availableWindows?.join('\n')} placeholder={'8am–9am\n9am–10am\n10am–11am\n11am–12pm\n12pm–1pm\n1pm–2pm'} style={{ ...iStyle, resize: 'vertical' }} /></div>
+        <div>
+          <label style={lab}>Service Date(s) — pick from calendar</label>
+          <input type="date" value={newDate} onChange={e => addDate(e.target.value)} style={dateStyle} />
+          {dates.length > 0 && (
+            <div className="flex gap-2 flex-wrap mt-2">
+              {dates.map(d => (
+                <span key={d} className="inline-flex items-center gap-2" style={{ background: 'rgba(224,0,42,.12)', border: '1px solid rgba(224,0,42,.3)', color: '#fff', borderRadius: 999, padding: '6px 8px 6px 12px', fontSize: 14 }}>
+                  {fmtDateLabel(d)}
+                  <button type="button" onClick={() => setDates(prev => prev.filter(x => x !== d))} aria-label="Remove date"
+                    style={{ border: 'none', background: 'rgba(255,255,255,.15)', color: '#fff', width: 20, height: 20, borderRadius: 999, cursor: 'pointer', fontSize: 13, lineHeight: '20px' }}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
+          <p style={{ ...lab, marginTop: 6, marginBottom: 0 }}>The customer picks from these — add one for a set date, or several to offer options.</p>
+        </div>
+        <div><label style={lab}>Arrival Windows (one per line)</label><textarea name="availableWindows" rows={4} defaultValue={booking?.availableWindows?.join('\n')} placeholder={'8am–9am\n9am–10am\n10am–11am\n11am–12pm\n12pm–1pm\n1pm–2pm'} style={{ ...fStyle, resize: 'vertical' }} /></div>
       </div>
+
       <label className="flex items-center gap-2.5 text-sm py-1" style={{ color: 'var(--text)' }}>
         <input type="checkbox" name="collectInPerson" defaultChecked={!!booking?.collectInPerson} style={{ width: 18, height: 18, accentColor: '#E0002A', flexShrink: 0 }} />
         Collect balance in person — show remaining balance as optional on the link (due at end of service), don&apos;t require online payment
       </label>
-      <div><label style={lab}>Internal Notes (ops only)</label><textarea name="internalNotes" rows={2} defaultValue={booking?.internalNotes} style={{ ...iStyle, resize: 'vertical' }} /></div>
+      <div><label style={lab}>Internal Notes (ops only)</label><textarea name="internalNotes" rows={2} defaultValue={booking?.internalNotes} style={{ ...fStyle, resize: 'vertical' }} /></div>
       {err && <p className="text-sm" style={{ color: '#f87171' }}>{err}</p>}
       <div className="flex gap-2">
-        <button type="submit" disabled={saving} className="btn" style={{ padding: '10px 18px', fontSize: '13px' }}>{saving ? 'Saving…' : edit ? 'Save Changes' : 'Create Booking'}</button>
-        <button type="button" onClick={onClose} className="btn-ghost" style={{ padding: '10px 18px', fontSize: '13px' }}>Cancel</button>
+        <button type="submit" disabled={saving || uploading} className="btn" style={{ padding: '14px 22px', fontSize: '15px', flex: 1 }}>{saving ? 'Saving…' : edit ? 'Save Changes' : 'Create Booking'}</button>
+        <button type="button" onClick={onClose} className="btn-ghost" style={{ padding: '14px 22px', fontSize: '15px' }}>Cancel</button>
       </div>
     </form>
   )

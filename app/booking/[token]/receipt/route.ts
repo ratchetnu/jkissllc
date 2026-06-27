@@ -141,6 +141,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
 </script>`
 
   const items = b.items.length ? `<ul class="items">${b.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul>` : ''
+  const photoGrid = b.invoicePhotos && b.invoicePhotos.length
+    ? `<h2>Photos</h2><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:4px">${b.invoicePhotos.map(p => `<a href="${esc(p.url)}" target="_blank" rel="noopener"><img src="${esc(p.url)}" alt="" style="width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;border:1px solid #ddd"></a>`).join('')}</div>`
+    : ''
   const confirmed = b.payments.filter(p => p.status === 'confirmed').sort((a, c) => (a.confirmedAt ?? a.createdAt) - (c.confirmedAt ?? c.createdAt))
   const lastPaidAt = confirmed.reduce((m, p) => Math.max(m, p.confirmedAt ?? p.createdAt), 0)
   const payRows = confirmed.map(p =>
@@ -176,6 +179,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
       ${b.pickupAddress || b.dropoffAddress || b.jobSiteAddress ? `<h2>Locations</h2><table>${row('Pickup', b.pickupAddress)}${row('Drop-off', b.dropoffAddress)}${row('Job Site', b.jobSiteAddress)}</table>` : ''}
 
       ${b.description || items ? `<h2>Job Details</h2>${b.description ? `<p style="font-size:14px;margin:0 0 6px">${esc(b.description)}</p>` : ''}${items}` : ''}
+
+      ${photoGrid}
 
       <h2>Payments</h2>
       <table class="pay">${payRows}</table>

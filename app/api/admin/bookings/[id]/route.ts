@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireSession } from '../../_lib/session'
 import {
   getBookingByToken, saveBooking, deleteBooking, recompute, balanceDueCents, dollarsToCents,
-  paymentSummaryStatus,
+  paymentSummaryStatus, sanitizePhotos,
   SERVICE_TYPES, type Booking, type ServiceType, type Payment, type PaymentMethod, type PaymentType,
   type BookingStatus,
 } from '../../../../lib/bookings'
@@ -87,6 +87,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if ('jobSiteAddress' in f) b.jobSiteAddress = str(f.jobSiteAddress, 300)
       if ('description' in f) b.description = str(f.description, 2000)
       if ('items' in f) { const l = strList(f.items, 80); if (l) b.items = l }
+      if ('invoicePhotos' in f) b.invoicePhotos = sanitizePhotos(f.invoicePhotos)
       if ('invoiceAmount' in f) b.invoiceAmountCents = dollarsToCents(f.invoiceAmount)
       if ('depositAmount' in f) b.depositAmountCents = dollarsToCents(f.depositAmount)
       if ('crewSize' in f) b.crewSize = num(f.crewSize)
