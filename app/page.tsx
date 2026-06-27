@@ -257,7 +257,7 @@ export default function Home() {
       <Nav />
 
       {/* ── Hero ── */}
-      <section className="relative min-h-screen flex items-center overflow-hidden">
+      <section className="relative min-h-screen flex items-start md:items-center overflow-hidden">
         {/* Background */}
         <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg, #0b0b0c 0%, #1a0508 100%)' }} />
         {/* Animated gradient mesh + drifting route grid */}
@@ -275,9 +275,9 @@ export default function Home() {
         <div className="relative max-w-6xl mx-auto px-6 pt-32 pb-24">
           <div className="max-w-2xl">
             <div className="label mb-6">DFW Metro · Licensed & Insured</div>
-            <h1 className="font-black text-white mb-6" style={{ fontSize: 'clamp(2.4rem, 5vw, 4rem)', lineHeight: 1.05, letterSpacing: '-0.045em', fontFamily: 'var(--font-display)' }}>
-              Delivery, Junk Removal &amp; Cleanouts.<br />
-              <span className="grad-red">Done Right Across DFW.</span>
+            <h1 className="font-black text-white mb-6" style={{ fontSize: 'clamp(2.4rem, 5vw, 4rem)', lineHeight: 1.1, letterSpacing: '-0.045em', fontFamily: 'var(--font-display)' }}>
+              Delivery, Junk Removal &amp; Cleanouts.
+              <span className="grad-red" style={{ display: 'block', marginTop: '0.28em', lineHeight: 1.12, paddingBottom: '0.08em' }}>Done Right Across DFW.</span>
             </h1>
             <p className="text-lg mb-8 max-w-xl" style={{ color: 'var(--muted)', lineHeight: 1.7 }}>
               J Kiss LLC handles box-truck freight and white-glove last-mile delivery, plus junk removal and eviction &amp; property cleanouts across Dallas–Fort Worth. 16–26 ft straight trucks, two-person crews, and the reliability major retailers already trust.
