@@ -50,13 +50,6 @@ async function patch(token: string, body: Record<string, unknown>) {
   return j
 }
 
-// ISO yyyy-mm-dd → "Fri, Jun 27" (parsed as a LOCAL date so it never slips a day).
-function fmtDateLabel(iso: string): string {
-  const [y, m, d] = iso.split('-').map(Number)
-  if (!y || !m || !d) return iso
-  return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-}
-
 // Shrink a phone photo before upload so receipts stay light. Best-effort: any
 // failure (e.g. HEIC that the browser can't decode to a canvas) returns the
 // original file untouched.
@@ -383,15 +376,15 @@ function BookingForm({ booking, onClose, onSaved }: { booking?: Booking; onClose
 
   // Invoice date defaults to today (long form, matching the stored display style).
   const todayLong = useMemo(() => new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }), [])
+  // Today as yyyy-mm-dd in LOCAL time (for the calendar default — never UTC, which can roll to yesterday).
+  const todayISO = useMemo(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }, [])
 
-  // Calendar-driven service dates (the customer picks from these).
-  const [dates, setDates] = useState<string[]>(booking?.availableDates ?? [])
-  const [newDate, setNewDate] = useState('')
-  function addDate(d: string) {
-    if (!d) return
-    setDates(prev => (prev.includes(d) ? prev : [...prev, d].sort()))
-    setNewDate('')
-  }
+  // Service date(s) the customer can pick from — each is its own editable calendar
+  // field. New bookings default to today; add more rows only to offer options.
+  const [dates, setDates] = useState<string[]>(booking?.availableDates?.length ? booking.availableDates : [todayISO])
 
   // Invoice photos — uploaded straight to Vercel Blob, stored as URLs.
   const [photos, setPhotos] = useState<InvoicePhoto[]>(booking?.invoicePhotos ?? [])
@@ -422,7 +415,7 @@ function BookingForm({ booking, onClose, onSaved }: { booking?: Booking; onClose
     f.customerName = `${fn} ${ln}`.trim()
     delete f.customerFirstName; delete f.customerLastName
     f.collectInPerson = 'collectInPerson' in f ? 'true' : 'false'
-    f.availableDates = dates.join('\n')
+    f.availableDates = dates.filter(Boolean).join('\n')
     f.invoicePhotos = photos
     try {
       if (edit) {
@@ -489,19 +482,19 @@ function BookingForm({ booking, onClose, onSaved }: { booking?: Booking; onClose
       <div className="grid sm:grid-cols-2 gap-3">
         <div>
           <label style={lab}>Service Date(s) — pick from calendar</label>
-          <input type="date" value={newDate} onChange={e => addDate(e.target.value)} style={dateStyle} />
-          {dates.length > 0 && (
-            <div className="flex gap-2 flex-wrap mt-2">
-              {dates.map(d => (
-                <span key={d} className="inline-flex items-center gap-2" style={{ background: 'rgba(224,0,42,.12)', border: '1px solid rgba(224,0,42,.3)', color: '#fff', borderRadius: 999, padding: '6px 8px 6px 12px', fontSize: 14 }}>
-                  {fmtDateLabel(d)}
-                  <button type="button" onClick={() => setDates(prev => prev.filter(x => x !== d))} aria-label="Remove date"
-                    style={{ border: 'none', background: 'rgba(255,255,255,.15)', color: '#fff', width: 20, height: 20, borderRadius: 999, cursor: 'pointer', fontSize: 13, lineHeight: '20px' }}>×</button>
-                </span>
-              ))}
-            </div>
-          )}
-          <p style={{ ...lab, marginTop: 6, marginBottom: 0 }}>The customer picks from these — add one for a set date, or several to offer options.</p>
+          <div className="space-y-2">
+            {dates.map((d, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <input type="date" value={d} onChange={e => setDates(prev => prev.map((x, idx) => idx === i ? e.target.value : x))} style={dateStyle} />
+                {dates.length > 1 && (
+                  <button type="button" onClick={() => setDates(prev => prev.filter((_, idx) => idx !== i))} aria-label="Remove date"
+                    style={{ border: '1px solid rgba(255,255,255,.15)', background: 'rgba(255,255,255,.05)', color: 'var(--muted)', borderRadius: 8, padding: '10px 14px', cursor: 'pointer', fontSize: 13 }}>Remove</button>
+                )}
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={() => setDates(prev => [...prev, ''])} className="btn-ghost" style={{ padding: '10px 16px', fontSize: 13, marginTop: 8, display: 'inline-flex' }}>+ Add another date option</button>
+          <p style={{ ...lab, marginTop: 8, marginBottom: 0 }}>Defaults to today — change it to any date. Add more only if you want to offer the customer options.</p>
         </div>
         <div><label style={lab}>Arrival Windows (one per line)</label><textarea name="availableWindows" rows={4} defaultValue={booking?.availableWindows?.join('\n')} placeholder={'8am–9am\n9am–10am\n10am–11am\n11am–12pm\n12pm–1pm\n1pm–2pm'} style={{ ...fStyle, resize: 'vertical' }} /></div>
       </div>
