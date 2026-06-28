@@ -61,6 +61,7 @@ export default function AdminGate({ title, children }: { title: string; children
         <a href="/admin/bookings" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Bookings</a>
         <a href="/admin/promos" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Promos</a>
         <a href="/admin/staff" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Crew</a>
+        <a href="/admin/availability" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Availability</a>
         <a href="/admin/policy" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Policy</a>
         <a href="/admin/reviews" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Reviews</a>
         <a href="/admin" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Analytics</a>

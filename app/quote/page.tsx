@@ -1,9 +1,101 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 
 type Estimate = { low: number; high: number; miles: number; fuelCharge?: number; promoCode?: string; promoPct?: number; pickupLabel: string; deliveryLabel: string }
+
+// ISO yyyy-mm-dd → "Fri, Jul 4, 2026" (parsed LOCAL so it never slips a day).
+function fmtDateLabel(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  if (!y || !m || !d) return iso
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+// ── Instant booking: pick an open date + pay a deposit ───────────────────────
+function InstantBook() {
+  const [open, setOpen] = useState(false)
+  const [avail, setAvail] = useState<{ dates: string[]; depositCents: number } | null>(null)
+  const [service, setService] = useState('junk-removal')
+  const [date, setDate] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    if (!open || avail) return
+    fetch('/api/availability').then(r => r.json()).then(j => { if (j.ok) setAvail({ dates: j.dates, depositCents: j.depositCents }) }).catch(() => {})
+  }, [open, avail])
+
+  const inp: React.CSSProperties = { width: '100%', padding: '12px 14px', background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.10)', borderRadius: 10, color: '#f3f4f6', fontSize: 16, outline: 'none' }
+  const sel: React.CSSProperties = { ...inp, cursor: 'pointer', colorScheme: 'dark' }
+  const lbl: React.CSSProperties = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 6 }
+  const deposit = avail ? (avail.depositCents / 100).toFixed(0) : '50'
+
+  async function submit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault(); setBusy(true); setErr('')
+    const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>
+    try {
+      const res = await fetch('/api/book', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...f, service, date }) })
+      const j = await res.json()
+      if (!res.ok) { setErr(j.error ?? 'Could not book that date.'); setBusy(false); return }
+      if (j.url) { window.location.href = j.url; return }
+      if (j.bookingUrl) { window.location.href = j.bookingUrl; return }
+      setBusy(false)
+    } catch { setErr('Connection error — please try again.'); setBusy(false) }
+  }
+
+  return (
+    <div className="glass-card mb-8" style={{ borderRadius: 20, border: '1px solid rgba(224,0,42,.3)', overflow: 'hidden' }}>
+      <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between gap-3 p-6 text-left" aria-expanded={open}>
+        <div>
+          <p className="text-lg font-black text-white">⚡ Book Instantly</p>
+          <p className="text-sm" style={{ color: 'var(--muted)' }}>Know what you need? Pick an open date and lock it in with a deposit.</p>
+        </div>
+        <span style={{ color: 'var(--red)', fontSize: 22 }}>{open ? '–' : '+'}</span>
+      </button>
+      {open && (
+        <form onSubmit={submit} className="px-6 pb-6 space-y-3" style={{ borderTop: '1px solid var(--line)' }}>
+          {!avail ? (
+            <p className="text-sm pt-4" style={{ color: 'var(--muted)' }}>Loading open dates…</p>
+          ) : avail.dates.length === 0 ? (
+            <p className="text-sm pt-4" style={{ color: 'var(--muted)' }}>No online dates are open right now — submit the quote form below and we&apos;ll get you scheduled.</p>
+          ) : (
+            <>
+              <div className="grid sm:grid-cols-2 gap-3 pt-4">
+                <div><label style={lbl}>Service</label>
+                  <select value={service} onChange={e => setService(e.target.value)} style={sel}>
+                    <option value="junk-removal">Junk Removal</option>
+                    <option value="eviction">Eviction / Property Cleanout</option>
+                    <option value="moving">Moving / Delivery</option>
+                    <option value="appliance-delivery">Appliance Delivery</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+                <div><label style={lbl}>Date</label>
+                  <select value={date} onChange={e => setDate(e.target.value)} required style={sel}>
+                    <option value="">Choose an open date…</option>
+                    {avail.dates.map(d => <option key={d} value={d}>{fmtDateLabel(d)}</option>)}
+                  </select>
+                </div>
+                <div><label style={lbl}>Name</label><input name="name" required style={inp} /></div>
+                <div><label style={lbl}>Phone</label><input name="phone" type="tel" style={inp} /></div>
+                <div className="sm:col-span-2"><label style={lbl}>Email</label><input name="email" type="email" required style={inp} /></div>
+                <div className="sm:col-span-2"><label style={lbl}>Service address</label><input name="address" style={inp} /></div>
+                <div className="sm:col-span-2"><label style={lbl}>Notes <span style={{ fontWeight: 400 }}>(optional)</span></label><input name="notes" placeholder="What's the job?" style={inp} /></div>
+                <div className="sm:col-span-2"><label style={lbl}>Promo code <span style={{ fontWeight: 400 }}>(optional)</span></label><input name="promo" style={{ ...inp, textTransform: 'uppercase' }} /></div>
+              </div>
+              {err && <p className="text-sm" role="alert" style={{ color: '#f87171' }}>{err}</p>}
+              <button type="submit" disabled={busy || !date} className="btn w-full" style={{ justifyContent: 'center' }}>
+                {busy ? 'Reserving…' : `Reserve & Pay $${deposit} Deposit →`}
+              </button>
+              <p className="text-xs text-center" style={{ color: 'rgba(255,255,255,.4)' }}>Your ${deposit} deposit holds the date and is <strong>fully refunded</strong> if we can&apos;t make it. The balance is settled after the job.</p>
+            </>
+          )}
+        </form>
+      )}
+    </div>
+  )
+}
 
 // Downscale an image to a small JPEG data URL for the AI photo estimate. Falls
 // back to the original (e.g. HEIC the browser can't decode to canvas).
@@ -127,6 +219,8 @@ export default function QuotePage() {
               ? `Tell us the job site, what needs to go, and how soon. ${jobNoun} is priced per job, so ops will send you a custom quote within 1 business day.`
               : 'Enter pickup and delivery ZIPs, load details, and service type. We’ll compute a price range right away and ops will follow up with a firm number within 1 business day.'}
           </p>
+
+          {status !== 'sent' && <InstantBook />}
 
           {status === 'sent' && estimate ? (
             <div className="glass-card p-10" style={{ borderRadius: '20px' }}>
