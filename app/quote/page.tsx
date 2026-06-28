@@ -243,9 +243,15 @@ export default function QuotePage() {
                       {photoErr && <p className="text-xs mt-2" role="alert" style={{ color: '#ff8a9b' }}>{photoErr}</p>}
                       {photoEst && (
                         <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,.1)' }}>
-                          <p className="text-lg font-black text-white">${photoEst.low}–${photoEst.high} <span className="text-sm font-semibold" style={{ color: 'var(--muted)' }}>· {photoEst.loadSize}</span></p>
-                          {photoEst.summary && <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,.6)', lineHeight: 1.5 }}>{photoEst.summary}</p>}
-                          <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Estimate only — submit the form below to lock in your custom quote.</p>
+                          {photoEst.high > 0 ? (
+                            <>
+                              <p className="text-lg font-black text-white">${photoEst.low}–${photoEst.high} <span className="text-sm font-semibold" style={{ color: 'var(--muted)' }}>· {photoEst.loadSize}</span></p>
+                              {photoEst.summary && <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,.6)', lineHeight: 1.5 }}>{photoEst.summary}</p>}
+                              <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Estimate only — submit the form below to lock in your custom quote.</p>
+                            </>
+                          ) : (
+                            <p className="text-sm" style={{ color: '#ff8a9b', lineHeight: 1.5 }}>{photoEst.summary || 'We may not be able to haul some of those items — please describe the job below and we’ll advise.'}</p>
+                          )}
                         </div>
                       )}
                     </div>
@@ -321,7 +327,7 @@ export default function QuotePage() {
 
               <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
                 <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>{isJobBased ? 'What needs to go?' : 'Notes (optional)'}</label>
-                <textarea name="notes" rows={3} placeholder={isEviction ? 'e.g. full apartment/house trash-out, tenant belongings left behind, furniture & appliances, number of bedrooms, stairs/elevator access…' : isJunk ? 'e.g. garage cleanout, old appliances & furniture, construction debris, stairs/elevator access, anything heavy or hazardous…' : 'Special handling, appointment requirements, dock conditions, etc.'} style={{ ...iStyle, resize: 'vertical' }} />
+                <textarea name="notes" rows={3} placeholder={isEviction ? 'e.g. full apartment/house trash-out, tenant belongings left behind, furniture & appliances, number of bedrooms, stairs/elevator access…' : isJunk ? 'e.g. garage cleanout, old appliances & furniture, construction debris, stairs/elevator access, heavy items… (note: we can’t haul hazardous materials)' : 'Special handling, appointment requirements, dock conditions, etc.'} style={{ ...iStyle, resize: 'vertical' }} />
                 <label className="block text-xs font-semibold mb-1.5 mt-3" style={{ color: 'var(--muted)' }}>How did you hear about us? <span style={{ fontWeight: 400 }}>(optional — referral name or code)</span></label>
                 <input name="referral" placeholder="e.g. Google, a friend's name, or a promo code" style={iStyle} />
               </div>
