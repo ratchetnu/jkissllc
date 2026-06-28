@@ -31,12 +31,12 @@ export type DisposalSettings = {
 }
 
 export const DEFAULT_DISPOSAL: DisposalSettings = {
-  serviceMinimumCents: 12000,
-  defaultDisposalCents: 5000,
-  dumpTripCents: 3500,
-  laborMinCents: 9000,
-  laborFullLoadCents: 25000,
-  marginPct: 0.45,
+  serviceMinimumCents: 9500,
+  defaultDisposalCents: 3000,
+  dumpTripCents: 2500,
+  laborMinCents: 6000,
+  laborFullLoadCents: 24000,
+  marginPct: 0.42,
   perTonCents: 6000,
   perCubicYardCents: 4000,
   perLoadCents: 12000,
