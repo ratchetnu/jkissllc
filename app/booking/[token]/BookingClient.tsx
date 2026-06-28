@@ -199,8 +199,8 @@ export default function BookingClient({
             {b.invoicePhotos && b.invoicePhotos.length > 0 && (
               <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mt-4">
                 {b.invoicePhotos.map((p, i) => (
-                  // eslint-disable-next-line @next/next/no-img-element
                   <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', aspectRatio: '1 / 1', borderRadius: 10, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={p.url} alt={p.name ?? `Photo ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   </a>
                 ))}
@@ -243,9 +243,16 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
   const [busy, setBusy] = useState<string>('')
   const [err, setErr] = useState('')
   const [showManual, setShowManual] = useState(false)
+  const [copied, setCopied] = useState('')
 
   const balance = b.balanceDueCents
   const depositDue = Math.max(0, Math.min(b.depositAmountCents - b.amountPaidCents, balance))
+  const memo = b.invoiceNumber ?? b.bookingNumber
+
+  async function copy(label: string, value: string) {
+    try { await navigator.clipboard.writeText(value); setCopied(label); setTimeout(() => setCopied(''), 1600) } catch { /* clipboard unavailable */ }
+  }
+  const feeOnBalance = grossUp(balance).total - balance
 
   async function pay(kind: 'deposit' | 'balance' | 'full') {
     setBusy(kind); setErr('')
@@ -304,19 +311,33 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
             </button>
           </div>
           <p className="text-xs mt-3" style={{ color: 'rgba(255,255,255,.4)' }}>
-            💳 Card payments include a processing fee ({(FEE_PCT * 100).toFixed(1)}% + {usd(FEE_FIXED)}). Shown on the secure Stripe checkout before you pay.
+            💳 Total includes a {(FEE_PCT * 100).toFixed(1)}% + {usd(FEE_FIXED)} card processing fee ({usd(feeOnBalance)} on this balance). Pay by Zelle below to skip it.
           </p>
           {err && <p className="text-sm mt-3" style={{ color: '#f87171' }}>{err}</p>}
 
           <div className="mt-5 pt-5" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
-            <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text)' }}>Prefer no card fee? Pay by Zelle or Apple Pay {b.collectInPerson && <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span>}</p>
-            <p className="text-sm" style={{ color: 'var(--muted)' }}>
-              Zelle: <span className="font-mono text-white">817-909-4312</span><br />
-              Apple Pay / Apple Cash: <span className="font-mono text-white">817-909-4312</span>
+            <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+              Prefer no card fee? Pay by Zelle or Apple Cash {b.collectInPerson && <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span>}
             </p>
-            <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Please include your invoice number ({b.invoiceNumber ?? b.bookingNumber}) in the payment memo.</p>
+            <p className="text-xs mt-1 mb-3" style={{ color: 'rgba(255,255,255,.45)' }}>Send <strong className="text-white">{usd(balance)}</strong> · add memo <strong className="text-white">{memo}</strong>, then tap “I Sent Payment”.</p>
+
+            <div className="flex flex-col gap-2">
+              {[
+                { label: 'Zelle', value: '817-909-4312' },
+                { label: 'Apple Cash', value: '817-909-4312' },
+                { label: 'Memo', value: memo },
+              ].map(item => (
+                <button key={item.label} type="button" onClick={() => copy(item.label, item.value)}
+                  className="flex items-center justify-between gap-3 rounded-xl px-4 py-3 text-left transition"
+                  style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.1)' }}>
+                  <span className="text-sm" style={{ color: 'var(--muted)' }}>{item.label}: <span className="font-mono text-white">{item.value}</span></span>
+                  <span className="text-xs font-bold shrink-0" style={{ color: copied === item.label ? '#34d399' : 'var(--red)' }}>{copied === item.label ? '✓ Copied' : 'Copy'}</span>
+                </button>
+              ))}
+            </div>
+
             {!showManual ? (
-              <button onClick={() => setShowManual(true)} className="btn-ghost mt-3" style={{ padding: '10px 18px', fontSize: '13px' }}>I Sent Payment</button>
+              <button onClick={() => setShowManual(true)} className="btn-ghost w-full mt-3" style={{ padding: '13px 18px', fontSize: '14px', justifyContent: 'center' }}>I Sent Payment →</button>
             ) : (
               <ManualPaymentForm token={token} balance={balance} onDone={() => { setShowManual(false); onChange() }} onCancel={() => setShowManual(false)} />
             )}

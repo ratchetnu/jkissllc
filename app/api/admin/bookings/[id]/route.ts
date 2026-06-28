@@ -9,24 +9,9 @@ import {
 import { getPolicyVersion, getCurrentPolicy } from '../../../../lib/policy'
 import { sendConfirmationLink, notifyJobCompleted, notifyBookingConfirmed, notifyPaidInFull } from '../../../../lib/notify'
 import { emailOpsPaymentReceived, emailPaymentReceiptCustomer } from '../../../../lib/booking-emails'
+import { str, strList, num } from '../../../../lib/validators'
 
 const METHODS: PaymentMethod[] = ['stripe', 'zelle', 'apple_cash', 'cash', 'other']
-
-function str(v: unknown, max = 500): string | undefined {
-  if (typeof v !== 'string') return undefined
-  const t = v.trim().slice(0, max)
-  return t || undefined
-}
-function strList(v: unknown, max = 60): string[] | undefined {
-  if (Array.isArray(v)) return v.map(x => String(x).trim()).filter(Boolean).slice(0, max)
-  if (typeof v === 'string') return v.split(/[\n,]/).map(s => s.trim()).filter(Boolean).slice(0, max)
-  return undefined
-}
-function num(v: unknown): number | undefined {
-  if (v === '' || v === null || v === undefined) return undefined
-  const n = typeof v === 'number' ? v : parseFloat(String(v))
-  return isFinite(n) && n > 0 ? n : undefined
-}
 
 function addConfirmedPayment(b: Booking, p: { amountCents: number; method: PaymentMethod; type: PaymentType; note?: string; reference?: string }): Payment {
   const now = Date.now()
@@ -86,14 +71,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if ('dropoffAddress' in f) b.dropoffAddress = str(f.dropoffAddress, 300)
       if ('jobSiteAddress' in f) b.jobSiteAddress = str(f.jobSiteAddress, 300)
       if ('description' in f) b.description = str(f.description, 2000)
-      if ('items' in f) { const l = strList(f.items, 80); if (l) b.items = l }
+      if ('items' in f) b.items = strList(f.items, 80)
       if ('invoicePhotos' in f) b.invoicePhotos = sanitizePhotos(f.invoicePhotos)
       if ('invoiceAmount' in f) b.invoiceAmountCents = dollarsToCents(f.invoiceAmount)
       if ('depositAmount' in f) b.depositAmountCents = dollarsToCents(f.depositAmount)
       if ('crewSize' in f) b.crewSize = num(f.crewSize)
       if ('estimatedHours' in f) b.estimatedHours = num(f.estimatedHours)
-      if ('availableDates' in f) { const l = strList(f.availableDates, 60); if (l) b.availableDates = l }
-      if ('availableWindows' in f) { const l = strList(f.availableWindows, 20); if (l) b.availableWindows = l }
+      if ('availableDates' in f) b.availableDates = strList(f.availableDates, 60)
+      if ('availableWindows' in f) b.availableWindows = strList(f.availableWindows, 20)
       if ('selectedDate' in f) b.selectedDate = str(f.selectedDate, 20)
       if ('selectedWindow' in f) b.selectedWindow = str(f.selectedWindow, 40)
       if ('internalNotes' in f) b.internalNotes = str(f.internalNotes, 2000)

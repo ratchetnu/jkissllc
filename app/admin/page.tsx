@@ -2,9 +2,20 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useIdleLogout } from './useIdleLogout'
+import type { BookingAnalytics, NamedTotal, DayPoint } from '../lib/analytics'
 
 type Range = '7d' | '30d' | '90d'
-type Tab = 'analytics' | 'shipments'
+type Tab = 'overview' | 'analytics' | 'shipments'
+
+const money = (c: number) => (c / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
+const money2 = (c: number) => (c / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+
+const SERVICE_LABEL: Record<string, string> = {
+  'moving': 'Moving', 'junk-removal': 'Junk Removal', 'eviction': 'Eviction / Cleanout',
+  'appliance-delivery': 'Appliance Delivery', 'freight': 'Freight', 'estate-cleanout': 'Estate Cleanout',
+  'garage-cleanout': 'Garage Cleanout', 'other': 'Other',
+}
+const svcLabel = (k: string) => SERVICE_LABEL[k] ?? k
 
 interface DayData { date: string; pageviews: number; visitors: number }
 interface RowData { key: string; total: number }
@@ -60,17 +71,111 @@ function MiniBar({ data, field }: { data: DayData[]; field: 'pageviews' | 'visit
   )
 }
 
+// ── Executive dashboard pieces ───────────────────────────────────────────────
+function StatCard({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
+  return (
+    <div className="glass-card p-5" style={{ borderRadius: '16px' }}>
+      <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)', letterSpacing: '0.06em' }}>{label}</p>
+      <p className="text-3xl font-black mt-1.5" style={{ color: accent ? 'var(--red)' : '#fff', letterSpacing: '-0.04em' }}>{value}</p>
+      {sub && <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,.4)' }}>{sub}</p>}
+    </div>
+  )
+}
+
+function RevenueTrend({ series }: { series: DayPoint[] }) {
+  const max = Math.max(...series.map(p => p.amountCents), 1)
+  const W = 600, H = 130, n = series.length
+  const xs = (i: number) => (n <= 1 ? 0 : (i / (n - 1)) * W)
+  const ys = (v: number) => H - (v / max) * (H - 12) - 6
+  const line = series.map((p, i) => `${i === 0 ? 'M' : 'L'}${xs(i).toFixed(1)},${ys(p.amountCents).toFixed(1)}`).join(' ')
+  const area = `${line} L${W},${H} L0,${H} Z`
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: 130, display: 'block' }} role="img" aria-label="Daily collected revenue, last 30 days">
+      <defs>
+        <linearGradient id="rvgrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="rgba(224,0,42,.35)" />
+          <stop offset="100%" stopColor="rgba(224,0,42,0)" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill="url(#rvgrad)" />
+      <path d={line} fill="none" stroke="#E0002A" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+    </svg>
+  )
+}
+
+function BarList({ rows, label, empty }: { rows: NamedTotal[]; label?: (k: string) => string; empty: string }) {
+  if (rows.length === 0) return <p className="px-5 py-8 text-sm text-center" style={{ color: 'var(--muted)' }}>{empty}</p>
+  const max = rows[0].amountCents || 1
+  return (
+    <>
+      {rows.map((r, i) => (
+        <div key={r.key} className="relative px-5 py-2.5" style={{ borderBottom: i < rows.length - 1 ? '1px solid rgba(255,255,255,.04)' : 'none' }}>
+          <div className="absolute inset-y-0 left-0" style={{ width: `${(r.amountCents / max) * 100}%`, background: 'rgba(224,0,42,.07)' }} />
+          <div className="relative flex items-center justify-between gap-3">
+            <span className="text-sm truncate text-white">{label ? label(r.key) : r.key} <span style={{ color: 'rgba(255,255,255,.3)' }}>· {r.count}</span></span>
+            <span className="text-sm font-black shrink-0" style={{ color: 'var(--red)' }}>{money(r.amountCents)}</span>
+          </div>
+        </div>
+      ))}
+    </>
+  )
+}
+
+const PAY_STATUS_META: { key: keyof BookingAnalytics['paymentStatus']; label: string; color: string }[] = [
+  { key: 'paid_in_full', label: 'Paid in full', color: '#34d399' },
+  { key: 'partially_paid', label: 'Partially paid', color: '#fbbf24' },
+  { key: 'deposit_paid', label: 'Deposit paid', color: '#60a5fa' },
+  { key: 'unpaid', label: 'Unpaid', color: '#f87171' },
+]
+function PaymentStatusBar({ status }: { status: BookingAnalytics['paymentStatus'] }) {
+  const total = PAY_STATUS_META.reduce((s, m) => s + status[m.key], 0) || 1
+  return (
+    <div>
+      <div className="flex h-3 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,.05)' }}>
+        {PAY_STATUS_META.map(m => status[m.key] > 0 && (
+          <div key={m.key} style={{ width: `${(status[m.key] / total) * 100}%`, background: m.color }} title={`${m.label}: ${status[m.key]}`} />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3">
+        {PAY_STATUS_META.map(m => (
+          <div key={m.key} className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--muted)' }}>
+            <span style={{ width: 8, height: 8, borderRadius: 999, background: m.color, display: 'inline-block' }} />
+            {m.label} <span className="font-bold text-white">{status[m.key]}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function AdminPage() {
   const [password, setPassword] = useState('')
   const [authed, setAuthed] = useState(false)
   const [authError, setAuthError] = useState('')
   const [authLoading, setAuthLoading] = useState(false)
 
-  const [tab, setTab] = useState<Tab>('analytics')
+  const [tab, setTab] = useState<Tab>('overview')
   const [range, setRange] = useState<Range>('30d')
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  // ── Executive overview state ────────────────────────────────────────────────
+  const [overview, setOverview] = useState<BookingAnalytics | null>(null)
+  const [ovLoading, setOvLoading] = useState(false)
+  const [ovError, setOvError] = useState('')
+  const fetchOverview = useCallback(async () => {
+    setOvLoading(true); setOvError('')
+    try {
+      const res = await fetch('/api/admin/reports', { credentials: 'same-origin' })
+      if (res.status === 401) { setAuthed(false); return }
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error ?? 'Error loading reports')
+      setOverview(j.data)
+    } catch (e) {
+      setOvError(e instanceof Error ? e.message : 'Error loading reports')
+    } finally { setOvLoading(false) }
+  }, [])
 
   // ── Shipments state ─────────────────────────────────────────────────────────
   const [shipments, setShipments] = useState<Shipment[]>([])
@@ -142,9 +247,10 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!authed) return
+    if (tab === 'overview') fetchOverview()
     if (tab === 'analytics') fetchAnalytics(range)
     if (tab === 'shipments') fetchShipments()
-  }, [authed, tab, range, fetchAnalytics, fetchShipments])
+  }, [authed, tab, range, fetchOverview, fetchAnalytics, fetchShipments])
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
@@ -257,7 +363,8 @@ export default function AdminPage() {
         <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
           <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,.1)' }}>
             {([
-              { id: 'analytics' as Tab, label: 'Analytics' },
+              { id: 'overview' as Tab, label: 'Overview' },
+              { id: 'analytics' as Tab, label: 'Traffic' },
               { id: 'shipments' as Tab, label: 'Shipments' },
             ]).map((t, i, arr) => (
               <button key={t.id} onClick={() => setTab(t.id)}
@@ -271,6 +378,11 @@ export default function AdminPage() {
               </button>
             ))}
           </div>
+          {tab === 'overview' && (
+            <button onClick={fetchOverview}
+              className="px-4 py-2 text-sm font-semibold rounded-xl"
+              style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>↻ Refresh</button>
+          )}
           {tab === 'analytics' && (
             <div className="flex items-center gap-3">
               <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,.1)' }}>
@@ -307,12 +419,97 @@ export default function AdminPage() {
         {/* Page title — context-aware */}
         <div className="mb-8">
           <p className="text-2xl font-black text-white" style={{ letterSpacing: '-0.04em' }}>
-            {tab === 'analytics' ? 'Analytics' : 'Shipments'}
+            {tab === 'overview' ? 'Business Overview' : tab === 'analytics' ? 'Website Traffic' : 'Shipments'}
           </p>
           <p className="text-sm mt-0.5" style={{ color: 'var(--muted)' }}>
-            {tab === 'analytics' ? 'Live visitor dashboard · jkissllc.com' : 'Manage BOL status updates that customers see on /track'}
+            {tab === 'overview' ? 'Revenue, jobs & outstanding payments · live from your bookings'
+              : tab === 'analytics' ? 'Live visitor dashboard · jkissllc.com'
+              : 'Manage BOL status updates that customers see on /track'}
           </p>
         </div>
+
+        {/* ── Overview (executive dashboard) ─────────────────────────────── */}
+        {tab === 'overview' && ovLoading && <div className="text-center py-20 text-sm" style={{ color: 'var(--muted)' }}>Loading…</div>}
+        {tab === 'overview' && ovError && !ovLoading && (
+          <div className="rounded-2xl p-5 text-sm text-center mb-6" style={{ background: 'rgba(224,0,42,.08)', border: '1px solid rgba(224,0,42,.2)', color: '#f87171' }}>
+            {ovError.includes('UPSTASH') ? 'Connect Upstash Redis to enable business reporting.' : ovError}
+          </div>
+        )}
+        {tab === 'overview' && !ovLoading && !ovError && overview && (
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+              <StatCard label="Today" value={money(overview.revenue.today)} accent />
+              <StatCard label="This Week" value={money(overview.revenue.week)} />
+              <StatCard label="This Month" value={money(overview.revenue.month)} sub={`Projected ${money(overview.revenue.forecastMonth)}`} />
+              <StatCard label="This Year" value={money(overview.revenue.year)} sub={`All-time ${money(overview.revenue.allTime)}`} />
+            </div>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+              <StatCard label="Outstanding" value={money(overview.outstandingCents)} accent sub="unpaid balances" />
+              <StatCard label="Avg Ticket" value={money(overview.averageTicketCents)} />
+              <StatCard label="Active Jobs" value={String(overview.jobs.active)} sub={`${overview.jobs.completed} completed all-time`} />
+              <StatCard label="Booked This Mo." value={String(overview.jobs.bookedThisMonth)} sub={`${overview.jobs.completedThisMonth} completed this mo.`} />
+            </div>
+
+            <div className="glass-card rounded-2xl p-6 mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-black text-white">Collected Revenue — Last 30 Days</p>
+                <p className="text-xs" style={{ color: 'var(--muted)' }}>Avg {money(overview.revenue.avgDaily30)}/day</p>
+              </div>
+              <RevenueTrend series={overview.revenue.series} />
+              <div className="flex justify-between mt-2 text-xs" style={{ color: 'rgba(255,255,255,.25)' }}>
+                <span>{overview.revenue.series[0]?.date}</span>
+                <span>{overview.revenue.series[overview.revenue.series.length - 1]?.date}</span>
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-6 mb-6">
+              <div className="glass-card rounded-2xl p-6">
+                <p className="text-sm font-black text-white mb-4">Payment Status</p>
+                <PaymentStatusBar status={overview.paymentStatus} />
+              </div>
+              <div className="glass-card rounded-2xl overflow-hidden">
+                <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,.06)' }}><p className="text-sm font-black text-white">Revenue by Service</p></div>
+                <BarList rows={overview.byService} label={svcLabel} empty="No collected revenue yet" />
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-6 mb-6">
+              <div className="glass-card rounded-2xl overflow-hidden">
+                <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,.06)' }}><p className="text-sm font-black text-white">Revenue by City</p></div>
+                <BarList rows={overview.byCity} empty="Add “City, ST” to job addresses to see this" />
+              </div>
+              <div className="glass-card rounded-2xl overflow-hidden">
+                <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,.06)' }}><p className="text-sm font-black text-white">Revenue by ZIP</p></div>
+                <BarList rows={overview.byZip} empty="Add ZIP codes to job addresses to see this" />
+              </div>
+            </div>
+
+            <div className="glass-card rounded-2xl overflow-hidden">
+              <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(255,255,255,.06)' }}>
+                <p className="text-sm font-black text-white">Outstanding Payments</p>
+                <span className="text-sm font-black" style={{ color: 'var(--red)' }}>{money2(overview.outstandingCents)}</span>
+              </div>
+              {overview.outstanding.length === 0 ? (
+                <p className="px-5 py-8 text-sm text-center" style={{ color: 'var(--muted)' }}>Nothing outstanding — everyone&apos;s paid up.</p>
+              ) : overview.outstanding.map((o, i) => (
+                <a key={o.token} href="/admin/bookings" className="flex items-center justify-between gap-3 px-5 py-3 transition hover:bg-white/[.02]"
+                  style={{ borderBottom: i < overview.outstanding.length - 1 ? '1px solid rgba(255,255,255,.04)' : 'none' }}>
+                  <div className="min-w-0">
+                    <p className="text-sm text-white font-medium truncate">{o.customerName}</p>
+                    <p className="text-xs" style={{ color: 'rgba(255,255,255,.4)' }}>{o.bookingNumber} · {o.status.replace(/_/g, ' ')}</p>
+                  </div>
+                  <span className="text-sm font-black shrink-0" style={{ color: 'var(--red)' }}>{money2(o.balanceCents)}</span>
+                </a>
+              ))}
+            </div>
+
+            {overview.reviews && overview.reviews.count > 0 && (
+              <p className="mt-6 text-xs text-center" style={{ color: 'rgba(255,255,255,.3)' }}>
+                ★ {overview.reviews.rating.toFixed(1)} average across {overview.reviews.count} customer review{overview.reviews.count === 1 ? '' : 's'}
+              </p>
+            )}
+          </>
+        )}
 
         {tab === 'analytics' && loading && <div className="text-center py-20 text-sm" style={{ color: 'var(--muted)' }}>Loading…</div>}
 

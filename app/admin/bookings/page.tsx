@@ -425,6 +425,9 @@ function BookingForm({ booking, prefill, onClose, onSaved }: { booking?: Booking
   // field. New bookings default to today; add more rows only to offer options.
   const [dates, setDates] = useState<string[]>(booking?.availableDates?.length ? booking.availableDates : [todayISO])
 
+  // Auto-send the customer their confirmation link on create (new bookings only).
+  const [sendLinkNow, setSendLinkNow] = useState(true)
+
   // Invoice photos — uploaded straight to Vercel Blob, stored as URLs.
   const [photos, setPhotos] = useState<InvoicePhoto[]>(booking?.invoicePhotos ?? [])
   const [uploading, setUploading] = useState(false)
@@ -456,6 +459,7 @@ function BookingForm({ booking, prefill, onClose, onSaved }: { booking?: Booking
     f.collectInPerson = 'collectInPerson' in f ? 'true' : 'false'
     f.availableDates = dates.filter(Boolean).join('\n')
     f.invoicePhotos = photos
+    f.sendLinkNow = sendLinkNow
     try {
       if (edit) {
         await patch(booking!.token, { action: 'update', fields: f })
@@ -543,6 +547,12 @@ function BookingForm({ booking, prefill, onClose, onSaved }: { booking?: Booking
         Collect balance in person — show remaining balance as optional on the link (due at end of service), don&apos;t require online payment
       </label>
       <div><label style={lab}>Internal Notes (ops only)</label><textarea name="internalNotes" rows={2} defaultValue={booking?.internalNotes} style={{ ...fStyle, resize: 'vertical' }} /></div>
+      {!edit && (
+        <label className="flex items-center gap-2.5 text-sm py-1" style={{ color: 'var(--text)' }}>
+          <input type="checkbox" checked={sendLinkNow} onChange={e => setSendLinkNow(e.target.checked)} style={{ width: 18, height: 18, accentColor: '#E0002A', flexShrink: 0 }} />
+          Text/email the customer their confirmation link as soon as I create this booking
+        </label>
+      )}
       {err && <p className="text-sm" style={{ color: '#f87171' }}>{err}</p>}
       <div className="flex gap-2">
         <button type="submit" disabled={saving || uploading} className="btn" style={{ padding: '14px 22px', fontSize: '15px', flex: 1 }}>{saving ? 'Saving…' : edit ? 'Save Changes' : 'Create Booking'}</button>

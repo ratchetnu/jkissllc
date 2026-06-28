@@ -5,21 +5,8 @@ import {
   SERVICE_TYPES, type Booking, type ServiceType,
 } from '../../../lib/bookings'
 import { emailOpsBookingCreated } from '../../../lib/booking-emails'
-
-function str(v: unknown, max = 500): string | undefined {
-  if (typeof v !== 'string') return undefined
-  const t = v.trim().slice(0, max)
-  return t || undefined
-}
-function strList(v: unknown, max = 60): string[] {
-  if (Array.isArray(v)) return v.map(x => String(x).trim()).filter(Boolean).slice(0, max)
-  if (typeof v === 'string') return v.split(/[\n,]/).map(s => s.trim()).filter(Boolean).slice(0, max)
-  return []
-}
-function num(v: unknown): number | undefined {
-  const n = typeof v === 'number' ? v : parseFloat(String(v))
-  return isFinite(n) && n > 0 ? n : undefined
-}
+import { sendConfirmationLink } from '../../../lib/notify'
+import { str, strList, num } from '../../../lib/validators'
 
 export async function GET(req: NextRequest) {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -78,7 +65,26 @@ export async function POST(req: NextRequest) {
     }
     await saveBooking(booking)
     await emailOpsBookingCreated(booking)
-    return NextResponse.json({ ok: true, booking })
+
+    // Auto-send the customer their confirmation link the moment a real booking is
+    // created (default on; the form can opt out with sendLinkNow:false). Only fires
+    // when we have a way to reach them and there's an invoice to confirm — never on a
+    // bare draft. Non-fatal: a send failure must not fail booking creation.
+    const wantLink = body.sendLinkNow !== false && body.sendLinkNow !== 'false'
+    const reachable = Boolean(booking.customerEmail || booking.customerPhone)
+    let linkChannels: { email: boolean; sms: boolean } | null = null
+    if (wantLink && reachable && booking.invoiceAmountCents > 0) {
+      try {
+        linkChannels = await sendConfirmationLink(booking)
+        booking.confirmationLinkSentAt = Date.now()
+        booking.confirmationLinkSentBy = 'admin (auto)'
+        booking.status = 'confirmation_link_sent'
+        await saveBooking(booking)
+      } catch (e) {
+        console.error('[admin/bookings POST] auto send-link failed', e)
+      }
+    }
+    return NextResponse.json({ ok: true, booking, linkChannels })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'save failed'
     if (msg === 'UPSTASH_NOT_CONFIGURED') return NextResponse.json({ error: 'UPSTASH_NOT_CONFIGURED' }, { status: 503 })

@@ -1,21 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
 import { rateLimit } from '../../lib/rate-limit'
-
-function escapeHtml(value: unknown): string {
-  if (typeof value !== 'string') return ''
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
-function isValidEmail(email: unknown): email is string {
-  if (typeof email !== 'string') return false
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length < 255
-}
+import { escapeHtml, isValidEmail } from '../../lib/validators'
 
 // Look up a US ZIP via zippopotam.us (free, no key required).
 async function lookupZip(zip: string): Promise<{ lat: number; lon: number; city: string; state: string } | null> {
