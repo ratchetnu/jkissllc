@@ -173,6 +173,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
         ${row('Phone', b.customerPhone)}
         ${row('Service', SERVICE_LABELS[b.serviceType])}
         ${row('Service Date', b.selectedDate ? `${b.selectedDate}${b.selectedWindow ? ` · ${b.selectedWindow}` : ''}` : undefined)}
+        ${row('Your Crew', [b.assignedTo, b.assignedHelper].filter(Boolean).join(' & ') || undefined)}
         ${row('Invoice Date', b.invoiceDate)}
       </table>
 
@@ -196,8 +197,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
       ${reviewSection}
 
       <div style="margin-top:22px;background:#0b0b0c;border-radius:12px;padding:20px;text-align:center;color:#fff">
-        <p style="margin:0 0 6px;font-size:16px;font-weight:800">Know someone who needs us?</p>
-        <p style="margin:0;font-size:13px;color:#b5b7bd;line-height:1.55">Refer a friend — have them mention <strong style="color:#fff">${esc(b.customerName)}</strong> when they book and they&apos;ll get <strong style="color:#fff">$25 off</strong> their first job. Text us at (817) 909-4312.</p>
+        <p style="margin:0 0 6px;font-size:16px;font-weight:800">Thanks — here&apos;s 10% off your next job</p>
+        ${b.loyaltyCode
+          ? `<p style="margin:0 0 12px;font-size:13px;color:#b5b7bd;line-height:1.55">Use this code for <strong style="color:#fff">10% off</strong> your next booking — or share it with a friend for their first job.</p>
+             <p style="margin:0;display:inline-block;background:#E0002A;color:#fff;font-weight:800;letter-spacing:2px;font-size:18px;padding:10px 20px;border-radius:8px">${esc(b.loyaltyCode)}</p>
+             <p style="margin:10px 0 0;font-size:12px;color:#888">Enter it on your booking page, or mention it when you call (817) 909-4312.</p>`
+          : `<p style="margin:0;font-size:13px;color:#b5b7bd;line-height:1.55">Refer a friend and ask us about 10% off your next service. Text us at (817) 909-4312.</p>`}
       </div>
     </div>
     <div class="ft">J Kiss LLC · (817) 909-4312 · info@jkissllc.com · US DOT 3484556 / MC 01155352 · Generated ${fmtTs(Date.now())}</div>

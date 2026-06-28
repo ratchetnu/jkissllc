@@ -76,6 +76,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
         ${row('Invoice Date', b.invoiceDate)}
         ${row('Service Date', b.selectedDate)}
         ${row('Arrival Window', b.selectedWindow)}
+        ${row('Your Crew', [b.assignedTo, b.assignedHelper].filter(Boolean).join(' & ') || undefined)}
         ${row('Time Verified', fmtTs(b.customerTimeVerifiedAt))}
       </table>
 

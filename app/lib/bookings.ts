@@ -149,7 +149,9 @@ export type Booking = {
 
   // Internal (never exposed to the customer)
   internalNotes?: string
-  assignedTo?: string          // crew/staff name assigned to the job
+  assignedTo?: string          // lead crew/rep assigned to the job (shown to customer)
+  assignedHelper?: string      // helper / second rep (shown to customer)
+  loyaltyCode?: string         // 10% off code issued when paid in full (reuse/referral)
   archived?: boolean           // hidden from the default list (soft delete)
   archivedAt?: number
 

@@ -10,6 +10,7 @@ import { getPolicyVersion, getCurrentPolicy } from '../../../../lib/policy'
 import { sendConfirmationLink, notifyJobCompleted, notifyBookingConfirmed, notifyPaidInFull } from '../../../../lib/notify'
 import { emailOpsPaymentReceived, emailPaymentReceiptCustomer } from '../../../../lib/booking-emails'
 import { str, strList, num } from '../../../../lib/validators'
+import { ensureLoyaltyCode } from '../../../../lib/promo'
 
 const METHODS: PaymentMethod[] = ['stripe', 'zelle', 'apple_cash', 'cash', 'other']
 
@@ -84,6 +85,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if ('selectedWindow' in f) b.selectedWindow = str(f.selectedWindow, 40)
       if ('internalNotes' in f) b.internalNotes = str(f.internalNotes, 2000)
       if ('assignedTo' in f) b.assignedTo = str(f.assignedTo, 80)
+      if ('assignedHelper' in f) b.assignedHelper = str(f.assignedHelper, 80)
       if ('collectInPerson' in f) b.collectInPerson = f.collectInPerson === true || f.collectInPerson === 'true' || f.collectInPerson === 'on'
       if (f.status && (Object.keys(STATUS_SET) as BookingStatus[]).includes(f.status)) b.status = f.status as BookingStatus
       break
@@ -182,7 +184,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       break
     }
     case 'assign': {
-      b.assignedTo = str(body.assignedTo, 80)
+      if ('assignedTo' in body) b.assignedTo = str(body.assignedTo, 80)
+      if ('assignedHelper' in body) b.assignedHelper = str(body.assignedHelper, 80)
       break
     }
     default:
@@ -196,14 +199,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!b.selectedDate && b.amountPaidCents > 0 && b.availableDates.length === 1) {
     b.selectedDate = b.availableDates[0]
   }
+  // On the transition to paid-in-full, issue a 10%-off loyalty/referral code (once)
+  // before persisting so the receipt + email can show it.
+  const nowPaidInFull = !wasPaidInFull && paymentSummaryStatus(b) === 'paid_in_full'
+  if (nowPaidInFull && !b.loyaltyCode) {
+    try { b.loyaltyCode = await ensureLoyaltyCode(b.token, b.bookingNumber, Date.now()) } catch (e) { console.error('[loyalty]', e) }
+  }
   await saveBooking(b)
 
   // Side-effect notifications after persistence.
   if (action === 'mark-completed') await notifyJobCompleted(b)
   if (!wasConfirmed && b.status === 'confirmed' && action !== 'send-link') await notifyBookingConfirmed(b)
   // On the transition to paid-in-full, send the customer their final paid receipt
-  // link (which carries the optional review prompt).
-  if (!wasPaidInFull && paymentSummaryStatus(b) === 'paid_in_full') await notifyPaidInFull(b)
+  // link (which carries the optional review prompt + their loyalty code).
+  if (nowPaidInFull) await notifyPaidInFull(b)
 
   return NextResponse.json({ ok: true, booking: b, ...extra })
 }

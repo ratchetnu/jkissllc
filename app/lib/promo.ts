@@ -67,6 +67,21 @@ export type PromoValidation =
   | { ok: true; promo: PromoCode; discountCents: number }
   | { ok: false; error: string }
 
+// Issue (once) a 10%-off loyalty/referral code for a paid-in-full booking. The
+// customer can use it on their next job or share it with a friend. Idempotent.
+export async function ensureLoyaltyCode(token: string, bookingNumber: string, now: number): Promise<string> {
+  const code = `THANKS-${token.slice(0, 5).toUpperCase()}`
+  const existing = await getPromo(code)
+  if (!existing) {
+    await savePromo({
+      code, type: 'percent', value: 10, active: true,
+      description: `Loyalty / referral — ${bookingNumber}`,
+      maxUses: 10, uses: 0, createdAt: now, updatedAt: now,
+    })
+  }
+  return code
+}
+
 export function validatePromo(p: PromoCode | null, subtotalCents: number, now: number): PromoValidation {
   if (!p || !p.active) return { ok: false, error: 'That code isn’t valid.' }
   if (p.expiresAt && now > p.expiresAt) return { ok: false, error: 'That code has expired.' }

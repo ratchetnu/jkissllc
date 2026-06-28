@@ -1,10 +1,11 @@
 import type Stripe from 'stripe'
 import {
-  getBookingByToken, saveBooking, recompute,
+  getBookingByToken, saveBooking, recompute, paymentSummaryStatus,
   type Booking, type Payment, type PaymentType,
 } from './bookings'
 import { emailOpsPaymentReceived, emailPaymentReceiptCustomer } from './booking-emails'
-import { notifyBookingConfirmed } from './notify'
+import { notifyBookingConfirmed, notifyPaidInFull } from './notify'
+import { ensureLoyaltyCode } from './promo'
 
 // Record a paid Stripe Checkout Session against its booking. Idempotent: a
 // session is only ever applied once (deduped by session id), so the webhook and
@@ -26,6 +27,7 @@ export async function recordStripeSessionPayment(session: Stripe.Checkout.Sessio
   const now = Date.now()
 
   const wasConfirmed = b.status === 'confirmed'
+  const wasPaidInFull = paymentSummaryStatus(b) === 'paid_in_full'
   const payment: Payment = {
     id: crypto.randomUUID(),
     type, method: 'stripe', status: 'confirmed',
@@ -36,10 +38,15 @@ export async function recordStripeSessionPayment(session: Stripe.Checkout.Sessio
   }
   b.payments.push(payment)
   recompute(b)
+  const nowPaidInFull = !wasPaidInFull && paymentSummaryStatus(b) === 'paid_in_full'
+  if (nowPaidInFull && !b.loyaltyCode) {
+    try { b.loyaltyCode = await ensureLoyaltyCode(b.token, b.bookingNumber, Date.now()) } catch (e) { console.error('[loyalty]', e) }
+  }
   await saveBooking(b)
 
   await emailOpsPaymentReceived(b, payment)
   await emailPaymentReceiptCustomer(b, payment)
   if (!wasConfirmed && b.status === 'confirmed') await notifyBookingConfirmed(b)
+  if (nowPaidInFull) await notifyPaidInFull(b)
   return b
 }

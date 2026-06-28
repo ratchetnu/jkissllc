@@ -36,6 +36,8 @@ export type CustomerBooking = {
   availableWindows: string[]
   selectedDate?: string
   selectedWindow?: string
+  assignedTo?: string
+  assignedHelper?: string
   customerNotes?: string
   gateCode?: string
   parkingNotes?: string
@@ -191,6 +193,7 @@ export default function BookingClient({
             <Row k="Drop-off" v={b.dropoffAddress} />
             <Row k="Job Site" v={b.jobSiteAddress} />
             <Row k="Crew" v={b.crewSize ? `${b.crewSize}-person team` : undefined} />
+            <Row k="Your Crew" v={[b.assignedTo, b.assignedHelper].filter(Boolean).join(' & ') || undefined} />
             <Row k="Estimated Time" v={b.estimatedHours ? `${b.estimatedHours} hours` : undefined} />
             {b.description && <p className="text-sm mt-4" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>{b.description}</p>}
             {b.items.length > 0 && (

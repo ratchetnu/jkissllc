@@ -154,6 +154,11 @@ export async function emailPaidInFullCustomer(b: Booking): Promise<void> {
       <a href="${receipt}" style="background:${RED};color:#fff;font-weight:700;text-decoration:none;padding:14px 28px;border-radius:10px;display:inline-block">View Your Paid Receipt →</a>
     </p>
     ${moneyBlock(b)}
+    ${b.loyaltyCode ? `<div style="margin-top:22px;background:#0b0b0c;border-radius:12px;padding:18px;text-align:center;color:#fff">
+      <p style="margin:0 0 6px;font-size:15px;font-weight:800">10% off your next job</p>
+      <p style="margin:0 0 12px;font-size:13px;color:#b5b7bd;line-height:1.55">Use this code next time, or share it with a friend for their first booking:</p>
+      <p style="margin:0;display:inline-block;background:${RED};color:#fff;font-weight:800;letter-spacing:2px;font-size:18px;padding:10px 20px;border-radius:8px">${esc(b.loyaltyCode)}</p>
+    </div>` : ''}
     <div style="margin-top:22px;background:#fafafa;border:1px solid #eee;border-radius:12px;padding:18px;text-align:center">
       <p style="margin:0 0 6px;font-size:15px;font-weight:700">How did we do?</p>
       <p style="margin:0 0 14px;font-size:13px;color:#666;line-height:1.55">Leave a quick star rating right on your receipt — about 30 seconds. (Totally optional.)</p>
@@ -193,7 +198,7 @@ export async function emailJobTomorrowCustomer(b: Booking): Promise<void> {
   if (!b.customerEmail) return
   const body = `
     <p style="font-size:15px;line-height:1.6">Hi ${esc(b.customerName)}, a quick heads-up — your ${esc(SERVICE_LABELS[b.serviceType])} with J Kiss LLC is <strong>tomorrow</strong>.</p>
-    ${rows([['Date', b.selectedDate], ['Arrival Window', b.selectedWindow], ['Service', SERVICE_LABELS[b.serviceType]]])}
+    ${rows([['Date', b.selectedDate], ['Arrival Window', b.selectedWindow], ['Service', SERVICE_LABELS[b.serviceType]], ['Your Crew', [b.assignedTo, b.assignedHelper].filter(Boolean).join(' & ') || undefined]])}
     ${locationBlock(b)}
     <p style="font-size:14px;line-height:1.6;margin-top:14px">Please make sure the crew has clear access. Questions? Call or text (817) 909-4312.</p>`
   await send({ to: [b.customerEmail], subject: `Reminder: your J Kiss LLC service is tomorrow — ${b.bookingNumber}`, html: shell('See you tomorrow', body) })

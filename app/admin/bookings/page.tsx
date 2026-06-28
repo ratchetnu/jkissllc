@@ -525,14 +525,23 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
         <KV k="Pickup" v={b.pickupAddress} /><KV k="Drop-off" v={b.dropoffAddress} /><KV k="Job Site" v={b.jobSiteAddress} />
         <KV k="Service Date" v={serviceDateLong(b)} />
         <div className="flex items-center gap-2 mt-2 flex-wrap">
-          <span className="text-sm font-semibold" style={{ color: 'var(--muted)', minWidth: 90 }}>Assigned To</span>
+          <span className="text-sm font-semibold" style={{ color: 'var(--muted)', minWidth: 90 }}>Lead</span>
           <select value={b.assignedTo ?? ''} disabled={busy === 'assign'} onChange={e => run('assign', { assignedTo: e.target.value })}
-            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 9, color: '#f3f4f6', fontSize: 14, padding: '8px 12px', cursor: 'pointer', minWidth: 160 }}>
+            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 9, color: '#f3f4f6', fontSize: 14, padding: '8px 12px', cursor: 'pointer', minWidth: 150 }}>
             <option value="">Unassigned</option>
             {staffNames.map(n => <option key={n} value={n}>{n}</option>)}
             {b.assignedTo && !staffNames.includes(b.assignedTo) && <option value={b.assignedTo}>{b.assignedTo}</option>}
           </select>
           {staffNames.length === 0 && <a href="/admin/staff" className="text-xs font-semibold" style={{ color: 'var(--red)' }}>+ Add crew</a>}
+        </div>
+        <div className="flex items-center gap-2 mt-2 flex-wrap">
+          <span className="text-sm font-semibold" style={{ color: 'var(--muted)', minWidth: 90 }}>Helper</span>
+          <select value={b.assignedHelper ?? ''} disabled={busy === 'assign'} onChange={e => run('assign', { assignedHelper: e.target.value })}
+            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 9, color: '#f3f4f6', fontSize: 14, padding: '8px 12px', cursor: 'pointer', minWidth: 150 }}>
+            <option value="">None</option>
+            {staffNames.map(n => <option key={n} value={n}>{n}</option>)}
+            {b.assignedHelper && !staffNames.includes(b.assignedHelper) && <option value={b.assignedHelper}>{b.assignedHelper}</option>}
+          </select>
         </div>
         {b.description && <p className="text-sm mt-3" style={{ color: 'var(--muted)' }}>{b.description}</p>}
         {b.items.length > 0 && <ul className="text-sm mt-2 space-y-0.5" style={{ color: 'var(--muted)' }}>{b.items.map((i, n) => <li key={n}>• {i}</li>)}</ul>}
@@ -776,7 +785,8 @@ function BookingForm({ booking, prefill, onClose, onSaved }: { booking?: Booking
         <div><label style={lab}>Discount ($)</label><input name="discountAmount" inputMode="decimal" defaultValue={dollars(booking?.discountCents) || prefill?.discount} placeholder="0.00" style={fStyle} /></div>
         <div><label style={lab}>Crew Size</label><input name="crewSize" inputMode="numeric" defaultValue={booking?.crewSize ?? prefill?.crewSize ?? ''} placeholder="2" style={fStyle} /></div>
         <div><label style={lab}>Estimated Hours</label><input name="estimatedHours" inputMode="numeric" defaultValue={booking?.estimatedHours ?? prefill?.estimatedHours ?? ''} placeholder="5" style={fStyle} /></div>
-        <div><label style={lab}>Assigned To (crew)</label><input name="assignedTo" list="staff-roster" defaultValue={booking?.assignedTo ?? prefill?.assignedTo} placeholder="Crew member" style={fStyle} /><datalist id="staff-roster">{staffNames.map(n => <option key={n} value={n} />)}</datalist></div>
+        <div><label style={lab}>Assigned To (lead)</label><input name="assignedTo" list="staff-roster" defaultValue={booking?.assignedTo ?? prefill?.assignedTo} placeholder="Crew member" style={fStyle} /><datalist id="staff-roster">{staffNames.map(n => <option key={n} value={n} />)}</datalist></div>
+        <div><label style={lab}>Helper (crew)</label><input name="assignedHelper" list="staff-roster" defaultValue={booking?.assignedHelper} placeholder="Second crew member" style={fStyle} /></div>
       </div>
       <div><label style={lab}>Pickup Address</label><input name="pickupAddress" defaultValue={booking?.pickupAddress ?? prefill?.pickup} style={fStyle} /></div>
       <div><label style={lab}>Drop-off Address</label><input name="dropoffAddress" defaultValue={booking?.dropoffAddress ?? prefill?.dropoff} style={fStyle} /></div>
