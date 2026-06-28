@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
-  generateToken, nextBookingNumber, nextInvoiceNumber, saveBooking,
+  generateToken, nextBookingNumber, nextInvoiceNumber, saveBooking, sanitizePhotos,
   SERVICE_TYPES, type Booking, type ServiceType,
 } from '../../lib/bookings'
 import { isDateBookable, getDepositCents } from '../../lib/availability'
@@ -55,6 +55,7 @@ export async function POST(req: NextRequest) {
     jobSiteAddress: s(body.address, 300),
     description: s(body.notes, 2000),
     items: [],
+    invoicePhotos: sanitizePhotos(Array.isArray(body.photos) ? body.photos.map((u: unknown) => ({ url: String(u) })) : []),
     invoiceAmountCents: 0,          // ops sets the real total after assessing the job
     depositAmountCents: depositCents,
     amountPaidCents: 0,

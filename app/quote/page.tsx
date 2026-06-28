@@ -20,11 +20,26 @@ function InstantBook() {
   const [date, setDate] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [photos, setPhotos] = useState<string[]>([])
+  const [photoBusy, setPhotoBusy] = useState(false)
 
   useEffect(() => {
     if (!open || avail) return
     fetch('/api/availability').then(r => r.json()).then(j => { if (j.ok) setAvail({ dates: j.dates, depositCents: j.depositCents }) }).catch(() => {})
   }, [open, avail])
+
+  async function addPhotos(files: FileList) {
+    setPhotoBusy(true); setErr('')
+    try {
+      for (const file of Array.from(files).slice(0, 6)) {
+        const dataUrl = await downscaleToDataUrl(file)
+        const res = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }) })
+        const j = await res.json()
+        if (res.ok && j.url) setPhotos(p => [...p, j.url])
+      }
+    } catch { setErr('A photo failed to upload — you can still book.') }
+    finally { setPhotoBusy(false) }
+  }
 
   const inp: React.CSSProperties = { width: '100%', padding: '12px 14px', background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.10)', borderRadius: 10, color: '#f3f4f6', fontSize: 16, outline: 'none' }
   const sel: React.CSSProperties = { ...inp, cursor: 'pointer', colorScheme: 'dark' }
@@ -35,7 +50,7 @@ function InstantBook() {
     e.preventDefault(); setBusy(true); setErr('')
     const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>
     try {
-      const res = await fetch('/api/book', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...f, service, date }) })
+      const res = await fetch('/api/book', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...f, service, date, photos }) })
       const j = await res.json()
       if (!res.ok) { setErr(j.error ?? 'Could not book that date.'); setBusy(false); return }
       if (j.url) { window.location.href = j.url; return }
@@ -83,6 +98,26 @@ function InstantBook() {
                 <div className="sm:col-span-2"><label style={lbl}>Service address</label><input name="address" style={inp} /></div>
                 <div className="sm:col-span-2"><label style={lbl}>Notes <span style={{ fontWeight: 400 }}>(optional)</span></label><input name="notes" placeholder="What's the job?" style={inp} /></div>
                 <div className="sm:col-span-2"><label style={lbl}>Promo code <span style={{ fontWeight: 400 }}>(optional)</span></label><input name="promo" style={{ ...inp, textTransform: 'uppercase' }} /></div>
+              </div>
+
+              <div>
+                <label style={lbl}>Photos <span style={{ fontWeight: 400 }}>(optional — helps us prep the right crew & truck)</span></label>
+                <label className="btn-ghost" style={{ padding: '10px 16px', fontSize: 14, cursor: photoBusy ? 'wait' : 'pointer', display: 'inline-flex' }}>
+                  {photoBusy ? 'Uploading…' : photos.length ? '+ Add more' : '📷 Add photos'}
+                  <input type="file" accept="image/*" multiple onChange={e => { const fs = e.target.files; e.target.value = ''; if (fs?.length) addPhotos(fs) }} disabled={photoBusy} style={{ display: 'none' }} />
+                </label>
+                {photos.length > 0 && (
+                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 mt-3">
+                    {photos.map((url, i) => (
+                      <div key={url} style={{ position: 'relative', aspectRatio: '1 / 1', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <button type="button" onClick={() => setPhotos(p => p.filter((_, idx) => idx !== i))} aria-label="Remove photo"
+                          style={{ position: 'absolute', top: 2, right: 2, width: 22, height: 22, borderRadius: 999, border: 'none', background: 'rgba(0,0,0,.65)', color: '#fff', cursor: 'pointer', fontSize: 13, lineHeight: '22px' }}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               {err && <p className="text-sm" role="alert" style={{ color: '#f87171' }}>{err}</p>}
               <button type="submit" disabled={busy || !date} className="btn w-full" style={{ justifyContent: 'center' }}>

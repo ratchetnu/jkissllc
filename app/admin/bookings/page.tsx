@@ -545,6 +545,16 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
         </div>
         {b.description && <p className="text-sm mt-3" style={{ color: 'var(--muted)' }}>{b.description}</p>}
         {b.items.length > 0 && <ul className="text-sm mt-2 space-y-0.5" style={{ color: 'var(--muted)' }}>{b.items.map((i, n) => <li key={n}>• {i}</li>)}</ul>}
+        {b.invoicePhotos && b.invoicePhotos.length > 0 && (
+          <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 mt-3">
+            {b.invoicePhotos.map((p, n) => (
+              <a key={n} href={p.url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', aspectRatio: '1 / 1', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={p.url} alt={p.name ?? `Photo ${n + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              </a>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Money */}
