@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import AdminGate from '../AdminGate'
+import { SkeletonList } from '../../components/Skeleton'
 
 type Review = {
   token: string
@@ -80,9 +81,9 @@ function ReviewsManager() {
           style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>View public page →</a>
       </div>
 
-      {err && <p className="text-sm mb-3" style={{ color: '#f87171' }}>{err}</p>}
+      {err && <p className="text-sm mb-3" role="alert" style={{ color: '#f87171' }}>{err}</p>}
       {loading ? (
-        <p className="text-sm" style={{ color: 'var(--muted)' }}>Loading…</p>
+        <SkeletonList rows={3} />
       ) : reviews.length === 0 ? (
         <div className="glass-card p-8 text-center" style={{ borderRadius: '16px' }}>
           <p className="text-sm" style={{ color: 'var(--muted)' }}>No reviews yet. They arrive once a customer rates a paid-in-full booking from their receipt.</p>

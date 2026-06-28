@@ -17,6 +17,31 @@
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 
+/* Visible keyboard-focus ring for accessibility (mouse clicks stay clean). */
+:focus-visible {
+  outline: 2px solid #ff4d6d;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Skeleton loading shimmer */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: rgba(255,255,255,.05);
+  border-radius: 10px;
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.06), transparent);
+  animation: skeleton-shimmer 1.4s infinite;
+}
+@keyframes skeleton-shimmer { 100% { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) { .skeleton::after { animation: none; } }
+
 body {
   background: var(--bg);
   color: var(--text);

@@ -327,7 +327,7 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
               <button type="submit" disabled={promoBusy || !promoInput.trim()} className="btn-ghost" style={{ padding: '11px 18px', fontSize: 14 }}>{promoBusy ? '…' : 'Apply'}</button>
             </form>
           )}
-          {promoErr && <p className="text-sm mb-3" style={{ color: '#f87171' }}>{promoErr}</p>}
+          {promoErr && <p className="text-sm mb-3" role="alert" style={{ color: '#f87171' }}>{promoErr}</p>}
           {b.collectInPerson && (
             <div className="rounded-xl px-4 py-3 mb-4 text-sm" style={{ background: 'rgba(52,211,153,.08)', border: '1px solid rgba(52,211,153,.25)', color: 'var(--text)', lineHeight: 1.6 }}>
               {b.amountPaidCents > 0 && <>✓ Deposit of <strong>{usd(b.amountPaidCents)}</strong> received. </>}
@@ -349,7 +349,7 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
           <p className="text-xs mt-3" style={{ color: 'rgba(255,255,255,.4)' }}>
             💳 Total includes a {(FEE_PCT * 100).toFixed(1)}% + {usd(FEE_FIXED)} card processing fee ({usd(feeOnBalance)} on this balance). Pay by Zelle below to skip it.
           </p>
-          {err && <p className="text-sm mt-3" style={{ color: '#f87171' }}>{err}</p>}
+          {err && <p className="text-sm mt-3" role="alert" style={{ color: '#f87171' }}>{err}</p>}
 
           <div className="mt-5 pt-5" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
             <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>

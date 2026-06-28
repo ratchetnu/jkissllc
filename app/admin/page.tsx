@@ -1,7 +1,9 @@
 'use client'
 
+import Link from 'next/link'
 import { useState, useEffect, useCallback } from 'react'
 import { useIdleLogout } from './useIdleLogout'
+import { SkeletonStats, SkeletonList } from '../components/Skeleton'
 import type { BookingAnalytics, NamedTotal, DayPoint } from '../lib/analytics'
 
 type Range = '7d' | '30d' | '90d'
@@ -295,13 +297,13 @@ export default function AdminPage() {
   const PortalHeader = () => (
     <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4"
       style={{ background: 'rgba(11,11,12,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
-      <a href="/" className="text-xl font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
+      <Link href="/" className="text-xl font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
         J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
-      </a>
+      </Link>
       {authed ? (
         <div className="flex items-center gap-1.5 text-sm font-semibold">
-          <a href="/" className="px-3 py-2 rounded-xl transition hover:text-white"
-            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Home</a>
+          <Link href="/" className="px-3 py-2 rounded-xl transition hover:text-white"
+            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Home</Link>
           <a href="/admin/bookings" className="px-3 py-2 rounded-xl transition hover:text-white"
             style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Bookings</a>
           <a href="/admin/promos" className="px-3 py-2 rounded-xl transition hover:text-white"
@@ -319,11 +321,11 @@ export default function AdminPage() {
           </button>
         </div>
       ) : (
-        <a href="/"
+        <Link href="/"
           className="text-sm font-semibold px-4 py-2 rounded-xl transition hover:text-white"
           style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>
           ← Back to Home
-        </a>
+        </Link>
       )}
     </header>
   )
@@ -402,7 +404,7 @@ export default function AdminPage() {
                   </button>
                 ))}
               </div>
-              <button onClick={() => fetchAnalytics(range)}
+              <button onClick={() => fetchAnalytics(range)} aria-label="Refresh analytics"
                 className="px-4 py-2 text-sm font-semibold rounded-xl"
                 style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>
                 ↻
@@ -413,7 +415,7 @@ export default function AdminPage() {
             <div className="flex items-center gap-3">
               <button onClick={() => { setShowNewForm(true); setEditingBol(null) }}
                 className="btn" style={{ padding: '8px 16px', fontSize: '13px' }}>+ New Shipment</button>
-              <button onClick={fetchShipments}
+              <button onClick={fetchShipments} aria-label="Refresh shipments"
                 className="px-4 py-2 text-sm font-semibold rounded-xl"
                 style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>↻</button>
             </div>
@@ -433,7 +435,13 @@ export default function AdminPage() {
         </div>
 
         {/* ── Overview (executive dashboard) ─────────────────────────────── */}
-        {tab === 'overview' && ovLoading && <div className="text-center py-20 text-sm" style={{ color: 'var(--muted)' }}>Loading…</div>}
+        {tab === 'overview' && ovLoading && (
+          <div className="space-y-6">
+            <SkeletonStats count={4} />
+            <SkeletonStats count={4} />
+            <div className="glass-card p-6" style={{ borderRadius: 16 }}><div className="skeleton" style={{ height: 130 }} aria-hidden="true" /></div>
+          </div>
+        )}
         {tab === 'overview' && ovError && !ovLoading && (
           <div className="rounded-2xl p-5 text-sm text-center mb-6" style={{ background: 'rgba(224,0,42,.08)', border: '1px solid rgba(224,0,42,.2)', color: '#f87171' }}>
             {ovError.includes('UPSTASH') ? 'Connect Upstash Redis to enable business reporting.' : ovError}
@@ -515,7 +523,9 @@ export default function AdminPage() {
           </>
         )}
 
-        {tab === 'analytics' && loading && <div className="text-center py-20 text-sm" style={{ color: 'var(--muted)' }}>Loading…</div>}
+        {tab === 'analytics' && loading && (
+          <div className="space-y-6"><SkeletonStats count={4} /><div className="glass-card p-6" style={{ borderRadius: 16 }}><div className="skeleton" style={{ height: 64 }} aria-hidden="true" /></div></div>
+        )}
 
         {/* Upstash not configured */}
         {tab === 'analytics' && noUpstash && !loading && (

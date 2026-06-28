@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { upload } from '@vercel/blob/client'
 import AdminGate from '../AdminGate'
+import { SkeletonList } from '../../components/Skeleton'
 import type { Booking, Payment, InvoicePhoto } from '../../lib/bookings'
 
 // ── Local label maps + helpers (avoid bundling server lib runtime) ───────────
@@ -228,14 +229,14 @@ function Dashboard() {
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => { setShowNew(true); setSelected(null) }} className="btn" style={{ padding: '8px 14px', fontSize: '13px' }}>+ New Booking</button>
-          <button onClick={load} className="px-3 py-2 text-sm rounded-xl" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>↻</button>
+          <button onClick={load} aria-label="Refresh bookings" className="px-3 py-2 text-sm rounded-xl" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>↻</button>
         </div>
       </div>
 
-      <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search customer, phone, email, booking #…" style={{ ...iStyle, marginBottom: '16px' }} />
+      <input value={search} onChange={e => setSearch(e.target.value)} aria-label="Search bookings" placeholder="Search customer, phone, email, booking #…" style={{ ...iStyle, marginBottom: '16px' }} />
 
-      {error && <p className="text-sm mb-4" style={{ color: '#f87171' }}>{error}</p>}
-      {loading && <p className="text-sm" style={{ color: 'var(--muted)' }}>Loading…</p>}
+      {error && <p className="text-sm mb-4" style={{ color: '#f87171' }} role="alert">{error}</p>}
+      {loading && <SkeletonList rows={6} />}
 
       {showNew && <BookingForm prefill={prefill ?? undefined} onClose={() => { setShowNew(false); setPrefill(null) }} onSaved={async () => { setShowNew(false); setPrefill(null); await load() }} />}
 
@@ -364,9 +365,9 @@ function CalendarView({ items, onSelect }: { items: Booking[]; onSelect: (token:
   return (
     <div className="glass-card p-4 sm:p-5" style={{ borderRadius: '16px' }}>
       <div className="flex items-center justify-between mb-4">
-        <button onClick={() => shift(-1)} className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>←</button>
+        <button onClick={() => shift(-1)} aria-label="Previous month" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>←</button>
         <p className="text-base font-black text-white">{monthLabel}</p>
-        <button onClick={() => shift(1)} className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>→</button>
+        <button onClick={() => shift(1)} aria-label="Next month" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>→</button>
       </div>
       <div className="grid grid-cols-7 gap-1 text-center mb-1">
         {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => <div key={i} className="text-xs font-bold py-1" style={{ color: 'rgba(255,255,255,.35)' }}>{d}</div>)}

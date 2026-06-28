@@ -228,7 +228,7 @@ function Nav() {
         <a href="/quote" className="hidden md:inline-flex btn" style={{ padding: '10px 20px', fontSize: '13px' }}>Instant Quote</a>
 
         {/* Mobile hamburger */}
-        <button className="md:hidden flex flex-col gap-1.5 p-2" onClick={() => setOpen(!open)}>
+        <button className="md:hidden flex flex-col gap-1.5 p-2" onClick={() => setOpen(!open)} aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open}>
           <span className="block w-6 h-0.5 bg-white transition-all" style={{ transform: open ? 'rotate(45deg) translate(4px, 4px)' : 'none' }} />
           <span className="block w-6 h-0.5 bg-white transition-all" style={{ opacity: open ? 0 : 1 }} />
           <span className="block w-6 h-0.5 bg-white transition-all" style={{ transform: open ? 'rotate(-45deg) translate(4px, -4px)' : 'none' }} />

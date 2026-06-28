@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import AdminGate from '../AdminGate'
+import { SkeletonList } from '../../components/Skeleton'
 
 type Promo = {
   code: string
@@ -93,7 +94,7 @@ function PromosManager() {
       </form>
 
       {loading ? (
-        <p className="text-sm" style={{ color: 'var(--muted)' }}>Loading…</p>
+        <SkeletonList rows={3} />
       ) : items.length === 0 ? (
         <div className="glass-card p-8 text-center" style={{ borderRadius: '16px' }}>
           <p className="text-sm" style={{ color: 'var(--muted)' }}>No promo codes yet. Add one above — customers enter it on their booking page.</p>

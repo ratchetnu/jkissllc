@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import AdminGate from '../AdminGate'
+import { SkeletonList } from '../../components/Skeleton'
 
 type Staff = { id: string; name: string; phone?: string; role?: string; active: boolean; createdAt: number; updatedAt: number }
 
@@ -78,7 +79,7 @@ function StaffManager() {
       </form>
 
       {loading ? (
-        <p className="text-sm" style={{ color: 'var(--muted)' }}>Loading…</p>
+        <SkeletonList rows={3} />
       ) : items.length === 0 ? (
         <div className="glass-card p-8 text-center" style={{ borderRadius: '16px' }}>
           <p className="text-sm" style={{ color: 'var(--muted)' }}>No crew yet. Add your team above to assign them to jobs.</p>
