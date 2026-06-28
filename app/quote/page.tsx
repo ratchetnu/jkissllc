@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 
-type Estimate = { low: number; high: number; miles: number; pickupLabel: string; deliveryLabel: string }
+type Estimate = { low: number; high: number; miles: number; fuelCharge?: number; pickupLabel: string; deliveryLabel: string }
 
 // Downscale an image to a small JPEG data URL for the AI photo estimate. Falls
 // back to the original (e.g. HEIC the browser can't decode to canvas).
@@ -136,8 +136,11 @@ export default function QuotePage() {
                   ${estimate.low.toLocaleString()}–${estimate.high.toLocaleString()}
                 </p>
                 <p className="text-sm mt-4" style={{ color: 'var(--muted)' }}>
-                  {estimate.pickupLabel} → {estimate.deliveryLabel} · {estimate.miles} mi
+                  {estimate.pickupLabel} → {estimate.deliveryLabel} · {estimate.miles} mi ({estimate.miles * 2} mi round trip)
                 </p>
+                {!!estimate.fuelCharge && estimate.fuelCharge > 0 && (
+                  <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,.45)' }}>Includes a ${estimate.fuelCharge} fuel charge for the round-trip distance.</p>
+                )}
               </div>
               <div className="pt-6" style={{ borderTop: '1px solid var(--line)' }}>
                 <p className="text-sm text-center leading-relaxed" style={{ color: 'var(--muted)' }}>

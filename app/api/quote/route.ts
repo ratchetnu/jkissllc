@@ -36,6 +36,18 @@ function distanceMiles(a: { lat: number; lon: number }, b: { lat: number; lon: n
   return 2 * R * Math.asin(Math.sqrt(h))
 }
 
+// Fuel surcharge based on the truck's ROUND-TRIP miles (2× the one-way job
+// distance). Operations run a 24 ft box truck. Returns whole USD.
+//  • round trip ≤ 75 mi: no fuel charge
+//  • 75 < round trip < 150 mi: flat $100
+//  • round trip ≥ 150 mi: $100 + $0.65 per round-trip mile beyond 150, rounded to $5
+function fuelChargeDollars(oneWayMiles: number): number {
+  const roundTrip = oneWayMiles * 2
+  if (roundTrip <= 75) return 0
+  if (roundTrip < 150) return 100
+  return Math.round((100 + (roundTrip - 150) * 0.65) / 5) * 5
+}
+
 // Pricing formula — easy to tune. All values USD.
 const PRICING = {
   base: 125,
@@ -133,6 +145,7 @@ export async function POST(request: NextRequest) {
   // Compute estimate (delivery only — job-based services are quoted by hand)
   let low = 0
   let high = 0
+  const fuelCharge = isJobBased ? 0 : fuelChargeDollars(miles)
   if (!isJobBased) {
     const serviceMult = PRICING.serviceMult[serviceType] ?? 1.0
     const timeMult = PRICING.timeMult[timing] ?? 1.0
@@ -140,10 +153,10 @@ export async function POST(request: NextRequest) {
       (PRICING.base + miles * PRICING.perMile + palletCount * PRICING.perPallet) *
       serviceMult *
       timeMult
-    low = Math.round((point * PRICING.rangeLow) / 5) * 5 + addOnTotal
-    high = Math.round((point * PRICING.rangeHigh) / 5) * 5 + addOnTotal
+    low = Math.round((point * PRICING.rangeLow) / 5) * 5 + addOnTotal + fuelCharge
+    high = Math.round((point * PRICING.rangeHigh) / 5) * 5 + addOnTotal + fuelCharge
   }
-  const distanceLabel = `${Math.round(miles)} mi`
+  const distanceLabel = `${Math.round(miles)} mi (${Math.round(miles * 2)} mi round trip)`
 
   const safe = {
     pickupZip:    escapeHtml(pickupZip),
@@ -181,6 +194,7 @@ export async function POST(request: NextRequest) {
             <tr><td style="padding:6px 0;color:#999">Weight</td><td style="padding:6px 0">${safe.weight} lbs</td></tr>
             <tr><td style="padding:6px 0;color:#999">Service Type</td><td style="padding:6px 0">${safe.serviceType}</td></tr>
             <tr><td style="padding:6px 0;color:#999">Timing</td><td style="padding:6px 0">${safe.timing}</td></tr>
+            ${fuelCharge > 0 ? `<tr><td style="padding:6px 0;color:#999">Fuel Charge</td><td style="padding:6px 0">$${fuelCharge} (${Math.round(miles * 2)} mi round trip)</td></tr>` : ''}
             ${addOnLabels.length ? `<tr><td style="padding:6px 0;color:#999">Add-ons</td><td style="padding:6px 0">${escapeHtml(addOnLabels.join(', '))}</td></tr>` : ''}`
 
     // One-tap "Create Booking" deep link: opens the admin new-booking form
@@ -238,7 +252,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      estimate: { low, high, miles: Math.round(miles), pickupLabel: `${from.city}, ${from.state}`, deliveryLabel: `${to.city}, ${to.state}` },
+      estimate: { low, high, miles: Math.round(miles), fuelCharge, pickupLabel: `${from.city}, ${from.state}`, deliveryLabel: `${to.city}, ${to.state}` },
     })
   } catch (err) {
     console.error('[quote]', err)
