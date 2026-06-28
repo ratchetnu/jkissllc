@@ -189,6 +189,7 @@ const KEY_PREFIX = 'bk:'
 const KEY_NUM = 'bk:num:'        // bk:num:{bookingNumber} -> token
 const KEY_INDEX = 'bk:index'     // sorted set, score=updatedAt, member=token
 const KEY_COUNTER = 'bk:counter' // booking-number sequence
+const KEY_INV_COUNTER = 'bk:invcounter' // invoice-number sequence
 
 // ── Tokens + numbers ─────────────────────────────────────────────────────────
 export function generateToken(): string {
@@ -204,6 +205,16 @@ export async function nextBookingNumber(): Promise<string> {
     n = Date.now() % 100000
   }
   return `JK-B-${1000 + n}`
+}
+
+export async function nextInvoiceNumber(): Promise<string> {
+  let n: number
+  try {
+    n = await redis.incr(KEY_INV_COUNTER)
+  } catch {
+    n = Date.now() % 100000
+  }
+  return `JK-INV-${1000 + n}`
 }
 
 // ── CRUD ─────────────────────────────────────────────────────────────────────

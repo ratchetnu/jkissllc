@@ -445,6 +445,13 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
   const [err, setErr] = useState('')
   const [aiMsg, setAiMsg] = useState('')
   const [aiBusy, setAiBusy] = useState('')
+  const [staffNames, setStaffNames] = useState<string[]>([])
+  useEffect(() => {
+    fetch('/api/admin/staff', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => { if (j?.items) setStaffNames(j.items.filter((s: { active: boolean }) => s.active).map((s: { name: string }) => s.name)) })
+      .catch(() => {})
+  }, [])
   const link = typeof window !== 'undefined' ? `${window.location.origin}/booking/${b.token}` : ''
 
   async function draftMessage(intent: string) {
@@ -517,10 +524,15 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
         <KV k="Phone" v={b.customerPhone} /><KV k="Email" v={b.customerEmail} />
         <KV k="Pickup" v={b.pickupAddress} /><KV k="Drop-off" v={b.dropoffAddress} /><KV k="Job Site" v={b.jobSiteAddress} />
         <KV k="Service Date" v={serviceDateLong(b)} />
-        <div className="flex items-center gap-2 mt-1">
-          <KV k="Assigned To" v={b.assignedTo || 'Unassigned'} />
-          <button onClick={() => { const a = prompt('Assign crew member (name):', b.assignedTo ?? ''); if (a !== null) run('assign', { assignedTo: a.trim() }) }}
-            className="text-xs font-semibold px-2.5 py-1 rounded-lg shrink-0" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Assign</button>
+        <div className="flex items-center gap-2 mt-2 flex-wrap">
+          <span className="text-sm font-semibold" style={{ color: 'var(--muted)', minWidth: 90 }}>Assigned To</span>
+          <select value={b.assignedTo ?? ''} disabled={busy === 'assign'} onChange={e => run('assign', { assignedTo: e.target.value })}
+            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 9, color: '#f3f4f6', fontSize: 14, padding: '8px 12px', cursor: 'pointer', minWidth: 160 }}>
+            <option value="">Unassigned</option>
+            {staffNames.map(n => <option key={n} value={n}>{n}</option>)}
+            {b.assignedTo && !staffNames.includes(b.assignedTo) && <option value={b.assignedTo}>{b.assignedTo}</option>}
+          </select>
+          {staffNames.length === 0 && <a href="/admin/staff" className="text-xs font-semibold" style={{ color: 'var(--red)' }}>+ Add crew</a>}
         </div>
         {b.description && <p className="text-sm mt-3" style={{ color: 'var(--muted)' }}>{b.description}</p>}
         {b.items.length > 0 && <ul className="text-sm mt-2 space-y-0.5" style={{ color: 'var(--muted)' }}>{b.items.map((i, n) => <li key={n}>• {i}</li>)}</ul>}
@@ -757,7 +769,7 @@ function BookingForm({ booking, prefill, onClose, onSaved }: { booking?: Booking
         <div><label style={lab}>Phone</label><input name="customerPhone" type="tel" inputMode="tel" autoComplete="tel" defaultValue={booking?.customerPhone ?? prefill?.phone} style={fStyle} /></div>
         <div><label style={lab}>Email</label><input name="customerEmail" type="email" inputMode="email" autoCapitalize="none" autoComplete="email" defaultValue={booking?.customerEmail ?? prefill?.email} style={fStyle} /></div>
         <div><label style={lab}>Service Type</label><select name="serviceType" defaultValue={booking?.serviceType ?? prefill?.service ?? 'moving'} style={{ ...fStyle, cursor: 'pointer' }}>{SERVICE_TYPES.map(s => <option key={s} value={s}>{SERVICE_LABELS[s]}</option>)}</select></div>
-        <div><label style={lab}>Invoice #</label><input name="invoiceNumber" defaultValue={booking?.invoiceNumber} style={fStyle} /></div>
+        <div><label style={lab}>Invoice #</label><input name="invoiceNumber" defaultValue={booking?.invoiceNumber} placeholder="Auto-generated if blank" style={fStyle} /></div>
         <div><label style={lab}>Invoice Date</label><input name="invoiceDate" defaultValue={booking?.invoiceDate ?? todayLong} placeholder="June 16, 2026" style={fStyle} /></div>
         <div><label style={lab}>Invoice Amount ($)</label><input name="invoiceAmount" inputMode="decimal" defaultValue={dollars(booking?.invoiceAmountCents) || prefill?.invoiceAmount} placeholder="550.00" style={fStyle} /></div>
         <div><label style={lab}>Deposit ($)</label><input name="depositAmount" inputMode="decimal" defaultValue={dollars(booking?.depositAmountCents) || prefill?.deposit} placeholder="150.00" style={fStyle} /></div>

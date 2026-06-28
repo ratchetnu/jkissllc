@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireSession } from '../_lib/session'
 import {
-  listBookings, saveBooking, generateToken, nextBookingNumber, dollarsToCents, sanitizePhotos,
+  listBookings, saveBooking, generateToken, nextBookingNumber, nextInvoiceNumber, dollarsToCents, sanitizePhotos,
   SERVICE_TYPES, type Booking, type ServiceType,
 } from '../../../lib/bookings'
 import { emailOpsBookingCreated } from '../../../lib/booking-emails'
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
       customerName,
       customerPhone: str(body.customerPhone, 40),
       customerEmail: str(body.customerEmail, 200),
-      invoiceNumber: str(body.invoiceNumber, 60),
+      invoiceNumber: str(body.invoiceNumber, 60) ?? await nextInvoiceNumber(),
       invoiceDate: str(body.invoiceDate, 40),
       serviceType,
       pickupAddress: str(body.pickupAddress, 300),
