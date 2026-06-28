@@ -53,6 +53,7 @@ export type BookingAnalytics = {
   byZip: NamedTotal[]
   paymentStatus: Record<PaymentSummaryStatus, number>
   disposal: { totalCents: number; actualCents: number; estimateCents: number; netAfterDisposalCents: number; actualEnteredCount: number }
+  refunds: { totalCents: number; grossCollectedCents: number; rate: number; bookingsCount: number }
   reviews?: { count: number; rating: number }
 }
 
@@ -86,6 +87,7 @@ export function computeBookingAnalytics(
   const outstanding: BookingAnalytics['outstanding'] = []
   let total = 0, active = 0, completed = 0, cancelled = 0, bookedThisMonth = 0, completedThisMonth = 0
   let disposalActualCents = 0, disposalEstimateCents = 0, disposalActualEnteredCount = 0
+  let grossCollectedCents = 0, refundedCents = 0, refundedBookings = 0
 
   const loc = parseLocation
   for (const b of bookings) {
@@ -116,14 +118,17 @@ export function computeBookingAnalytics(
       }
     }
 
-    // Collected revenue from confirmed payments
+    // Collected revenue from confirmed payments (negative entries = refunds)
     const { city: cityName, zip: zipCode } = loc(b)
+    let bookingRefunded = false
     for (const p of b.payments) {
       if (p.status !== 'confirmed') continue
       const cents = p.amountCents
       const when = centralDate(p.confirmedAt ?? p.createdAt)
       allTime += cents
       feesAllTime += p.feeCents || 0
+      if (cents > 0) grossCollectedCents += cents
+      else if (cents < 0) { refundedCents += -cents; bookingRefunded = true }
       if (when === todayStr) today += cents
       if (when >= weekStart) week += cents
       if (when >= monthStart) month += cents
@@ -133,6 +138,7 @@ export function computeBookingAnalytics(
       if (cityName) bump(city, cityName, cents)
       if (zipCode) bump(zip, zipCode, cents)
     }
+    if (bookingRefunded) refundedBookings++
   }
 
   // Build the 30-day series (fill gaps with 0)
@@ -166,6 +172,12 @@ export function computeBookingAnalytics(
       estimateCents: disposalEstimateCents,
       netAfterDisposalCents: allTime - (disposalActualCents + disposalEstimateCents),
       actualEnteredCount: disposalActualEnteredCount,
+    },
+    refunds: {
+      totalCents: refundedCents,
+      grossCollectedCents,
+      rate: grossCollectedCents > 0 ? refundedCents / grossCollectedCents : 0,
+      bookingsCount: refundedBookings,
     },
     reviews,
   }

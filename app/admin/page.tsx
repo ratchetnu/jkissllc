@@ -500,7 +500,7 @@ export default function AdminPage() {
                 <StatCard label="Net After Disposal" value={money(overview.disposal.netAfterDisposalCents)} accent sub="collected − disposal cost" />
                 <StatCard label="Disposal Cost" value={money(overview.disposal.totalCents)} sub={overview.disposal.actualEnteredCount > 0 ? `${overview.disposal.actualEnteredCount} actual + est.` : 'estimated'} />
                 <StatCard label="Disposal (Actual)" value={money(overview.disposal.actualCents)} sub={`${overview.disposal.actualEnteredCount} job${overview.disposal.actualEnteredCount === 1 ? '' : 's'} entered`} />
-                <StatCard label="Disposal (Est.)" value={money(overview.disposal.estimateCents)} sub="not yet finalized" />
+                <StatCard label="Refunds" value={money(overview.refunds?.totalCents ?? 0)} sub={`${((overview.refunds?.rate ?? 0) * 100).toFixed(1)}% rate · ${overview.refunds?.bookingsCount ?? 0} job${(overview.refunds?.bookingsCount ?? 0) === 1 ? '' : 's'}`} />
               </div>
             )}
 

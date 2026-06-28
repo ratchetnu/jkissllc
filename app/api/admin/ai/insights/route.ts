@@ -23,6 +23,8 @@ export async function GET(req: NextRequest) {
       byCity: a.byCity.slice(0, 5).map(s => ({ city: s.key, revenue: usd(s.amountCents), jobs: s.count })),
       disposalCost: usd(a.disposal.totalCents),
       netAfterDisposal: usd(a.disposal.netAfterDisposalCents),
+      refunds: usd(a.refunds.totalCents),
+      refundRate: `${(a.refunds.rate * 100).toFixed(1)}%`,
       reviews: a.reviews,
     }
     const r = await aiText({
