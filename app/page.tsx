@@ -225,7 +225,10 @@ function Nav() {
           ))}
         </nav>
 
-        <a href="/quote" className="hidden md:inline-flex btn" style={{ padding: '10px 20px', fontSize: '13px' }}>Instant Quote</a>
+        <div className="hidden md:flex items-center gap-5">
+          <a href="/admin/bookings" className="text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)' }}>Admin</a>
+          <a href="/quote" className="btn" style={{ padding: '10px 20px', fontSize: '13px' }}>Instant Quote</a>
+        </div>
 
         {/* Mobile hamburger */}
         <button className="md:hidden flex flex-col gap-1.5 p-2" onClick={() => setOpen(!open)} aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open}>
@@ -242,6 +245,7 @@ function Nav() {
             <a key={href} href={href} className="text-base font-medium py-2" style={{ color: 'var(--muted)' }} onClick={() => setOpen(false)}>{label}</a>
           ))}
           <a href="/start-your-carrier" className="text-base font-bold py-2" style={{ color: '#ff6680' }} onClick={() => setOpen(false)}>Start a Carrier (Guide)</a>
+          <a href="/admin/bookings" className="text-base font-medium py-2" style={{ color: 'var(--muted)' }} onClick={() => setOpen(false)}>Admin Login</a>
           <a href="/quote" className="btn mt-2" onClick={() => setOpen(false)}>Instant Quote</a>
         </div>
       )}
