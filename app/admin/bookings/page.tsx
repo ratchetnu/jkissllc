@@ -443,7 +443,23 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
+  const [aiMsg, setAiMsg] = useState('')
+  const [aiBusy, setAiBusy] = useState('')
   const link = typeof window !== 'undefined' ? `${window.location.origin}/booking/${b.token}` : ''
+
+  async function draftMessage(intent: string) {
+    setAiBusy(intent); setErr(''); setAiMsg('')
+    try {
+      const res = await fetch('/api/admin/ai/message', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: b.token, intent }),
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error ?? 'Could not draft a message.')
+      setAiMsg(j.message)
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') }
+    finally { setAiBusy('') }
+  }
 
   async function run(action: string, body: Record<string, unknown> = {}, confirmMsg?: string) {
     if (confirmMsg && !confirm(confirmMsg)) return
@@ -559,6 +575,26 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
         <a href={link} target="_blank" rel="noreferrer" className="block text-xs mt-3 font-mono break-all" style={{ color: 'var(--red)' }}>{link}</a>
         {msg && <p className="text-sm mt-2" style={{ color: '#34d399' }}>{msg}</p>}
         {err && <p className="text-sm mt-2" style={{ color: '#f87171' }}>{err}</p>}
+      </div>
+
+      {/* AI assistant */}
+      <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px', border: '1px solid rgba(224,0,42,.22)' }}>
+        <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)' }}>✨ AI — Draft a Customer Message</p>
+        <div className="flex flex-wrap gap-2">
+          {([['followup', 'Follow-up'], ['reminder', 'Reminder'], ['thanks', 'Thank-you'], ['reschedule', 'Reschedule']] as const).map(([k, label]) => (
+            <button key={k} onClick={() => draftMessage(k)} disabled={!!aiBusy} className="text-xs font-semibold px-3 py-1.5 rounded-lg"
+              style={{ background: aiBusy === k ? 'var(--red)' : 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: aiBusy === k ? '#fff' : 'var(--text)' }}>
+              {aiBusy === k ? '…' : label}
+            </button>
+          ))}
+        </div>
+        {aiMsg && (
+          <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
+            <p className="text-sm" style={{ color: 'var(--text)', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{aiMsg}</p>
+            <button onClick={() => { navigator.clipboard?.writeText(aiMsg); setMsg('Message copied.') }} className="text-xs font-semibold px-3 py-1.5 rounded-lg mt-2"
+              style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--text)' }}>Copy</button>
+          </div>
+        )}
       </div>
 
       {/* Customer timeline */}

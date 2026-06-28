@@ -5,13 +5,55 @@ import Link from 'next/link'
 
 type Estimate = { low: number; high: number; miles: number; pickupLabel: string; deliveryLabel: string }
 
+// Downscale an image to a small JPEG data URL for the AI photo estimate. Falls
+// back to the original (e.g. HEIC the browser can't decode to canvas).
+async function downscaleToDataUrl(file: File, maxDim = 1280, quality = 0.7): Promise<string> {
+  try {
+    const bitmap = await createImageBitmap(file)
+    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height))
+    const w = Math.round(bitmap.width * scale), h = Math.round(bitmap.height * scale)
+    const canvas = document.createElement('canvas')
+    canvas.width = w; canvas.height = h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('no ctx')
+    ctx.drawImage(bitmap, 0, 0, w, h)
+    bitmap.close?.()
+    return canvas.toDataURL('image/jpeg', quality)
+  } catch {
+    return await new Promise((resolve, reject) => {
+      const fr = new FileReader()
+      fr.onload = () => resolve(String(fr.result))
+      fr.onerror = () => reject(new Error('read failed'))
+      fr.readAsDataURL(file)
+    })
+  }
+}
+
 export default function QuotePage() {
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
   const [estimate, setEstimate] = useState<Estimate | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [service, setService] = useState('dock-to-dock')
+  // AI photo estimate (junk-removal / cleanout)
+  const [photoEst, setPhotoEst] = useState<{ loadSize: string; low: number; high: number; summary: string } | null>(null)
+  const [photoBusy, setPhotoBusy] = useState(false)
+  const [photoErr, setPhotoErr] = useState('')
   const isJunk = service === 'junk-removal'
   const isEviction = service === 'eviction'
+
+  async function estimateFromPhoto(file: File) {
+    setPhotoErr(''); setPhotoEst(null); setPhotoBusy(true)
+    try {
+      const dataUrl = await downscaleToDataUrl(file)
+      const res = await fetch('/api/ai/photo-estimate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }),
+      })
+      const j = await res.json()
+      if (!res.ok) { setPhotoErr(j.error ?? 'Could not estimate from that photo.'); return }
+      setPhotoEst({ loadSize: j.loadSize, low: j.low, high: j.high, summary: j.summary })
+    } catch { setPhotoErr('Could not read that photo. Try another, or request a custom quote below.') }
+    finally { setPhotoBusy(false) }
+  }
   // Junk removal and eviction/property cleanouts are single-site, priced per job —
   // same form shape and request-only flow (no instant price).
   const isJobBased = isJunk || isEviction
@@ -186,6 +228,24 @@ export default function QuotePage() {
                       <option value="multiple">More than one truck</option>
                     </select>
                     <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Just a rough guess — pricing depends on the items, access, and disposal fees. Describe the job in Notes and we&apos;ll send a custom quote.</p>
+
+                    {/* AI photo estimate */}
+                    <div className="mt-4 rounded-xl p-4" style={{ background: 'rgba(224,0,42,.06)', border: '1px solid rgba(224,0,42,.25)' }}>
+                      <p className="text-sm font-bold text-white mb-1">✨ Instant estimate from a photo</p>
+                      <p className="text-xs mb-3" style={{ color: 'rgba(255,255,255,.55)', lineHeight: 1.5 }}>Snap a pic of the pile and our AI will ballpark the load size + price. Final quote is confirmed on site.</p>
+                      <label className="btn-ghost" style={{ padding: '10px 16px', fontSize: 14, cursor: photoBusy ? 'wait' : 'pointer', display: 'inline-flex' }}>
+                        {photoBusy ? 'Analyzing…' : photoEst ? 'Try another photo' : '📷 Add a photo'}
+                        <input type="file" accept="image/*" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) estimateFromPhoto(f) }} disabled={photoBusy} style={{ display: 'none' }} />
+                      </label>
+                      {photoErr && <p className="text-xs mt-2" role="alert" style={{ color: '#ff8a9b' }}>{photoErr}</p>}
+                      {photoEst && (
+                        <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,.1)' }}>
+                          <p className="text-lg font-black text-white">${photoEst.low}–${photoEst.high} <span className="text-sm font-semibold" style={{ color: 'var(--muted)' }}>· {photoEst.loadSize}</span></p>
+                          {photoEst.summary && <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,.6)', lineHeight: 1.5 }}>{photoEst.summary}</p>}
+                          <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Estimate only — submit the form below to lock in your custom quote.</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <>

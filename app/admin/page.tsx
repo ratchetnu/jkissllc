@@ -179,6 +179,21 @@ export default function AdminPage() {
     } finally { setOvLoading(false) }
   }, [])
 
+  // ── AI insights ─────────────────────────────────────────────────────────────
+  const [insights, setInsights] = useState('')
+  const [insightsLoading, setInsightsLoading] = useState(false)
+  const [insightsErr, setInsightsErr] = useState('')
+  async function fetchInsights() {
+    setInsightsLoading(true); setInsightsErr('')
+    try {
+      const res = await fetch('/api/admin/ai/insights', { credentials: 'same-origin' })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error ?? 'Could not generate insights.')
+      setInsights(j.insights)
+    } catch (e) { setInsightsErr(e instanceof Error ? e.message : 'Failed') }
+    finally { setInsightsLoading(false) }
+  }
+
   // ── Shipments state ─────────────────────────────────────────────────────────
   const [shipments, setShipments] = useState<Shipment[]>([])
   const [shipmentsLoading, setShipmentsLoading] = useState(false)
@@ -449,6 +464,20 @@ export default function AdminPage() {
         )}
         {tab === 'overview' && !ovLoading && !ovError && overview && (
           <>
+            {/* AI insights */}
+            <div className="glass-card p-5 mb-6" style={{ borderRadius: 16, border: '1px solid rgba(224,0,42,.22)' }}>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-black text-white">✨ AI Insights</p>
+                <button onClick={fetchInsights} disabled={insightsLoading} className="text-xs font-bold px-3 py-1.5 rounded-lg" style={{ background: 'var(--red)', color: '#fff' }}>
+                  {insightsLoading ? 'Analyzing…' : insights ? 'Regenerate' : 'Analyze my numbers'}
+                </button>
+              </div>
+              {insightsErr && <p className="text-sm mt-3" role="alert" style={{ color: '#f87171' }}>{insightsErr}</p>}
+              {insights
+                ? <pre className="text-sm mt-3 whitespace-pre-wrap" style={{ color: 'var(--text)', fontFamily: 'var(--font-body)', lineHeight: 1.6 }}>{insights}</pre>
+                : !insightsErr && !insightsLoading && <p className="text-sm mt-2" style={{ color: 'var(--muted)' }}>Get a plain-English read on your revenue, A/R, and job mix — plus what to do this week.</p>}
+            </div>
+
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
               <StatCard label="Today" value={money(overview.revenue.today)} accent />
               <StatCard label="This Week" value={money(overview.revenue.week)} />

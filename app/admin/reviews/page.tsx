@@ -23,6 +23,22 @@ function ReviewsManager() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [drafting, setDrafting] = useState('')
+
+  async function draftReply(r: Review) {
+    setDrafting(r.token); setErr('')
+    try {
+      const res = await fetch('/api/admin/ai/review-reply', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rating: r.rating, author: r.authorName, text: r.text ?? '' }),
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error ?? 'Could not draft a reply.')
+      setDrafts(d => ({ ...d, [r.token]: j.reply }))
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') }
+    finally { setDrafting('') }
+  }
 
   const load = useCallback(async () => {
     setLoading(true); setErr('')
@@ -104,6 +120,10 @@ function ReviewsManager() {
                   {r.text && <p className="text-sm mt-2" style={{ color: 'var(--text)', lineHeight: 1.5 }}>“{r.text}”</p>}
                 </div>
                 <div className="flex flex-col gap-1.5 shrink-0">
+                  <button onClick={() => draftReply(r)} disabled={drafting === r.token}
+                    className="text-xs font-bold px-3 py-1.5 rounded-lg" style={{ background: 'var(--red)', color: '#fff' }}>
+                    {drafting === r.token ? '…' : '✨ Reply'}
+                  </button>
                   <button onClick={() => toggleHidden(r)} disabled={busy === r.token}
                     className="text-xs font-semibold px-3 py-1.5 rounded-lg"
                     style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--text)' }}>
@@ -116,6 +136,14 @@ function ReviewsManager() {
                   </button>
                 </div>
               </div>
+              {drafts[r.token] && (
+                <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
+                  <p className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>Suggested reply</p>
+                  <p className="text-sm" style={{ color: 'var(--text)', lineHeight: 1.5 }}>{drafts[r.token]}</p>
+                  <button onClick={() => navigator.clipboard?.writeText(drafts[r.token])} className="text-xs font-semibold px-3 py-1.5 rounded-lg mt-2"
+                    style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--text)' }}>Copy</button>
+                </div>
+              )}
             </div>
           ))}
         </div>
