@@ -491,6 +491,14 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
 
   const receiptUrl = link ? `${link}/receipt` : ''
   const paidInFull = netInvoice(b) > 0 && b.amountPaidCents >= netInvoice(b)
+  // Refundable = positive confirmed Stripe charges − already-refunded amounts.
+  const stripePaidCents = b.payments.filter(p => p.method === 'stripe' && p.status === 'confirmed' && p.amountCents > 0).reduce((s, p) => s + p.amountCents, 0)
+  const refundedCents = b.payments.filter(p => p.amountCents < 0).reduce((s, p) => s - p.amountCents, 0)
+  const refundable = stripePaidCents - refundedCents
+  function approveRefund() {
+    const input = prompt(`Refund amount ($). Up to $${(refundable / 100).toFixed(2)} on the Stripe charge — enter the policy-eligible amount:`, (refundable / 100).toFixed(2))
+    if (input && parseFloat(input) > 0) run('refund', { amount: input }, `Issue a $${input} Stripe refund to the customer? This sends money back to their card.`)
+  }
   function copyReceipt() {
     navigator.clipboard?.writeText(receiptUrl).then(() => setMsg('Receipt link copied — paste it to the customer.'), () => setMsg(receiptUrl))
   }
@@ -568,6 +576,7 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
         <div className="flex flex-wrap gap-2 mt-3">
           {b.depositAmountCents > b.amountPaidCents && <ActBtn label="Mark Deposit Paid" busy={busy === 'mark-deposit-paid'} onClick={() => run('mark-deposit-paid')} />}
           {balanceDue(b) > 0 && <ActBtn label="Mark Paid in Full" busy={busy === 'mark-paid-full'} onClick={() => run('mark-paid-full')} />}
+          {refundable > 0 && <ActBtn label={`Approve Refund (≤ ${usd(refundable)})`} danger busy={busy === 'refund'} onClick={approveRefund} />}
         </div>
         {paidInFull && (
           <div className="mt-4 pt-4" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>

@@ -246,6 +246,14 @@ export async function emailCancelledCustomer(b: Booking, tierLabel: string): Pro
   await send({ to: [b.customerEmail], subject: `Cancelled — J Kiss LLC ${b.bookingNumber}`, html: shell('Your booking is cancelled', body) })
 }
 
+export async function emailRefundCustomer(b: Booking, refundCents: number): Promise<void> {
+  if (!b.customerEmail) return
+  const body = `
+    <p style="font-size:15px;line-height:1.6">Hi ${esc(b.customerName)}, a refund of <strong>${fmtUSD(refundCents)}</strong> has been issued to your original payment method for booking <strong>${esc(b.bookingNumber)}</strong>.</p>
+    <p style="font-size:14px;line-height:1.6;color:#555">It typically takes 5–10 business days to appear, depending on your bank. Questions? Call or text (817) 909-4312.</p>`
+  await send({ to: [b.customerEmail], subject: `Refund issued — ${fmtUSD(refundCents)} · J Kiss LLC ${b.bookingNumber}`, html: shell('Your refund is on the way', body) })
+}
+
 export async function emailOpsCancelledByCustomer(b: Booking, tierLabel: string): Promise<void> {
   const body = `${opsCustomerRows(b)}
     ${rows([['Service Date', b.selectedDate || b.availableDates?.[0]], ['Deposit/Refund tier', tierLabel], ['Amount Paid', fmtUSD(b.amountPaidCents)]])}

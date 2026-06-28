@@ -8,9 +8,12 @@ import {
 } from '../../../../lib/bookings'
 import { getPolicyVersion, getCurrentPolicy } from '../../../../lib/policy'
 import { sendConfirmationLink, notifyJobCompleted, notifyBookingConfirmed, notifyPaidInFull } from '../../../../lib/notify'
-import { emailOpsPaymentReceived, emailPaymentReceiptCustomer } from '../../../../lib/booking-emails'
+import { emailOpsPaymentReceived, emailPaymentReceiptCustomer, emailRefundCustomer } from '../../../../lib/booking-emails'
 import { str, strList, num } from '../../../../lib/validators'
 import { ensureLoyaltyCode } from '../../../../lib/promo'
+import { getStripe, stripeConfigured } from '../../../../lib/stripe'
+
+export const runtime = 'nodejs'
 
 const METHODS: PaymentMethod[] = ['stripe', 'zelle', 'apple_cash', 'cash', 'other']
 
@@ -58,6 +61,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const wasConfirmed = b.status === 'confirmed'
   const wasPaidInFull = paymentSummaryStatus(b) === 'paid_in_full'
   let extra: Record<string, unknown> = {}
+  let refundedNowCents = 0
 
   switch (action) {
     case 'update': {
@@ -195,6 +199,37 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if ('disposalActual' in body) b.disposalActualCents = dollarsToCents(body.disposalActual) || undefined
       break
     }
+    case 'refund': {
+      // One-click Stripe refund for the eligible amount. Records a negative payment
+      // so Amount Paid drops, and emails the customer. Zelle/cash refunds are manual.
+      const refundCents = dollarsToCents(body.amount)
+      if (refundCents <= 0) return NextResponse.json({ error: 'Enter a refund amount.' }, { status: 400 })
+      if (!stripeConfigured()) return NextResponse.json({ error: 'Stripe is not configured — refund manually for Zelle/cash.' }, { status: 503 })
+
+      const stripePaid = b.payments.filter(p => p.method === 'stripe' && p.status === 'confirmed' && p.amountCents > 0 && p.stripePaymentIntentId)
+      const alreadyRefunded = b.payments.filter(p => p.amountCents < 0).reduce((s, p) => s - p.amountCents, 0)
+      const maxRefund = stripePaid.reduce((s, p) => s + p.amountCents, 0) - alreadyRefunded
+      if (stripePaid.length === 0) return NextResponse.json({ error: 'No Stripe payment to refund here — issue Zelle/cash refunds manually and use Void if needed.' }, { status: 400 })
+      if (refundCents > maxRefund) return NextResponse.json({ error: `Max refundable on the Stripe charge is $${(maxRefund / 100).toFixed(2)}.` }, { status: 400 })
+
+      const target = stripePaid.find(p => p.amountCents >= refundCents) ?? stripePaid[0]
+      try {
+        const refund = await getStripe().refunds.create({ payment_intent: target.stripePaymentIntentId!, amount: refundCents })
+        b.payments.push({
+          id: crypto.randomUUID(), type: 'partial', method: 'stripe', status: 'confirmed',
+          amountCents: -refundCents, feeCents: 0, totalChargedCents: -refundCents, netCents: -refundCents,
+          note: 'Refund issued (Stripe)', reference: refund.id, createdAt: Date.now(), confirmedAt: Date.now(),
+        })
+        const stamp = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })
+        b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[${stamp}] Refunded $${(refundCents / 100).toFixed(2)} via Stripe (${refund.id})`
+        extra = { refundId: refund.id }
+        refundedNowCents = refundCents
+      } catch (e) {
+        console.error('[refund]', e)
+        return NextResponse.json({ error: 'Stripe refund failed — check the dashboard and try again.' }, { status: 502 })
+      }
+      break
+    }
     default:
       return NextResponse.json({ error: 'unknown action' }, { status: 400 })
   }
@@ -215,6 +250,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   await saveBooking(b)
 
   // Side-effect notifications after persistence.
+  if (action === 'refund' && refundedNowCents > 0) await emailRefundCustomer(b, refundedNowCents)
   if (action === 'mark-completed') await notifyJobCompleted(b)
   if (!wasConfirmed && b.status === 'confirmed' && action !== 'send-link') await notifyBookingConfirmed(b)
   // On the transition to paid-in-full, send the customer their final paid receipt
