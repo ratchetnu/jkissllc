@@ -95,6 +95,9 @@ async function downscaleImage(file: File, maxDim = 1600, quality = 0.82): Promis
   } catch { return file }
 }
 
+// Fields a quote email can pre-fill into a brand-new booking via ?new=1&…
+type Prefill = { name?: string; email?: string; phone?: string; service?: string; pickup?: string; dropoff?: string; jobSite?: string; desc?: string }
+
 // ── Dashboard ────────────────────────────────────────────────────────────────
 function Dashboard() {
   const [items, setItems] = useState<Booking[]>([])
@@ -105,6 +108,18 @@ function Dashboard() {
   const [selected, setSelected] = useState<string | null>(null)
   const [showNew, setShowNew] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [prefill, setPrefill] = useState<Prefill | null>(null)
+
+  // Deep-link from the quote-request email: ?new=1 (+ customer fields) opens a
+  // prefilled new-booking form. Strip the query after so a refresh won't reopen.
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search)
+    if (sp.get('new') !== '1') return
+    const g = (k: string) => sp.get(k) || undefined
+    setPrefill({ name: g('name'), email: g('email'), phone: g('phone'), service: g('service'), pickup: g('pickup'), dropoff: g('dropoff'), jobSite: g('jobSite'), desc: g('desc') })
+    setShowNew(true)
+    window.history.replaceState({}, '', window.location.pathname)
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true); setError('')
@@ -156,7 +171,7 @@ function Dashboard() {
       {error && <p className="text-sm mb-4" style={{ color: '#f87171' }}>{error}</p>}
       {loading && <p className="text-sm" style={{ color: 'var(--muted)' }}>Loading…</p>}
 
-      {showNew && <BookingForm onClose={() => setShowNew(false)} onSaved={async () => { setShowNew(false); await load() }} />}
+      {showNew && <BookingForm prefill={prefill ?? undefined} onClose={() => { setShowNew(false); setPrefill(null) }} onSaved={async () => { setShowNew(false); setPrefill(null); await load() }} />}
 
       {!loading && view === 'bookings' && !showNew && (
         current ? (
@@ -390,11 +405,11 @@ function ActBtn({ label, onClick, busy, primary, danger }: { label: string; onCl
 }
 
 // ── New / edit form ──────────────────────────────────────────────────────────
-function BookingForm({ booking, onClose, onSaved }: { booking?: Booking; onClose: () => void; onSaved: () => Promise<void> }) {
+function BookingForm({ booking, prefill, onClose, onSaved }: { booking?: Booking; prefill?: Prefill; onClose: () => void; onSaved: () => Promise<void> }) {
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   const edit = !!booking
-  const np = (booking?.customerName ?? '').trim().split(/\s+/).filter(Boolean)
+  const np = (booking?.customerName ?? prefill?.name ?? '').trim().split(/\s+/).filter(Boolean)
   const firstName = np[0] ?? ''
   const lastName = np.slice(1).join(' ')
 
@@ -464,9 +479,9 @@ function BookingForm({ booking, onClose, onSaved }: { booking?: Booking; onClose
       <div className="grid sm:grid-cols-2 gap-3">
         <div><label style={lab}>First Name *</label><input name="customerFirstName" required autoCapitalize="words" defaultValue={firstName} style={fStyle} /></div>
         <div><label style={lab}>Last Name</label><input name="customerLastName" autoCapitalize="words" defaultValue={lastName} style={fStyle} /></div>
-        <div><label style={lab}>Phone</label><input name="customerPhone" type="tel" inputMode="tel" autoComplete="tel" defaultValue={booking?.customerPhone} style={fStyle} /></div>
-        <div><label style={lab}>Email</label><input name="customerEmail" type="email" inputMode="email" autoCapitalize="none" autoComplete="email" defaultValue={booking?.customerEmail} style={fStyle} /></div>
-        <div><label style={lab}>Service Type</label><select name="serviceType" defaultValue={booking?.serviceType ?? 'moving'} style={{ ...fStyle, cursor: 'pointer' }}>{SERVICE_TYPES.map(s => <option key={s} value={s}>{SERVICE_LABELS[s]}</option>)}</select></div>
+        <div><label style={lab}>Phone</label><input name="customerPhone" type="tel" inputMode="tel" autoComplete="tel" defaultValue={booking?.customerPhone ?? prefill?.phone} style={fStyle} /></div>
+        <div><label style={lab}>Email</label><input name="customerEmail" type="email" inputMode="email" autoCapitalize="none" autoComplete="email" defaultValue={booking?.customerEmail ?? prefill?.email} style={fStyle} /></div>
+        <div><label style={lab}>Service Type</label><select name="serviceType" defaultValue={booking?.serviceType ?? prefill?.service ?? 'moving'} style={{ ...fStyle, cursor: 'pointer' }}>{SERVICE_TYPES.map(s => <option key={s} value={s}>{SERVICE_LABELS[s]}</option>)}</select></div>
         <div><label style={lab}>Invoice #</label><input name="invoiceNumber" defaultValue={booking?.invoiceNumber} style={fStyle} /></div>
         <div><label style={lab}>Invoice Date</label><input name="invoiceDate" defaultValue={booking?.invoiceDate ?? todayLong} placeholder="June 16, 2026" style={fStyle} /></div>
         <div><label style={lab}>Invoice Amount ($)</label><input name="invoiceAmount" inputMode="decimal" defaultValue={dollars(booking?.invoiceAmountCents)} placeholder="550.00" style={fStyle} /></div>
@@ -474,10 +489,10 @@ function BookingForm({ booking, onClose, onSaved }: { booking?: Booking; onClose
         <div><label style={lab}>Crew Size</label><input name="crewSize" inputMode="numeric" defaultValue={booking?.crewSize ?? ''} placeholder="2" style={fStyle} /></div>
         <div><label style={lab}>Estimated Hours</label><input name="estimatedHours" inputMode="numeric" defaultValue={booking?.estimatedHours ?? ''} placeholder="5" style={fStyle} /></div>
       </div>
-      <div><label style={lab}>Pickup Address</label><input name="pickupAddress" defaultValue={booking?.pickupAddress} style={fStyle} /></div>
-      <div><label style={lab}>Drop-off Address</label><input name="dropoffAddress" defaultValue={booking?.dropoffAddress} style={fStyle} /></div>
-      <div><label style={lab}>Job Site Address (if single-site)</label><input name="jobSiteAddress" defaultValue={booking?.jobSiteAddress} style={fStyle} /></div>
-      <div><label style={lab}>Description</label><textarea name="description" rows={2} defaultValue={booking?.description} style={{ ...fStyle, resize: 'vertical' }} /></div>
+      <div><label style={lab}>Pickup Address</label><input name="pickupAddress" defaultValue={booking?.pickupAddress ?? prefill?.pickup} style={fStyle} /></div>
+      <div><label style={lab}>Drop-off Address</label><input name="dropoffAddress" defaultValue={booking?.dropoffAddress ?? prefill?.dropoff} style={fStyle} /></div>
+      <div><label style={lab}>Job Site Address (if single-site)</label><input name="jobSiteAddress" defaultValue={booking?.jobSiteAddress ?? prefill?.jobSite} style={fStyle} /></div>
+      <div><label style={lab}>Description</label><textarea name="description" rows={2} defaultValue={booking?.description ?? prefill?.desc} style={{ ...fStyle, resize: 'vertical' }} /></div>
       <div><label style={lab}>Items (one per line)</label><textarea name="items" rows={3} defaultValue={booking?.items?.join('\n')} placeholder={'40 boxes\nRefrigerator\nDresser\nCouch\nGrill'} style={{ ...fStyle, resize: 'vertical' }} /></div>
 
       {/* ── Invoice photos ─────────────────────────────────────────── */}

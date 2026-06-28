@@ -110,7 +110,7 @@ export default function QuotePage() {
               <div className="text-5xl mb-5">✓</div>
               <h2 className="text-2xl font-black text-white mb-3" style={{ letterSpacing: '-0.02em' }}>Request Received</h2>
               <p className="text-base leading-relaxed mb-2" style={{ color: 'var(--muted)' }}>
-                Thanks — we&apos;ve got your {jobNoun.toLowerCase()} details. Because every job is different, our team will review what&apos;s involved and email you a custom quote within 1 business day.
+                {`Thanks — we've got your ${jobNoun.toLowerCase()} details. Because every job is different, our team will review what's involved and email you a custom quote within 1 business day.`}
               </p>
               <p className="text-sm" style={{ color: 'rgba(255,255,255,.4)' }}>
                 Need it handled fast? Call or email us at info@jkissllc.com.

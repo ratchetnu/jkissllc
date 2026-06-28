@@ -167,6 +167,15 @@ export async function POST(request: NextRequest) {
             <tr><td style="padding:6px 0;color:#999">Service Type</td><td style="padding:6px 0">${safe.serviceType}</td></tr>
             <tr><td style="padding:6px 0;color:#999">Timing</td><td style="padding:6px 0">${safe.timing}</td></tr>`
 
+    // One-tap "Create Booking" deep link: opens the admin new-booking form
+    // pre-filled with this customer's details (?new=1&…).
+    const bookingParams = new URLSearchParams({ new: '1', name: name || '', email: email || '', phone: phone || '', service: isJunk ? 'junk-removal' : isEviction ? 'eviction' : 'freight' })
+    if (isJobBased) bookingParams.set('jobSite', `${from.city}, ${from.state} ${pickupZip}`)
+    else { bookingParams.set('pickup', `${from.city}, ${from.state} ${pickupZip}`); bookingParams.set('dropoff', `${to.city}, ${to.state} ${deliveryZip}`) }
+    const desc = [notes, isJobBased ? `Est. load: ${LOAD_LABELS[loadSize] ?? loadSize}` : '', timing ? `Timing: ${timing}` : ''].filter(Boolean).join(' · ')
+    if (desc) bookingParams.set('desc', desc)
+    const bookingUrl = `https://www.jkissllc.com/admin/bookings?${bookingParams.toString()}`
+
     // Notify ops
     await resend.emails.send({
       from: 'J Kiss LLC <info@jkissllc.com>',
@@ -181,6 +190,11 @@ export async function POST(request: NextRequest) {
           <p style="color:#666;margin-top:0">${isJobBased
             ? 'Submitted via jkissllc.com/quote · Needs a custom quote (no instant price shown)'
             : `Submitted via jkissllc.com/quote · Customer was shown $${low.toLocaleString()}–$${high.toLocaleString()}`}</p>
+
+          <div style="margin:18px 0">
+            <a href="${bookingUrl}" style="display:inline-block;background:#E0002A;color:#fff;text-decoration:none;font-weight:700;font-size:15px;padding:13px 24px;border-radius:8px">Create Booking →</a>
+            <p style="color:#999;font-size:12px;margin:8px 0 0">Opens your admin with a new booking pre-filled from this request. (Sign in if prompted.)</p>
+          </div>
 
           <h3 style="margin-bottom:8px">${isJobBased ? 'Job' : 'Route'}</h3>
           <table style="width:100%;border-collapse:collapse">${jobRows}
