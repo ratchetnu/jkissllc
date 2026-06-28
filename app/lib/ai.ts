@@ -27,7 +27,9 @@ export async function aiText(opts: {
   maxOutputTokens?: number
   temperature?: number
 }): Promise<AiResult> {
-  if (!aiConfigured()) return { ok: false, error: 'AI is not configured. Connect Vercel AI Gateway to enable this.' }
+  // Always attempt the call — the AI Gateway auto-authenticates via the runtime
+  // OIDC token when connected. If it isn't, the catch returns a friendly message,
+  // so features light up automatically once the Gateway is enabled (no redeploy).
   try {
     const { text } = await generateText({
       model: MODEL,
