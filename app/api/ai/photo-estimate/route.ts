@@ -6,8 +6,8 @@ import { aiText } from '../../../lib/ai'
 export const maxDuration = 30
 
 // Rough price guide so the model returns sane junk-removal numbers (USD per load).
-// "Truck" = J Kiss LLC's 24 ft box truck (~1,500 cu ft), so judge capacity against that.
-const GUIDE = `Operations use a 24 ft box truck (about 1,500 cubic feet). Judge how much of THAT truck the items would fill. Pricing guide (USD): a few items $75–150; quarter of the 24 ft truck $150–275; half $275–425; three-quarter $425–575; a full 24 ft truck load $575–775; more than one truckload $800+. Heavy/hazardous items, stairs, or long carries push toward the high end.`
+// "Truck" = J Kiss LLC's 24 ft box truck (~1,200 cu ft), so judge capacity against that.
+const GUIDE = `Operations use a 24 ft box truck (about 1,200 cubic feet). Judge how much of THAT truck the items would fill. Pricing guide (USD): a few items $75–150; quarter of the 24 ft truck $150–275; half $275–425; three-quarter $425–575; a full 24 ft truck load $575–775; more than one truckload $800+. Heavy/hazardous items, stairs, or long carries push toward the high end.`
 
 // POST /api/ai/photo-estimate — customer uploads a photo of their junk/load and
 // gets an AI-suggested load size + ballpark price range. Public, so it's rate-limited
