@@ -149,6 +149,9 @@ export type Booking = {
 
   // Internal (never exposed to the customer)
   internalNotes?: string
+  assignedTo?: string          // crew/staff name assigned to the job
+  archived?: boolean           // hidden from the default list (soft delete)
+  archivedAt?: number
 
   // Status + payments
   status: BookingStatus

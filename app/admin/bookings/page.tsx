@@ -98,20 +98,60 @@ async function downscaleImage(file: File, maxDim = 1600, quality = 0.82): Promis
   } catch { return file }
 }
 
-// Fields a quote email can pre-fill into a brand-new booking via ?new=1&…
-type Prefill = { name?: string; email?: string; phone?: string; service?: string; pickup?: string; dropoff?: string; jobSite?: string; desc?: string }
+// Fields a quote email or a "duplicate" can pre-fill into a brand-new booking.
+type Prefill = {
+  name?: string; email?: string; phone?: string; service?: string
+  pickup?: string; dropoff?: string; jobSite?: string; desc?: string
+  items?: string; invoiceAmount?: string; deposit?: string; discount?: string
+  crewSize?: string; estimatedHours?: string; assignedTo?: string; invoiceNumber?: string
+}
+
+// Build a prefill from an existing booking (used by Duplicate).
+function prefillFromBooking(b: Booking): Prefill {
+  const d = (c?: number) => (c ? (c / 100).toFixed(2) : undefined)
+  return {
+    name: b.customerName, email: b.customerEmail, phone: b.customerPhone, service: b.serviceType,
+    pickup: b.pickupAddress, dropoff: b.dropoffAddress, jobSite: b.jobSiteAddress,
+    desc: b.description, items: b.items?.join('\n'),
+    invoiceAmount: d(b.invoiceAmountCents), deposit: d(b.depositAmountCents), discount: d(b.discountCents),
+    crewSize: b.crewSize ? String(b.crewSize) : undefined,
+    estimatedHours: b.estimatedHours ? String(b.estimatedHours) : undefined,
+    assignedTo: b.assignedTo,
+  }
+}
+
+// Which status bucket a booking falls in, for the filter chips.
+function matchesStatusFilter(b: Booking, f: string): boolean {
+  if (f === 'all') return true
+  if (f === 'cancelled') return b.status === 'cancelled'
+  if (f === 'completed') return b.status === 'completed'
+  if (f === 'unpaid') return b.status !== 'cancelled' && balanceDue(b) > 0 && b.amountPaidCents === 0
+  if (f === 'unscheduled') return b.status !== 'cancelled' && b.status !== 'completed' && !b.selectedDate
+  if (f === 'active') return b.status !== 'cancelled' && b.status !== 'completed'
+  return true
+}
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
 function Dashboard() {
   const [items, setItems] = useState<Booking[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [view, setView] = useState<'bookings' | 'customers'>('bookings')
+  const [view, setView] = useState<'bookings' | 'calendar' | 'customers'>('bookings')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<string | null>(null)
   const [showNew, setShowNew] = useState(false)
   const [editing, setEditing] = useState(false)
   const [prefill, setPrefill] = useState<Prefill | null>(null)
+  const [statusFilter, setStatusFilter] = useState<'active' | 'all' | 'unpaid' | 'unscheduled' | 'completed' | 'cancelled'>('active')
+  const [showArchived, setShowArchived] = useState(false)
+  const [checked, setChecked] = useState<Set<string>>(new Set())
+  const [visibleCount, setVisibleCount] = useState(25)
+  const [bulkBusy, setBulkBusy] = useState(false)
+
+  function startDuplicate(b: Booking) {
+    setSelected(null); setEditing(false)
+    setPrefill(prefillFromBooking(b)); setShowNew(true)
+  }
 
   // Deep-link from the quote-request email: ?new=1 (+ customer fields) opens a
   // prefilled new-booking form. Strip the query after so a refresh won't reopen.
@@ -142,23 +182,46 @@ function Dashboard() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return items
-    return items.filter(b =>
-      [b.customerName, b.customerPhone, b.customerEmail, b.bookingNumber, b.invoiceNumber]
-        .filter(Boolean).some(v => v!.toLowerCase().includes(q)))
-  }, [items, search])
+    return items.filter(b => {
+      if (!showArchived && b.archived) return false
+      if (showArchived && !b.archived) return false
+      if (!matchesStatusFilter(b, statusFilter)) return false
+      if (!q) return true
+      return [b.customerName, b.customerPhone, b.customerEmail, b.bookingNumber, b.invoiceNumber, b.assignedTo]
+        .filter(Boolean).some(v => v!.toLowerCase().includes(q))
+    })
+  }, [items, search, statusFilter, showArchived])
+
+  // Reset pagination + selection whenever the visible set changes.
+  useEffect(() => { setVisibleCount(25); setChecked(new Set()) }, [search, statusFilter, showArchived, view])
 
   function exportCsv(filter: string) {
     window.open(`/api/admin/bookings/export?filter=${filter}`, '_blank')
   }
 
+  async function bulkArchive(archive: boolean) {
+    const tokens = [...checked]
+    if (!tokens.length) return
+    setBulkBusy(true)
+    try {
+      await Promise.all(tokens.map(t => patch(t, { action: archive ? 'archive' : 'unarchive' }).catch(() => {})))
+      setChecked(new Set()); await load()
+    } finally { setBulkBusy(false) }
+  }
+
+  function toggleCheck(token: string) {
+    setChecked(prev => { const n = new Set(prev); n.has(token) ? n.delete(token) : n.add(token); return n })
+  }
+
+  const STATUS_FILTERS = ['active', 'unpaid', 'unscheduled', 'completed', 'cancelled', 'all'] as const
+
   return (
     <div className="max-w-4xl mx-auto">
       <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
         <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,.1)' }}>
-          {(['bookings', 'customers'] as const).map((t, i) => (
+          {(['bookings', 'calendar', 'customers'] as const).map((t, i, arr) => (
             <button key={t} onClick={() => { setView(t); setSelected(null) }} className="px-4 py-2 text-sm font-semibold capitalize"
-              style={{ background: view === t ? 'var(--red)' : 'rgba(255,255,255,.03)', color: view === t ? '#fff' : 'var(--muted)', borderRight: i === 0 ? '1px solid rgba(255,255,255,.1)' : 'none' }}>
+              style={{ background: view === t ? 'var(--red)' : 'rgba(255,255,255,.03)', color: view === t ? '#fff' : 'var(--muted)', borderRight: i < arr.length - 1 ? '1px solid rgba(255,255,255,.1)' : 'none' }}>
               {t}
             </button>
           ))}
@@ -181,12 +244,32 @@ function Dashboard() {
           editing ? (
             <BookingForm booking={current} onClose={() => setEditing(false)} onSaved={async () => { setEditing(false); await load() }} />
           ) : (
-            <BookingDetail b={current} onBack={() => setSelected(null)} onEdit={() => setEditing(true)} onChanged={load} />
+            <BookingDetail b={current} onBack={() => setSelected(null)} onEdit={() => setEditing(true)} onChanged={load} onDuplicate={() => startDuplicate(current)} />
           )
         ) : (
           <div className="space-y-2.5">
-            {filtered.length === 0 && <p className="text-sm" style={{ color: 'var(--muted)' }}>No bookings yet. Click <strong className="text-white">+ New Booking</strong>.</p>}
-            <div className="flex flex-wrap gap-2 mb-2">
+            {/* Status filter chips + archived toggle */}
+            <div className="flex flex-wrap items-center gap-1.5 mb-1">
+              {STATUS_FILTERS.map(f => (
+                <button key={f} onClick={() => setStatusFilter(f)} className="text-xs font-semibold px-3 py-1.5 rounded-lg capitalize"
+                  style={{ background: statusFilter === f && !showArchived ? 'var(--red)' : 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: statusFilter === f && !showArchived ? '#fff' : 'var(--muted)' }}>{f}</button>
+              ))}
+              <button onClick={() => setShowArchived(v => !v)} className="text-xs font-semibold px-3 py-1.5 rounded-lg"
+                style={{ background: showArchived ? 'var(--red)' : 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: showArchived ? '#fff' : 'var(--muted)' }}>Archived</button>
+            </div>
+
+            {/* Bulk action bar */}
+            {checked.size > 0 && (
+              <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl" style={{ background: 'rgba(224,0,42,.08)', border: '1px solid rgba(224,0,42,.25)' }}>
+                <span className="text-sm font-semibold text-white">{checked.size} selected</span>
+                <div className="flex gap-2">
+                  <button onClick={() => bulkArchive(!showArchived)} disabled={bulkBusy} className="text-xs font-bold px-3 py-1.5 rounded-lg" style={{ background: 'var(--red)', color: '#fff' }}>{bulkBusy ? '…' : showArchived ? 'Unarchive' : 'Archive'}</button>
+                  <button onClick={() => setChecked(new Set())} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.08)', color: 'var(--muted)' }}>Clear</button>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-2 mb-1">
               {(['all', 'paid', 'unpaid', 'completed'] as const).map(f => (
                 <button key={f} onClick={() => exportCsv(f)} className="text-xs font-semibold px-3 py-1.5 rounded-lg capitalize"
                   style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>
@@ -194,8 +277,25 @@ function Dashboard() {
                 </button>
               ))}
             </div>
-            {filtered.map(b => <BookingCard key={b.token} b={b} onClick={() => setSelected(b.token)} />)}
+
+            {filtered.length === 0 && <p className="text-sm" style={{ color: 'var(--muted)' }}>{showArchived ? 'No archived bookings.' : 'No bookings match this filter.'}</p>}
+            {filtered.slice(0, visibleCount).map(b => (
+              <BookingCard key={b.token} b={b} onClick={() => setSelected(b.token)} checked={checked.has(b.token)} onCheck={() => toggleCheck(b.token)} />
+            ))}
+            {filtered.length > visibleCount && (
+              <button onClick={() => setVisibleCount(c => c + 25)} className="btn-ghost w-full" style={{ padding: '11px', fontSize: 13, justifyContent: 'center' }}>
+                Load more ({filtered.length - visibleCount} more)
+              </button>
+            )}
           </div>
+        )
+      )}
+
+      {!loading && view === 'calendar' && !showNew && (
+        current ? (
+          <BookingDetail b={current} onBack={() => setSelected(null)} onEdit={() => setEditing(true)} onChanged={load} onDuplicate={() => startDuplicate(current)} />
+        ) : (
+          <CalendarView items={items.filter(b => !b.archived)} onSelect={setSelected} />
         )
       )}
 
@@ -208,28 +308,137 @@ function StatusBadge({ s }: { s: string }) {
   return <span className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ background: 'rgba(255,255,255,.06)', color: statusColor(s) }}>{STATUS_LABEL[s] ?? s}</span>
 }
 
-function BookingCard({ b, onClick }: { b: Booking; onClick: () => void }) {
+function BookingCard({ b, onClick, checked, onCheck }: { b: Booking; onClick: () => void; checked?: boolean; onCheck?: () => void }) {
   return (
-    <button onClick={onClick} className="glass-card w-full text-left p-4 transition" style={{ borderRadius: '14px' }}>
-      <div className="flex items-start justify-between gap-3 mb-2">
-        <div>
-          <p className="font-black text-white">{b.customerName}</p>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>
-            <span className="font-mono">{b.bookingNumber}</span> · {SERVICE_LABELS[b.serviceType] ?? b.serviceType}
-          </p>
+    <div className="glass-card flex items-stretch transition" style={{ borderRadius: '14px', opacity: b.archived ? 0.6 : 1 }}>
+      {onCheck && (
+        <label className="flex items-center pl-3.5 pr-1 cursor-pointer" onClick={e => e.stopPropagation()}>
+          <input type="checkbox" checked={!!checked} onChange={onCheck} style={{ width: 17, height: 17, accentColor: '#E0002A' }} />
+        </label>
+      )}
+      <button onClick={onClick} className="flex-1 text-left p-4">
+        <div className="flex items-start justify-between gap-3 mb-2">
+          <div className="min-w-0">
+            <p className="font-black text-white">{b.customerName}{b.archived && <span className="text-xs font-normal" style={{ color: 'rgba(255,255,255,.4)' }}> · archived</span>}</p>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>
+              <span className="font-mono">{b.bookingNumber}</span> · {SERVICE_LABELS[b.serviceType] ?? b.serviceType}{b.assignedTo ? ` · 👷 ${b.assignedTo}` : ''}
+            </p>
+          </div>
+          <StatusBadge s={b.status} />
         </div>
-        <StatusBadge s={b.status} />
+        <div className="flex items-center justify-between text-xs" style={{ color: 'var(--muted)' }}>
+          <span>{paySummary(b)} · Bal {usd(balanceDue(b))}</span>
+          <span>{serviceDateShort(b)}</span>
+        </div>
+      </button>
+    </div>
+  )
+}
+
+// ── Calendar view ────────────────────────────────────────────────────────────
+function CalendarView({ items, onSelect }: { items: Booking[]; onSelect: (token: string) => void }) {
+  const today = new Date()
+  const [month, setMonth] = useState({ y: today.getFullYear(), m: today.getMonth() })
+
+  // Index bookings by their effective service date (selected, else single offered).
+  const byDate = useMemo(() => {
+    const map = new Map<string, Booking[]>()
+    for (const b of items) {
+      const d = b.selectedDate || (b.availableDates?.length === 1 ? b.availableDates[0] : '')
+      if (!d) continue
+      const arr = map.get(d) ?? []; arr.push(b); map.set(d, arr)
+    }
+    return map
+  }, [items])
+
+  const first = new Date(month.y, month.m, 1)
+  const startPad = first.getDay()
+  const daysInMonth = new Date(month.y, month.m + 1, 0).getDate()
+  const cells: (number | null)[] = [...Array(startPad).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)]
+  while (cells.length % 7 !== 0) cells.push(null)
+  const monthLabel = first.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  const iso = (d: number) => `${month.y}-${String(month.m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  const shift = (n: number) => setMonth(({ y, m }) => { const d = new Date(y, m + n, 1); return { y: d.getFullYear(), m: d.getMonth() } })
+
+  return (
+    <div className="glass-card p-4 sm:p-5" style={{ borderRadius: '16px' }}>
+      <div className="flex items-center justify-between mb-4">
+        <button onClick={() => shift(-1)} className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>←</button>
+        <p className="text-base font-black text-white">{monthLabel}</p>
+        <button onClick={() => shift(1)} className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>→</button>
       </div>
-      <div className="flex items-center justify-between text-xs" style={{ color: 'var(--muted)' }}>
-        <span>{paySummary(b)} · Bal {usd(balanceDue(b))}</span>
-        <span>{serviceDateShort(b)}</span>
+      <div className="grid grid-cols-7 gap-1 text-center mb-1">
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => <div key={i} className="text-xs font-bold py-1" style={{ color: 'rgba(255,255,255,.35)' }}>{d}</div>)}
       </div>
-    </button>
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map((d, i) => {
+          if (d === null) return <div key={i} />
+          const dayBookings = byDate.get(iso(d)) ?? []
+          const isToday = iso(d) === todayIso
+          return (
+            <div key={i} className="rounded-lg p-1" style={{ minHeight: 64, background: 'rgba(255,255,255,.025)', border: `1px solid ${isToday ? 'rgba(224,0,42,.5)' : 'rgba(255,255,255,.06)'}` }}>
+              <div className="text-xs font-bold mb-0.5" style={{ color: isToday ? 'var(--red)' : 'rgba(255,255,255,.5)' }}>{d}</div>
+              <div className="flex flex-col gap-0.5">
+                {dayBookings.slice(0, 3).map(b => (
+                  <button key={b.token} onClick={() => onSelect(b.token)} className="text-left truncate rounded px-1 py-0.5" style={{ fontSize: 10, lineHeight: 1.3, background: b.status === 'cancelled' ? 'rgba(248,113,113,.15)' : 'rgba(224,0,42,.18)', color: '#fff' }}
+                    title={`${b.customerName}${b.selectedWindow ? ` · ${b.selectedWindow}` : ''}${b.assignedTo ? ` · ${b.assignedTo}` : ''}`}>
+                    {b.customerName.split(' ')[0]}{b.selectedWindow ? ` ${b.selectedWindow.split('–')[0]}` : ''}
+                  </button>
+                ))}
+                {dayBookings.length > 3 && <span style={{ fontSize: 9, color: 'rgba(255,255,255,.4)' }}>+{dayBookings.length - 3} more</span>}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <p className="text-xs mt-3 text-center" style={{ color: 'rgba(255,255,255,.3)' }}>Jobs appear on their confirmed (or single scheduled) date. Tap one to open it.</p>
+    </div>
+  )
+}
+
+// ── Customer timeline ────────────────────────────────────────────────────────
+function Timeline({ b }: { b: Booking }) {
+  const events: { at: number; label: string }[] = []
+  const push = (at: number | undefined, label: string) => { if (at) events.push({ at, label }) }
+  push(b.createdAt, 'Booking created')
+  push(b.confirmationLinkSentAt, `Confirmation link sent${b.confirmationLinkSentBy ? ` (${b.confirmationLinkSentBy})` : ''}`)
+  push(b.customerViewedAt, 'Customer opened booking')
+  push(b.customerTimeVerifiedAt, `Time verified${b.selectedDate ? ` — ${fmtISO(b.selectedDate)}${b.selectedWindow ? `, ${b.selectedWindow}` : ''}` : ''}`)
+  for (const p of b.payments) {
+    if (p.status === 'confirmed') push(p.confirmedAt ?? p.createdAt, `Payment ${usd(p.amountCents)} · ${p.method}`)
+    else if (p.status === 'sent_by_customer') push(p.createdAt, `Customer reported ${usd(p.amountCents)} · ${p.method} (needs confirm)`)
+  }
+  push(b.rescheduleRequest?.at, 'Reschedule requested')
+  push(b.reminders?.recoverySentAt, 'Recovery reminder sent')
+  push(b.reminders?.paymentSentAt, 'Payment reminder sent')
+  push(b.reminders?.dayBeforeSentAt, 'Day-before reminder sent')
+  push(b.reminders?.reviewRequestSentAt, 'Review request sent')
+  push(b.completedAt, 'Job completed')
+  push(b.cancelledAt, 'Cancelled')
+  push(b.archivedAt, 'Archived')
+  events.sort((a, c) => a.at - c.at)
+  if (events.length === 0) return null
+  return (
+    <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
+      <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)' }}>Timeline</p>
+      <div className="space-y-2.5">
+        {events.map((e, i) => (
+          <div key={i} className="flex gap-3">
+            <div className="shrink-0 mt-1.5" style={{ width: 8, height: 8, borderRadius: 999, background: i === events.length - 1 ? 'var(--red)' : 'rgba(255,255,255,.25)' }} />
+            <div className="min-w-0">
+              <p className="text-sm text-white">{e.label}</p>
+              <p className="text-xs" style={{ color: 'var(--muted)' }}>{fmtTs(e.at)}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
 // ── Detail + actions ─────────────────────────────────────────────────────────
-function BookingDetail({ b, onBack, onEdit, onChanged }: { b: Booking; onBack: () => void; onEdit: () => void; onChanged: () => Promise<void> }) {
+function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booking; onBack: () => void; onEdit: () => void; onChanged: () => Promise<void>; onDuplicate: () => void }) {
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
@@ -291,6 +500,11 @@ function BookingDetail({ b, onBack, onEdit, onChanged }: { b: Booking; onBack: (
         <KV k="Phone" v={b.customerPhone} /><KV k="Email" v={b.customerEmail} />
         <KV k="Pickup" v={b.pickupAddress} /><KV k="Drop-off" v={b.dropoffAddress} /><KV k="Job Site" v={b.jobSiteAddress} />
         <KV k="Service Date" v={serviceDateLong(b)} />
+        <div className="flex items-center gap-2 mt-1">
+          <KV k="Assigned To" v={b.assignedTo || 'Unassigned'} />
+          <button onClick={() => { const a = prompt('Assign crew member (name):', b.assignedTo ?? ''); if (a !== null) run('assign', { assignedTo: a.trim() }) }}
+            className="text-xs font-semibold px-2.5 py-1 rounded-lg shrink-0" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Assign</button>
+        </div>
         {b.description && <p className="text-sm mt-3" style={{ color: 'var(--muted)' }}>{b.description}</p>}
         {b.items.length > 0 && <ul className="text-sm mt-2 space-y-0.5" style={{ color: 'var(--muted)' }}>{b.items.map((i, n) => <li key={n}>• {i}</li>)}</ul>}
       </div>
@@ -333,14 +547,21 @@ function BookingDetail({ b, onBack, onEdit, onChanged }: { b: Booking; onBack: (
           <ActBtn label={b.confirmationLinkSentAt ? 'Resend Confirmation Link' : 'Send Confirmation Link'} primary busy={busy === 'send-link'} onClick={() => run('send-link')} />
           <ActBtn label="Add Note" onClick={() => { const n = prompt('Internal note:'); if (n) run('add-note', { note: n }) }} />
           <ActBtn label="Edit" onClick={onEdit} />
+          <ActBtn label="Duplicate" onClick={onDuplicate} />
           {b.status !== 'completed' && <ActBtn label="Mark Completed" busy={busy === 'mark-completed'} onClick={() => run('mark-completed', {}, 'Mark this job completed?')} />}
           {b.status !== 'cancelled' && <ActBtn label="Cancel Booking" danger onClick={() => { const r = prompt('Cancellation reason (optional):') ?? ''; run('cancel', { reason: r }, 'Cancel this booking?') }} />}
+          {b.archived
+            ? <ActBtn label="Unarchive" busy={busy === 'unarchive'} onClick={() => run('unarchive')} />
+            : <ActBtn label="Archive" busy={busy === 'archive'} onClick={() => run('archive', {}, 'Archive this booking? It will be hidden from the default list but kept for your records.')} />}
           <ActBtn label="Delete" danger busy={busy === 'delete'} onClick={del} />
         </div>
         <a href={link} target="_blank" rel="noreferrer" className="block text-xs mt-3 font-mono break-all" style={{ color: 'var(--red)' }}>{link}</a>
         {msg && <p className="text-sm mt-2" style={{ color: '#34d399' }}>{msg}</p>}
         {err && <p className="text-sm mt-2" style={{ color: '#f87171' }}>{err}</p>}
       </div>
+
+      {/* Customer timeline */}
+      <Timeline b={b} />
 
       {/* Chargeback evidence */}
       <details className="glass-card p-5" style={{ borderRadius: '16px' }}>
@@ -432,6 +653,15 @@ function BookingForm({ booking, prefill, onClose, onSaved }: { booking?: Booking
   // Auto-send the customer their confirmation link on create (new bookings only).
   const [sendLinkNow, setSendLinkNow] = useState(true)
 
+  // Crew roster names → datalist for the Assigned To field.
+  const [staffNames, setStaffNames] = useState<string[]>([])
+  useEffect(() => {
+    fetch('/api/admin/staff', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => { if (j?.items) setStaffNames(j.items.filter((s: { active: boolean }) => s.active).map((s: { name: string }) => s.name)) })
+      .catch(() => {})
+  }, [])
+
   // Invoice photos — uploaded straight to Vercel Blob, stored as URLs.
   const [photos, setPhotos] = useState<InvoicePhoto[]>(booking?.invoicePhotos ?? [])
   const [uploading, setUploading] = useState(false)
@@ -492,17 +722,18 @@ function BookingForm({ booking, prefill, onClose, onSaved }: { booking?: Booking
         <div><label style={lab}>Service Type</label><select name="serviceType" defaultValue={booking?.serviceType ?? prefill?.service ?? 'moving'} style={{ ...fStyle, cursor: 'pointer' }}>{SERVICE_TYPES.map(s => <option key={s} value={s}>{SERVICE_LABELS[s]}</option>)}</select></div>
         <div><label style={lab}>Invoice #</label><input name="invoiceNumber" defaultValue={booking?.invoiceNumber} style={fStyle} /></div>
         <div><label style={lab}>Invoice Date</label><input name="invoiceDate" defaultValue={booking?.invoiceDate ?? todayLong} placeholder="June 16, 2026" style={fStyle} /></div>
-        <div><label style={lab}>Invoice Amount ($)</label><input name="invoiceAmount" inputMode="decimal" defaultValue={dollars(booking?.invoiceAmountCents)} placeholder="550.00" style={fStyle} /></div>
-        <div><label style={lab}>Deposit ($)</label><input name="depositAmount" inputMode="decimal" defaultValue={dollars(booking?.depositAmountCents)} placeholder="150.00" style={fStyle} /></div>
-        <div><label style={lab}>Discount ($)</label><input name="discountAmount" inputMode="decimal" defaultValue={dollars(booking?.discountCents)} placeholder="0.00" style={fStyle} /></div>
-        <div><label style={lab}>Crew Size</label><input name="crewSize" inputMode="numeric" defaultValue={booking?.crewSize ?? ''} placeholder="2" style={fStyle} /></div>
-        <div><label style={lab}>Estimated Hours</label><input name="estimatedHours" inputMode="numeric" defaultValue={booking?.estimatedHours ?? ''} placeholder="5" style={fStyle} /></div>
+        <div><label style={lab}>Invoice Amount ($)</label><input name="invoiceAmount" inputMode="decimal" defaultValue={dollars(booking?.invoiceAmountCents) || prefill?.invoiceAmount} placeholder="550.00" style={fStyle} /></div>
+        <div><label style={lab}>Deposit ($)</label><input name="depositAmount" inputMode="decimal" defaultValue={dollars(booking?.depositAmountCents) || prefill?.deposit} placeholder="150.00" style={fStyle} /></div>
+        <div><label style={lab}>Discount ($)</label><input name="discountAmount" inputMode="decimal" defaultValue={dollars(booking?.discountCents) || prefill?.discount} placeholder="0.00" style={fStyle} /></div>
+        <div><label style={lab}>Crew Size</label><input name="crewSize" inputMode="numeric" defaultValue={booking?.crewSize ?? prefill?.crewSize ?? ''} placeholder="2" style={fStyle} /></div>
+        <div><label style={lab}>Estimated Hours</label><input name="estimatedHours" inputMode="numeric" defaultValue={booking?.estimatedHours ?? prefill?.estimatedHours ?? ''} placeholder="5" style={fStyle} /></div>
+        <div><label style={lab}>Assigned To (crew)</label><input name="assignedTo" list="staff-roster" defaultValue={booking?.assignedTo ?? prefill?.assignedTo} placeholder="Crew member" style={fStyle} /><datalist id="staff-roster">{staffNames.map(n => <option key={n} value={n} />)}</datalist></div>
       </div>
       <div><label style={lab}>Pickup Address</label><input name="pickupAddress" defaultValue={booking?.pickupAddress ?? prefill?.pickup} style={fStyle} /></div>
       <div><label style={lab}>Drop-off Address</label><input name="dropoffAddress" defaultValue={booking?.dropoffAddress ?? prefill?.dropoff} style={fStyle} /></div>
       <div><label style={lab}>Job Site Address (if single-site)</label><input name="jobSiteAddress" defaultValue={booking?.jobSiteAddress ?? prefill?.jobSite} style={fStyle} /></div>
       <div><label style={lab}>Description</label><textarea name="description" rows={2} defaultValue={booking?.description ?? prefill?.desc} style={{ ...fStyle, resize: 'vertical' }} /></div>
-      <div><label style={lab}>Items (one per line)</label><textarea name="items" rows={3} defaultValue={booking?.items?.join('\n')} placeholder={'40 boxes\nRefrigerator\nDresser\nCouch\nGrill'} style={{ ...fStyle, resize: 'vertical' }} /></div>
+      <div><label style={lab}>Items (one per line)</label><textarea name="items" rows={3} defaultValue={booking?.items?.join('\n') ?? prefill?.items} placeholder={'40 boxes\nRefrigerator\nDresser\nCouch\nGrill'} style={{ ...fStyle, resize: 'vertical' }} /></div>
 
       {/* ── Invoice photos ─────────────────────────────────────────── */}
       <div>

@@ -83,6 +83,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if ('selectedDate' in f) b.selectedDate = str(f.selectedDate, 20)
       if ('selectedWindow' in f) b.selectedWindow = str(f.selectedWindow, 40)
       if ('internalNotes' in f) b.internalNotes = str(f.internalNotes, 2000)
+      if ('assignedTo' in f) b.assignedTo = str(f.assignedTo, 80)
       if ('collectInPerson' in f) b.collectInPerson = f.collectInPerson === true || f.collectInPerson === 'true' || f.collectInPerson === 'on'
       if (f.status && (Object.keys(STATUS_SET) as BookingStatus[]).includes(f.status)) b.status = f.status as BookingStatus
       break
@@ -168,6 +169,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (!note) return NextResponse.json({ error: 'note required' }, { status: 400 })
       const stamp = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })
       b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[${stamp}] ${note}`
+      break
+    }
+    case 'archive': {
+      b.archived = true
+      b.archivedAt = Date.now()
+      break
+    }
+    case 'unarchive': {
+      b.archived = false
+      b.archivedAt = undefined
+      break
+    }
+    case 'assign': {
+      b.assignedTo = str(body.assignedTo, 80)
       break
     }
     default:

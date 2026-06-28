@@ -59,6 +59,7 @@ export async function POST(req: NextRequest) {
       selectedDate: str(body.selectedDate, 20),
       selectedWindow: str(body.selectedWindow, 40),
       internalNotes: str(body.internalNotes, 2000),
+      assignedTo: str(body.assignedTo, 80),
       status: 'booking_created',
       payments: [],
       createdAt: now,

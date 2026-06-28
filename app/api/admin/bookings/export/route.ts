@@ -38,9 +38,9 @@ export async function GET(req: NextRequest) {
   })
 
   const header = [
-    'Booking #', 'Invoice Number', 'Customer', 'Phone', 'Email', 'Service Type', 'Job Date',
-    'Invoice Amount', 'Amount Paid', 'Processing Fees', 'Net Revenue', 'Balance Due',
-    'Booking Status', 'Payment Status', 'Created',
+    'Booking #', 'Invoice Number', 'Customer', 'Phone', 'Email', 'Service Type', 'Assigned To', 'Job Date', 'Arrival Window',
+    'Invoice Amount', 'Discount', 'Promo Code', 'Amount Paid', 'Processing Fees', 'Net Revenue', 'Balance Due',
+    'Booking Status', 'Payment Status', 'Reschedules', 'Archived', 'Created',
   ]
   const lines = [header.map(csvCell).join(',')]
   for (const b of rows) {
@@ -51,14 +51,20 @@ export async function GET(req: NextRequest) {
       b.customerPhone ?? '',
       b.customerEmail ?? '',
       SERVICE_LABELS[b.serviceType],
+      b.assignedTo ?? '',
       jobDate(b),
+      b.selectedWindow ?? '',
       usd(b.invoiceAmountCents),
+      usd(b.discountCents ?? 0),
+      b.promoCode ?? '',
       usd(b.amountPaidCents),
       usd(confirmedFeesCents(b)),
       usd(b.amountPaidCents),
       usd(balanceDueCents(b)),
       BOOKING_STATUS_LABEL[b.status],
       PAYMENT_SUMMARY_LABEL[paymentSummaryStatus(b)],
+      String(b.rescheduleCount ?? 0),
+      b.archived ? 'yes' : '',
       new Date(b.createdAt).toISOString().slice(0, 10),
     ].map(csvCell).join(','))
   }
