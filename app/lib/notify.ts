@@ -88,7 +88,7 @@ export async function notifyPaymentReminder(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
   if (hasEmail(b)) { await emailPaymentReminderCustomer(b); out.email = true }
   if (hasSms(b)) {
-    const msg = `J Kiss LLC: Reminder — a balance of ${fmtUSD(balanceDueCents(b))} is due on ${b.bookingNumber}. Pay or pay fee-free by Zelle (817-909-4312): ${bookingLink(b.token)} Reply STOP to opt out.`
+    const msg = `J Kiss LLC: Reminder — a balance of ${fmtUSD(balanceDueCents(b))} is due on ${b.bookingNumber}. Pay or pay fee-free by Zelle (jkissbiz@gmail.com): ${bookingLink(b.token)} Reply STOP to opt out.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
   return out

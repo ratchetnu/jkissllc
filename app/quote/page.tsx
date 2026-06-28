@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 
-type Estimate = { low: number; high: number; miles: number; fuelCharge?: number; pickupLabel: string; deliveryLabel: string }
+type Estimate = { low: number; high: number; miles: number; fuelCharge?: number; promoCode?: string; promoPct?: number; pickupLabel: string; deliveryLabel: string }
 
 // Downscale an image to a small JPEG data URL for the AI photo estimate. Falls
 // back to the original (e.g. HEIC the browser can't decode to canvas).
@@ -140,6 +140,9 @@ export default function QuotePage() {
                 </p>
                 {!!estimate.fuelCharge && estimate.fuelCharge > 0 && (
                   <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,.45)' }}>Includes a ${estimate.fuelCharge} fuel charge for the round-trip distance.</p>
+                )}
+                {estimate.promoCode && (
+                  <p className="text-xs mt-1 font-semibold" style={{ color: '#34d399' }}>✓ Promo {estimate.promoCode} applied{estimate.promoPct ? ` — ${estimate.promoPct}% off` : ''}.</p>
                 )}
               </div>
               <div className="pt-6" style={{ borderTop: '1px solid var(--line)' }}>
@@ -328,8 +331,10 @@ export default function QuotePage() {
               <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
                 <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>{isJobBased ? 'What needs to go?' : 'Notes (optional)'}</label>
                 <textarea name="notes" rows={3} placeholder={isEviction ? 'e.g. full apartment/house trash-out, tenant belongings left behind, furniture & appliances, number of bedrooms, stairs/elevator access…' : isJunk ? 'e.g. garage cleanout, old appliances & furniture, construction debris, stairs/elevator access, heavy items… (note: we can’t haul hazardous materials)' : 'Special handling, appointment requirements, dock conditions, etc.'} style={{ ...iStyle, resize: 'vertical' }} />
-                <label className="block text-xs font-semibold mb-1.5 mt-3" style={{ color: 'var(--muted)' }}>How did you hear about us? <span style={{ fontWeight: 400 }}>(optional — referral name or code)</span></label>
-                <input name="referral" placeholder="e.g. Google, a friend's name, or a promo code" style={iStyle} />
+                <label className="block text-xs font-semibold mb-1.5 mt-3" style={{ color: 'var(--muted)' }}>How did you hear about us? <span style={{ fontWeight: 400 }}>(optional — referral name)</span></label>
+                <input name="referral" placeholder="e.g. Google, or a friend's name" style={iStyle} />
+                <label className="block text-xs font-semibold mb-1.5 mt-3" style={{ color: 'var(--muted)' }}>Promo code <span style={{ fontWeight: 400 }}>(optional)</span></label>
+                <input name="promo" placeholder="Enter a code for a discount" style={{ ...iStyle, textTransform: 'uppercase' }} />
               </div>
 
               {status === 'error' && <p className="text-sm" style={{ color: '#f87171' }}>{errorMsg}</p>}

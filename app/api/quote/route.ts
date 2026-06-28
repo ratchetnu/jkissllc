@@ -3,6 +3,7 @@ import { Resend } from 'resend'
 import { rateLimit } from '../../lib/rate-limit'
 import { escapeHtml, isValidEmail } from '../../lib/validators'
 import { isBlockedBot } from '../../lib/botcheck'
+import { getPromo, validatePromo, normalizeCode } from '../../lib/promo'
 
 // Look up a US ZIP via zippopotam.us (free, no key required).
 async function lookupZip(zip: string): Promise<{ lat: number; lon: number; city: string; state: string } | null> {
@@ -99,7 +100,7 @@ export async function POST(request: NextRequest) {
   const {
     pickupZip, deliveryZip,
     pallets, weight, serviceType, timing, loadSize,
-    name, email, phone, company, notes, referral,
+    name, email, phone, company, notes, referral, promo,
   } = body
 
   // Junk removal and eviction/property cleanouts are priced per job, not by
@@ -158,6 +159,29 @@ export async function POST(request: NextRequest) {
   }
   const distanceLabel = `${Math.round(miles)} mi (${Math.round(miles * 2)} mi round trip)`
 
+  // Promo code: validate it, preview the discount on a delivery estimate, and
+  // carry the code into the lead + booking prefill so it can be applied for real.
+  let promoCode = ''
+  let promoPct = 0
+  const promoInput = normalizeCode(promo)
+  if (promoInput) {
+    const p = await getPromo(promoInput)
+    const v = validatePromo(p, (high || 100) * 100, Date.now())
+    if (v.ok) {
+      promoCode = v.promo.code
+      if (!isJobBased && high > 0) {
+        if (v.promo.type === 'percent') {
+          promoPct = v.promo.value
+          low = Math.max(0, Math.round(low * (1 - v.promo.value / 100)))
+          high = Math.max(0, Math.round(high * (1 - v.promo.value / 100)))
+        } else {
+          low = Math.max(0, low - v.promo.value)
+          high = Math.max(0, high - v.promo.value)
+        }
+      }
+    }
+  }
+
   const safe = {
     pickupZip:    escapeHtml(pickupZip),
     deliveryZip:  escapeHtml(deliveryZip),
@@ -202,7 +226,7 @@ export async function POST(request: NextRequest) {
     const bookingParams = new URLSearchParams({ new: '1', name: name || '', email: email || '', phone: phone || '', service: isJunk ? 'junk-removal' : isEviction ? 'eviction' : 'freight' })
     if (isJobBased) bookingParams.set('jobSite', `${from.city}, ${from.state} ${pickupZip}`)
     else { bookingParams.set('pickup', `${from.city}, ${from.state} ${pickupZip}`); bookingParams.set('dropoff', `${to.city}, ${to.state} ${deliveryZip}`) }
-    const desc = [notes, isJobBased ? `Est. load: ${LOAD_LABELS[loadSize] ?? loadSize}` : '', timing ? `Timing: ${timing}` : '', addOnLabels.length ? `Add-ons: ${addOnLabels.join(', ')}` : ''].filter(Boolean).join(' · ')
+    const desc = [notes, isJobBased ? `Est. load: ${LOAD_LABELS[loadSize] ?? loadSize}` : '', timing ? `Timing: ${timing}` : '', addOnLabels.length ? `Add-ons: ${addOnLabels.join(', ')}` : '', promoCode ? `Promo: ${promoCode}` : ''].filter(Boolean).join(' · ')
     if (desc) bookingParams.set('desc', desc)
     const bookingUrl = `https://www.jkissllc.com/admin/bookings?${bookingParams.toString()}`
 
@@ -237,6 +261,7 @@ export async function POST(request: NextRequest) {
             <tr><td style="padding:6px 0;color:#999">Email</td><td style="padding:6px 0"><a href="mailto:${safe.email}">${safe.email}</a></td></tr>
             <tr><td style="padding:6px 0;color:#999">Phone</td><td style="padding:6px 0">${safe.phone}</td></tr>
             ${safe.referral !== '—' ? `<tr><td style="padding:6px 0;color:#999">Heard via</td><td style="padding:6px 0;font-weight:600">${safe.referral}</td></tr>` : ''}
+            ${promoCode ? `<tr><td style="padding:6px 0;color:#999">Promo</td><td style="padding:6px 0;font-weight:600">${escapeHtml(promoCode)}${promoPct ? ` (${promoPct}% off)` : ''}</td></tr>` : ''}
           </table>
 
           <p style="color:#999;margin:18px 0 6px 0">${isJobBased ? 'What needs to go' : 'Notes'}</p>
@@ -252,7 +277,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      estimate: { low, high, miles: Math.round(miles), fuelCharge, pickupLabel: `${from.city}, ${from.state}`, deliveryLabel: `${to.city}, ${to.state}` },
+      estimate: { low, high, miles: Math.round(miles), fuelCharge, promoCode, promoPct, pickupLabel: `${from.city}, ${from.state}`, deliveryLabel: `${to.city}, ${to.state}` },
     })
   } catch (err) {
     console.error('[quote]', err)

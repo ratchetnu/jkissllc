@@ -189,7 +189,7 @@ export async function emailPaymentReminderCustomer(b: Booking): Promise<void> {
     <p style="text-align:center;margin:26px 0">
       <a href="${link}" style="background:${RED};color:#fff;font-weight:700;text-decoration:none;padding:14px 28px;border-radius:10px;display:inline-block">View Invoice &amp; Pay →</a>
     </p>
-    <p style="font-size:13px;color:#888">You can also pay fee-free by Zelle to (817) 909-4312 — include ${esc(b.invoiceNumber ?? b.bookingNumber)} in the memo.</p>
+    <p style="font-size:13px;color:#888">You can also pay fee-free by Zelle to jkissbiz@gmail.com — include ${esc(b.invoiceNumber ?? b.bookingNumber)} in the memo.</p>
     ${moneyBlock(b)}`
   await send({ to: [b.customerEmail], subject: `Balance reminder — J Kiss LLC ${b.bookingNumber}`, html: shell('A balance is due', body) })
 }

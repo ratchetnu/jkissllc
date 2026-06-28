@@ -362,7 +362,7 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
 
             <div className="flex flex-col gap-2">
               {[
-                { label: 'Zelle', value: '817-909-4312' },
+                { label: 'Zelle', value: 'jkissbiz@gmail.com' },
                 { label: 'Apple Cash', value: '817-909-4312' },
                 { label: 'Memo', value: memo },
               ].map(item => (
