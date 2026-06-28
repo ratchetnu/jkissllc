@@ -2,12 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
 import { rateLimit } from '../../lib/rate-limit'
 import { escapeHtml, isValidEmail } from '../../lib/validators'
+import { isBlockedBot } from '../../lib/botcheck'
 
 export async function POST(request: NextRequest) {
   // Public form that sends two emails (one to a requester-supplied address) —
   // rate-limit per IP so it can't be used as an email-spam relay.
   if (await rateLimit(request, 'coi', 5, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many requests. Please wait a few minutes and try again.' }, { status: 429 })
+  }
+  if (await isBlockedBot()) {
+    return NextResponse.json({ error: 'Request blocked. Please try again.' }, { status: 403 })
   }
 
   const body = await request.json()

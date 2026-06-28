@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
 import { rateLimit } from '../../lib/rate-limit'
 import { escapeHtml, isValidEmail } from '../../lib/validators'
+import { isBlockedBot } from '../../lib/botcheck'
 
 // Look up a US ZIP via zippopotam.us (free, no key required).
 async function lookupZip(zip: string): Promise<{ lat: number; lon: number; city: string; state: string } | null> {
@@ -60,6 +61,9 @@ export async function POST(request: NextRequest) {
   // rate-limit per IP to block spam/amplification abuse.
   if (await rateLimit(request, 'quote', 5, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many requests. Please wait a few minutes and try again.' }, { status: 429 })
+  }
+  if (await isBlockedBot()) {
+    return NextResponse.json({ error: 'Request blocked. Please try again.' }, { status: 403 })
   }
 
   const body = await request.json()

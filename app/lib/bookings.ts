@@ -159,6 +159,14 @@ export type Booking = {
   customerTimeVerifiedAt?: number
   customerConfirmedAt?: number
 
+  // Automated-reminder dedupe stamps (set by the daily cron; one-shot each)
+  reminders?: {
+    recoverySentAt?: number      // "finish confirming your booking" nudge
+    paymentSentAt?: number       // unpaid-balance reminder
+    dayBeforeSentAt?: number     // "your service is tomorrow"
+    reviewRequestSentAt?: number // post-completion review ask
+  }
+
   // Lifecycle timestamps
   createdAt: number
   updatedAt: number

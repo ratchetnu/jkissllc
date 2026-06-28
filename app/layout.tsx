@@ -1,8 +1,16 @@
 import type { Metadata } from 'next'
 import { Analytics } from '@vercel/analytics/react'
+import { BotIdClient } from 'botid/client'
 import { Inter, Space_Grotesk, JetBrains_Mono } from 'next/font/google'
 import PageTracker from './components/PageTracker'
 import './globals.css'
+
+// Public form endpoints guarded by Vercel BotID's invisible challenge.
+const PROTECTED_ROUTES = [
+  { path: '/api/contact', method: 'POST' },
+  { path: '/api/quote', method: 'POST' },
+  { path: '/api/coi', method: 'POST' },
+]
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-body', display: 'swap' })
 const display = Space_Grotesk({ subsets: ['latin'], variable: '--font-display', display: 'swap', weight: ['500', '600', '700'] })
@@ -43,6 +51,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${inter.variable} ${display.variable} ${mono.variable}`}>
+      <head>
+        <BotIdClient protect={PROTECTED_ROUTES} />
+      </head>
       <body>
         {/* LocalBusiness structured data for Google */}
         <script

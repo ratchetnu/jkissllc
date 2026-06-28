@@ -161,6 +161,55 @@ export async function emailPaidInFullCustomer(b: Booking): Promise<void> {
   await send({ to: [b.customerEmail], subject: `Paid in full — your J Kiss LLC receipt (${b.bookingNumber})`, html: shell('Paid in full — thank you!', body) })
 }
 
+// ── Automated reminders (sent by the daily cron) ─────────────────────────────
+
+export async function emailBookingReminderCustomer(b: Booking): Promise<void> {
+  if (!b.customerEmail) return
+  const link = bookingLink(b.token)
+  const body = `
+    <p style="font-size:15px;line-height:1.6">Hi ${esc(b.customerName)}, just a friendly reminder to finish confirming your ${esc(SERVICE_LABELS[b.serviceType])} with J Kiss LLC. It only takes a minute.</p>
+    <p style="text-align:center;margin:26px 0">
+      <a href="${link}" style="background:${RED};color:#fff;font-weight:700;text-decoration:none;padding:14px 28px;border-radius:10px;display:inline-block">Confirm Your Booking →</a>
+    </p>
+    ${moneyBlock(b)}`
+  await send({ to: [b.customerEmail], subject: `Reminder: confirm your J Kiss LLC booking — ${b.bookingNumber}`, html: shell('Finish confirming your booking', body) })
+}
+
+export async function emailPaymentReminderCustomer(b: Booking): Promise<void> {
+  if (!b.customerEmail) return
+  const link = bookingLink(b.token)
+  const body = `
+    <p style="font-size:15px;line-height:1.6">Hi ${esc(b.customerName)}, this is a friendly reminder that a balance of <strong>${fmtUSD(balanceDueCents(b))}</strong> remains on your J Kiss LLC invoice.</p>
+    <p style="text-align:center;margin:26px 0">
+      <a href="${link}" style="background:${RED};color:#fff;font-weight:700;text-decoration:none;padding:14px 28px;border-radius:10px;display:inline-block">View Invoice &amp; Pay →</a>
+    </p>
+    <p style="font-size:13px;color:#888">You can also pay fee-free by Zelle to (817) 909-4312 — include ${esc(b.invoiceNumber ?? b.bookingNumber)} in the memo.</p>
+    ${moneyBlock(b)}`
+  await send({ to: [b.customerEmail], subject: `Balance reminder — J Kiss LLC ${b.bookingNumber}`, html: shell('A balance is due', body) })
+}
+
+export async function emailJobTomorrowCustomer(b: Booking): Promise<void> {
+  if (!b.customerEmail) return
+  const body = `
+    <p style="font-size:15px;line-height:1.6">Hi ${esc(b.customerName)}, a quick heads-up — your ${esc(SERVICE_LABELS[b.serviceType])} with J Kiss LLC is <strong>tomorrow</strong>.</p>
+    ${rows([['Date', b.selectedDate], ['Arrival Window', b.selectedWindow], ['Service', SERVICE_LABELS[b.serviceType]]])}
+    ${locationBlock(b)}
+    <p style="font-size:14px;line-height:1.6;margin-top:14px">Please make sure the crew has clear access. Questions? Call or text (817) 909-4312.</p>`
+  await send({ to: [b.customerEmail], subject: `Reminder: your J Kiss LLC service is tomorrow — ${b.bookingNumber}`, html: shell('See you tomorrow', body) })
+}
+
+export async function emailReviewRequestCustomer(b: Booking): Promise<void> {
+  if (!b.customerEmail) return
+  const receipt = receiptLink(b.token)
+  const body = `
+    <p style="font-size:15px;line-height:1.6">Hi ${esc(b.customerName)}, thanks again for choosing J Kiss LLC for your ${esc(SERVICE_LABELS[b.serviceType])}. How did we do?</p>
+    <p style="font-size:14px;line-height:1.6;color:#555">A quick star rating takes about 30 seconds and really helps our small business.</p>
+    <p style="text-align:center;margin:24px 0">
+      <a href="${receipt}#review" style="background:${RED};color:#fff;font-weight:700;text-decoration:none;padding:14px 28px;border-radius:10px;display:inline-block">Leave a Quick Review →</a>
+    </p>`
+  await send({ to: [b.customerEmail], subject: `How did we do? — J Kiss LLC ${b.bookingNumber}`, html: shell('Mind leaving a review?', body) })
+}
+
 // ── Ops-facing ───────────────────────────────────────────────────────────────
 
 function opsCustomerRows(b: Booking): string {
