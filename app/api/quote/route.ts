@@ -237,6 +237,7 @@ export async function POST(request: NextRequest) {
     const bookingParams = new URLSearchParams({ new: '1', name: name || '', email: email || '', phone: phone || '', service: isJunk ? 'junk-removal' : isEviction ? 'eviction' : 'freight' })
     if (isJobBased) bookingParams.set('jobSite', `${from.city}, ${from.state} ${pickupZip}`)
     else { bookingParams.set('pickup', `${from.city}, ${from.state} ${pickupZip}`); bookingParams.set('dropoff', `${to.city}, ${to.state} ${deliveryZip}`) }
+    if (disposal) bookingParams.set('disposalEst', String(Math.round(disposal.disposalCents / 100)))
     const desc = [notes, isJobBased ? `Est. load: ${LOAD_LABELS[loadSize] ?? loadSize}` : '', timing ? `Timing: ${timing}` : '', addOnLabels.length ? `Add-ons: ${addOnLabels.join(', ')}` : '', promoCode ? `Promo: ${promoCode}` : '', disposal ? `Disposal est $${Math.round(disposal.disposalCents / 100)} · ${disposal.confidence} confidence` : ''].filter(Boolean).join(' · ')
     if (desc) bookingParams.set('desc', desc)
     const bookingUrl = `https://www.jkissllc.com/admin/bookings?${bookingParams.toString()}`

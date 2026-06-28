@@ -104,7 +104,7 @@ type Prefill = {
   name?: string; email?: string; phone?: string; service?: string
   pickup?: string; dropoff?: string; jobSite?: string; desc?: string
   items?: string; invoiceAmount?: string; deposit?: string; discount?: string
-  crewSize?: string; estimatedHours?: string; assignedTo?: string; invoiceNumber?: string
+  crewSize?: string; estimatedHours?: string; assignedTo?: string; invoiceNumber?: string; disposalEst?: string
 }
 
 // Build a prefill from an existing booking (used by Duplicate).
@@ -160,7 +160,7 @@ function Dashboard() {
     const sp = new URLSearchParams(window.location.search)
     if (sp.get('new') !== '1') return
     const g = (k: string) => sp.get(k) || undefined
-    setPrefill({ name: g('name'), email: g('email'), phone: g('phone'), service: g('service'), pickup: g('pickup'), dropoff: g('dropoff'), jobSite: g('jobSite'), desc: g('desc') })
+    setPrefill({ name: g('name'), email: g('email'), phone: g('phone'), service: g('service'), pickup: g('pickup'), dropoff: g('dropoff'), jobSite: g('jobSite'), desc: g('desc'), disposalEst: g('disposalEst') })
     setShowNew(true)
     window.history.replaceState({}, '', window.location.pathname)
   }, [])
@@ -587,6 +587,31 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
         {pendingPayments.length > 0 && <p className="text-xs mt-2" style={{ color: '#fbbf24' }}>⚠ {pendingPayments.length} customer-reported payment(s) need confirmation.</p>}
       </div>
 
+      {/* Disposal & profit */}
+      <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
+        <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)' }}>Disposal &amp; Profit</p>
+        {!!b.disposalEstimateCents && <KV k="Estimated Disposal" v={usd(b.disposalEstimateCents)} />}
+        <form key={b.token} onSubmit={e => { e.preventDefault(); const v = new FormData(e.currentTarget).get('disposalActual'); run('set-disposal', { disposalActual: v }) }} className="flex items-end gap-2 mt-1">
+          <div className="flex-1">
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 4 }}>Actual disposal cost ($)</label>
+            <input name="disposalActual" inputMode="decimal" defaultValue={b.disposalActualCents ? (b.disposalActualCents / 100).toFixed(2) : ''} placeholder="0.00"
+              style={{ width: '100%', padding: '9px 12px', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 9, color: '#f3f4f6', fontSize: 15, outline: 'none' }} />
+          </div>
+          <button type="submit" disabled={busy === 'set-disposal'} className="btn-ghost" style={{ padding: '9px 16px', fontSize: 13 }}>{busy === 'set-disposal' ? '…' : 'Save'}</button>
+        </form>
+        {(() => {
+          const disposal = b.disposalActualCents ?? b.disposalEstimateCents ?? 0
+          const net = b.amountPaidCents - disposal
+          return (
+            <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
+              <KV k="Collected" v={usd(b.amountPaidCents)} />
+              <KV k={`Net after disposal${b.disposalActualCents ? '' : ' (est.)'}`} v={usd(net)} />
+            </div>
+          )
+        })()}
+        <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Enter the real dump cost after the job — it feeds your profit reporting on the dashboard.</p>
+      </div>
+
       {/* Actions */}
       <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
         <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)' }}>Actions</p>
@@ -793,6 +818,7 @@ function BookingForm({ booking, prefill, onClose, onSaved }: { booking?: Booking
         <div><label style={lab}>Invoice Amount ($)</label><input name="invoiceAmount" inputMode="decimal" defaultValue={dollars(booking?.invoiceAmountCents) || prefill?.invoiceAmount} placeholder="550.00" style={fStyle} /></div>
         <div><label style={lab}>Deposit ($)</label><input name="depositAmount" inputMode="decimal" defaultValue={dollars(booking?.depositAmountCents) || prefill?.deposit} placeholder="150.00" style={fStyle} /></div>
         <div><label style={lab}>Discount ($)</label><input name="discountAmount" inputMode="decimal" defaultValue={dollars(booking?.discountCents) || prefill?.discount} placeholder="0.00" style={fStyle} /></div>
+        <div><label style={lab}>Disposal Est. ($)</label><input name="disposalEstimate" inputMode="decimal" defaultValue={dollars(booking?.disposalEstimateCents) || prefill?.disposalEst} placeholder="0.00" style={fStyle} /></div>
         <div><label style={lab}>Crew Size</label><input name="crewSize" inputMode="numeric" defaultValue={booking?.crewSize ?? prefill?.crewSize ?? ''} placeholder="2" style={fStyle} /></div>
         <div><label style={lab}>Estimated Hours</label><input name="estimatedHours" inputMode="numeric" defaultValue={booking?.estimatedHours ?? prefill?.estimatedHours ?? ''} placeholder="5" style={fStyle} /></div>
         <div><label style={lab}>Assigned To (lead)</label><input name="assignedTo" list="staff-roster" defaultValue={booking?.assignedTo ?? prefill?.assignedTo} placeholder="Crew member" style={fStyle} /><datalist id="staff-roster">{staffNames.map(n => <option key={n} value={n} />)}</datalist></div>

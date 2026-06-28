@@ -86,6 +86,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if ('internalNotes' in f) b.internalNotes = str(f.internalNotes, 2000)
       if ('assignedTo' in f) b.assignedTo = str(f.assignedTo, 80)
       if ('assignedHelper' in f) b.assignedHelper = str(f.assignedHelper, 80)
+      if ('disposalEstimate' in f) b.disposalEstimateCents = dollarsToCents(f.disposalEstimate) || undefined
+      if ('disposalActual' in f) b.disposalActualCents = dollarsToCents(f.disposalActual) || undefined
       if ('collectInPerson' in f) b.collectInPerson = f.collectInPerson === true || f.collectInPerson === 'true' || f.collectInPerson === 'on'
       if (f.status && (Object.keys(STATUS_SET) as BookingStatus[]).includes(f.status)) b.status = f.status as BookingStatus
       break
@@ -186,6 +188,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     case 'assign': {
       if ('assignedTo' in body) b.assignedTo = str(body.assignedTo, 80)
       if ('assignedHelper' in body) b.assignedHelper = str(body.assignedHelper, 80)
+      break
+    }
+    case 'set-disposal': {
+      if ('disposalEstimate' in body) b.disposalEstimateCents = dollarsToCents(body.disposalEstimate) || undefined
+      if ('disposalActual' in body) b.disposalActualCents = dollarsToCents(body.disposalActual) || undefined
       break
     }
     default:

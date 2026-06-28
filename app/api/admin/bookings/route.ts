@@ -49,6 +49,7 @@ export async function POST(req: NextRequest) {
       invoicePhotos: sanitizePhotos(body.invoicePhotos),
       invoiceAmountCents: dollarsToCents(body.invoiceAmount ?? 0),
       discountCents: dollarsToCents(body.discountAmount ?? 0) || undefined,
+      disposalEstimateCents: dollarsToCents(body.disposalEstimate ?? 0) || undefined,
       depositAmountCents: dollarsToCents(body.depositAmount ?? 0),
       amountPaidCents: 0,
       collectInPerson: body.collectInPerson === true || body.collectInPerson === 'true' || body.collectInPerson === 'on',

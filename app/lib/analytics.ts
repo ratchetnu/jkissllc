@@ -52,6 +52,7 @@ export type BookingAnalytics = {
   byCity: NamedTotal[]
   byZip: NamedTotal[]
   paymentStatus: Record<PaymentSummaryStatus, number>
+  disposal: { totalCents: number; actualCents: number; estimateCents: number; netAfterDisposalCents: number; actualEnteredCount: number }
   reviews?: { count: number; rating: number }
 }
 
@@ -84,6 +85,7 @@ export function computeBookingAnalytics(
   let ticketSum = 0, ticketCount = 0, outstandingCents = 0
   const outstanding: BookingAnalytics['outstanding'] = []
   let total = 0, active = 0, completed = 0, cancelled = 0, bookedThisMonth = 0, completedThisMonth = 0
+  let disposalActualCents = 0, disposalEstimateCents = 0, disposalActualEnteredCount = 0
 
   const loc = parseLocation
   for (const b of bookings) {
@@ -93,6 +95,11 @@ export function computeBookingAnalytics(
     else {
       total++
       if (b.status === 'completed') completed++; else active++
+    }
+    // Disposal cost (actual where entered, else estimate) — non-cancelled jobs.
+    if (!isCancelled) {
+      if (b.disposalActualCents) { disposalActualCents += b.disposalActualCents; disposalActualEnteredCount++ }
+      else if (b.disposalEstimateCents) disposalEstimateCents += b.disposalEstimateCents
     }
     const createdStr = centralDate(b.createdAt)
     if (!isCancelled && createdStr >= monthStart) bookedThisMonth++
@@ -153,6 +160,13 @@ export function computeBookingAnalytics(
     byCity: sortDesc(city).slice(0, 8),
     byZip: sortDesc(zip).slice(0, 8),
     paymentStatus,
+    disposal: {
+      totalCents: disposalActualCents + disposalEstimateCents,
+      actualCents: disposalActualCents,
+      estimateCents: disposalEstimateCents,
+      netAfterDisposalCents: allTime - (disposalActualCents + disposalEstimateCents),
+      actualEnteredCount: disposalActualEnteredCount,
+    },
     reviews,
   }
 }

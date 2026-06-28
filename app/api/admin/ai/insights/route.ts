@@ -21,6 +21,8 @@ export async function GET(req: NextRequest) {
       paymentStatus: a.paymentStatus,
       byService: a.byService.map(s => ({ service: s.key, revenue: usd(s.amountCents), jobs: s.count })),
       byCity: a.byCity.slice(0, 5).map(s => ({ city: s.key, revenue: usd(s.amountCents), jobs: s.count })),
+      disposalCost: usd(a.disposal.totalCents),
+      netAfterDisposal: usd(a.disposal.netAfterDisposalCents),
       reviews: a.reviews,
     }
     const r = await aiText({

@@ -151,6 +151,8 @@ export type Booking = {
   internalNotes?: string
   assignedTo?: string          // lead crew/rep assigned to the job (shown to customer)
   assignedHelper?: string      // helper / second rep (shown to customer)
+  disposalEstimateCents?: number // estimated dump/disposal cost (from the quote)
+  disposalActualCents?: number   // actual disposal cost entered after the job
   loyaltyCode?: string         // 10% off code issued when paid in full (reuse/referral)
   archived?: boolean           // hidden from the default list (soft delete)
   archivedAt?: number

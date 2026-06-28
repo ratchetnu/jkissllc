@@ -495,6 +495,15 @@ export default function AdminPage() {
               <StatCard label="Booked This Mo." value={String(overview.jobs.bookedThisMonth)} sub={`${overview.jobs.completedThisMonth} completed this mo.`} />
             </div>
 
+            {overview.disposal && (overview.disposal.totalCents > 0 || overview.revenue.allTime > 0) && (
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                <StatCard label="Net After Disposal" value={money(overview.disposal.netAfterDisposalCents)} accent sub="collected − disposal cost" />
+                <StatCard label="Disposal Cost" value={money(overview.disposal.totalCents)} sub={overview.disposal.actualEnteredCount > 0 ? `${overview.disposal.actualEnteredCount} actual + est.` : 'estimated'} />
+                <StatCard label="Disposal (Actual)" value={money(overview.disposal.actualCents)} sub={`${overview.disposal.actualEnteredCount} job${overview.disposal.actualEnteredCount === 1 ? '' : 's'} entered`} />
+                <StatCard label="Disposal (Est.)" value={money(overview.disposal.estimateCents)} sub="not yet finalized" />
+              </div>
+            )}
+
             <div className="glass-card rounded-2xl p-6 mb-6">
               <div className="flex items-center justify-between mb-3">
                 <p className="text-sm font-black text-white">Collected Revenue — Last 30 Days</p>
