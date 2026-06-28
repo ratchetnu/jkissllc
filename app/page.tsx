@@ -657,10 +657,11 @@ export default function Home() {
           </div>
           <div className="pt-8 text-xs flex flex-col md:flex-row items-center justify-between gap-3" style={{ borderTop: '1px solid var(--line)', color: 'rgba(255,255,255,.25)' }}>
             <p>© {new Date().getFullYear()} J Kiss LLC. All rights reserved.</p>
-            <div className="flex gap-4">
+            <div className="flex items-center gap-4">
               <a href="tel:+18179094312" className="transition hover:text-white">(817) 909-4312</a>
               <a href="mailto:info@jkissllc.com" className="transition hover:text-white">info@jkissllc.com</a>
               <a href="mailto:timmothy@jkissllc.com" className="transition hover:text-white">timmothy@jkissllc.com</a>
+              <a href="/admin/bookings" className="px-3 py-1.5 rounded-lg font-semibold transition hover:text-white" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', color: 'var(--muted)' }}>Admin Login</a>
             </div>
           </div>
         </div>
