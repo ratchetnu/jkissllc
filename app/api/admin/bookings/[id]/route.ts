@@ -147,7 +147,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         amountCents = dollarsToCents(body.amount); type = (['deposit', 'balance', 'full', 'partial'].includes(body.type) ? body.type : 'partial')
       }
       if (amountCents <= 0) return NextResponse.json({ error: 'Nothing due / invalid amount.' }, { status: 400 })
-      const p = addConfirmedPayment(b, { amountCents, method, type, reference: str(body.reference, 120), note: str(body.note, 500) })
+      // Block accidental double-entry of the same manual payment (same reference).
+      const ref = str(body.reference, 120)
+      if (ref && b.payments.some(p => p.reference === ref && p.status === 'confirmed')) {
+        return NextResponse.json({ error: `A payment with reference "${ref}" is already recorded.` }, { status: 409 })
+      }
+      const p = addConfirmedPayment(b, { amountCents, method, type, reference: ref, note: str(body.note, 500) })
       await sendReceipts(b, p)
       break
     }
@@ -162,6 +167,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       break
     }
     case 'mark-completed': {
+      // Guard accounting: a job shouldn't be completed with no invoice total set
+      // (e.g. an instant online booking still showing $0 until ops prices it).
+      if (b.invoiceAmountCents <= 0) {
+        return NextResponse.json({ error: 'Set the final invoice amount before marking this job completed.' }, { status: 400 })
+      }
       b.status = 'completed'
       b.completedAt = Date.now()
       break
@@ -207,27 +217,40 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (!stripeConfigured()) return NextResponse.json({ error: 'Stripe is not configured — refund manually for Zelle/cash.' }, { status: 503 })
 
       const stripePaid = b.payments.filter(p => p.method === 'stripe' && p.status === 'confirmed' && p.amountCents > 0 && p.stripePaymentIntentId)
-      const alreadyRefunded = b.payments.filter(p => p.amountCents < 0).reduce((s, p) => s - p.amountCents, 0)
-      const maxRefund = stripePaid.reduce((s, p) => s + p.amountCents, 0) - alreadyRefunded
       if (stripePaid.length === 0) return NextResponse.json({ error: 'No Stripe payment to refund here — issue Zelle/cash refunds manually and use Void if needed.' }, { status: 400 })
-      if (refundCents > maxRefund) return NextResponse.json({ error: `Max refundable on the Stripe charge is $${(maxRefund / 100).toFixed(2)}.` }, { status: 400 })
+      // Per-intent already-refunded (refund records carry their intent).
+      const refundedByIntent = new Map<string, number>()
+      for (const p of b.payments) if (p.amountCents < 0 && p.stripePaymentIntentId) refundedByIntent.set(p.stripePaymentIntentId, (refundedByIntent.get(p.stripePaymentIntentId) ?? 0) - p.amountCents)
+      const availFor = (p: Payment) => p.amountCents - (refundedByIntent.get(p.stripePaymentIntentId!) ?? 0)
+      const maxRefund = stripePaid.reduce((s, p) => s + Math.max(0, availFor(p)), 0)
+      if (refundCents > maxRefund) return NextResponse.json({ error: `Max refundable on the Stripe charge${stripePaid.length > 1 ? 's' : ''} is $${(maxRefund / 100).toFixed(2)}.` }, { status: 400 })
 
-      const target = stripePaid.find(p => p.amountCents >= refundCents) ?? stripePaid[0]
+      // Split the refund across charges (largest available first).
+      const stripe = getStripe()
+      let remaining = refundCents
+      const ids: string[] = []
       try {
-        const refund = await getStripe().refunds.create({ payment_intent: target.stripePaymentIntentId!, amount: refundCents })
-        b.payments.push({
-          id: crypto.randomUUID(), type: 'partial', method: 'stripe', status: 'confirmed',
-          amountCents: -refundCents, feeCents: 0, totalChargedCents: -refundCents, netCents: -refundCents,
-          note: 'Refund issued (Stripe)', reference: refund.id, createdAt: Date.now(), confirmedAt: Date.now(),
-        })
-        const stamp = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })
-        b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[${stamp}] Refunded $${(refundCents / 100).toFixed(2)} via Stripe (${refund.id})`
-        extra = { refundId: refund.id }
-        refundedNowCents = refundCents
+        for (const p of [...stripePaid].sort((a, c) => availFor(c) - availFor(a))) {
+          if (remaining <= 0) break
+          const amt = Math.min(remaining, Math.max(0, availFor(p)))
+          if (amt <= 0) continue
+          const refund = await stripe.refunds.create({ payment_intent: p.stripePaymentIntentId!, amount: amt })
+          b.payments.push({
+            id: crypto.randomUUID(), type: 'partial', method: 'stripe', status: 'confirmed',
+            amountCents: -amt, feeCents: 0, totalChargedCents: -amt, netCents: -amt,
+            stripePaymentIntentId: p.stripePaymentIntentId,
+            note: 'Refund issued (Stripe)', reference: refund.id, createdAt: Date.now(), confirmedAt: Date.now(),
+          })
+          ids.push(refund.id); remaining -= amt
+        }
       } catch (e) {
         console.error('[refund]', e)
         return NextResponse.json({ error: 'Stripe refund failed — check the dashboard and try again.' }, { status: 502 })
       }
+      const stamp = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })
+      b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[${stamp}] Refunded $${((refundCents - remaining) / 100).toFixed(2)} via Stripe (${ids.join(', ')})`
+      extra = { refundIds: ids }
+      refundedNowCents = refundCents - remaining
       break
     }
     default:

@@ -51,12 +51,16 @@ export async function getAvailability(daysAhead = 60): Promise<Availability> {
   ])
   const blackoutSet = new Set(blackout)
   const counts = new Map<string, number>()
+  const now = Date.now()
   for (const b of bookings) {
     if (b.status === 'cancelled') continue
+    // An abandoned online hold (deposit never paid, no invoice) shouldn't keep a
+    // slot forever — release it after 2h so the date frees up again.
+    const isUnpaidHold = b.amountPaidCents === 0 && b.invoiceAmountCents === 0 && (b.depositAmountCents ?? 0) > 0
+    if (isUnpaidHold && now - b.createdAt > 2 * 60 * 60 * 1000) continue
     const d = b.selectedDate || (b.availableDates?.length === 1 ? b.availableDates[0] : '')
     if (d) counts.set(d, (counts.get(d) ?? 0) + 1)
   }
-  const now = Date.now()
   const todayStr = centralDate(now)
   const minStr = centralDate(now + 24 * 60 * 60 * 1000) // at least 24h out
   const dates: string[] = []
