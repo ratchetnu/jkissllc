@@ -50,10 +50,27 @@ const PRICING = {
     standard: 1.0,
     'next-day': 1.25,
     'same-day': 1.55,
+    weekend: 1.20,
+    'after-hours': 1.35,
+    emergency: 1.75,
+  } as Record<string, number>,
+  // Flat add-on fees (USD) — applied on top of the estimate.
+  addOns: {
+    stairs: 40,
+    'extra-stop': 60,
+    packing: 75,
+    disposal: 50,
+    'extra-labor': 65,
+    assembly: 55,
   } as Record<string, number>,
   // Range spread around point estimate (low, high)
   rangeLow: 0.85,
   rangeHigh: 1.20,
+}
+
+const ADDON_LABELS: Record<string, string> = {
+  stairs: 'Stairs / no elevator', 'extra-stop': 'Extra stop', packing: 'Packing / wrapping',
+  disposal: 'Haul-away / disposal', 'extra-labor': 'Extra labor', assembly: 'Assembly / disassembly',
 }
 
 export async function POST(request: NextRequest) {
@@ -70,7 +87,7 @@ export async function POST(request: NextRequest) {
   const {
     pickupZip, deliveryZip,
     pallets, weight, serviceType, timing, loadSize,
-    name, email, phone, company, notes,
+    name, email, phone, company, notes, referral,
   } = body
 
   // Junk removal and eviction/property cleanouts are priced per job, not by
@@ -106,6 +123,13 @@ export async function POST(request: NextRequest) {
   }
   const miles = distanceMiles(from, to)
 
+  // Selected add-ons (flat fees on top of the estimate)
+  const selectedAddOns: string[] = Array.isArray(body.addOns)
+    ? body.addOns.map((a: unknown) => String(a)).filter((a: string) => a in PRICING.addOns).slice(0, 10)
+    : []
+  const addOnTotal = selectedAddOns.reduce((s, a) => s + (PRICING.addOns[a] ?? 0), 0)
+  const addOnLabels = selectedAddOns.map(a => `${ADDON_LABELS[a] ?? a} (+$${PRICING.addOns[a]})`)
+
   // Compute estimate (delivery only — job-based services are quoted by hand)
   let low = 0
   let high = 0
@@ -116,8 +140,8 @@ export async function POST(request: NextRequest) {
       (PRICING.base + miles * PRICING.perMile + palletCount * PRICING.perPallet) *
       serviceMult *
       timeMult
-    low = Math.round((point * PRICING.rangeLow) / 5) * 5
-    high = Math.round((point * PRICING.rangeHigh) / 5) * 5
+    low = Math.round((point * PRICING.rangeLow) / 5) * 5 + addOnTotal
+    high = Math.round((point * PRICING.rangeHigh) / 5) * 5 + addOnTotal
   }
   const distanceLabel = `${Math.round(miles)} mi`
 
@@ -136,6 +160,7 @@ export async function POST(request: NextRequest) {
     phone:        escapeHtml(phone) || '—',
     company:      escapeHtml(company) || '—',
     notes:        escapeHtml(notes) || '—',
+    referral:     escapeHtml(referral) || '—',
   }
 
   const resend = new Resend(process.env.RESEND_API_KEY)
@@ -155,14 +180,15 @@ export async function POST(request: NextRequest) {
             <tr><td style="padding:6px 0;color:#999">Pallets</td><td style="padding:6px 0">${safe.pallets}</td></tr>
             <tr><td style="padding:6px 0;color:#999">Weight</td><td style="padding:6px 0">${safe.weight} lbs</td></tr>
             <tr><td style="padding:6px 0;color:#999">Service Type</td><td style="padding:6px 0">${safe.serviceType}</td></tr>
-            <tr><td style="padding:6px 0;color:#999">Timing</td><td style="padding:6px 0">${safe.timing}</td></tr>`
+            <tr><td style="padding:6px 0;color:#999">Timing</td><td style="padding:6px 0">${safe.timing}</td></tr>
+            ${addOnLabels.length ? `<tr><td style="padding:6px 0;color:#999">Add-ons</td><td style="padding:6px 0">${escapeHtml(addOnLabels.join(', '))}</td></tr>` : ''}`
 
     // One-tap "Create Booking" deep link: opens the admin new-booking form
     // pre-filled with this customer's details (?new=1&…).
     const bookingParams = new URLSearchParams({ new: '1', name: name || '', email: email || '', phone: phone || '', service: isJunk ? 'junk-removal' : isEviction ? 'eviction' : 'freight' })
     if (isJobBased) bookingParams.set('jobSite', `${from.city}, ${from.state} ${pickupZip}`)
     else { bookingParams.set('pickup', `${from.city}, ${from.state} ${pickupZip}`); bookingParams.set('dropoff', `${to.city}, ${to.state} ${deliveryZip}`) }
-    const desc = [notes, isJobBased ? `Est. load: ${LOAD_LABELS[loadSize] ?? loadSize}` : '', timing ? `Timing: ${timing}` : ''].filter(Boolean).join(' · ')
+    const desc = [notes, isJobBased ? `Est. load: ${LOAD_LABELS[loadSize] ?? loadSize}` : '', timing ? `Timing: ${timing}` : '', addOnLabels.length ? `Add-ons: ${addOnLabels.join(', ')}` : ''].filter(Boolean).join(' · ')
     if (desc) bookingParams.set('desc', desc)
     const bookingUrl = `https://www.jkissllc.com/admin/bookings?${bookingParams.toString()}`
 
@@ -196,6 +222,7 @@ export async function POST(request: NextRequest) {
             <tr><td style="padding:6px 0;color:#999">Company</td><td style="padding:6px 0">${safe.company}</td></tr>
             <tr><td style="padding:6px 0;color:#999">Email</td><td style="padding:6px 0"><a href="mailto:${safe.email}">${safe.email}</a></td></tr>
             <tr><td style="padding:6px 0;color:#999">Phone</td><td style="padding:6px 0">${safe.phone}</td></tr>
+            ${safe.referral !== '—' ? `<tr><td style="padding:6px 0;color:#999">Heard via</td><td style="padding:6px 0;font-weight:600">${safe.referral}</td></tr>` : ''}
           </table>
 
           <p style="color:#999;margin:18px 0 6px 0">${isJobBased ? 'What needs to go' : 'Notes'}</p>

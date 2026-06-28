@@ -74,6 +74,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if ('items' in f) b.items = strList(f.items, 80)
       if ('invoicePhotos' in f) b.invoicePhotos = sanitizePhotos(f.invoicePhotos)
       if ('invoiceAmount' in f) b.invoiceAmountCents = dollarsToCents(f.invoiceAmount)
+      if ('discountAmount' in f) b.discountCents = dollarsToCents(f.discountAmount) || undefined
       if ('depositAmount' in f) b.depositAmountCents = dollarsToCents(f.depositAmount)
       if ('crewSize' in f) b.crewSize = num(f.crewSize)
       if ('estimatedHours' in f) b.estimatedHours = num(f.estimatedHours)

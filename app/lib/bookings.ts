@@ -117,6 +117,8 @@ export type Booking = {
   items: string[]
   invoicePhotos?: InvoicePhoto[]   // photos attached to the invoice (Blob URLs)
   invoiceAmountCents: number
+  discountCents?: number       // promo/admin discount off the invoice (0 = none)
+  promoCode?: string           // code applied, for display/audit
   depositAmountCents: number
   amountPaidCents: number      // sum of confirmed payments applied to invoice
   collectInPerson?: boolean    // hide online payment on the link (balance collected in person)
@@ -166,6 +168,10 @@ export type Booking = {
     dayBeforeSentAt?: number     // "your service is tomorrow"
     reviewRequestSentAt?: number // post-completion review ask
   }
+
+  // Self-service rescheduling
+  rescheduleCount?: number
+  rescheduleRequest?: { requestedDate?: string; note?: string; at: number }
 
   // Lifecycle timestamps
   createdAt: number
@@ -269,14 +275,21 @@ export function sanitizePhotos(v: unknown): InvoicePhoto[] {
 }
 
 // ── Derivations ──────────────────────────────────────────────────────────────
+// Invoice the customer actually owes = gross invoice minus any discount/promo.
+// Centralizing here keeps balance + paid-in-full logic correct everywhere.
+export function netInvoiceCents(b: Booking): number {
+  return Math.max(0, b.invoiceAmountCents - (b.discountCents || 0))
+}
+
 export function balanceDueCents(b: Booking): number {
-  return Math.max(0, b.invoiceAmountCents - b.amountPaidCents)
+  return Math.max(0, netInvoiceCents(b) - b.amountPaidCents)
 }
 
 export function paymentSummaryStatus(b: Booking): PaymentSummaryStatus {
   const paid = b.amountPaidCents
+  const net = netInvoiceCents(b)
   if (paid <= 0) return 'unpaid'
-  if (paid >= b.invoiceAmountCents && b.invoiceAmountCents > 0) return 'paid_in_full'
+  if (paid >= net && net > 0) return 'paid_in_full'
   if (b.depositAmountCents > 0 && paid >= b.depositAmountCents) return 'deposit_paid'
   return 'partially_paid'
 }

@@ -22,7 +22,9 @@ export default function QuotePage() {
     setStatus('sending')
     setErrorMsg('')
     const form = e.currentTarget
-    const data = Object.fromEntries(new FormData(form)) as Record<string, string>
+    const fd = new FormData(form)
+    const data = Object.fromEntries(fd) as Record<string, string>
+    const addOns = fd.getAll('addOns').map(String)
     // Job-based services (junk removal, eviction cleanouts) are single-site —
     // mirror the job ZIP into deliveryZip so route validation/lookup passes and
     // distance resolves to 0.
@@ -31,7 +33,7 @@ export default function QuotePage() {
       const res = await fetch('/api/quote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ ...data, addOns }),
       })
       const j = await res.json()
       if (res.ok && (j.estimate || j.requested)) {
@@ -141,6 +143,9 @@ export default function QuotePage() {
                       <option value="standard">Standard (2–4 business days)</option>
                       <option value="next-day">Next-Day</option>
                       <option value="same-day">Same-Day</option>
+                      <option value="weekend">Weekend</option>
+                      <option value="after-hours">After-Hours (evening)</option>
+                      <option value="emergency">Emergency / ASAP</option>
                     </select>
                   </div>
                 </div>
@@ -229,9 +234,33 @@ export default function QuotePage() {
                 </p>
               </div>
 
+              {!isJobBased && (
+                <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
+                  <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>Add-ons (optional)</p>
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    {[
+                      { v: 'stairs', l: 'Stairs / no elevator', p: 40 },
+                      { v: 'extra-stop', l: 'Extra stop', p: 60 },
+                      { v: 'packing', l: 'Packing / wrapping', p: 75 },
+                      { v: 'disposal', l: 'Haul-away / disposal', p: 50 },
+                      { v: 'extra-labor', l: 'Extra labor', p: 65 },
+                      { v: 'assembly', l: 'Assembly / disassembly', p: 55 },
+                    ].map(a => (
+                      <label key={a.v} className="flex items-center gap-2.5 text-sm px-3 py-2.5 rounded-xl cursor-pointer" style={{ background: 'rgba(255,255,255,.04)', border: '1px solid var(--line)', color: 'var(--text)' }}>
+                        <input type="checkbox" name="addOns" value={a.v} style={{ width: 16, height: 16, accentColor: '#E0002A', flexShrink: 0 }} />
+                        <span className="flex-1">{a.l}</span>
+                        <span style={{ color: 'var(--muted)' }}>+${a.p}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
                 <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>{isJobBased ? 'What needs to go?' : 'Notes (optional)'}</label>
                 <textarea name="notes" rows={3} placeholder={isEviction ? 'e.g. full apartment/house trash-out, tenant belongings left behind, furniture & appliances, number of bedrooms, stairs/elevator access…' : isJunk ? 'e.g. garage cleanout, old appliances & furniture, construction debris, stairs/elevator access, anything heavy or hazardous…' : 'Special handling, appointment requirements, dock conditions, etc.'} style={{ ...iStyle, resize: 'vertical' }} />
+                <label className="block text-xs font-semibold mb-1.5 mt-3" style={{ color: 'var(--muted)' }}>How did you hear about us? <span style={{ fontWeight: 400 }}>(optional — referral name or code)</span></label>
+                <input name="referral" placeholder="e.g. Google, a friend's name, or a promo code" style={iStyle} />
               </div>
 
               {status === 'error' && <p className="text-sm" style={{ color: '#f87171' }}>{errorMsg}</p>}

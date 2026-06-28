@@ -62,6 +62,7 @@ function rows(pairs: [string, string | undefined][]): string {
 function moneyBlock(b: Booking): string {
   return rows([
     ['Invoice Total', fmtUSD(b.invoiceAmountCents)],
+    ['Discount' + (b.promoCode ? ` (${b.promoCode})` : ''), b.discountCents ? `– ${fmtUSD(b.discountCents)}` : undefined],
     ['Deposit', b.depositAmountCents ? fmtUSD(b.depositAmountCents) : undefined],
     ['Amount Paid', fmtUSD(b.amountPaidCents)],
     ['Balance Due', fmtUSD(balanceDueCents(b))],
@@ -208,6 +209,35 @@ export async function emailReviewRequestCustomer(b: Booking): Promise<void> {
       <a href="${receipt}#review" style="background:${RED};color:#fff;font-weight:700;text-decoration:none;padding:14px 28px;border-radius:10px;display:inline-block">Leave a Quick Review →</a>
     </p>`
   await send({ to: [b.customerEmail], subject: `How did we do? — J Kiss LLC ${b.bookingNumber}`, html: shell('Mind leaving a review?', body) })
+}
+
+// ── Rescheduling ─────────────────────────────────────────────────────────────
+
+export async function emailRescheduledCustomer(b: Booking): Promise<void> {
+  if (!b.customerEmail) return
+  const body = `
+    <p style="font-size:15px;line-height:1.6">Hi ${esc(b.customerName)}, your J Kiss LLC service has been <strong>rescheduled</strong>. Here are your updated details:</p>
+    ${rows([['Service Date', b.selectedDate], ['Arrival Window', b.selectedWindow], ['Service', SERVICE_LABELS[b.serviceType]]])}
+    <p style="font-size:14px;margin-top:14px">View your booking: <a href="${bookingLink(b.token)}" style="color:${RED}">your booking page</a></p>`
+  await send({ to: [b.customerEmail], subject: `Your J Kiss LLC service was rescheduled — ${b.bookingNumber}`, html: shell('Your service is rescheduled', body) })
+}
+
+export async function emailRescheduleRequestAck(b: Booking): Promise<void> {
+  if (!b.customerEmail) return
+  const body = `
+    <p style="font-size:15px;line-height:1.6">Thanks ${esc(b.customerName)} — we got your reschedule request and will reach out shortly to confirm a new time. Your current booking remains as-is until then.</p>
+    ${rows([['Requested', b.rescheduleRequest?.requestedDate], ['Note', b.rescheduleRequest?.note]])}`
+  await send({ to: [b.customerEmail], subject: `We received your reschedule request — ${b.bookingNumber}`, html: shell('Reschedule request received', body) })
+}
+
+export async function emailOpsRescheduled(b: Booking): Promise<void> {
+  const req = b.rescheduleRequest
+  const body = `${opsCustomerRows(b)}
+    ${req
+      ? rows([['Requested Date', req.requestedDate], ['Customer Note', req.note]])
+      : rows([['New Service Date', b.selectedDate], ['New Arrival Window', b.selectedWindow], ['Reschedules', String(b.rescheduleCount ?? 1)]])}
+    <p style="font-size:13px;margin-top:10px">Link: <a href="${bookingLink(b.token)}">${bookingLink(b.token)}</a></p>`
+  await send({ to: OPS, subject: `${req ? 'Reschedule request' : 'Booking rescheduled'} — ${b.bookingNumber} (${b.customerName})`, html: shell(req ? 'Customer requested a reschedule' : 'Customer rescheduled', body) })
 }
 
 // ── Ops-facing ───────────────────────────────────────────────────────────────

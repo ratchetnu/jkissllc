@@ -20,7 +20,9 @@ const STATUS_LABEL: Record<string, string> = {
 }
 const usd = (c: number) => ((c || 0) / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 const fmtTs = (ts?: number) => ts ? new Date(ts).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '—'
-const balanceDue = (b: Booking) => Math.max(0, b.invoiceAmountCents - b.amountPaidCents)
+// Net invoice = gross minus any discount/promo (mirrors lib/bookings.netInvoiceCents).
+const netInvoice = (b: Booking) => Math.max(0, b.invoiceAmountCents - (b.discountCents || 0))
+const balanceDue = (b: Booking) => Math.max(0, netInvoice(b) - b.amountPaidCents)
 
 // ISO yyyy-mm-dd → "Jun 27, 2026" (parsed LOCAL so it never slips a day).
 function fmtISO(iso: string): string {
@@ -47,8 +49,9 @@ function serviceDateShort(b: Booking): string {
 }
 function paySummary(b: Booking): string {
   const p = b.amountPaidCents
+  const net = netInvoice(b)
   if (p <= 0) return 'Unpaid'
-  if (p >= b.invoiceAmountCents && b.invoiceAmountCents > 0) return 'Paid in Full'
+  if (p >= net && net > 0) return 'Paid in Full'
   if (b.depositAmountCents > 0 && p >= b.depositAmountCents) return 'Deposit Paid'
   return 'Partially Paid'
 }
@@ -254,7 +257,7 @@ function BookingDetail({ b, onBack, onEdit, onChanged }: { b: Booking; onBack: (
   }
 
   const receiptUrl = link ? `${link}/receipt` : ''
-  const paidInFull = b.invoiceAmountCents > 0 && b.amountPaidCents >= b.invoiceAmountCents
+  const paidInFull = netInvoice(b) > 0 && b.amountPaidCents >= netInvoice(b)
   function copyReceipt() {
     navigator.clipboard?.writeText(receiptUrl).then(() => setMsg('Receipt link copied — paste it to the customer.'), () => setMsg(receiptUrl))
   }
@@ -296,6 +299,7 @@ function BookingDetail({ b, onBack, onEdit, onChanged }: { b: Booking; onBack: (
       <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
         <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)' }}>Payment — {paySummary(b)}</p>
         <KV k="Invoice Total" v={usd(b.invoiceAmountCents)} />
+        {!!b.discountCents && b.discountCents > 0 && <KV k={`Discount${b.promoCode ? ` (${b.promoCode})` : ''}`} v={`– ${usd(b.discountCents)}`} />}
         {b.depositAmountCents > 0 && <KV k="Deposit" v={usd(b.depositAmountCents)} />}
         <KV k="Amount Paid" v={usd(b.amountPaidCents)} />
         <KV k="Balance Due" v={usd(balanceDue(b))} />
@@ -490,6 +494,7 @@ function BookingForm({ booking, prefill, onClose, onSaved }: { booking?: Booking
         <div><label style={lab}>Invoice Date</label><input name="invoiceDate" defaultValue={booking?.invoiceDate ?? todayLong} placeholder="June 16, 2026" style={fStyle} /></div>
         <div><label style={lab}>Invoice Amount ($)</label><input name="invoiceAmount" inputMode="decimal" defaultValue={dollars(booking?.invoiceAmountCents)} placeholder="550.00" style={fStyle} /></div>
         <div><label style={lab}>Deposit ($)</label><input name="depositAmount" inputMode="decimal" defaultValue={dollars(booking?.depositAmountCents)} placeholder="150.00" style={fStyle} /></div>
+        <div><label style={lab}>Discount ($)</label><input name="discountAmount" inputMode="decimal" defaultValue={dollars(booking?.discountCents)} placeholder="0.00" style={fStyle} /></div>
         <div><label style={lab}>Crew Size</label><input name="crewSize" inputMode="numeric" defaultValue={booking?.crewSize ?? ''} placeholder="2" style={fStyle} /></div>
         <div><label style={lab}>Estimated Hours</label><input name="estimatedHours" inputMode="numeric" defaultValue={booking?.estimatedHours ?? ''} placeholder="5" style={fStyle} /></div>
       </div>

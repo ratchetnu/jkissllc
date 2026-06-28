@@ -5,6 +5,7 @@ import {
   emailConfirmationLink, emailTimeVerifiedCustomer, emailBookingConfirmedCustomer, emailJobCompletedCustomer,
   emailPaidInFullCustomer,
   emailBookingReminderCustomer, emailPaymentReminderCustomer, emailJobTomorrowCustomer, emailReviewRequestCustomer,
+  emailRescheduledCustomer, emailRescheduleRequestAck, emailOpsRescheduled,
 } from './booking-emails'
 import { sendSms, smsConfigured, toE164 } from './sms'
 
@@ -110,5 +111,25 @@ export async function notifyReviewRequest(b: Booking): Promise<Channels> {
     const msg = `J Kiss LLC: Thanks again, ${b.customerName}! How did we do? Leave a quick review here: ${receiptLink(b.token)}#review Reply STOP to opt out.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
+  return out
+}
+
+// Customer self-rescheduled to a new available slot — confirm to them + alert ops.
+export async function notifyRescheduled(b: Booking): Promise<Channels> {
+  const out: Channels = { email: false, sms: false }
+  if (hasEmail(b)) { await emailRescheduledCustomer(b); out.email = true }
+  if (hasSms(b)) {
+    const msg = `J Kiss LLC: Your service (${b.bookingNumber}) is rescheduled to ${b.selectedDate}${b.selectedWindow ? `, ${b.selectedWindow}` : ''}. ${bookingLink(b.token)}`
+    out.sms = await sendSms(b.customerPhone, msg)
+  }
+  await emailOpsRescheduled(b)
+  return out
+}
+
+// Customer requested a custom new date — ack to them + alert ops to coordinate.
+export async function notifyRescheduleRequest(b: Booking): Promise<Channels> {
+  const out: Channels = { email: false, sms: false }
+  if (hasEmail(b)) { await emailRescheduleRequestAck(b); out.email = true }
+  await emailOpsRescheduled(b)
   return out
 }

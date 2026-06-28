@@ -188,11 +188,17 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
       <h2>Summary</h2>
       <table class="totals">
         <tr><td class="k">Invoice Total</td><td class="v">${fmtUSD(b.invoiceAmountCents)}</td></tr>
+        ${b.discountCents ? `<tr><td class="k">Discount${b.promoCode ? ` (${esc(b.promoCode)})` : ''}</td><td class="v">– ${fmtUSD(b.discountCents)}</td></tr>` : ''}
         <tr><td class="k">Total Paid</td><td class="v">${fmtUSD(b.amountPaidCents)}</td></tr>
       </table>
       <div class="paidbar"><span class="lbl">Balance Due</span><span class="amt">${fmtUSD(balanceDueCents(b))}</span></div>
 
       ${reviewSection}
+
+      <div style="margin-top:22px;background:#0b0b0c;border-radius:12px;padding:20px;text-align:center;color:#fff">
+        <p style="margin:0 0 6px;font-size:16px;font-weight:800">Know someone who needs us?</p>
+        <p style="margin:0;font-size:13px;color:#b5b7bd;line-height:1.55">Refer a friend — have them mention <strong style="color:#fff">${esc(b.customerName)}</strong> when they book and they&apos;ll get <strong style="color:#fff">$25 off</strong> their first job. Text us at (817) 909-4312.</p>
+      </div>
     </div>
     <div class="ft">J Kiss LLC · (817) 909-4312 · info@jkissllc.com · US DOT 3484556 / MC 01155352 · Generated ${fmtTs(Date.now())}</div>
   </div>

@@ -25,6 +25,8 @@ export type CustomerBooking = {
   items: string[]
   invoicePhotos?: { url: string; name?: string }[]
   invoiceAmountCents: number
+  discountCents?: number
+  promoCode?: string
   depositAmountCents: number
   amountPaidCents: number
   collectInPerson?: boolean
@@ -229,6 +231,11 @@ export default function BookingClient({
             </div>
           )}
 
+          {/* ── Self-service reschedule ─────────────────────────────────── */}
+          {verified && b.status !== 'completed' && (
+            <RescheduleCard b={b} token={token} onChange={refresh} />
+          )}
+
           <p className="text-xs text-center mt-8" style={{ color: 'rgba(255,255,255,.3)' }}>
             J Kiss LLC · (817) 909-4312 · info@jkissllc.com · US DOT 3484556 / MC 01155352
           </p>
@@ -245,6 +252,10 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
   const [showManual, setShowManual] = useState(false)
   const [copied, setCopied] = useState('')
 
+  const [promoInput, setPromoInput] = useState('')
+  const [promoBusy, setPromoBusy] = useState(false)
+  const [promoErr, setPromoErr] = useState('')
+
   const balance = b.balanceDueCents
   const depositDue = Math.max(0, Math.min(b.depositAmountCents - b.amountPaidCents, balance))
   const memo = b.invoiceNumber ?? b.bookingNumber
@@ -253,6 +264,22 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
     try { await navigator.clipboard.writeText(value); setCopied(label); setTimeout(() => setCopied(''), 1600) } catch { /* clipboard unavailable */ }
   }
   const feeOnBalance = grossUp(balance).total - balance
+
+  async function applyPromo(e: React.FormEvent) {
+    e.preventDefault()
+    if (!promoInput.trim()) return
+    setPromoBusy(true); setPromoErr('')
+    try {
+      const res = await fetch(`/api/booking/${token}/promo`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: promoInput }),
+      })
+      const j = await res.json()
+      if (!res.ok) { setPromoErr(j.error ?? 'Could not apply code.'); setPromoBusy(false); return }
+      setPromoInput(''); onChange()
+    } catch { setPromoErr('Connection error — please try again.') }
+    setPromoBusy(false)
+  }
+  const canPromo = balance > 0 && b.amountPaidCents === 0 && !b.promoCode
 
   async function pay(kind: 'deposit' | 'balance' | 'full') {
     setBusy(kind); setErr('')
@@ -271,6 +298,7 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
     <div className="glass-card p-6 mb-5" style={{ borderRadius: '18px' }}>
       <p className={sectionLabel} style={sectionLabelStyle}>{b.collectInPerson && balance > 0 ? 'Remaining Balance — Optional' : 'Payment'}</p>
       <Row k="Invoice Total" v={usd(b.invoiceAmountCents)} />
+      {!!b.discountCents && b.discountCents > 0 && <Row k={`Discount${b.promoCode ? ` (${b.promoCode})` : ''}`} v={`– ${usd(b.discountCents)}`} />}
       {b.depositAmountCents > 0 && <Row k="Deposit" v={usd(b.depositAmountCents)} />}
       <Row k="Amount Paid" v={usd(b.amountPaidCents)} />
       <div className="flex justify-between gap-4 py-3 mt-1">
@@ -292,6 +320,14 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
         </>
       ) : disabled ? null : (
         <>
+          {canPromo && (
+            <form onSubmit={applyPromo} className="flex gap-2 mb-4">
+              <input value={promoInput} onChange={e => { setPromoInput(e.target.value); setPromoErr('') }} placeholder="Promo code"
+                style={{ flex: 1, padding: '11px 13px', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10, color: '#fff', fontSize: 15, textTransform: 'uppercase', outline: 'none' }} />
+              <button type="submit" disabled={promoBusy || !promoInput.trim()} className="btn-ghost" style={{ padding: '11px 18px', fontSize: 14 }}>{promoBusy ? '…' : 'Apply'}</button>
+            </form>
+          )}
+          {promoErr && <p className="text-sm mb-3" style={{ color: '#f87171' }}>{promoErr}</p>}
           {b.collectInPerson && (
             <div className="rounded-xl px-4 py-3 mb-4 text-sm" style={{ background: 'rgba(52,211,153,.08)', border: '1px solid rgba(52,211,153,.25)', color: 'var(--text)', lineHeight: 1.6 }}>
               {b.amountPaidCents > 0 && <>✓ Deposit of <strong>{usd(b.amountPaidCents)}</strong> received. </>}
@@ -403,6 +439,89 @@ function ManualPaymentForm({ token, balance, onDone, onCancel }: { token: string
         <button type="button" onClick={onCancel} className="btn-ghost" style={{ padding: '10px 18px', fontSize: '13px' }}>Cancel</button>
       </div>
     </form>
+  )
+}
+
+// ── Reschedule card ────────────────────────────────────────────────────────
+function RescheduleCard({ b, token, onChange }: { b: CustomerBooking; token: string; onChange: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [mode, setMode] = useState<'pick' | 'request'>(b.availableDates.length > 1 || b.availableWindows.length > 1 ? 'pick' : 'request')
+  const [date, setDate] = useState(b.selectedDate ?? '')
+  const [win, setWin] = useState(b.selectedWindow ?? '')
+  const [reqDate, setReqDate] = useState('')
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [done, setDone] = useState('')
+  const hasOptions = b.availableDates.length > 0
+  const inputStyle: React.CSSProperties = { width: '100%', padding: '12px 14px', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10, color: '#fff', fontSize: 15, outline: 'none', marginBottom: 10 }
+
+  async function submit(payload: Record<string, string>, okMsg: string) {
+    setBusy(true); setErr('')
+    try {
+      const res = await fetch(`/api/booking/${token}/reschedule`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const j = await res.json()
+      if (!res.ok) { setErr(j.error ?? 'Could not reschedule.'); setBusy(false); return }
+      setDone(okMsg); setOpen(false); onChange()
+    } catch { setErr('Connection error — please try again.') }
+    setBusy(false)
+  }
+
+  const pillStyle = (active: boolean): React.CSSProperties => ({ background: active ? 'var(--red)' : 'rgba(255,255,255,.05)', border: `1px solid ${active ? 'var(--red)' : 'rgba(255,255,255,.1)'}`, color: active ? '#fff' : 'var(--text)' })
+
+  return (
+    <div className="glass-card p-6 mb-5" style={{ borderRadius: '18px' }}>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className={sectionLabel} style={{ ...sectionLabelStyle, marginBottom: 2 }}>Need to reschedule?</p>
+          <p className="text-sm" style={{ color: 'var(--muted)' }}>Current: {b.selectedDate ? fmtDate(b.selectedDate) : '—'}{b.selectedWindow ? ` · ${b.selectedWindow}` : ''}</p>
+        </div>
+        {!open && <button onClick={() => { setOpen(true); setDone('') }} className="btn-ghost" style={{ padding: '10px 16px', fontSize: 13 }}>Reschedule</button>}
+      </div>
+      {done && <p className="text-sm mt-3" style={{ color: '#34d399' }}>{done}</p>}
+      {open && (
+        <div className="mt-4">
+          {hasOptions && (
+            <div className="flex gap-2 mb-3">
+              <button onClick={() => setMode('pick')} className="text-sm font-semibold px-3 py-1.5 rounded-lg" style={{ background: mode === 'pick' ? 'var(--red)' : 'rgba(255,255,255,.05)', color: mode === 'pick' ? '#fff' : 'var(--muted)' }}>Pick another time</button>
+              <button onClick={() => setMode('request')} className="text-sm font-semibold px-3 py-1.5 rounded-lg" style={{ background: mode === 'request' ? 'var(--red)' : 'rgba(255,255,255,.05)', color: mode === 'request' ? '#fff' : 'var(--muted)' }}>Request a new date</button>
+            </div>
+          )}
+          {mode === 'pick' && hasOptions ? (
+            <>
+              <p className="text-xs font-semibold mb-2" style={{ color: 'var(--muted)' }}>Choose a date</p>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {b.availableDates.map(d => <button key={d} onClick={() => setDate(d)} className="px-3 py-2 rounded-xl text-sm font-semibold" style={pillStyle(date === d)}>{fmtDate(d)}</button>)}
+              </div>
+              {b.availableWindows.length > 0 && (
+                <>
+                  <p className="text-xs font-semibold mb-2" style={{ color: 'var(--muted)' }}>Choose a window</p>
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {b.availableWindows.map(w => <button key={w} onClick={() => setWin(w)} className="px-3 py-2 rounded-xl text-sm font-semibold" style={pillStyle(win === w)}>{w}</button>)}
+                  </div>
+                </>
+              )}
+              {err && <p className="text-sm mb-2" style={{ color: '#f87171' }}>{err}</p>}
+              <div className="flex gap-2">
+                <button onClick={() => submit({ mode: 'pick', selectedDate: date, selectedWindow: win }, 'Rescheduled — we emailed you a confirmation.')} disabled={busy} className="btn" style={{ padding: '11px 18px', fontSize: 14 }}>{busy ? 'Saving…' : 'Confirm New Time'}</button>
+                <button onClick={() => setOpen(false)} className="btn-ghost" style={{ padding: '11px 18px', fontSize: 14 }}>Cancel</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-xs font-semibold mb-2" style={{ color: 'var(--muted)' }}>What date works better?</p>
+              <input value={reqDate} onChange={e => setReqDate(e.target.value)} placeholder="e.g. next Tuesday, or July 5 morning" style={inputStyle} />
+              <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} placeholder="Anything else we should know? (optional)" style={{ ...inputStyle, resize: 'vertical' }} />
+              {err && <p className="text-sm mb-2" style={{ color: '#f87171' }}>{err}</p>}
+              <div className="flex gap-2">
+                <button onClick={() => submit({ mode: 'request', requestedDate: reqDate, note }, 'Request sent — we’ll reach out to confirm a new time.')} disabled={busy || (!reqDate.trim() && !note.trim())} className="btn" style={{ padding: '11px 18px', fontSize: 14 }}>{busy ? 'Sending…' : 'Send Request'}</button>
+                <button onClick={() => setOpen(false)} className="btn-ghost" style={{ padding: '11px 18px', fontSize: 14 }}>Cancel</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
