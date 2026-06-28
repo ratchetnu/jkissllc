@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
 
 type Estimate = { low: number; high: number; miles: number; fuelCharge?: number; promoCode?: string; promoPct?: number; confidence?: 'high' | 'medium' | 'low'; jobBased?: boolean; pickupLabel: string; deliveryLabel: string }
@@ -12,21 +12,38 @@ function fmtDateLabel(iso: string): string {
   return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-// ── Instant booking: pick an open date + pay a deposit ───────────────────────
+// ── Instant booking wizard ───────────────────────────────────────────────────
+// Flow: 1 service → 2 job details/photos/address → 3 price/deposit estimate →
+// 4 availability + date/time → 5 contact info → 6 review & pay. Availability is
+// shown after the estimate and BEFORE contact info, sized to the selected job.
+const JOB_BASED = ['junk-removal', 'eviction', 'estate-cleanout', 'garage-cleanout']
+const WINDOWS = ['8am–10am', '10am–12pm', '12pm–2pm', '2pm–4pm', '4pm–6pm']
+const STEP_LABELS = ['Service', 'Job details', 'Estimate', 'Date & time', 'Your info', 'Review']
+
 function InstantBook() {
   const [open, setOpen] = useState(false)
-  const [avail, setAvail] = useState<{ dates: string[]; depositCents: number } | null>(null)
+  const [step, setStep] = useState(1)
   const [service, setService] = useState('junk-removal')
-  const [date, setDate] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
+  const [loadSize, setLoadSize] = useState('quarter')
+  const [debris, setDebris] = useState('general')
+  const [address, setAddress] = useState('')
+  const [notes, setNotes] = useState('')
   const [photos, setPhotos] = useState<string[]>([])
   const [photoBusy, setPhotoBusy] = useState(false)
+  const [estimate, setEstimate] = useState<{ hasPrice: boolean; low?: number; high?: number; depositCents: number; confidence?: string; units: number } | null>(null)
+  const [avail, setAvail] = useState<{ dates: string[]; depositCents: number } | null>(null)
+  const [date, setDate] = useState('')
+  const [win, setWin] = useState('')
+  const [name, setName] = useState(''); const [phone, setPhone] = useState(''); const [email, setEmail] = useState('')
+  const [promo, setPromo] = useState('')
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
 
-  useEffect(() => {
-    if (!open || avail) return
-    fetch('/api/availability').then(r => r.json()).then(j => { if (j.ok) setAvail({ dates: j.dates, depositCents: j.depositCents }) }).catch(() => {})
-  }, [open, avail])
+  const isJob = JOB_BASED.includes(service)
+  const deposit = ((estimate?.depositCents ?? avail?.depositCents ?? 5000) / 100).toFixed(0)
+  const inp: React.CSSProperties = { width: '100%', padding: '12px 14px', background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.10)', borderRadius: 10, color: '#f3f4f6', fontSize: 16, outline: 'none' }
+  const sel: React.CSSProperties = { ...inp, cursor: 'pointer', colorScheme: 'dark' }
+  const lbl: React.CSSProperties = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 6 }
+  const pill = (active: boolean): React.CSSProperties => ({ background: active ? 'var(--red)' : 'rgba(255,255,255,.05)', border: `1px solid ${active ? 'var(--red)' : 'rgba(255,255,255,.12)'}`, color: active ? '#fff' : 'var(--text)', borderRadius: 12, padding: '10px 14px', fontSize: 14, fontWeight: 600, cursor: 'pointer' })
 
   async function addPhotos(files: FileList) {
     setPhotoBusy(true); setErr('')
@@ -37,71 +54,107 @@ function InstantBook() {
         const j = await res.json()
         if (res.ok && j.url) setPhotos(p => [...p, j.url])
       }
-    } catch { setErr('A photo failed to upload — you can still book.') }
+    } catch { setErr('A photo failed to upload — you can still continue.') }
     finally { setPhotoBusy(false) }
   }
 
-  const inp: React.CSSProperties = { width: '100%', padding: '12px 14px', background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.10)', borderRadius: 10, color: '#f3f4f6', fontSize: 16, outline: 'none' }
-  const sel: React.CSSProperties = { ...inp, cursor: 'pointer', colorScheme: 'dark' }
-  const lbl: React.CSSProperties = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 6 }
-  const deposit = avail ? (avail.depositCents / 100).toFixed(0) : '50'
-
-  async function submit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault(); setBusy(true); setErr('')
-    const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>
+  async function loadEstimate() {
+    setBusy(true); setErr('')
     try {
-      const res = await fetch('/api/book', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...f, service, date, photos }) })
+      const res = await fetch('/api/estimate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ service, loadSize: isJob ? loadSize : undefined, debris: isJob ? debris : undefined }) })
       const j = await res.json()
-      if (!res.ok) { setErr(j.error ?? 'Could not book that date.'); setBusy(false); return }
+      if (!res.ok) { setErr(j.error ?? 'Could not load an estimate.'); setBusy(false); return }
+      setEstimate(j); setStep(3)
+    } catch { setErr('Connection error — please try again.') }
+    setBusy(false)
+  }
+  async function loadAvailability() {
+    setBusy(true); setErr(''); setAvail(null)
+    try {
+      const res = await fetch(`/api/availability?units=${estimate?.units ?? 1}`)
+      const j = await res.json()
+      setAvail({ dates: j.dates ?? [], depositCents: j.depositCents ?? 5000 }); setStep(4)
+    } catch { setErr('Could not load availability.') }
+    setBusy(false)
+  }
+  async function submit() {
+    setBusy(true); setErr('')
+    try {
+      const res = await fetch('/api/book', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service, loadSize: isJob ? loadSize : undefined, debris: isJob ? debris : undefined, address, notes, photos, date, window: win, name, phone, email, promo }),
+      })
+      const j = await res.json()
+      if (!res.ok) { setErr(j.error ?? 'Could not complete your booking.'); setBusy(false); return }
       if (j.url) { window.location.href = j.url; return }
       if (j.bookingUrl) { window.location.href = j.bookingUrl; return }
       setBusy(false)
     } catch { setErr('Connection error — please try again.'); setBusy(false) }
   }
 
+  const Back = () => <button type="button" onClick={() => { setErr(''); setStep(s => Math.max(1, s - 1)) }} className="btn-ghost" style={{ padding: '12px 18px', fontSize: 14 }}>← Back</button>
+  const Next = ({ onClick, disabled, label = 'Continue →' }: { onClick: () => void; disabled?: boolean; label?: string }) => (
+    <button type="button" onClick={onClick} disabled={disabled || busy} className="btn" style={{ padding: '12px 22px', fontSize: 15, flex: 1, justifyContent: 'center' }}>{busy ? '…' : label}</button>
+  )
+
   return (
     <div className="glass-card mb-8" style={{ borderRadius: 20, border: '1px solid rgba(224,0,42,.3)', overflow: 'hidden' }}>
       <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between gap-3 p-6 text-left" aria-expanded={open}>
         <div>
           <p className="text-lg font-black text-white">⚡ Book Instantly</p>
-          <p className="text-sm" style={{ color: 'var(--muted)' }}>Know what you need? Pick an open date and lock it in with a deposit.</p>
+          <p className="text-sm" style={{ color: 'var(--muted)' }}>Get a price, pick an open date, and lock it in with a deposit.</p>
         </div>
         <span style={{ color: 'var(--red)', fontSize: 22 }}>{open ? '–' : '+'}</span>
       </button>
-      {open && (
-        <form onSubmit={submit} className="px-6 pb-6 space-y-3" style={{ borderTop: '1px solid var(--line)' }}>
-          {!avail ? (
-            <p className="text-sm pt-4" style={{ color: 'var(--muted)' }}>Loading open dates…</p>
-          ) : avail.dates.length === 0 ? (
-            <p className="text-sm pt-4" style={{ color: 'var(--muted)' }}>No online dates are open right now — submit the quote form below and we&apos;ll get you scheduled.</p>
-          ) : (
-            <>
-              <div className="grid sm:grid-cols-2 gap-3 pt-4">
-                <div><label style={lbl}>Service</label>
-                  <select value={service} onChange={e => setService(e.target.value)} style={sel}>
-                    <option value="junk-removal">Junk Removal</option>
-                    <option value="eviction">Eviction / Property Cleanout</option>
-                    <option value="moving">Moving / Delivery</option>
-                    <option value="appliance-delivery">Appliance Delivery</option>
-                    <option value="other">Other</option>
-                  </select>
-                </div>
-                <div><label style={lbl}>Date</label>
-                  <select value={date} onChange={e => setDate(e.target.value)} required style={sel}>
-                    <option value="">Choose an open date…</option>
-                    {avail.dates.map(d => <option key={d} value={d}>{fmtDateLabel(d)}</option>)}
-                  </select>
-                </div>
-                <div><label style={lbl}>Name</label><input name="name" required style={inp} /></div>
-                <div><label style={lbl}>Phone</label><input name="phone" type="tel" style={inp} /></div>
-                <div className="sm:col-span-2"><label style={lbl}>Email</label><input name="email" type="email" required style={inp} /></div>
-                <div className="sm:col-span-2"><label style={lbl}>Service address</label><input name="address" style={inp} /></div>
-                <div className="sm:col-span-2"><label style={lbl}>Notes <span style={{ fontWeight: 400 }}>(optional)</span></label><input name="notes" placeholder="What's the job?" style={inp} /></div>
-                <div className="sm:col-span-2"><label style={lbl}>Promo code <span style={{ fontWeight: 400 }}>(optional)</span></label><input name="promo" style={{ ...inp, textTransform: 'uppercase' }} /></div>
-              </div>
 
+      {open && (
+        <div className="px-6 pb-6" style={{ borderTop: '1px solid var(--line)' }}>
+          <p className="text-xs font-bold uppercase tracking-widest pt-4 mb-4" style={{ color: 'var(--muted)' }}>Step {step} of 6 · {STEP_LABELS[step - 1]}</p>
+
+          {/* 1 — Service */}
+          {step === 1 && (
+            <>
+              <div className="grid sm:grid-cols-2 gap-2">
+                {[['junk-removal', 'Junk Removal'], ['eviction', 'Eviction / Cleanout'], ['estate-cleanout', 'Estate Cleanout'], ['garage-cleanout', 'Garage Cleanout'], ['moving', 'Moving / Delivery'], ['appliance-delivery', 'Appliance Delivery'], ['other', 'Other']].map(([v, l]) => (
+                  <button key={v} type="button" onClick={() => setService(v)} style={{ ...pill(service === v), textAlign: 'left' }}>{l}</button>
+                ))}
+              </div>
+              <div className="flex gap-2 mt-4"><Next onClick={() => setStep(2)} /></div>
+            </>
+          )}
+
+          {/* 2 — Job details + photos + address */}
+          {step === 2 && (
+            <>
+              {isJob && (
+                <div className="grid sm:grid-cols-2 gap-3 mb-3">
+                  <div><label style={lbl}>How much is there?</label>
+                    <select value={loadSize} onChange={e => setLoadSize(e.target.value)} style={sel}>
+                      <option value="few-items">A few items</option>
+                      <option value="quarter">About a quarter truck</option>
+                      <option value="half">About a half truck</option>
+                      <option value="three-quarter">About three-quarter truck</option>
+                      <option value="full">Full truck load</option>
+                      <option value="multiple">More than one truck</option>
+                    </select>
+                  </div>
+                  <div><label style={lbl}>What are you removing?</label>
+                    <select value={debris} onChange={e => setDebris(e.target.value)} style={sel}>
+                      <option value="general">General / mixed junk</option>
+                      <option value="furniture">Furniture / bulky items</option>
+                      <option value="appliance">Appliances</option>
+                      <option value="mattress">Mattresses</option>
+                      <option value="yard-waste">Yard waste / brush</option>
+                      <option value="construction-debris">Construction debris</option>
+                      <option value="eviction-cleanout">Eviction / full cleanout</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+              <div className="mb-3"><label style={lbl}>Service address or ZIP</label><input value={address} onChange={e => setAddress(e.target.value)} placeholder="123 Main St, Dallas TX 75201" style={inp} /></div>
+              <div className="mb-3"><label style={lbl}>Notes <span style={{ fontWeight: 400 }}>(optional)</span></label><input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Stairs, gate code, anything heavy…" style={inp} /></div>
               <div>
-                <label style={lbl}>Photos <span style={{ fontWeight: 400 }}>(optional — helps us prep the right crew & truck)</span></label>
+                <label style={lbl}>Photos <span style={{ fontWeight: 400 }}>(optional — sharpens your quote)</span></label>
                 <label className="btn-ghost" style={{ padding: '10px 16px', fontSize: 14, cursor: photoBusy ? 'wait' : 'pointer', display: 'inline-flex' }}>
                   {photoBusy ? 'Uploading…' : photos.length ? '+ Add more' : '📷 Add photos'}
                   <input type="file" accept="image/*" multiple onChange={e => { const fs = e.target.files; e.target.value = ''; if (fs?.length) addPhotos(fs) }} disabled={photoBusy} style={{ display: 'none' }} />
@@ -112,21 +165,90 @@ function InstantBook() {
                       <div key={url} style={{ position: 'relative', aspectRatio: '1 / 1', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                        <button type="button" onClick={() => setPhotos(p => p.filter((_, idx) => idx !== i))} aria-label="Remove photo"
-                          style={{ position: 'absolute', top: 2, right: 2, width: 22, height: 22, borderRadius: 999, border: 'none', background: 'rgba(0,0,0,.65)', color: '#fff', cursor: 'pointer', fontSize: 13, lineHeight: '22px' }}>×</button>
+                        <button type="button" onClick={() => setPhotos(p => p.filter((_, idx) => idx !== i))} aria-label="Remove photo" style={{ position: 'absolute', top: 2, right: 2, width: 22, height: 22, borderRadius: 999, border: 'none', background: 'rgba(0,0,0,.65)', color: '#fff', cursor: 'pointer', fontSize: 13, lineHeight: '22px' }}>×</button>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
-              {err && <p className="text-sm" role="alert" style={{ color: '#f87171' }}>{err}</p>}
-              <button type="submit" disabled={busy || !date} className="btn w-full" style={{ justifyContent: 'center' }}>
-                {busy ? 'Reserving…' : `Reserve & Pay $${deposit} Deposit →`}
-              </button>
-              <p className="text-xs text-center" style={{ color: 'rgba(255,255,255,.4)' }}>Your ${deposit} deposit holds the date and is <strong>fully refunded</strong> if we can&apos;t make it. The balance is settled after the job.</p>
+              <div className="flex gap-2 mt-4"><Back /><Next onClick={loadEstimate} disabled={!address.trim()} label="Get my estimate →" /></div>
             </>
           )}
-        </form>
+
+          {/* 3 — Estimate */}
+          {step === 3 && estimate && (
+            <>
+              <div className="glass-card p-6 text-center" style={{ borderRadius: 16, background: 'rgba(224,0,42,.06)' }}>
+                {estimate.hasPrice ? (
+                  <>
+                    <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--muted)' }}>Estimated price</p>
+                    <p className="text-4xl font-black" style={{ color: 'var(--red)', letterSpacing: '-0.03em' }}>${estimate.low?.toLocaleString()}–${estimate.high?.toLocaleString()}</p>
+                    {(estimate.confidence === 'medium' || estimate.confidence === 'low') && <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.5)' }}>Instant estimate — final price confirmed on site (your photos help).</p>}
+                  </>
+                ) : (
+                  <p className="text-sm" style={{ color: 'var(--text)', lineHeight: 1.6 }}>We&apos;ll confirm your custom price after we review the details. Reserve your spot now with a deposit.</p>
+                )}
+                <p className="text-sm mt-3" style={{ color: 'var(--text)' }}>Deposit to reserve: <strong className="text-white">${deposit}</strong> <span style={{ color: 'var(--muted)' }}>(refundable if we can&apos;t make your date)</span></p>
+              </div>
+              <div className="flex gap-2 mt-4"><Back /><Next onClick={loadAvailability} label="Pick a date →" /></div>
+            </>
+          )}
+
+          {/* 4 — Availability: date + time window (shown BEFORE contact info) */}
+          {step === 4 && (
+            <>
+              {!avail ? <p className="text-sm" style={{ color: 'var(--muted)' }}>Loading open dates…</p> : avail.dates.length === 0 ? (
+                <p className="text-sm" style={{ color: 'var(--muted)' }}>No online dates are open for a job this size right now — submit the quote form below and we&apos;ll get you scheduled.</p>
+              ) : (
+                <>
+                  <label style={lbl}>Choose an open date</label>
+                  <div className="flex flex-wrap gap-2 mb-4" style={{ maxHeight: 180, overflowY: 'auto' }}>
+                    {avail.dates.map(d => <button key={d} type="button" onClick={() => setDate(d)} style={pill(date === d)}>{fmtDateLabel(d)}</button>)}
+                  </div>
+                  {date && (
+                    <>
+                      <label style={lbl}>Preferred arrival window</label>
+                      <div className="flex flex-wrap gap-2">
+                        {WINDOWS.map(w => <button key={w} type="button" onClick={() => setWin(w)} style={pill(win === w)}>{w}</button>)}
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+              <div className="flex gap-2 mt-4"><Back /><Next onClick={() => setStep(5)} disabled={!date || !win} /></div>
+            </>
+          )}
+
+          {/* 5 — Contact info */}
+          {step === 5 && (
+            <>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div className="sm:col-span-2"><label style={lbl}>Full name</label><input value={name} onChange={e => setName(e.target.value)} autoCapitalize="words" style={inp} /></div>
+                <div><label style={lbl}>Phone</label><input value={phone} onChange={e => setPhone(e.target.value)} type="tel" style={inp} /></div>
+                <div><label style={lbl}>Email</label><input value={email} onChange={e => setEmail(e.target.value)} type="email" style={inp} /></div>
+                <div className="sm:col-span-2"><label style={lbl}>Promo code <span style={{ fontWeight: 400 }}>(optional)</span></label><input value={promo} onChange={e => setPromo(e.target.value.toUpperCase())} style={{ ...inp, textTransform: 'uppercase' }} /></div>
+              </div>
+              <div className="flex gap-2 mt-4"><Back /><Next onClick={() => setStep(6)} disabled={!name.trim() || (!email.trim() && !phone.trim())} label="Review →" /></div>
+            </>
+          )}
+
+          {/* 6 — Review & pay */}
+          {step === 6 && (
+            <>
+              <div className="glass-card p-5" style={{ borderRadius: 14 }}>
+                {[['Service', service.replace(/-/g, ' ')], ['When', `${fmtDateLabel(date)} · ${win}`], ['Where', address], ['Name', name], ['Contact', [email, phone].filter(Boolean).join(' · ')], estimate?.hasPrice ? ['Estimated price', `$${estimate.low}–$${estimate.high}`] : ['Price', 'Custom — confirmed on site'], ['Deposit now', `$${deposit} (refundable)`]].filter(Boolean).map((row, i) => {
+                  const [k, v] = row as [string, string]
+                  return <div key={i} className="flex justify-between gap-3 py-1.5 text-sm" style={i > 0 ? { borderTop: '1px solid rgba(255,255,255,.06)' } : undefined}><span style={{ color: 'var(--muted)' }}>{k}</span><span className="text-white text-right" style={{ textTransform: k === 'Service' ? 'capitalize' : undefined }}>{v || '—'}</span></div>
+                })}
+              </div>
+              {err && <p className="text-sm mt-3" role="alert" style={{ color: '#f87171' }}>{err}</p>}
+              <div className="flex gap-2 mt-4"><Back /><Next onClick={submit} label={`Reserve & Pay $${deposit} →`} /></div>
+              <p className="text-xs text-center mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Your ${deposit} deposit holds the date and is <strong>fully refunded</strong> if we can&apos;t make it. The balance is settled after the job.</p>
+            </>
+          )}
+
+          {err && step !== 6 && <p className="text-sm mt-3" role="alert" style={{ color: '#f87171' }}>{err}</p>}
+        </div>
       )}
     </div>
   )

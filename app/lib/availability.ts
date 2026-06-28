@@ -26,8 +26,20 @@ export function isAbandonedOnlineHold(b: Booking, now: number): boolean {
 const K_BLACKOUT = 'cfg:blackout'
 const K_CAPACITY = 'cfg:capacity'
 const K_DEPOSIT = 'cfg:deposit'
-const DEFAULT_CAPACITY = 2
-const DEFAULT_DEPOSIT_CENTS = 5000 // $50
+const DEFAULT_CAPACITY = 4               // work-units bookable per day
+const DEFAULT_DEPOSIT_CENTS = 5000       // $50
+
+// Load size → scheduling "work units": bigger jobs take more of the day.
+const LOAD_UNITS: Record<string, number> = {
+  'few-items': 1, quarter: 1, half: 2, 'three-quarter': 2, full: 3, multiple: 4,
+}
+export function unitsForLoad(loadSize?: string): number {
+  return (loadSize && LOAD_UNITS[loadSize]) || 1
+}
+// Units a booking consumes on the calendar (explicit jobUnits, else 1).
+function bookingUnits(b: Booking): number {
+  return Math.max(1, Math.min(8, b.jobUnits ?? 1))
+}
 
 const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' })
 const centralDate = (ts: number) => dayFmt.format(new Date(ts))
@@ -63,21 +75,24 @@ export async function setDepositCents(c: number): Promise<void> {
 
 export type Availability = { dates: string[]; depositCents: number; capacity: number; blackout: string[] }
 
-// Bookable dates: ≥24h out, not a closed/blackout day, and under daily capacity.
-export async function getAvailability(daysAhead = 60): Promise<Availability> {
+// Bookable dates: ≥24h out, not a closed/blackout day, and with enough remaining
+// work-units for a job of `requiredUnits` size (bigger jobs need more open room).
+export async function getAvailability(daysAhead = 60, requiredUnits = 1): Promise<Availability> {
   const [blackout, capacity, depositCents, bookings] = await Promise.all([
     getBlackout(), getCapacity(), getDepositCents(), listBookings(1000),
   ])
   const blackoutSet = new Set(blackout)
   const counts = new Map<string, number>()
   const now = Date.now()
+  const need = Math.max(1, Math.min(capacity, Math.round(requiredUnits) || 1))
   for (const b of bookings) {
     if (b.status === 'cancelled') continue
     // An abandoned online hold shouldn't keep a slot forever — release it after 2h.
     if (isAbandonedOnlineHold(b, now)) continue
-    // Count the effective date (a continued job's RETURN date blocks that slot).
+    // Count the effective date (a continued job's RETURN date blocks that slot),
+    // weighted by the job's size in work-units.
     const d = effectiveServiceDate(b)
-    if (d) counts.set(d, (counts.get(d) ?? 0) + 1)
+    if (d) counts.set(d, (counts.get(d) ?? 0) + bookingUnits(b))
   }
   const todayStr = centralDate(now)
   const minStr = centralDate(now + 24 * 60 * 60 * 1000) // at least 24h out
@@ -86,15 +101,17 @@ export async function getAvailability(daysAhead = 60): Promise<Availability> {
     const d = addDaysStr(todayStr, i)
     if (d < minStr) continue
     if (blackoutSet.has(d)) continue
-    if ((counts.get(d) ?? 0) >= capacity) continue
+    // Enough room left for this job's size?
+    if ((counts.get(d) ?? 0) + need > capacity) continue
     dates.push(d)
   }
   return { dates, depositCents, capacity, blackout }
 }
 
-// Is a single date bookable right now? (re-checked server-side before booking)
-export async function isDateBookable(date: string): Promise<boolean> {
+// Is a single date bookable right now for a job of `requiredUnits` size?
+// (re-checked server-side before booking)
+export async function isDateBookable(date: string, requiredUnits = 1): Promise<boolean> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false
-  const { dates } = await getAvailability(120)
+  const { dates } = await getAvailability(120, requiredUnits)
   return dates.includes(date)
 }

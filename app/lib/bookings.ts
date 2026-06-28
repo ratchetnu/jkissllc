@@ -120,6 +120,7 @@ export type Booking = {
   description?: string
   items: string[]
   invoicePhotos?: InvoicePhoto[]   // photos attached to the invoice (Blob URLs)
+  jobUnits?: number                // size weight for scheduling capacity (1=small … 4=multi-truck)
   invoiceAmountCents: number
   discountCents?: number       // promo/admin discount off the invoice (0 = none)
   promoCode?: string           // code applied, for display/audit

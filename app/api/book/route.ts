@@ -3,7 +3,7 @@ import {
   generateToken, nextBookingNumber, nextInvoiceNumber, saveBooking, sanitizePhotos,
   SERVICE_TYPES, type Booking, type ServiceType,
 } from '../../lib/bookings'
-import { isDateBookable, getDepositCents } from '../../lib/availability'
+import { isDateBookable, getDepositCents, unitsForLoad } from '../../lib/availability'
 import { getStripe, stripeConfigured, grossUp } from '../../lib/stripe'
 import { rateLimit } from '../../lib/rate-limit'
 import { isBlockedBot } from '../../lib/botcheck'
@@ -30,9 +30,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Please enter your name and an email or phone.' }, { status: 400 })
   }
   const serviceType = (SERVICE_TYPES.includes(body.service) ? body.service : 'other') as ServiceType
+  const loadSize = s(body.loadSize, 30)
+  const units = unitsForLoad(loadSize)
   const date = s(body.date, 20) || ''
-  if (!(await isDateBookable(date))) {
-    return NextResponse.json({ error: 'That date is no longer available — please pick another.' }, { status: 409 })
+  const window = s(body.window, 60)
+  // Re-validate server-side using the job's size (bigger jobs need more open room).
+  if (!(await isDateBookable(date, units))) {
+    return NextResponse.json({ error: 'That date is no longer available for a job this size — please pick another.' }, { status: 409 })
   }
 
   const depositCents = await getDepositCents()
@@ -53,17 +57,19 @@ export async function POST(req: NextRequest) {
     invoiceNumber: await nextInvoiceNumber(),
     serviceType,
     jobSiteAddress: s(body.address, 300),
-    description: s(body.notes, 2000),
+    description: [s(body.notes, 2000), loadSize ? `Est. load: ${loadSize}` : '', s(body.debris, 40) ? `Type: ${s(body.debris, 40)}` : ''].filter(Boolean).join(' · ') || undefined,
     items: [],
     invoicePhotos: sanitizePhotos(Array.isArray(body.photos) ? body.photos.map((u: unknown) => ({ url: String(u) })) : []),
+    jobUnits: units,
     invoiceAmountCents: 0,          // ops sets the real total after assessing the job
     depositAmountCents: depositCents,
     amountPaidCents: 0,
     collectInPerson: true,          // remaining balance handled after the job
     availableDates: [date],
-    availableWindows: [],
+    availableWindows: window ? [window] : [],
     selectedDate: date,
-    customerTimeVerifiedAt: now,    // customer chose the date themselves
+    selectedWindow: window,
+    customerTimeVerifiedAt: now,    // customer chose the date + window themselves
     promoCode,
     source: 'online',               // self-service deposit hold — eligible for cleanup
     status: 'booking_created',
