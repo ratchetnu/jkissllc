@@ -292,6 +292,24 @@ export function sanitizePhotos(v: unknown): InvoicePhoto[] {
   return out
 }
 
+// Hours from `now` until a booking's service starts (≈8am Central on the service
+// date). Returns Infinity when no date is set yet.
+export function hoursUntilService(b: Booking, now: number): number {
+  const d = b.selectedDate || (b.availableDates?.length === 1 ? b.availableDates[0] : '')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return Infinity
+  const [y, m, day] = d.split('-').map(Number)
+  const start = Date.UTC(y, m - 1, day, 13) // ~8am Central
+  return (start - now) / 3_600_000
+}
+
+// Cancellation/refund tier per the policy (deposit handling by notice given).
+export function cancellationTier(hoursUntil: number, completed: boolean): { tier: string; label: string; depositRefundPct: number } {
+  if (completed) return { tier: 'completed', label: 'This service is already complete and cannot be cancelled online.', depositRefundPct: 0 }
+  if (hoursUntil >= 72) return { tier: '72h+', label: 'Full credit toward a future service, or a refund of your deposit minus any card-processing fee.', depositRefundPct: 100 }
+  if (hoursUntil >= 48) return { tier: '48-72h', label: '50% of your deposit refunded, or full credit toward a future service.', depositRefundPct: 50 }
+  return { tier: 'under-48h', label: 'Within 48 hours of service, deposits are non-refundable per our policy. You can reschedule instead.', depositRefundPct: 0 }
+}
+
 // ── Derivations ──────────────────────────────────────────────────────────────
 // Invoice the customer actually owes = gross invoice minus any discount/promo.
 // Centralizing here keeps balance + paid-in-full logic correct everywhere.

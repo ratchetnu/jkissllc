@@ -235,6 +235,24 @@ export async function emailRescheduleRequestAck(b: Booking): Promise<void> {
   await send({ to: [b.customerEmail], subject: `We received your reschedule request — ${b.bookingNumber}`, html: shell('Reschedule request received', body) })
 }
 
+export async function emailCancelledCustomer(b: Booking, tierLabel: string): Promise<void> {
+  if (!b.customerEmail) return
+  const body = `
+    <p style="font-size:15px;line-height:1.6">Hi ${esc(b.customerName)}, your J Kiss LLC booking <strong>${esc(b.bookingNumber)}</strong> has been <strong>cancelled</strong> as requested.</p>
+    <div style="margin:14px 0;background:#fafafa;border:1px solid #eee;border-radius:10px;padding:14px">
+      <p style="margin:0;font-size:14px;line-height:1.55"><strong>Deposit / refund:</strong> ${esc(tierLabel)}</p>
+    </div>
+    <p style="font-size:14px;line-height:1.6">Any eligible refund or credit will be processed within a few business days. Questions? Call or text (817) 909-4312.</p>`
+  await send({ to: [b.customerEmail], subject: `Cancelled — J Kiss LLC ${b.bookingNumber}`, html: shell('Your booking is cancelled', body) })
+}
+
+export async function emailOpsCancelledByCustomer(b: Booking, tierLabel: string): Promise<void> {
+  const body = `${opsCustomerRows(b)}
+    ${rows([['Service Date', b.selectedDate || b.availableDates?.[0]], ['Deposit/Refund tier', tierLabel], ['Amount Paid', fmtUSD(b.amountPaidCents)]])}
+    <p style="font-size:13px;margin-top:10px">Process any refund/credit per the tier above. Link: <a href="${bookingLink(b.token)}">${bookingLink(b.token)}</a></p>`
+  await send({ to: OPS, subject: `Customer cancelled — ${b.bookingNumber} (${b.customerName})`, html: shell('Customer cancelled their booking', body) })
+}
+
 export async function emailOpsRescheduled(b: Booking): Promise<void> {
   const req = b.rescheduleRequest
   const body = `${opsCustomerRows(b)}

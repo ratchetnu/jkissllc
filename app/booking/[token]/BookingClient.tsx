@@ -234,8 +234,8 @@ export default function BookingClient({
             </div>
           )}
 
-          {/* ── Self-service reschedule ─────────────────────────────────── */}
-          {verified && b.status !== 'completed' && (
+          {/* ── Manage booking: reschedule + cancel ─────────────────────── */}
+          {b.status !== 'completed' && b.status !== 'cancelled' && (b.selectedDate || b.availableDates.length > 0) && (
             <RescheduleCard b={b} token={token} onChange={refresh} />
           )}
 
@@ -445,7 +445,17 @@ function ManualPaymentForm({ token, balance, onDone, onCancel }: { token: string
   )
 }
 
-// ── Reschedule card ────────────────────────────────────────────────────────
+// Client-side preview of the cancellation/refund tier by how much notice is left.
+function cancelTier(serviceDate?: string): { label: string; refundPct: number } {
+  if (!serviceDate || !/^\d{4}-\d{2}-\d{2}$/.test(serviceDate)) return { label: 'Full credit or a refund of your deposit (minus any card fee).', refundPct: 100 }
+  const [y, m, d] = serviceDate.split('-').map(Number)
+  const hrs = (Date.UTC(y, m - 1, d, 13) - Date.now()) / 3_600_000
+  if (hrs >= 72) return { label: 'Full credit toward a future service, or a refund of your deposit minus any card fee.', refundPct: 100 }
+  if (hrs >= 48) return { label: '50% of your deposit refunded, or full credit toward a future service.', refundPct: 50 }
+  return { label: 'Within 48 hours of service, deposits are non-refundable per our policy — you can reschedule instead.', refundPct: 0 }
+}
+
+// ── Manage booking: reschedule + cancel ──────────────────────────────────────
 function RescheduleCard({ b, token, onChange }: { b: CustomerBooking; token: string; onChange: () => void }) {
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<'pick' | 'request'>(b.availableDates.length > 1 || b.availableWindows.length > 1 ? 'pick' : 'request')
@@ -456,7 +466,23 @@ function RescheduleCard({ b, token, onChange }: { b: CustomerBooking; token: str
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [done, setDone] = useState('')
+  const [cancelOpen, setCancelOpen] = useState(false)
+  const [cancelReason, setCancelReason] = useState('')
+  const [cancelBusy, setCancelBusy] = useState(false)
   const hasOptions = b.availableDates.length > 0
+  const serviceDate = b.selectedDate || (b.availableDates.length === 1 ? b.availableDates[0] : undefined)
+  const tier = cancelTier(serviceDate)
+
+  async function doCancel() {
+    setCancelBusy(true); setErr('')
+    try {
+      const res = await fetch(`/api/booking/${token}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true, reason: cancelReason }) })
+      const j = await res.json()
+      if (!res.ok) { setErr(j.error ?? 'Could not cancel.'); setCancelBusy(false); return }
+      setDone('Your booking has been cancelled. We emailed you the details.'); setCancelOpen(false); onChange()
+    } catch { setErr('Connection error — please try again.') }
+    setCancelBusy(false)
+  }
   const inputStyle: React.CSSProperties = { width: '100%', padding: '12px 14px', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10, color: '#fff', fontSize: 15, outline: 'none', marginBottom: 10 }
 
   async function submit(payload: Record<string, string>, okMsg: string) {
@@ -474,16 +500,40 @@ function RescheduleCard({ b, token, onChange }: { b: CustomerBooking; token: str
 
   return (
     <div className="glass-card p-6 mb-5" style={{ borderRadius: '18px' }}>
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <p className={sectionLabel} style={{ ...sectionLabelStyle, marginBottom: 2 }}>Need to reschedule?</p>
-          <p className="text-sm" style={{ color: 'var(--muted)' }}>Current: {b.selectedDate ? fmtDate(b.selectedDate) : '—'}{b.selectedWindow ? ` · ${b.selectedWindow}` : ''}</p>
+          <p className={sectionLabel} style={{ ...sectionLabelStyle, marginBottom: 2 }}>Manage your booking</p>
+          <p className="text-sm" style={{ color: 'var(--muted)' }}>Current: {b.selectedDate ? fmtDate(b.selectedDate) : (serviceDate ? fmtDate(serviceDate) : '—')}{b.selectedWindow ? ` · ${b.selectedWindow}` : ''}</p>
         </div>
-        {!open && <button onClick={() => { setOpen(true); setDone('') }} className="btn-ghost" style={{ padding: '10px 16px', fontSize: 13 }}>Reschedule</button>}
+        {!open && !cancelOpen && (
+          <div className="flex gap-2">
+            <button onClick={() => { setOpen(true); setDone(''); setErr('') }} className="btn-ghost" style={{ padding: '10px 16px', fontSize: 13 }}>Reschedule</button>
+            <button onClick={() => { setCancelOpen(true); setDone(''); setErr('') }} className="text-sm font-semibold px-4 py-2.5 rounded-xl" style={{ background: 'rgba(224,0,42,.08)', border: '1px solid rgba(224,0,42,.3)', color: '#ff6680' }}>Cancel</button>
+          </div>
+        )}
       </div>
       {done && <p className="text-sm mt-3" style={{ color: '#34d399' }}>{done}</p>}
+
+      {cancelOpen && (
+        <div className="mt-4 rounded-xl p-4" style={{ background: 'rgba(224,0,42,.06)', border: '1px solid rgba(224,0,42,.25)' }}>
+          <p className="text-sm font-bold text-white mb-1">Cancel this booking?</p>
+          <p className="text-xs mb-3" style={{ color: 'rgba(255,255,255,.7)', lineHeight: 1.55 }}>
+            Based on your notice, our cancellation policy applies: <strong style={{ color: '#fff' }}>{tier.label}</strong>
+            {tier.refundPct === 0 && b.amountPaidCents > 0 && ' Consider rescheduling instead to keep your deposit.'}
+          </p>
+          <textarea value={cancelReason} onChange={e => setCancelReason(e.target.value)} rows={2} placeholder="Reason (optional)" style={{ ...inputStyle, resize: 'vertical' }} />
+          {err && <p className="text-sm mb-2" role="alert" style={{ color: '#f87171' }}>{err}</p>}
+          <div className="flex gap-2">
+            <button onClick={doCancel} disabled={cancelBusy} className="text-sm font-bold px-4 py-2.5 rounded-xl" style={{ background: 'var(--red)', color: '#fff' }}>{cancelBusy ? 'Cancelling…' : 'Yes, cancel my booking'}</button>
+            <button onClick={() => { setCancelOpen(false); setErr('') }} className="btn-ghost" style={{ padding: '11px 18px', fontSize: 14 }}>Keep my booking</button>
+          </div>
+        </div>
+      )}
       {open && (
         <div className="mt-4">
+          <p className="text-xs mb-3" style={{ color: 'rgba(255,255,255,.5)', lineHeight: 1.5 }}>
+            Reschedules with 48+ hours notice are free.{tier.refundPct < 100 ? ' Within 48 hours we’ll do our best, but a fee may apply.' : ''}
+          </p>
           {hasOptions && (
             <div className="flex gap-2 mb-3">
               <button onClick={() => setMode('pick')} className="text-sm font-semibold px-3 py-1.5 rounded-lg" style={{ background: mode === 'pick' ? 'var(--red)' : 'rgba(255,255,255,.05)', color: mode === 'pick' ? '#fff' : 'var(--muted)' }}>Pick another time</button>

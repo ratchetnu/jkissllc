@@ -6,6 +6,7 @@ import {
   emailPaidInFullCustomer,
   emailBookingReminderCustomer, emailPaymentReminderCustomer, emailJobTomorrowCustomer, emailReviewRequestCustomer,
   emailRescheduledCustomer, emailRescheduleRequestAck, emailOpsRescheduled,
+  emailCancelledCustomer, emailOpsCancelledByCustomer,
 } from './booking-emails'
 import { sendSms, smsConfigured, toE164 } from './sms'
 
@@ -131,5 +132,17 @@ export async function notifyRescheduleRequest(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
   if (hasEmail(b)) { await emailRescheduleRequestAck(b); out.email = true }
   await emailOpsRescheduled(b)
+  return out
+}
+
+// Customer cancelled their own booking — confirm to them (with refund terms) + alert ops.
+export async function notifyCancelledByCustomer(b: Booking, tierLabel: string): Promise<Channels> {
+  const out: Channels = { email: false, sms: false }
+  if (hasEmail(b)) { await emailCancelledCustomer(b, tierLabel); out.email = true }
+  if (hasSms(b)) {
+    const msg = `J Kiss LLC: Your booking ${b.bookingNumber} is cancelled. ${tierLabel} Questions? (817) 909-4312.`
+    out.sms = await sendSms(b.customerPhone, msg)
+  }
+  await emailOpsCancelledByCustomer(b, tierLabel)
   return out
 }
