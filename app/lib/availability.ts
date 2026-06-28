@@ -1,5 +1,21 @@
 import { redis } from './redis'
-import { listBookings } from './bookings'
+import { listBookings, type Booking } from './bookings'
+
+const TWO_HOURS_MS = 2 * 60 * 60 * 1000
+
+// An abandoned online deposit-hold: a self-service booking where the deposit was
+// never paid, no invoice exists, a deposit was required, it isn't already
+// cancelled/completed, and it was created over 2h ago. Admin/manual bookings
+// (source !== 'online') and anything with a payment or invoice are excluded.
+export function isAbandonedOnlineHold(b: Booking, now: number): boolean {
+  return b.source === 'online'
+    && b.amountPaidCents === 0
+    && b.invoiceAmountCents === 0
+    && (b.depositAmountCents ?? 0) > 0
+    && b.status !== 'cancelled'
+    && b.status !== 'completed'
+    && now - b.createdAt > TWO_HOURS_MS
+}
 
 // Booking availability: closed days (blackout), daily job capacity, and the
 // online-booking deposit — all admin-configurable, stored in Redis.
@@ -54,10 +70,8 @@ export async function getAvailability(daysAhead = 60): Promise<Availability> {
   const now = Date.now()
   for (const b of bookings) {
     if (b.status === 'cancelled') continue
-    // An abandoned online hold (deposit never paid, no invoice) shouldn't keep a
-    // slot forever — release it after 2h so the date frees up again.
-    const isUnpaidHold = b.amountPaidCents === 0 && b.invoiceAmountCents === 0 && (b.depositAmountCents ?? 0) > 0
-    if (isUnpaidHold && now - b.createdAt > 2 * 60 * 60 * 1000) continue
+    // An abandoned online hold shouldn't keep a slot forever — release it after 2h.
+    if (isAbandonedOnlineHold(b, now)) continue
     const d = b.selectedDate || (b.availableDates?.length === 1 ? b.availableDates[0] : '')
     if (d) counts.set(d, (counts.get(d) ?? 0) + 1)
   }

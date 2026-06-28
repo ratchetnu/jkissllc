@@ -147,6 +147,10 @@ export type Booking = {
   agreementIp?: string
   agreementUserAgent?: string
 
+  // How the booking was created — 'online' = self-service instant/deposit hold flow,
+  // 'admin' = created in the admin. Used to scope the abandoned-hold cleanup.
+  source?: 'online' | 'admin'
+
   // Internal (never exposed to the customer)
   internalNotes?: string
   assignedTo?: string          // lead crew/rep assigned to the job (shown to customer)

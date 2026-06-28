@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
       internalNotes: str(body.internalNotes, 2000),
       assignedTo: str(body.assignedTo, 80),
       assignedHelper: str(body.assignedHelper, 80),
+      source: 'admin',
       status: 'booking_created',
       payments: [],
       createdAt: now,

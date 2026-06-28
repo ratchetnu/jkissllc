@@ -65,6 +65,7 @@ export async function POST(req: NextRequest) {
     selectedDate: date,
     customerTimeVerifiedAt: now,    // customer chose the date themselves
     promoCode,
+    source: 'online',               // self-service deposit hold — eligible for cleanup
     status: 'booking_created',
     payments: [],
     internalNotes: `Booked online${promoCode ? ` · promo ${promoCode}` : ''}. Deposit $${(depositCents / 100).toFixed(2)} to hold ${date}. Set the final invoice + arrival window.`,

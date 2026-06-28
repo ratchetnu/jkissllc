@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { listBookings, saveBooking, balanceDueCents, paymentSummaryStatus, type Booking } from '../../../lib/bookings'
 import { notifyBookingReminder, notifyPaymentReminder, notifyJobTomorrow, notifyReviewRequest } from '../../../lib/notify'
+import { isAbandonedOnlineHold } from '../../../lib/availability'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -86,6 +87,26 @@ async function run(): Promise<Record<string, number>> {
   return counts
 }
 
+// Auto-cancel abandoned online deposit-holds (see isAbandonedOnlineHold for the
+// exact, conservative criteria). dryRun logs what WOULD be cancelled, changes nothing.
+async function cleanupAbandonedHolds(now: number, dryRun: boolean): Promise<{ matched: string[]; cancelled: number; dryRun: boolean }> {
+  const bookings = await listBookings(1000)
+  const matched: string[] = []
+  let cancelled = 0
+  for (const b of bookings) {
+    if (!isAbandonedOnlineHold(b, now)) continue
+    matched.push(b.bookingNumber)
+    if (dryRun) { console.log('[cron/cleanup] DRY-RUN would cancel', b.bookingNumber); continue }
+    const stamp = new Date(now).toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })
+    const hrs = Math.round((now - b.createdAt) / DAY * 24)
+    b.status = 'cancelled'
+    b.cancelledAt = now
+    b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[${stamp}] AUTO-CANCELLED: abandoned online hold — deposit never paid (${hrs}h after booking).`
+    try { await saveBooking(b); cancelled++ } catch (e) { console.error('[cron/cleanup save]', b.bookingNumber, e) }
+  }
+  return { matched, cancelled, dryRun }
+}
+
 function authorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET
   if (!secret) return true // not configured — allow (Vercel adds the bearer once set)
@@ -94,9 +115,12 @@ function authorized(req: NextRequest): boolean {
 
 export async function GET(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // ?dryRun=1 → don't send reminders or cancel anything; just report abandoned holds.
+  const dryRun = new URL(req.url).searchParams.get('dryRun') === '1'
   try {
-    const counts = await run()
-    return NextResponse.json({ ok: true, ...counts })
+    const counts = dryRun ? { skipped: 'reminders (dry-run)' } : await run()
+    const cleanup = await cleanupAbandonedHolds(Date.now(), dryRun)
+    return NextResponse.json({ ok: true, dryRun, ...counts, cleanup })
   } catch (e) {
     console.error('[cron/daily] fatal', e)
     return NextResponse.json({ error: 'failed' }, { status: 500 })
