@@ -246,6 +246,34 @@ export async function emailCancelledCustomer(b: Booking, tierLabel: string): Pro
   await send({ to: [b.customerEmail], subject: `Cancelled — J Kiss LLC ${b.bookingNumber}`, html: shell('Your booking is cancelled', body) })
 }
 
+// Human-readable date for a yyyy-mm-dd string (parsed LOCAL so it doesn't slip).
+function niceDate(iso?: string): string {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso || ''
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+}
+
+// The customer-facing continuation message — shared by the admin "copy" button,
+// the email, and the SMS so the wording is identical everywhere.
+export function continuationMessage(b: Booking): string {
+  const c = b.continuation
+  const svc = (SERVICE_LABELS[b.serviceType] ?? 'job').toLowerCase()
+  const because = c?.reason ? ` because ${c.reason}` : ' in one trip'
+  const when = c?.returnDate ? ` on ${niceDate(c.returnDate)}${c?.returnWindow ? ` (${c.returnWindow})` : ''}` : ' soon'
+  const remaining = c?.remainingWork ? ` to finish ${c.remainingWork}` : ' to finish the remaining work'
+  return `Hi ${b.customerName}, we started your ${svc} today but couldn't complete everything${because}. We have you scheduled to return${when}${remaining}. Thank you for your patience! — J Kiss LLC`
+}
+
+export async function emailContinuationCustomer(b: Booking): Promise<void> {
+  if (!b.customerEmail) return
+  const c = b.continuation
+  const body = `
+    <p style="font-size:15px;line-height:1.6">${esc(continuationMessage(b))}</p>
+    ${rows([['Return date', c?.returnDate ? niceDate(c.returnDate) : 'We’ll confirm shortly'], ['Arrival window', c?.returnWindow], ['Remaining work', c?.remainingWork]])}
+    <p style="font-size:13px;color:#888;margin-top:12px">Questions? Call or text (817) 909-4312. Your booking ${esc(b.bookingNumber)} stays the same — no need to rebook.</p>`
+  await send({ to: [b.customerEmail], subject: `We'll be back to finish your job — J Kiss LLC ${b.bookingNumber}`, html: shell('We’ll return to finish your job', body) })
+}
+
 export async function emailRefundCustomer(b: Booking, refundCents: number): Promise<void> {
   if (!b.customerEmail) return
   const body = `

@@ -7,7 +7,7 @@ import {
   type BookingStatus,
 } from '../../../../lib/bookings'
 import { getPolicyVersion, getCurrentPolicy } from '../../../../lib/policy'
-import { sendConfirmationLink, notifyJobCompleted, notifyBookingConfirmed, notifyPaidInFull } from '../../../../lib/notify'
+import { sendConfirmationLink, notifyJobCompleted, notifyBookingConfirmed, notifyPaidInFull, notifyContinuation } from '../../../../lib/notify'
 import { emailOpsPaymentReceived, emailPaymentReceiptCustomer, emailRefundCustomer } from '../../../../lib/booking-emails'
 import { str, strList, num } from '../../../../lib/validators'
 import { ensureLoyaltyCode } from '../../../../lib/promo'
@@ -166,6 +166,37 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       extra = { channels }
       break
     }
+    case 'mark-in-progress': {
+      b.status = 'in_progress'
+      break
+    }
+    case 'continue': {
+      // Multi-day job: work started but couldn't finish in one trip — a return is
+      // needed. NOT a cancellation: same booking, balance, and payments carry over.
+      b.continuation = {
+        continuedAt: Date.now(),
+        originalServiceDate: b.continuation?.originalServiceDate || b.selectedDate || b.availableDates?.[0],
+        reason: str(body.reason, 500),
+        completedToday: str(body.completedToday, 1000),
+        remainingWork: str(body.remainingWork, 1000),
+        returnDate: str(body.returnDate, 20),
+        returnWindow: str(body.returnWindow, 60),
+        customerNotified: body.customerNotified === true || body.customerNotified === 'true',
+        notes: str(body.notes, 1000),
+      }
+      b.status = 'continued'
+      const stamp = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })
+      b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[${stamp}] CONTINUED — return ${b.continuation.returnDate ?? 'TBD'}${b.continuation.reason ? ` · ${b.continuation.reason}` : ''}`
+      break
+    }
+    case 'send-continuation': {
+      // Email/text the customer the continuation message; mark them notified.
+      if (!b.continuation) return NextResponse.json({ error: 'Mark the job as Continued first.' }, { status: 400 })
+      const channels = await notifyContinuation(b)
+      b.continuation.customerNotified = true
+      extra = { channels }
+      break
+    }
     case 'mark-completed': {
       // Guard accounting: a job shouldn't be completed with no invoice total set
       // (e.g. an instant online booking still showing $0 until ops prices it).
@@ -292,5 +323,5 @@ async function sendReceipts(b: Booking, p: Payment): Promise<void> {
 const STATUS_SET: Record<BookingStatus, true> = {
   quote_received: true, pending_payment: true, payment_received: true, booking_created: true,
   confirmation_link_sent: true, customer_viewed: true, time_verification_pending: true,
-  time_verified: true, confirmed: true, completed: true, cancelled: true,
+  time_verified: true, confirmed: true, in_progress: true, continued: true, completed: true, cancelled: true,
 }

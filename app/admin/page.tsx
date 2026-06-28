@@ -504,6 +504,25 @@ export default function AdminPage() {
               </div>
             )}
 
+            {overview.continued && overview.continued.count > 0 && (
+              <div className="glass-card rounded-2xl p-6 mb-6">
+                <div className="flex items-center justify-between gap-3 flex-wrap mb-1">
+                  <p className="text-sm font-black text-white">Continued / Multi-Day Jobs</p>
+                  <p className="text-sm" style={{ color: 'var(--muted)' }}>
+                    {overview.continued.count} total · <span style={{ color: '#fb923c' }}>{overview.continued.openCount} awaiting return</span>
+                    {overview.continued.avgDelayDays > 0 && <> · avg {overview.continued.avgDelayDays}-day completion delay</>}
+                  </p>
+                </div>
+                {overview.continued.reasons.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {overview.continued.reasons.map(r => (
+                      <span key={r.key} className="text-xs px-2.5 py-1 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>{r.key} <span className="font-bold text-white">×{r.count}</span></span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="glass-card rounded-2xl p-6 mb-6">
               <div className="flex items-center justify-between mb-3">
                 <p className="text-sm font-black text-white">Collected Revenue — Last 30 Days</p>

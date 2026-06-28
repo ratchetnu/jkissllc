@@ -1,5 +1,5 @@
 import { redis } from './redis'
-import { listBookings, type Booking } from './bookings'
+import { listBookings, effectiveServiceDate, type Booking } from './bookings'
 
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000
 
@@ -14,6 +14,9 @@ export function isAbandonedOnlineHold(b: Booking, now: number): boolean {
     && (b.depositAmountCents ?? 0) > 0
     && b.status !== 'cancelled'
     && b.status !== 'completed'
+    && b.status !== 'in_progress'
+    && b.status !== 'continued'
+    && !b.continuation
     && now - b.createdAt > TWO_HOURS_MS
 }
 
@@ -72,7 +75,8 @@ export async function getAvailability(daysAhead = 60): Promise<Availability> {
     if (b.status === 'cancelled') continue
     // An abandoned online hold shouldn't keep a slot forever — release it after 2h.
     if (isAbandonedOnlineHold(b, now)) continue
-    const d = b.selectedDate || (b.availableDates?.length === 1 ? b.availableDates[0] : '')
+    // Count the effective date (a continued job's RETURN date blocks that slot).
+    const d = effectiveServiceDate(b)
     if (d) counts.set(d, (counts.get(d) ?? 0) + 1)
   }
   const todayStr = centralDate(now)

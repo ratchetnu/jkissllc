@@ -36,6 +36,8 @@ export type BookingStatus =
   | 'time_verification_pending'
   | 'time_verified'
   | 'confirmed'
+  | 'in_progress'
+  | 'continued'
   | 'completed'
   | 'cancelled'
 
@@ -49,6 +51,8 @@ export const BOOKING_STATUS_LABEL: Record<BookingStatus, string> = {
   time_verification_pending: 'Awaiting Time Verification',
   time_verified: 'Time Verified',
   confirmed: 'Confirmed',
+  in_progress: 'In Progress',
+  continued: 'Continued — Return Needed',
   completed: 'Completed',
   cancelled: 'Cancelled',
 }
@@ -184,6 +188,20 @@ export type Booking = {
   rescheduleCount?: number
   rescheduleRequest?: { requestedDate?: string; note?: string; at: number }
 
+  // Multi-day / job continuation (work started, return trip needed to finish).
+  // NOT a cancellation — the same booking, balance, and payments carry over.
+  continuation?: {
+    continuedAt: number
+    originalServiceDate?: string   // the date work was started (for delay reporting)
+    reason?: string
+    completedToday?: string
+    remainingWork?: string
+    returnDate?: string            // yyyy-mm-dd
+    returnWindow?: string
+    customerNotified?: boolean
+    notes?: string
+  }
+
   // Lifecycle timestamps
   createdAt: number
   updatedAt: number
@@ -296,6 +314,13 @@ export function sanitizePhotos(v: unknown): InvoicePhoto[] {
   return out
 }
 
+// The date a crew should actually show up: the return date for a continued job,
+// otherwise the scheduled/selected date. Used by the calendar + availability.
+export function effectiveServiceDate(b: Booking): string {
+  if (b.status === 'continued' && b.continuation?.returnDate) return b.continuation.returnDate
+  return b.selectedDate || (b.availableDates?.length === 1 ? b.availableDates[0] : '')
+}
+
 // Hours from `now` until a booking's service starts (≈8am Central on the service
 // date). Returns Infinity when no date is set yet.
 export function hoursUntilService(b: Booking, now: number): number {
@@ -355,7 +380,9 @@ export function recompute(b: Booking): Booking {
   const paidSomething = b.amountPaidCents > 0
   const timeVerified = !!b.customerTimeVerifiedAt && !!b.selectedDate && !!b.selectedWindow
 
-  if (b.status !== 'cancelled' && b.status !== 'completed') {
+  // Never downgrade terminal/active workflow states. 'in_progress' and 'continued'
+  // are mid-job states a human set — payment/time changes must not revert them.
+  if (!['cancelled', 'completed', 'in_progress', 'continued'].includes(b.status)) {
     if (timeVerified && paidSomething) {
       b.status = 'confirmed'
       if (!b.confirmedAt) b.confirmedAt = Date.now()
@@ -372,7 +399,7 @@ export function recompute(b: Booking): Booking {
 const STATUS_ORDER: BookingStatus[] = [
   'quote_received', 'pending_payment', 'payment_received', 'booking_created',
   'confirmation_link_sent', 'customer_viewed', 'time_verification_pending',
-  'time_verified', 'confirmed', 'completed',
+  'time_verified', 'confirmed', 'in_progress', 'continued', 'completed',
 ]
 function rank(s: BookingStatus): number {
   const i = STATUS_ORDER.indexOf(s)

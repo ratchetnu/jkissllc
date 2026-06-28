@@ -54,6 +54,7 @@ export type BookingAnalytics = {
   paymentStatus: Record<PaymentSummaryStatus, number>
   disposal: { totalCents: number; actualCents: number; estimateCents: number; netAfterDisposalCents: number; actualEnteredCount: number }
   refunds: { totalCents: number; grossCollectedCents: number; rate: number; bookingsCount: number }
+  continued: { count: number; openCount: number; avgDelayDays: number; reasons: NamedTotal[] }
   reviews?: { count: number; rating: number }
 }
 
@@ -88,15 +89,34 @@ export function computeBookingAnalytics(
   let total = 0, active = 0, completed = 0, cancelled = 0, bookedThisMonth = 0, completedThisMonth = 0
   let disposalActualCents = 0, disposalEstimateCents = 0, disposalActualEnteredCount = 0
   let grossCollectedCents = 0, refundedCents = 0, refundedBookings = 0
+  let continuedCount = 0, continuedOpen = 0, delaySumDays = 0, delayCount = 0
+  const continueReasons = new Map<string, NamedTotal>()
 
   const loc = parseLocation
   for (const b of bookings) {
     const isCancelled = b.status === 'cancelled'
-    // Job counters
+    // Job counters — 'continued' is an ACTIVE job, never counted as cancelled.
     if (isCancelled) cancelled++
     else {
       total++
       if (b.status === 'completed') completed++; else active++
+    }
+    // Continuation (multi-day) reporting.
+    if (b.continuation) {
+      continuedCount++
+      if (b.status === 'continued') continuedOpen++
+      const reason = b.continuation.reason?.trim()
+      if (reason) {
+        const key = reason.slice(0, 60)
+        const e = continueReasons.get(key) ?? { key, amountCents: 0, count: 0 }
+        e.count++; continueReasons.set(key, e)
+      }
+      const orig = b.continuation.originalServiceDate
+      if (b.status === 'completed' && b.completedAt && orig && /^\d{4}-\d{2}-\d{2}$/.test(orig)) {
+        const [oy, om, od] = orig.split('-').map(Number)
+        const days = (b.completedAt - Date.UTC(oy, om - 1, od, 13)) / 86_400_000
+        if (days >= 0 && days < 365) { delaySumDays += days; delayCount++ }
+      }
     }
     // Disposal cost (actual where entered, else estimate) — non-cancelled jobs.
     if (!isCancelled) {
@@ -178,6 +198,12 @@ export function computeBookingAnalytics(
       grossCollectedCents,
       rate: grossCollectedCents > 0 ? refundedCents / grossCollectedCents : 0,
       bookingsCount: refundedBookings,
+    },
+    continued: {
+      count: continuedCount,
+      openCount: continuedOpen,
+      avgDelayDays: delayCount > 0 ? Math.round((delaySumDays / delayCount) * 10) / 10 : 0,
+      reasons: [...continueReasons.values()].sort((a, b) => b.count - a.count).slice(0, 8),
     },
     reviews,
   }

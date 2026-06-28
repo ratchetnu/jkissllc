@@ -17,7 +17,7 @@ const STATUS_LABEL: Record<string, string> = {
   quote_received: 'Quote Received', pending_payment: 'Pending Payment', payment_received: 'Payment Received',
   booking_created: 'Booking Created', confirmation_link_sent: 'Link Sent', customer_viewed: 'Viewed',
   time_verification_pending: 'Awaiting Time', time_verified: 'Time Verified', confirmed: 'Confirmed',
-  completed: 'Completed', cancelled: 'Cancelled',
+  in_progress: 'In Progress', continued: 'Continued — Return Needed', completed: 'Completed', cancelled: 'Cancelled',
 }
 const usd = (c: number) => ((c || 0) / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 const fmtTs = (ts?: number) => ts ? new Date(ts).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '—'
@@ -59,6 +59,8 @@ function paySummary(b: Booking): string {
 function statusColor(s: string): string {
   if (s === 'confirmed' || s === 'completed') return '#34d399'
   if (s === 'cancelled') return '#f87171'
+  if (s === 'continued') return '#fb923c'
+  if (s === 'in_progress') return '#60a5fa'
   if (s === 'time_verified' || s === 'payment_received') return '#fbbf24'
   return 'var(--muted)'
 }
@@ -345,7 +347,7 @@ function CalendarView({ items, onSelect }: { items: Booking[]; onSelect: (token:
   const byDate = useMemo(() => {
     const map = new Map<string, Booking[]>()
     for (const b of items) {
-      const d = b.selectedDate || (b.availableDates?.length === 1 ? b.availableDates[0] : '')
+      const d = (b.status === 'continued' && b.continuation?.returnDate) ? b.continuation.returnDate : (b.selectedDate || (b.availableDates?.length === 1 ? b.availableDates[0] : ''))
       if (!d) continue
       const arr = map.get(d) ?? []; arr.push(b); map.set(d, arr)
     }
@@ -438,6 +440,90 @@ function Timeline({ b }: { b: Booking }) {
   )
 }
 
+// Client mirror of lib/booking-emails.continuationMessage — keep wording in sync.
+function continuationMsg(b: Booking): string {
+  const c = b.continuation
+  if (!c) return ''
+  const svc = (SERVICE_LABELS[b.serviceType] ?? 'job').toLowerCase()
+  const because = c.reason ? ` because ${c.reason}` : ' in one trip'
+  const when = c.returnDate ? ` on ${fmtISO(c.returnDate)}${c.returnWindow ? ` (${c.returnWindow})` : ''}` : ' soon'
+  const remaining = c.remainingWork ? ` to finish ${c.remainingWork}` : ' to finish the remaining work'
+  return `Hi ${b.customerName}, we started your ${svc} today but couldn't complete everything${because}. We have you scheduled to return${when}${remaining}. Thank you for your patience! — J Kiss LLC`
+}
+
+// ── Multi-day / job continuation ─────────────────────────────────────────────
+function ContinuationCard({ b, run, busy }: { b: Booking; run: (action: string, body?: Record<string, unknown>, confirmMsg?: string) => void; busy: string }) {
+  const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const c = b.continuation
+  const active = b.status !== 'completed' && b.status !== 'cancelled'
+  const ti: React.CSSProperties = { width: '100%', padding: '10px 12px', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 9, color: '#f3f4f6', fontSize: 15, outline: 'none' }
+  const lb: React.CSSProperties = { display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 4 }
+
+  function submit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, unknown>
+    f.customerNotified = 'customerNotified' in f ? 'true' : 'false'
+    run('continue', f)
+    setOpen(false)
+  }
+
+  return (
+    <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px', border: b.status === 'continued' ? '1px solid rgba(251,146,60,.4)' : undefined }}>
+      <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)' }}>Multi-Day / Continuation</p>
+
+      {c ? (
+        <>
+          <KV k="Originally started" v={c.originalServiceDate ? fmtISO(c.originalServiceDate) : '—'} />
+          <KV k="Return scheduled" v={c.returnDate ? `${fmtISO(c.returnDate)}${c.returnWindow ? ` · ${c.returnWindow}` : ''}` : 'TBD'} />
+          <KV k="Reason" v={c.reason} />
+          <KV k="Completed so far" v={c.completedToday} />
+          <KV k="Remaining work" v={c.remainingWork} />
+          <KV k="Customer notified" v={c.customerNotified ? 'Yes' : 'No'} />
+          <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
+            <p className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>Customer message</p>
+            <p className="text-sm" style={{ color: 'var(--text)', lineHeight: 1.5 }}>{continuationMsg(b)}</p>
+            <div className="flex flex-wrap gap-2 mt-2">
+              <button onClick={() => { navigator.clipboard?.writeText(continuationMsg(b)); setCopied(true); setTimeout(() => setCopied(false), 1600) }} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--text)' }}>{copied ? '✓ Copied' : 'Copy'}</button>
+              {b.customerEmail && <button onClick={() => run('send-continuation')} disabled={busy === 'send-continuation'} className="text-xs font-bold px-3 py-1.5 rounded-lg" style={{ background: 'var(--red)', color: '#fff' }}>{busy === 'send-continuation' ? '…' : 'Email / Text Customer'}</button>}
+            </div>
+          </div>
+        </>
+      ) : (
+        <p className="text-sm" style={{ color: 'var(--muted)' }}>Started the job but couldn&apos;t finish in one trip? Schedule a return without cancelling — the same booking, balance, and payments carry over.</p>
+      )}
+
+      {active && (
+        <div className="flex flex-wrap gap-2 mt-3">
+          {b.status !== 'in_progress' && b.status !== 'continued' && <ActBtn label="Mark In Progress" busy={busy === 'mark-in-progress'} onClick={() => run('mark-in-progress')} />}
+          <ActBtn label={c ? 'Edit Continuation' : 'Mark as Continued / Return Needed'} onClick={() => setOpen(o => !o)} />
+        </div>
+      )}
+
+      {open && (
+        <form onSubmit={submit} className="mt-3 space-y-2.5">
+          <div><label style={lb}>Reason for continuation</label><input name="reason" defaultValue={c?.reason} placeholder="truck filled with brush and the dump was closed" style={ti} /></div>
+          <div className="grid sm:grid-cols-2 gap-2.5">
+            <div><label style={lb}>Return date</label><input type="date" name="returnDate" defaultValue={c?.returnDate} style={{ ...ti, colorScheme: 'dark' }} /></div>
+            <div><label style={lb}>Return window (optional)</label><input name="returnWindow" defaultValue={c?.returnWindow} placeholder="8am–10am" style={ti} /></div>
+          </div>
+          <div><label style={lb}>What was completed today</label><textarea name="completedToday" rows={2} defaultValue={c?.completedToday} style={{ ...ti, resize: 'vertical' }} /></div>
+          <div><label style={lb}>What remains to be done</label><textarea name="remainingWork" rows={2} defaultValue={c?.remainingWork} style={{ ...ti, resize: 'vertical' }} /></div>
+          <div><label style={lb}>Internal notes (ops only)</label><textarea name="notes" rows={2} defaultValue={c?.notes} style={{ ...ti, resize: 'vertical' }} /></div>
+          <label className="flex items-center gap-2.5 text-sm py-1" style={{ color: 'var(--text)' }}>
+            <input type="checkbox" name="customerNotified" defaultChecked={!!c?.customerNotified} style={{ width: 18, height: 18, accentColor: '#E0002A' }} />
+            Customer already notified
+          </label>
+          <div className="flex gap-2">
+            <button type="submit" disabled={busy === 'continue'} className="btn" style={{ padding: '10px 18px', fontSize: 14 }}>{busy === 'continue' ? 'Saving…' : 'Save — Return Needed'}</button>
+            <button type="button" onClick={() => setOpen(false)} className="btn-ghost" style={{ padding: '10px 18px', fontSize: 14 }}>Cancel</button>
+          </div>
+        </form>
+      )}
+    </div>
+  )
+}
+
 // ── Detail + actions ─────────────────────────────────────────────────────────
 function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booking; onBack: () => void; onEdit: () => void; onChanged: () => Promise<void>; onDuplicate: () => void }) {
   const [busy, setBusy] = useState('')
@@ -479,6 +565,9 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
       } else if (action === 'send-receipt' && j.channels) {
         const ch = [j.channels.email && 'email', j.channels.sms && 'text'].filter(Boolean)
         setMsg(ch.length ? `Receipt sent via ${ch.join(' + ')}.` : 'No email on file — use Copy Receipt Link to send it manually.')
+      } else if (action === 'send-continuation' && j.channels) {
+        const ch = [j.channels.email && 'email', j.channels.sms && 'text'].filter(Boolean)
+        setMsg(ch.length ? `Continuation message sent via ${ch.join(' + ')}.` : 'No email/phone on file — copy the message and send it manually.')
       } else setMsg('Done.')
       await onChanged()
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') }
@@ -595,6 +684,9 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
         )}
         {pendingPayments.length > 0 && <p className="text-xs mt-2" style={{ color: '#fbbf24' }}>⚠ {pendingPayments.length} customer-reported payment(s) need confirmation.</p>}
       </div>
+
+      {/* Multi-day / continuation */}
+      <ContinuationCard b={b} run={run} busy={busy} />
 
       {/* Disposal & profit */}
       <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>

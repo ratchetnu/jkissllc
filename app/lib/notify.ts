@@ -7,6 +7,7 @@ import {
   emailBookingReminderCustomer, emailPaymentReminderCustomer, emailJobTomorrowCustomer, emailReviewRequestCustomer,
   emailRescheduledCustomer, emailRescheduleRequestAck, emailOpsRescheduled,
   emailCancelledCustomer, emailOpsCancelledByCustomer,
+  emailContinuationCustomer, continuationMessage,
 } from './booking-emails'
 import { sendSms, smsConfigured, toE164 } from './sms'
 
@@ -132,6 +133,14 @@ export async function notifyRescheduleRequest(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
   if (hasEmail(b)) { await emailRescheduleRequestAck(b); out.email = true }
   await emailOpsRescheduled(b)
+  return out
+}
+
+// Multi-day job continuation — tell the customer we'll return to finish.
+export async function notifyContinuation(b: Booking): Promise<Channels> {
+  const out: Channels = { email: false, sms: false }
+  if (hasEmail(b)) { await emailContinuationCustomer(b); out.email = true }
+  if (hasSms(b)) { out.sms = await sendSms(b.customerPhone, continuationMessage(b)) }
   return out
 }
 
