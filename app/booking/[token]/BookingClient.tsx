@@ -127,7 +127,10 @@ export default function BookingClient({
   useEffect(() => { refresh() }, [refresh])
 
   const cancelled = b.status === 'cancelled'
-  const verified = !!b.customerTimeVerifiedAt && !!b.selectedDate && !!b.selectedWindow
+  // Verified once the customer has a confirmed date. An arrival window is only
+  // required when ops actually offered windows (instant bookings have none —
+  // ops confirms the window afterward), so don't force it then.
+  const verified = !!b.customerTimeVerifiedAt && !!b.selectedDate && (!!b.selectedWindow || b.availableWindows.length === 0)
   const confirmed = b.status === 'confirmed' || b.status === 'completed'
   const completed = b.status === 'completed'
   // When ops set a single available date, it's the fixed service date — show it
@@ -260,13 +263,23 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
   const [promoErr, setPromoErr] = useState('')
 
   const balance = b.balanceDueCents
-  const depositDue = Math.max(0, Math.min(b.depositAmountCents - b.amountPaidCents, balance))
+  // priceTBD = an instant online booking whose final invoice ops hasn't set yet.
+  const priceTBD = b.invoiceAmountCents === 0
+  const paidInFull = b.paymentSummary === 'paid_in_full'
+  // When the price is still TBD the deposit isn't capped by the (zero) balance.
+  const depositDue = priceTBD
+    ? Math.max(0, b.depositAmountCents - b.amountPaidCents)
+    : Math.max(0, Math.min(b.depositAmountCents - b.amountPaidCents, balance))
+  // What the customer actually owes right now: the deposit when the price is TBD,
+  // otherwise the invoice balance.
+  const payAmount = priceTBD ? depositDue : balance
+  const serviceDate = b.selectedDate || (b.availableDates.length === 1 ? b.availableDates[0] : '')
   const memo = b.invoiceNumber ?? b.bookingNumber
 
   async function copy(label: string, value: string) {
     try { await navigator.clipboard.writeText(value); setCopied(label); setTimeout(() => setCopied(''), 1600) } catch { /* clipboard unavailable */ }
   }
-  const feeOnBalance = grossUp(balance).total - balance
+  const feeOnBalance = grossUp(payAmount).total - payAmount
 
   async function applyPromo(e: React.FormEvent) {
     e.preventDefault()
@@ -313,13 +326,43 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
         {PAYMENT_SUMMARY_LABEL[b.paymentSummary] ?? b.paymentSummary}
       </div>
 
-      {balance <= 0 ? (
+      {paidInFull ? (
         <>
           <p className="text-sm font-semibold mb-3" style={{ color: '#34d399' }}>✓ Paid in full — thank you!</p>
           <a href={`/booking/${token}/receipt`} target="_blank" rel="noreferrer" className="btn w-full" style={{ justifyContent: 'center' }}>
             View Your Paid Receipt →
           </a>
           <p className="text-xs mt-2 text-center" style={{ color: 'var(--muted)' }}>Print, save a PDF, or leave us a quick review.</p>
+        </>
+      ) : priceTBD && b.amountPaidCents > 0 ? (
+        <div className="rounded-xl px-4 py-4 text-sm" style={{ background: 'rgba(52,211,153,.08)', border: '1px solid rgba(52,211,153,.25)', color: 'var(--text)', lineHeight: 1.6 }}>
+          ✓ Deposit of <strong>{usd(b.amountPaidCents)}</strong> received — your spot is reserved{serviceDate ? <> for <strong>{fmtDate(serviceDate)}</strong></> : ''}. We&apos;ll confirm your final price and arrival window shortly. Any remaining balance is due after the job.
+        </div>
+      ) : disabled ? null : priceTBD ? (
+        <>
+          <p className="text-sm mb-3" style={{ color: 'var(--text)', lineHeight: 1.6 }}>
+            Reserve{serviceDate ? <> <strong>{fmtDate(serviceDate)}</strong></> : ' your date'} with a <strong>{usd(depositDue)}</strong> deposit. We&apos;ll confirm your final price after we see the job; the balance is settled afterward. Fully refundable if we can&apos;t make your date.
+          </p>
+          <button onClick={() => pay('deposit')} disabled={!!busy} className="btn w-full" style={{ justifyContent: 'center' }}>
+            {busy === 'deposit' ? 'Starting…' : `Pay Deposit — ${usd(grossUp(depositDue).total)}`}
+          </button>
+          <p className="text-xs mt-3" style={{ color: 'rgba(255,255,255,.4)' }}>
+            💳 Includes a {(FEE_PCT * 100).toFixed(1)}% + {usd(FEE_FIXED)} card fee ({usd(feeOnBalance)} on the deposit). Pay by Zelle below to skip it.
+          </p>
+          {err && <p className="text-sm mt-3" role="alert" style={{ color: '#f87171' }}>{err}</p>}
+          <div className="mt-5 pt-5" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
+            <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Prefer no card fee? Send the deposit by Zelle</p>
+            <p className="text-xs mt-1 mb-3" style={{ color: 'rgba(255,255,255,.45)' }}>Send <strong className="text-white">{usd(depositDue)}</strong> · memo <strong className="text-white">{memo}</strong>, then tap “I Sent Payment”.</p>
+            <button type="button" onClick={() => copy('Zelle', 'jkissbiz@gmail.com')} className="flex items-center justify-between gap-3 rounded-xl px-4 py-3 text-left w-full" style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.1)' }}>
+              <span className="text-sm" style={{ color: 'var(--muted)' }}>Zelle: <span className="font-mono text-white">jkissbiz@gmail.com</span></span>
+              <span className="text-xs font-bold shrink-0" style={{ color: copied === 'Zelle' ? '#34d399' : 'var(--red)' }}>{copied === 'Zelle' ? '✓ Copied' : 'Copy'}</span>
+            </button>
+            {!showManual ? (
+              <button onClick={() => setShowManual(true)} className="btn-ghost w-full mt-3" style={{ padding: '13px 18px', fontSize: 14, justifyContent: 'center' }}>I Sent Payment →</button>
+            ) : (
+              <ManualPaymentForm token={token} balance={depositDue} onDone={() => { setShowManual(false); onChange() }} onCancel={() => setShowManual(false)} />
+            )}
+          </div>
         </>
       ) : disabled ? null : (
         <>
@@ -624,9 +667,11 @@ function VerifyCard({ b, token, policy, onUpdated, verified }: {
         <Row k="Parking" v={b.parkingNotes} />
         <Row k="Access Notes" v={b.accessNotes} />
         <Row k="Special Instructions" v={b.specialInstructions} />
-        <p className="text-xs mt-4" style={{ color: 'rgba(255,255,255,.4)' }}>
-          Policy v{b.agreementPolicyVersion} accepted{b.agreementAcceptedAt ? ` on ${new Date(b.agreementAcceptedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}` : ''}.
-        </p>
+        {b.agreementPolicyVersion && (
+          <p className="text-xs mt-4" style={{ color: 'rgba(255,255,255,.4)' }}>
+            Policy v{b.agreementPolicyVersion} accepted{b.agreementAcceptedAt ? ` on ${new Date(b.agreementAcceptedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}` : ''}.
+          </p>
+        )}
         <button onClick={() => setEditing(true)} className="btn-ghost mt-4" style={{ padding: '10px 18px', fontSize: '13px' }}>Change Date / Details</button>
       </div>
     )

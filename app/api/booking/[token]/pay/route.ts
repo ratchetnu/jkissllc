@@ -31,7 +31,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   let net: number
   let type: PaymentType
   if (kind === 'deposit') {
-    net = Math.max(0, Math.min(b.depositAmountCents - b.amountPaidCents, balance))
+    // When the final invoice isn't set yet (instant online bookings, invoice=0),
+    // the deposit isn't capped by the (zero) balance — let them pay the deposit.
+    net = b.invoiceAmountCents === 0
+      ? Math.max(0, b.depositAmountCents - b.amountPaidCents)
+      : Math.max(0, Math.min(b.depositAmountCents - b.amountPaidCents, balance))
     type = 'deposit'
   } else {
     net = balance

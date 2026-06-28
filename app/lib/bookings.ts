@@ -389,15 +389,17 @@ export function dollarsToCents(v: string | number): number {
 // ── Customer-safe projection ─────────────────────────────────────────────────
 // Strips internal notes and the agreement audit trail (IP / UA) before sending
 // a booking to the browser.
-export type CustomerBooking = Omit<Booking, 'internalNotes' | 'agreementIp' | 'agreementUserAgent' | 'payments'> & {
+export type CustomerBooking = Omit<Booking, 'internalNotes' | 'agreementIp' | 'agreementUserAgent' | 'payments' | 'disposalEstimateCents' | 'disposalActualCents'> & {
   balanceDueCents: number
   paymentSummary: PaymentSummaryStatus
   payments: Array<Pick<Payment, 'type' | 'method' | 'status' | 'amountCents' | 'feeCents' | 'totalChargedCents' | 'createdAt' | 'confirmedAt'>>
 }
 
 export function customerView(b: Booking): CustomerBooking {
-  const { internalNotes: _i, agreementIp: _ip, agreementUserAgent: _ua, payments, ...rest } = b
-  void _i; void _ip; void _ua
+  // Strip everything internal: audit fields, full payment detail, and the disposal
+  // cost / margin numbers (never expose those to the customer).
+  const { internalNotes: _i, agreementIp: _ip, agreementUserAgent: _ua, payments, disposalEstimateCents: _de, disposalActualCents: _da, ...rest } = b
+  void _i; void _ip; void _ua; void _de; void _da
   return {
     ...rest,
     balanceDueCents: balanceDueCents(b),
