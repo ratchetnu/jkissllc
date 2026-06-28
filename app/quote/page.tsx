@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 
-type Estimate = { low: number; high: number; miles: number; fuelCharge?: number; promoCode?: string; promoPct?: number; pickupLabel: string; deliveryLabel: string }
+type Estimate = { low: number; high: number; miles: number; fuelCharge?: number; promoCode?: string; promoPct?: number; confidence?: 'high' | 'medium' | 'low'; jobBased?: boolean; pickupLabel: string; deliveryLabel: string }
 
 // ISO yyyy-mm-dd → "Fri, Jul 4, 2026" (parsed LOCAL so it never slips a day).
 function fmtDateLabel(iso: string): string {
@@ -230,13 +230,18 @@ export default function QuotePage() {
                   ${estimate.low.toLocaleString()}–${estimate.high.toLocaleString()}
                 </p>
                 <p className="text-sm mt-4" style={{ color: 'var(--muted)' }}>
-                  {estimate.pickupLabel} → {estimate.deliveryLabel} · {estimate.miles} mi ({estimate.miles * 2} mi round trip)
+                  {estimate.jobBased
+                    ? `${estimate.pickupLabel} · priced by load + disposal`
+                    : `${estimate.pickupLabel} → ${estimate.deliveryLabel} · ${estimate.miles} mi (${estimate.miles * 2} mi round trip)`}
                 </p>
                 {!!estimate.fuelCharge && estimate.fuelCharge > 0 && (
                   <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,.45)' }}>Includes a ${estimate.fuelCharge} fuel charge for the round-trip distance.</p>
                 )}
                 {estimate.promoCode && (
                   <p className="text-xs mt-1 font-semibold" style={{ color: '#34d399' }}>✓ Promo {estimate.promoCode} applied{estimate.promoPct ? ` — ${estimate.promoPct}% off` : ''}.</p>
+                )}
+                {(estimate.confidence === 'medium' || estimate.confidence === 'low') && (
+                  <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.5)' }}>Instant estimate — the final price may need a photo or a quick review to confirm.</p>
                 )}
               </div>
               <div className="pt-6" style={{ borderTop: '1px solid var(--line)' }}>
@@ -318,16 +323,32 @@ export default function QuotePage() {
                 <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>{isJobBased ? '3. Load Size' : '3. Load'}</p>
                 {isJobBased ? (
                   <div>
-                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Estimated Load Size</label>
-                    <select name="loadSize" defaultValue="quarter" style={{ ...iStyle, cursor: 'pointer' }}>
-                      <option value="few-items">A few items</option>
-                      <option value="quarter">About a quarter truck</option>
-                      <option value="half">About a half truck</option>
-                      <option value="three-quarter">About three-quarter truck</option>
-                      <option value="full">Full truck load</option>
-                      <option value="multiple">More than one truck</option>
-                    </select>
-                    <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Just a rough guess — pricing depends on the items, access, and disposal fees. Describe the job in Notes and we&apos;ll send a custom quote.</p>
+                    <div className="grid sm:grid-cols-2 gap-4 mb-3">
+                      <div>
+                        <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Estimated Load Size</label>
+                        <select name="loadSize" defaultValue="quarter" style={{ ...iStyle, cursor: 'pointer' }}>
+                          <option value="few-items">A few items</option>
+                          <option value="quarter">About a quarter truck</option>
+                          <option value="half">About a half truck</option>
+                          <option value="three-quarter">About three-quarter truck</option>
+                          <option value="full">Full truck load</option>
+                          <option value="multiple">More than one truck</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>What are you removing?</label>
+                        <select name="debris" defaultValue={isEviction ? 'eviction-cleanout' : 'general'} style={{ ...iStyle, cursor: 'pointer' }}>
+                          <option value="general">General / mixed junk</option>
+                          <option value="furniture">Furniture / bulky items</option>
+                          <option value="appliance">Appliances</option>
+                          <option value="mattress">Mattresses</option>
+                          <option value="yard-waste">Yard waste / brush</option>
+                          <option value="construction-debris">Construction debris</option>
+                          <option value="eviction-cleanout">Eviction / full cleanout</option>
+                        </select>
+                      </div>
+                    </div>
+                    <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>We&apos;ll give you an instant range based on load size, item type, and disposal. Add a photo below for a sharper estimate — final price confirmed on site.</p>
 
                     {/* AI photo estimate */}
                     <div className="mt-4 rounded-xl p-4" style={{ background: 'rgba(224,0,42,.06)', border: '1px solid rgba(224,0,42,.25)' }}>

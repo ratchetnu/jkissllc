@@ -327,6 +327,8 @@ export default function AdminPage() {
             style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Crew</a>
           <a href="/admin/availability" className="px-3 py-2 rounded-xl transition hover:text-white"
             style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Availability</a>
+          <a href="/admin/disposal" className="px-3 py-2 rounded-xl transition hover:text-white"
+            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Disposal</a>
           <a href="/admin/policy" className="px-3 py-2 rounded-xl transition hover:text-white"
             style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Policy</a>
           <a href="/admin/reviews" className="px-3 py-2 rounded-xl transition hover:text-white"

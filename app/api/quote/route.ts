@@ -4,6 +4,7 @@ import { rateLimit } from '../../lib/rate-limit'
 import { escapeHtml, isValidEmail } from '../../lib/validators'
 import { isBlockedBot } from '../../lib/botcheck'
 import { getPromo, validatePromo, normalizeCode } from '../../lib/promo'
+import { getDisposalSettings, priceJob, categoryFor, type DisposalQuote } from '../../lib/disposal'
 
 // Look up a US ZIP via zippopotam.us (free, no key required).
 async function lookupZip(zip: string): Promise<{ lat: number; lon: number; city: string; state: string } | null> {
@@ -157,6 +158,16 @@ export async function POST(request: NextRequest) {
     low = Math.round((point * PRICING.rangeLow) / 5) * 5 + addOnTotal + fuelCharge
     high = Math.round((point * PRICING.rangeHigh) / 5) * 5 + addOnTotal + fuelCharge
   }
+
+  // Job-based services (junk / brush / debris / eviction / cleanout) now get an
+  // INSTANT price with disposal cost folded in and margin + minimums protecting profit.
+  let disposal: DisposalQuote | null = null
+  if (isJobBased) {
+    const settings = await getDisposalSettings()
+    disposal = priceJob({ settings, category: categoryFor(serviceType, body.debris), loadSize })
+    low = disposal.low + addOnTotal
+    high = disposal.high + addOnTotal
+  }
   const distanceLabel = `${Math.round(miles)} mi (${Math.round(miles * 2)} mi round trip)`
 
   // Promo code: validate it, preview the discount on a delivery estimate, and
@@ -169,7 +180,7 @@ export async function POST(request: NextRequest) {
     const v = validatePromo(p, (high || 100) * 100, Date.now())
     if (v.ok) {
       promoCode = v.promo.code
-      if (!isJobBased && high > 0) {
+      if (high > 0) {
         if (v.promo.type === 'percent') {
           promoPct = v.promo.value
           low = Math.max(0, Math.round(low * (1 - v.promo.value / 100)))
@@ -226,7 +237,7 @@ export async function POST(request: NextRequest) {
     const bookingParams = new URLSearchParams({ new: '1', name: name || '', email: email || '', phone: phone || '', service: isJunk ? 'junk-removal' : isEviction ? 'eviction' : 'freight' })
     if (isJobBased) bookingParams.set('jobSite', `${from.city}, ${from.state} ${pickupZip}`)
     else { bookingParams.set('pickup', `${from.city}, ${from.state} ${pickupZip}`); bookingParams.set('dropoff', `${to.city}, ${to.state} ${deliveryZip}`) }
-    const desc = [notes, isJobBased ? `Est. load: ${LOAD_LABELS[loadSize] ?? loadSize}` : '', timing ? `Timing: ${timing}` : '', addOnLabels.length ? `Add-ons: ${addOnLabels.join(', ')}` : '', promoCode ? `Promo: ${promoCode}` : ''].filter(Boolean).join(' · ')
+    const desc = [notes, isJobBased ? `Est. load: ${LOAD_LABELS[loadSize] ?? loadSize}` : '', timing ? `Timing: ${timing}` : '', addOnLabels.length ? `Add-ons: ${addOnLabels.join(', ')}` : '', promoCode ? `Promo: ${promoCode}` : '', disposal ? `Disposal est $${Math.round(disposal.disposalCents / 100)} · ${disposal.confidence} confidence` : ''].filter(Boolean).join(' · ')
     if (desc) bookingParams.set('desc', desc)
     const bookingUrl = `https://www.jkissllc.com/admin/bookings?${bookingParams.toString()}`
 
@@ -241,9 +252,15 @@ export async function POST(request: NextRequest) {
       html: `
         <div style="font-family:sans-serif;max-width:640px;margin:0 auto">
           <h2 style="color:#E0002A;margin-bottom:4px">${isJobBased ? `${jobLabel} Request` : 'Instant Quote Request'}</h2>
-          <p style="color:#666;margin-top:0">${isJobBased
-            ? 'Submitted via jkissllc.com/quote · Needs a custom quote (no instant price shown)'
-            : `Submitted via jkissllc.com/quote · Customer was shown $${low.toLocaleString()}–$${high.toLocaleString()}`}</p>
+          <p style="color:#666;margin-top:0">Submitted via jkissllc.com/quote · Customer was shown $${low.toLocaleString()}–$${high.toLocaleString()}</p>
+          ${disposal ? `<table style="width:100%;border-collapse:collapse;background:#fafafa;border-radius:8px;margin:8px 0"><tr><td colspan="2" style="padding:8px 10px;font-weight:700;color:#E0002A">Pricing intelligence (internal)</td></tr>
+            <tr><td style="padding:4px 10px;color:#999;width:200px">Disposal estimate</td><td style="padding:4px 10px;font-weight:600">$${Math.round(disposal.disposalCents / 100)}</td></tr>
+            <tr><td style="padding:4px 10px;color:#999">Labor estimate</td><td style="padding:4px 10px">$${Math.round(disposal.laborCents / 100)}</td></tr>
+            <tr><td style="padding:4px 10px;color:#999">Cost basis</td><td style="padding:4px 10px">$${Math.round(disposal.costBasisCents / 100)}</td></tr>
+            <tr><td style="padding:4px 10px;color:#999">Est. profit (at low)</td><td style="padding:4px 10px;font-weight:600">$${Math.round(disposal.profitLowCents / 100)}</td></tr>
+            <tr><td style="padding:4px 10px;color:#999">Confidence</td><td style="padding:4px 10px;font-weight:600;text-transform:uppercase">${disposal.confidence}</td></tr>
+            <tr><td style="padding:4px 10px;color:#999">Category</td><td style="padding:4px 10px">${disposal.category}</td></tr>
+            </table>` : ''}
 
           <div style="margin:18px 0">
             <a href="${bookingUrl}" style="display:inline-block;background:#E0002A;color:#fff;text-decoration:none;font-weight:700;font-size:15px;padding:13px 24px;border-radius:8px">Create Booking →</a>
@@ -270,14 +287,22 @@ export async function POST(request: NextRequest) {
       `,
     })
 
-    // Job-based services: no instant price — acknowledge the request only.
+    // Job-based services now get an instant, disposal-protected price range.
     if (isJobBased) {
-      return NextResponse.json({ ok: true, requested: true })
+      return NextResponse.json({
+        ok: true,
+        estimate: {
+          low, high, miles: 0, promoCode, promoPct,
+          confidence: disposal?.confidence ?? 'medium',
+          jobBased: true,
+          pickupLabel: `${from.city}, ${from.state}`, deliveryLabel: `${from.city}, ${from.state}`,
+        },
+      })
     }
 
     return NextResponse.json({
       ok: true,
-      estimate: { low, high, miles: Math.round(miles), fuelCharge, promoCode, promoPct, pickupLabel: `${from.city}, ${from.state}`, deliveryLabel: `${to.city}, ${to.state}` },
+      estimate: { low, high, miles: Math.round(miles), fuelCharge, promoCode, promoPct, confidence: 'high', pickupLabel: `${from.city}, ${from.state}`, deliveryLabel: `${to.city}, ${to.state}` },
     })
   } catch (err) {
     console.error('[quote]', err)
