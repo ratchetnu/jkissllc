@@ -141,11 +141,17 @@ export default function BookingClient({
   // required when ops actually offered windows (instant bookings have none —
   // ops confirms the window afterward), so don't force it then.
   const verified = !!b.customerTimeVerifiedAt && !!b.selectedDate && (!!b.selectedWindow || b.availableWindows.length === 0)
-  const confirmed = b.status === 'confirmed' || b.status === 'completed'
   const completed = b.status === 'completed'
   // When ops set a single available date, it's the fixed service date — show it
   // and have the customer choose only the arrival time.
   const serviceDate = b.selectedDate || (b.availableDates.length === 1 ? b.availableDates[0] : '')
+  // "Booked" = locked in. The status string isn't the only signal: a paid deposit
+  // on a scheduled date holds the booking even if the customer never tapped the
+  // verify button (e.g. ops set the date + recorded the deposit), and active /
+  // multi-day jobs are obviously booked too.
+  const confirmed = b.status === 'confirmed' || completed
+    || b.status === 'in_progress' || b.status === 'continued'
+    || (b.amountPaidCents > 0 && !!serviceDate)
 
   const heading = completed
     ? 'Your service is complete'
@@ -176,11 +182,13 @@ export default function BookingClient({
               ? 'This booking has been cancelled. Please contact us if you have questions.'
               : completed
                 ? 'Thank you for choosing J Kiss LLC. We hope to work with you again.'
-                : verified
-                  ? 'Your service time has been verified. J Kiss LLC will contact you if any adjustment is needed.'
-                  : serviceDate
-                    ? `Your service is scheduled for ${fmtDate(serviceDate)}. Please choose the arrival time that works best for you and confirm below.`
-                    : 'Your booking is almost confirmed. Please verify the service date and arrival window below.'}
+                : confirmed
+                  ? `You're all set${serviceDate ? ` for ${fmtDate(serviceDate)}${b.selectedWindow ? `, ${b.selectedWindow}` : ''}` : ''}. J Kiss LLC will contact you if any adjustment is needed.`
+                  : verified
+                    ? 'Your service time has been verified. J Kiss LLC will contact you if any adjustment is needed.'
+                    : serviceDate
+                      ? `Your service is scheduled for ${fmtDate(serviceDate)}. Please choose the arrival time that works best for you and confirm below.`
+                      : 'Your booking is almost confirmed. Please verify the service date and arrival window below.'}
           </p>
           <p className="text-sm mb-6" style={{ color: 'rgba(255,255,255,.45)' }}>
             Booking <span className="font-mono">{b.bookingNumber}</span>
