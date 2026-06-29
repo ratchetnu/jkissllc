@@ -441,6 +441,9 @@ function Timeline({ b }: { b: Booking }) {
 }
 
 // Client mirror of lib/booking-emails.continuationMessage — keep wording in sync.
+function bookingLinkFor(token: string): string {
+  return typeof window !== 'undefined' ? `${window.location.origin}/booking/${token}` : `/booking/${token}`
+}
 function continuationMsg(b: Booking): string {
   const c = b.continuation
   if (!c) return ''
@@ -448,13 +451,14 @@ function continuationMsg(b: Booking): string {
   const because = c.reason ? ` because ${c.reason}` : ' in one trip'
   const when = c.returnDate ? ` on ${fmtISO(c.returnDate)}${c.returnWindow ? ` (${c.returnWindow})` : ''}` : ' soon'
   const remaining = c.remainingWork ? ` to finish ${c.remainingWork}` : ' to finish the remaining work'
-  return `Hi ${b.customerName}, we started your ${svc} today but couldn't complete everything${because}. We have you scheduled to return${when}${remaining}. Thank you for your patience! — J Kiss LLC`
+  return `Hi ${b.customerName}, we started your ${svc} but couldn't complete everything${because}. We'd like to return${when}${remaining}. Please confirm this works (or pick another date) here: ${bookingLinkFor(b.token)} — J Kiss LLC`
 }
 
 // ── Multi-day / job continuation ─────────────────────────────────────────────
 function ContinuationCard({ b, run, busy }: { b: Booking; run: (action: string, body?: Record<string, unknown>, confirmMsg?: string) => void; busy: string }) {
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [linkCopied, setLinkCopied] = useState(false)
   const c = b.continuation
   const active = b.status !== 'completed' && b.status !== 'cancelled'
   const ti: React.CSSProperties = { width: '100%', padding: '10px 12px', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 9, color: '#f3f4f6', fontSize: 15, outline: 'none' }
@@ -480,12 +484,21 @@ function ContinuationCard({ b, run, busy }: { b: Booking; run: (action: string, 
           <KV k="Completed so far" v={c.completedToday} />
           <KV k="Remaining work" v={c.remainingWork} />
           <KV k="Customer notified" v={c.customerNotified ? 'Yes' : 'No'} />
+          <KV k="Return confirmed by customer" v={c.customerConfirmedReturn ? `✓ Yes${c.customerConfirmedReturnAt ? ` · ${new Date(c.customerConfirmedReturnAt).toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })}` : ''}` : 'Awaiting confirmation'} />
+          {c.returnChangeRequest && !c.customerConfirmedReturn && (
+            <div className="mt-2 rounded-lg px-3 py-2 text-xs" style={{ background: 'rgba(251,146,60,.10)', border: '1px solid rgba(251,146,60,.3)', color: '#fdba74' }}>
+              Customer requested a different date{c.returnChangeRequest.requestedDate ? `: ${fmtISO(c.returnChangeRequest.requestedDate)}` : ''}{c.returnChangeRequest.note ? ` — “${c.returnChangeRequest.note}”` : ''}. Update the return date and re-save to send a fresh confirmation.
+            </div>
+          )}
           <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
-            <p className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>Customer message</p>
+            <p className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>Customer confirmation link</p>
+            <p className="text-xs font-mono break-all mb-2" style={{ color: 'var(--text)' }}>{bookingLinkFor(b.token)}</p>
+            <p className="text-xs font-semibold mb-1 mt-3" style={{ color: 'var(--muted)' }}>Customer message</p>
             <p className="text-sm" style={{ color: 'var(--text)', lineHeight: 1.5 }}>{continuationMsg(b)}</p>
             <div className="flex flex-wrap gap-2 mt-2">
-              <button onClick={() => { navigator.clipboard?.writeText(continuationMsg(b)); setCopied(true); setTimeout(() => setCopied(false), 1600) }} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--text)' }}>{copied ? '✓ Copied' : 'Copy'}</button>
-              {b.customerEmail && <button onClick={() => run('send-continuation')} disabled={busy === 'send-continuation'} className="text-xs font-bold px-3 py-1.5 rounded-lg" style={{ background: 'var(--red)', color: '#fff' }}>{busy === 'send-continuation' ? '…' : 'Email / Text Customer'}</button>}
+              <button onClick={() => { navigator.clipboard?.writeText(bookingLinkFor(b.token)); setLinkCopied(true); setTimeout(() => setLinkCopied(false), 1600) }} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--text)' }}>{linkCopied ? '✓ Link copied' : 'Copy link'}</button>
+              <button onClick={() => { navigator.clipboard?.writeText(continuationMsg(b)); setCopied(true); setTimeout(() => setCopied(false), 1600) }} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--text)' }}>{copied ? '✓ Copied' : 'Copy message'}</button>
+              {(b.customerEmail || b.customerPhone) && <button onClick={() => run('send-continuation')} disabled={busy === 'send-continuation'} className="text-xs font-bold px-3 py-1.5 rounded-lg" style={{ background: 'var(--red)', color: '#fff' }}>{busy === 'send-continuation' ? '…' : 'Send confirmation link'}</button>}
             </div>
           </div>
         </>

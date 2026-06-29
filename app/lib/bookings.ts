@@ -197,9 +197,15 @@ export type Booking = {
     reason?: string
     completedToday?: string
     remainingWork?: string
-    returnDate?: string            // yyyy-mm-dd
+    returnDate?: string            // yyyy-mm-dd — the proposed return date
     returnWindow?: string
     customerNotified?: boolean
+    // Customer confirmation of the proposed return visit (reset whenever ops
+    // saves a new return date — a fresh proposal needs a fresh confirmation).
+    customerConfirmedReturn?: boolean
+    customerConfirmedReturnAt?: number
+    // Customer asked for a different return date instead of confirming.
+    returnChangeRequest?: { requestedDate?: string; note?: string; at: number }
     notes?: string
   }
 

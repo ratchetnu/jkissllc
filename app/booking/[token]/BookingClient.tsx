@@ -47,6 +47,16 @@ export type CustomerBooking = {
   agreementAcceptedAt?: number
   agreementPolicyVersion?: number
   status: string
+  continuation?: {
+    reason?: string
+    completedToday?: string
+    remainingWork?: string
+    returnDate?: string
+    returnWindow?: string
+    customerConfirmedReturn?: boolean
+    customerConfirmedReturnAt?: number
+    returnChangeRequest?: { requestedDate?: string; note?: string; at: number }
+  }
   payments: PaymentLite[]
   confirmationLinkSentAt?: number
   customerViewedAt?: number
@@ -184,6 +194,21 @@ export default function BookingClient({
             </div>
           )}
 
+          {/* ── Return-visit confirmation (multi-day / continued job) ───── */}
+          {b.status === 'continued' && b.continuation && (
+            <ReturnConfirmCard b={b} token={token} onChange={refresh} />
+          )}
+
+          {/* ── Verify date/time + policy agreement (top priority action) ── */}
+          {!cancelled && (
+            <VerifyCard b={b} token={token} policy={policy} onUpdated={setB} verified={verified} />
+          )}
+
+          {/* ── Manage booking: reschedule + cancel (kept near the top) ──── */}
+          {b.status !== 'completed' && b.status !== 'cancelled' && (b.selectedDate || b.availableDates.length > 0) && (
+            <RescheduleCard b={b} token={token} onChange={refresh} />
+          )}
+
           {/* ── Booking summary ─────────────────────────────────────────── */}
           <div className="glass-card p-6 mb-5" style={{ borderRadius: '18px' }}>
             <p className={sectionLabel} style={sectionLabelStyle}>Booking Details</p>
@@ -216,11 +241,6 @@ export default function BookingClient({
             )}
           </div>
 
-          {/* ── Verify date/time + agreement ────────────────────────────── */}
-          {!cancelled && (
-            <VerifyCard b={b} token={token} policy={policy} onUpdated={setB} verified={verified} />
-          )}
-
           {/* ── Payment (shown under the booking time) ──────────────────── */}
           <PaymentCard b={b} token={token} onChange={refresh} disabled={cancelled} />
 
@@ -235,11 +255,6 @@ export default function BookingClient({
                 Download Confirmation →
               </a>
             </div>
-          )}
-
-          {/* ── Manage booking: reschedule + cancel ─────────────────────── */}
-          {b.status !== 'completed' && b.status !== 'cancelled' && (b.selectedDate || b.availableDates.length > 0) && (
-            <RescheduleCard b={b} token={token} onChange={refresh} />
           )}
 
           <p className="text-xs text-center mt-8" style={{ color: 'rgba(255,255,255,.3)' }}>
@@ -498,6 +513,87 @@ function cancelTier(serviceDate?: string): { label: string; refundPct: number } 
   return { label: 'Within 48 hours of service, deposits are non-refundable per our policy — you can reschedule instead.', refundPct: 0 }
 }
 
+// ── Return-visit confirmation (multi-day / continued job) ────────────────────
+function ReturnConfirmCard({ b, token, onChange }: { b: CustomerBooking; token: string; onChange: () => void }) {
+  const c = b.continuation!
+  const [showRequest, setShowRequest] = useState(false)
+  const [reqDate, setReqDate] = useState('')
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  const confirmed = !!c.customerConfirmedReturn
+  const pendingChange = !!c.returnChangeRequest && !confirmed
+
+  async function post(payload: Record<string, string>) {
+    setBusy(true); setErr('')
+    try {
+      const res = await fetch(`/api/booking/${token}/confirm-return`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const j = await res.json()
+      if (!res.ok) { setErr(j.error ?? 'Something went wrong — please call us at (817) 909-4312.'); setBusy(false); return }
+      await onChange()
+    } catch { setErr('Connection error — please try again.') }
+    setBusy(false)
+  }
+
+  const tint = confirmed ? 'rgba(34,197,94,.10)' : 'rgba(251,146,60,.10)'
+  const edge = confirmed ? 'rgba(34,197,94,.4)' : 'rgba(251,146,60,.45)'
+  const inp: React.CSSProperties = { width: '100%', padding: '11px 13px', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 10, color: '#f3f4f6', fontSize: 15, outline: 'none' }
+
+  return (
+    <div className="glass-card p-6 mb-5" style={{ borderRadius: '18px', background: tint, border: `1px solid ${edge}` }}>
+      <p className={sectionLabel} style={sectionLabelStyle}>{confirmed ? 'Return Visit Confirmed' : 'Confirm Your Return Visit'}</p>
+
+      {confirmed ? (
+        <p className="text-sm" style={{ color: 'var(--text)', lineHeight: 1.6 }}>
+          Thanks! You confirmed our return{c.returnDate ? <> on <strong className="text-white">{fmtDate(c.returnDate)}</strong>{c.returnWindow ? <> ({c.returnWindow})</> : null}</> : ''}. We&apos;ll see you then to finish the job. Need to change it? Call or text (817) 909-4312.
+        </p>
+      ) : (
+        <>
+          <p className="text-sm mb-4" style={{ color: 'var(--text)', lineHeight: 1.6 }}>
+            We started your job but couldn&apos;t finish everything in one trip{c.reason ? <> because {c.reason}</> : ''}. We&apos;d like to come back to wrap it up — please confirm the time below works for you.
+          </p>
+          <Row k="Proposed return" v={c.returnDate ? fmtDate(c.returnDate) : 'To be scheduled'} />
+          <Row k="Arrival window" v={c.returnWindow} />
+          <Row k="Remaining work" v={c.remainingWork} />
+
+          {pendingChange && (
+            <div className="rounded-xl px-4 py-3 my-3 text-sm" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>
+              We got your request for a different date{c.returnChangeRequest?.requestedDate ? <> ({fmtDate(c.returnChangeRequest.requestedDate)})</> : ''} — we&apos;ll reach out to lock in a new time.
+            </div>
+          )}
+
+          {err && <p className="text-sm mt-3" role="alert" style={{ color: '#f87171' }}>{err}</p>}
+
+          {!showRequest ? (
+            <div className="flex flex-wrap gap-2 mt-4">
+              <button onClick={() => post({ mode: 'confirm' })} disabled={busy} className="btn" style={{ padding: '11px 20px', fontSize: 14, justifyContent: 'center' }}>
+                {busy ? 'Confirming…' : c.returnDate ? '✓ This works — confirm' : '✓ Confirm'}
+              </button>
+              <button onClick={() => { setShowRequest(true); setErr('') }} disabled={busy} className="btn-ghost" style={{ padding: '11px 18px', fontSize: 14 }}>Request a different date</button>
+            </div>
+          ) : (
+            <div className="mt-4 space-y-2.5">
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 6 }}>What date works better?</label>
+                <input type="date" value={reqDate} onChange={e => setReqDate(e.target.value)} style={{ ...inp, colorScheme: 'dark' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 6 }}>Anything else? <span style={{ fontWeight: 400 }}>(optional)</span></label>
+                <input value={note} onChange={e => setNote(e.target.value)} placeholder="Mornings are better for me…" style={inp} />
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => post({ mode: 'request', requestedDate: reqDate, note })} disabled={busy || (!reqDate && !note.trim())} className="btn" style={{ padding: '11px 18px', fontSize: 14, justifyContent: 'center' }}>{busy ? 'Sending…' : 'Send request'}</button>
+                <button onClick={() => { setShowRequest(false); setErr('') }} disabled={busy} className="btn-ghost" style={{ padding: '11px 18px', fontSize: 14 }}>Back</button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Manage booking: reschedule + cancel ──────────────────────────────────────
 function RescheduleCard({ b, token, onChange }: { b: CustomerBooking; token: string; onChange: () => void }) {
   const [open, setOpen] = useState(false)
@@ -730,6 +826,31 @@ function VerifyCard({ b, token, policy, onUpdated, verified }: {
             ))}
           </div>
 
+          {/* Required agreement — surfaced right under the time picker so accepting
+              the policy is a top-of-mind step, not buried below the optional fields. */}
+          <div className="rounded-xl p-4 mb-5" style={{ background: agree ? 'rgba(52,211,153,.08)' : 'rgba(224,0,42,.07)', border: `1px solid ${agree ? 'rgba(52,211,153,.35)' : 'rgba(224,0,42,.4)'}` }}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold uppercase tracking-widest" style={{ color: agree ? '#34d399' : 'var(--red)' }}>{agree ? '✓ Policy Accepted' : 'Required — Please Accept'}</span>
+              <span className="text-xs" style={{ color: 'rgba(255,255,255,.4)' }}>v{policy.version}</span>
+            </div>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)}
+                style={{ width: 22, height: 22, marginTop: 1, accentColor: '#E0002A', flexShrink: 0 }} />
+              <span className="text-sm" style={{ color: 'var(--text)', lineHeight: 1.5 }}>
+                I have read and agree to the J KISS LLC{' '}
+                <button type="button" onClick={() => setShowPolicy(s => !s)} className="font-semibold underline" style={{ color: 'var(--red)' }}>
+                  Cancellation &amp; Refund Policy
+                </button>{' '}and Terms of Service.
+              </span>
+            </label>
+            {showPolicy && (
+              <pre className="mt-3 text-xs whitespace-pre-wrap max-h-64 overflow-auto p-3 rounded-lg"
+                style={{ background: 'rgba(0,0,0,.3)', color: 'var(--muted)', fontFamily: 'var(--font-body)', lineHeight: 1.5 }}>
+                {policy.text}
+              </pre>
+            )}
+          </div>
+
           <div className="grid sm:grid-cols-2 gap-3 mb-3">
             <div>
               <label style={labelStyle}>Contact Phone</label>
@@ -751,26 +872,6 @@ function VerifyCard({ b, token, policy, onUpdated, verified }: {
           <div className="mb-5">
             <label style={labelStyle}>Special Instructions</label>
             <textarea name="specialInstructions" rows={2} defaultValue={b.specialInstructions} placeholder="Anything our crew should know" style={{ ...iStyle, resize: 'vertical' }} />
-          </div>
-
-          {/* Required agreement */}
-          <div className="rounded-xl p-4 mb-4" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.1)' }}>
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)}
-                style={{ width: 20, height: 20, marginTop: 2, accentColor: '#E0002A', flexShrink: 0 }} />
-              <span className="text-sm" style={{ color: 'var(--text)', lineHeight: 1.5 }}>
-                I have read and agree to the J KISS LLC{' '}
-                <button type="button" onClick={() => setShowPolicy(s => !s)} className="font-semibold underline" style={{ color: 'var(--red)' }}>
-                  Cancellation &amp; Refund Policy
-                </button>{' '}and Terms of Service. <span style={{ color: 'rgba(255,255,255,.4)' }}>(v{policy.version})</span>
-              </span>
-            </label>
-            {showPolicy && (
-              <pre className="mt-3 text-xs whitespace-pre-wrap max-h-64 overflow-auto p-3 rounded-lg"
-                style={{ background: 'rgba(0,0,0,.3)', color: 'var(--muted)', fontFamily: 'var(--font-body)', lineHeight: 1.5 }}>
-                {policy.text}
-              </pre>
-            )}
           </div>
 
           {err && <p className="text-sm mb-3" style={{ color: '#f87171' }}>{err}</p>}

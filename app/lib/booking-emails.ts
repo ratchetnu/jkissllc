@@ -261,17 +261,44 @@ export function continuationMessage(b: Booking): string {
   const because = c?.reason ? ` because ${c.reason}` : ' in one trip'
   const when = c?.returnDate ? ` on ${niceDate(c.returnDate)}${c?.returnWindow ? ` (${c.returnWindow})` : ''}` : ' soon'
   const remaining = c?.remainingWork ? ` to finish ${c.remainingWork}` : ' to finish the remaining work'
-  return `Hi ${b.customerName}, we started your ${svc} today but couldn't complete everything${because}. We have you scheduled to return${when}${remaining}. Thank you for your patience! — J Kiss LLC`
+  return `Hi ${b.customerName}, we started your ${svc} but couldn't complete everything${because}. We'd like to return${when}${remaining}. Please confirm this works (or pick another date) here: ${bookingLink(b.token)} — J Kiss LLC`
 }
 
 export async function emailContinuationCustomer(b: Booking): Promise<void> {
   if (!b.customerEmail) return
   const c = b.continuation
+  const link = bookingLink(b.token)
+  const svc = (SERVICE_LABELS[b.serviceType] ?? 'job').toLowerCase()
+  const because = c?.reason ? ` because ${esc(c.reason)}` : ''
   const body = `
-    <p style="font-size:15px;line-height:1.6">${esc(continuationMessage(b))}</p>
-    ${rows([['Return date', c?.returnDate ? niceDate(c.returnDate) : 'We’ll confirm shortly'], ['Arrival window', c?.returnWindow], ['Remaining work', c?.remainingWork]])}
+    <p style="font-size:15px;line-height:1.6">Hi ${esc(b.customerName)}, we started your ${esc(svc)} but couldn't finish everything in one trip${because}. We'd like to come back to wrap it up — please confirm the return time below works for you.</p>
+    ${rows([['Proposed return date', c?.returnDate ? niceDate(c.returnDate) : 'Please pick a date'], ['Arrival window', c?.returnWindow], ['Remaining work', c?.remainingWork]])}
+    <p style="text-align:center;margin:22px 0">
+      <a href="${link}" style="display:inline-block;background:${RED};color:#fff;font-weight:700;font-size:15px;text-decoration:none;padding:13px 26px;border-radius:10px">Confirm your return visit →</a>
+    </p>
+    <p style="font-size:13px;color:#888;margin-top:8px;text-align:center">If that date doesn’t work, you can request a different one from the same page.</p>
     <p style="font-size:13px;color:#888;margin-top:12px">Questions? Call or text (817) 909-4312. Your booking ${esc(b.bookingNumber)} stays the same — no need to rebook.</p>`
-  await send({ to: [b.customerEmail], subject: `We'll be back to finish your job — J Kiss LLC ${b.bookingNumber}`, html: shell('We’ll return to finish your job', body) })
+  await send({ to: [b.customerEmail], subject: `Confirm your return visit — J Kiss LLC ${b.bookingNumber}`, html: shell('Confirm your return visit', body) })
+}
+
+// Ops alert: the customer confirmed the proposed return date.
+export async function emailOpsReturnConfirmed(b: Booking): Promise<void> {
+  const c = b.continuation
+  const body = `${opsCustomerRows(b)}
+    ${rows([['Confirmed return', c?.returnDate ? niceDate(c.returnDate) : '—'], ['Arrival window', c?.returnWindow], ['Remaining work', c?.remainingWork]])}
+    <p style="font-size:14px;margin-top:10px;color:#0a7a2f"><strong>The customer confirmed this return date.</strong> You’re good to schedule the crew.</p>
+    <p style="font-size:13px;margin-top:8px">Booking: <a href="${bookingLink(b.token)}">${esc(b.bookingNumber)}</a></p>`
+  await send({ to: OPS, subject: `Return confirmed — ${b.bookingNumber} (${b.customerName})`, html: shell('Customer confirmed the return date', body) })
+}
+
+// Ops alert: the customer asked for a different return date.
+export async function emailOpsReturnChangeRequest(b: Booking): Promise<void> {
+  const r = b.continuation?.returnChangeRequest
+  const body = `${opsCustomerRows(b)}
+    ${rows([['Currently proposed', b.continuation?.returnDate ? niceDate(b.continuation.returnDate) : '—'], ['Customer prefers', r?.requestedDate ? niceDate(r.requestedDate) : '—'], ['Their note', r?.note]])}
+    <p style="font-size:14px;margin-top:10px"><strong>The customer requested a different return date.</strong> Reach out to coordinate, then update + re-save the continuation to send a fresh confirmation.</p>
+    <p style="font-size:13px;margin-top:8px">Booking: <a href="${bookingLink(b.token)}">${esc(b.bookingNumber)}</a></p>`
+  await send({ to: OPS, subject: `Return-date change requested — ${b.bookingNumber} (${b.customerName})`, html: shell('Customer requested a different return date', body) })
 }
 
 export async function emailRefundCustomer(b: Booking, refundCents: number): Promise<void> {

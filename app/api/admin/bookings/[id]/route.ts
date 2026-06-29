@@ -8,7 +8,7 @@ import {
 } from '../../../../lib/bookings'
 import { getPolicyVersion, getCurrentPolicy } from '../../../../lib/policy'
 import { sendConfirmationLink, notifyJobCompleted, notifyBookingConfirmed, notifyPaidInFull, notifyContinuation } from '../../../../lib/notify'
-import { emailOpsPaymentReceived, emailPaymentReceiptCustomer, emailRefundCustomer } from '../../../../lib/booking-emails'
+import { emailOpsPaymentReceived, emailPaymentReceiptCustomer, emailRefundCustomer, bookingLink } from '../../../../lib/booking-emails'
 import { str, strList, num } from '../../../../lib/validators'
 import { ensureLoyaltyCode } from '../../../../lib/promo'
 import { getStripe, stripeConfigured } from '../../../../lib/stripe'
@@ -173,20 +173,32 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     case 'continue': {
       // Multi-day job: work started but couldn't finish in one trip — a return is
       // needed. NOT a cancellation: same booking, balance, and payments carry over.
+      const prevReturn = b.continuation?.returnDate
+      const newReturn = str(body.returnDate, 20)
+      const newWindow = str(body.returnWindow, 60)
+      // A changed return date/window is a fresh proposal — the customer must
+      // re-confirm availability, so clear any prior confirmation/change request.
+      const dateChanged = newReturn !== prevReturn || newWindow !== b.continuation?.returnWindow
       b.continuation = {
-        continuedAt: Date.now(),
+        continuedAt: b.continuation?.continuedAt || Date.now(),
         originalServiceDate: b.continuation?.originalServiceDate || b.selectedDate || b.availableDates?.[0],
         reason: str(body.reason, 500),
         completedToday: str(body.completedToday, 1000),
         remainingWork: str(body.remainingWork, 1000),
-        returnDate: str(body.returnDate, 20),
-        returnWindow: str(body.returnWindow, 60),
+        returnDate: newReturn,
+        returnWindow: newWindow,
         customerNotified: body.customerNotified === true || body.customerNotified === 'true',
+        customerConfirmedReturn: dateChanged ? false : b.continuation?.customerConfirmedReturn,
+        customerConfirmedReturnAt: dateChanged ? undefined : b.continuation?.customerConfirmedReturnAt,
+        returnChangeRequest: dateChanged ? undefined : b.continuation?.returnChangeRequest,
         notes: str(body.notes, 1000),
       }
       b.status = 'continued'
       const stamp = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })
       b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[${stamp}] CONTINUED — return ${b.continuation.returnDate ?? 'TBD'}${b.continuation.reason ? ` · ${b.continuation.reason}` : ''}`
+      // Hand the admin a shareable link so they can send it to the customer to
+      // confirm the return date right after saving.
+      extra = { confirmLink: bookingLink(b.token) }
       break
     }
     case 'send-continuation': {

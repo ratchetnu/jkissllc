@@ -8,6 +8,7 @@ import {
   emailRescheduledCustomer, emailRescheduleRequestAck, emailOpsRescheduled,
   emailCancelledCustomer, emailOpsCancelledByCustomer,
   emailContinuationCustomer, continuationMessage,
+  emailOpsReturnConfirmed, emailOpsReturnChangeRequest,
 } from './booking-emails'
 import { sendSms, smsConfigured, toE164 } from './sms'
 
@@ -136,12 +137,30 @@ export async function notifyRescheduleRequest(b: Booking): Promise<Channels> {
   return out
 }
 
-// Multi-day job continuation — tell the customer we'll return to finish.
+// Multi-day job continuation — ask the customer to confirm the return visit.
 export async function notifyContinuation(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
   if (hasEmail(b)) { await emailContinuationCustomer(b); out.email = true }
   if (hasSms(b)) { out.sms = await sendSms(b.customerPhone, continuationMessage(b)) }
   return out
+}
+
+// Customer confirmed the proposed return date — ack to them + alert ops.
+export async function notifyReturnConfirmed(b: Booking): Promise<Channels> {
+  const out: Channels = { email: false, sms: false }
+  const c = b.continuation
+  if (hasSms(b)) {
+    const msg = `J Kiss LLC: Thanks ${b.customerName}! Your return visit is confirmed${c?.returnDate ? ` for ${c.returnDate}${c.returnWindow ? `, ${c.returnWindow}` : ''}` : ''}. See you then. ${bookingLink(b.token)}`
+    out.sms = await sendSms(b.customerPhone, msg)
+  }
+  await emailOpsReturnConfirmed(b)
+  return out
+}
+
+// Customer asked for a different return date — alert ops to coordinate.
+export async function notifyReturnChangeRequest(b: Booking): Promise<Channels> {
+  await emailOpsReturnChangeRequest(b)
+  return { email: false, sms: false }
 }
 
 // Customer cancelled their own booking — confirm to them (with refund terms) + alert ops.
