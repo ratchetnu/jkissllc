@@ -51,6 +51,7 @@ export type CustomerBooking = {
     reason?: string
     completedToday?: string
     remainingWork?: string
+    originalServiceDate?: string
     returnDate?: string
     returnWindow?: string
     customerConfirmedReturn?: boolean
@@ -144,7 +145,12 @@ export default function BookingClient({
   const completed = b.status === 'completed'
   // When ops set a single available date, it's the fixed service date — show it
   // and have the customer choose only the arrival time.
-  const serviceDate = b.selectedDate || (b.availableDates.length === 1 ? b.availableDates[0] : '')
+  const originalDate = b.selectedDate || (b.availableDates.length === 1 ? b.availableDates[0] : '')
+  // Multi-day job: the return visit's date is the one that matters now, so it's
+  // what we surface at the top. The original start date is shown below for context.
+  const isReturn = b.status === 'continued' && !!b.continuation?.returnDate
+  const serviceDate = isReturn ? b.continuation!.returnDate! : originalDate
+  const serviceWindow = isReturn ? b.continuation?.returnWindow : b.selectedWindow
   // "Booked" = locked in. The status string isn't the only signal: a paid deposit
   // on a scheduled date holds the booking even if the customer never tapped the
   // verify button (e.g. ops set the date + recorded the deposit), and active /
@@ -155,11 +161,13 @@ export default function BookingClient({
 
   const heading = completed
     ? 'Your service is complete'
-    : confirmed
-      ? "You're officially booked with J KISS LLC"
-      : verified
-        ? 'Your service time is verified'
-        : "You're almost booked with J KISS LLC"
+    : isReturn
+      ? 'Your return visit is scheduled'
+      : confirmed
+        ? "You're officially booked with J KISS LLC"
+        : verified
+          ? 'Your service time is verified'
+          : "You're almost booked with J KISS LLC"
 
   return (
     <main className="min-h-screen pb-20" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
@@ -182,13 +190,15 @@ export default function BookingClient({
               ? 'This booking has been cancelled. Please contact us if you have questions.'
               : completed
                 ? 'Thank you for choosing J Kiss LLC. We hope to work with you again.'
-                : confirmed
-                  ? `You're all set${serviceDate ? ` for ${fmtDate(serviceDate)}${b.selectedWindow ? `, ${b.selectedWindow}` : ''}` : ''}. J Kiss LLC will contact you if any adjustment is needed.`
-                  : verified
-                    ? 'Your service time has been verified. J Kiss LLC will contact you if any adjustment is needed.'
-                    : serviceDate
-                      ? `Your service is scheduled for ${fmtDate(serviceDate)}. Please choose the arrival time that works best for you and confirm below.`
-                      : 'Your booking is almost confirmed. Please verify the service date and arrival window below.'}
+                : isReturn
+                  ? `We're coming back to finish your job on ${fmtDate(serviceDate)}${serviceWindow ? `, ${serviceWindow}` : ''}.${b.continuation?.customerConfirmedReturn ? ' Thanks for confirming!' : ' Please confirm this works below.'}`
+                  : confirmed
+                    ? `You're all set${serviceDate ? ` for ${fmtDate(serviceDate)}${serviceWindow ? `, ${serviceWindow}` : ''}` : ''}. J Kiss LLC will contact you if any adjustment is needed.`
+                    : verified
+                      ? 'Your service time has been verified. J Kiss LLC will contact you if any adjustment is needed.'
+                      : serviceDate
+                        ? `Your service is scheduled for ${fmtDate(serviceDate)}. Please choose the arrival time that works best for you and confirm below.`
+                        : 'Your booking is almost confirmed. Please verify the service date and arrival window below.'}
           </p>
           <p className="text-sm mb-6" style={{ color: 'rgba(255,255,255,.45)' }}>
             Booking <span className="font-mono">{b.bookingNumber}</span>
@@ -222,8 +232,11 @@ export default function BookingClient({
             <p className={sectionLabel} style={sectionLabelStyle}>Booking Details</p>
             <Row k="Customer" v={b.customerName} />
             <Row k="Service" v={SERVICE_LABELS[b.serviceType] ?? b.serviceType} />
-            <Row k="Service Date" v={serviceDate ? fmtDate(serviceDate) : undefined} />
-            <Row k="Arrival Window" v={b.selectedWindow ?? undefined} />
+            <Row k={isReturn ? 'Return Visit' : 'Service Date'} v={serviceDate ? fmtDate(serviceDate) : undefined} />
+            <Row k="Arrival Window" v={serviceWindow ?? undefined} />
+            {isReturn && b.continuation?.originalServiceDate && (
+              <Row k="Originally started" v={fmtDate(b.continuation.originalServiceDate)} />
+            )}
             <Row k="Invoice Date" v={b.invoiceDate} />
             <Row k="Pickup" v={b.pickupAddress} />
             <Row k="Drop-off" v={b.dropoffAddress} />
