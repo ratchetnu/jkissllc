@@ -66,7 +66,7 @@ export default function AdminGate({ title, children }: { title: string; children
     <header className="fixed top-0 left-0 right-0 z-50 flex items-center gap-3 px-3 sm:px-5 py-3.5"
       style={{ background: 'rgba(11,11,12,0.96)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
       <style>{`.adminnav::-webkit-scrollbar{display:none}`}</style>
-      <a href="/admin/bookings" className="text-lg font-black tracking-tight shrink-0" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
+      <a href="/" className="text-lg font-black tracking-tight shrink-0" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
         J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
       </a>
       <div className="adminnav flex items-center gap-1.5 text-xs font-semibold overflow-x-auto whitespace-nowrap"
