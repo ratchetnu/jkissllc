@@ -37,14 +37,21 @@ export function toE164(raw: string | undefined | null): string | null {
   return null
 }
 
-export async function sendSms(to: string | undefined | null, body: string): Promise<boolean> {
-  if (!smsConfigured()) return false
+// Rich result for callers that need the Twilio MessageSid / accept status (e.g.
+// admin sends that surface the SID + delivery tracking). `status` is Twilio's
+// initial value — usually 'queued' or 'accepted' for a Messaging Service send.
+export type SmsDetail =
+  | { ok: true; sid: string; status: string }
+  | { ok: false; error: string; code?: number; httpStatus?: number }
+
+export async function sendSmsDetailed(to: string | undefined | null, body: string): Promise<SmsDetail> {
+  if (!smsConfigured()) return { ok: false, error: 'SMS is not configured (missing Twilio credentials).' }
   const dest = toE164(to)
-  if (!dest) return false
+  if (!dest) return { ok: false, error: `Invalid phone number: ${to}` }
 
   // Honor app-level opt-out (set when a customer texts STOP). Twilio also blocks
   // opted-out numbers; we skip proactively so reminders don't even attempt a send.
-  try { if (await redis.get(`sms:optout:${dest}`)) return false } catch { /* non-fatal */ }
+  try { if (await redis.get(`sms:optout:${dest}`)) return { ok: false, error: 'Recipient has opted out of SMS (STOP).' } } catch { /* non-fatal */ }
 
   const accountSid = process.env.TWILIO_ACCOUNT_SID!
   const auth = authPair()!
@@ -67,13 +74,41 @@ export async function sendSms(to: string | undefined | null, body: string): Prom
       body: params.toString(),
       cache: 'no-store',
     })
+    const data = await res.json().catch(() => ({} as Record<string, unknown>))
     if (!res.ok) {
-      console.error('[sms] twilio error', res.status, await res.text().catch(() => ''))
-      return false
+      const msg = (data as { message?: string }).message || `Twilio error (HTTP ${res.status})`
+      console.error('[sms] twilio error', res.status, msg)
+      return { ok: false, error: msg, code: (data as { code?: number }).code, httpStatus: res.status }
     }
-    return true
+    return { ok: true, sid: (data as { sid: string }).sid, status: (data as { status: string }).status }
   } catch (err) {
-    console.error('[sms] send failed', err)
-    return false
+    const msg = err instanceof Error ? err.message : 'Network error sending SMS'
+    console.error('[sms] send failed', msg)
+    return { ok: false, error: msg }
   }
+}
+
+// Look up the current delivery status of a previously-sent message. Returns null
+// if SMS isn't configured or Twilio can't be reached.
+export async function getSmsStatus(sid: string): Promise<{ status: string; errorCode: number | null; errorMessage: string | null } | null> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID
+  const auth = authPair()
+  if (!accountSid || !auth) return null
+  try {
+    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages/${sid}.json`, {
+      headers: { Authorization: `Basic ${Buffer.from(`${auth.user}:${auth.pass}`).toString('base64')}` },
+      cache: 'no-store',
+    })
+    if (!res.ok) return null
+    const d = await res.json()
+    return { status: d.status, errorCode: d.error_code ?? null, errorMessage: d.error_message ?? null }
+  } catch {
+    return null
+  }
+}
+
+// Boolean convenience wrapper — preserves the original signature for the many
+// fire-and-forget callers (reminders, alerts) that only care if it went out.
+export async function sendSms(to: string | undefined | null, body: string): Promise<boolean> {
+  return (await sendSmsDetailed(to, body)).ok
 }

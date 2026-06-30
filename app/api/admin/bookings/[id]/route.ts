@@ -10,6 +10,8 @@ import { getPolicyVersion, getCurrentPolicy } from '../../../../lib/policy'
 import { sendConfirmationLink, notifyJobCompleted, notifyBookingConfirmed, notifyPaidInFull, notifyContinuation, notifyCustomerMessage } from '../../../../lib/notify'
 import { emailOpsPaymentReceived, emailPaymentReceiptCustomer, emailRefundCustomer, bookingLink } from '../../../../lib/booking-emails'
 import { str, strList, num } from '../../../../lib/validators'
+import { sendSmsDetailed, getSmsStatus, toE164 } from '../../../../lib/sms'
+import { recordMessage } from '../../../../lib/messages'
 import { ensureLoyaltyCode } from '../../../../lib/promo'
 import { getStripe, stripeConfigured } from '../../../../lib/stripe'
 
@@ -257,6 +259,59 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       const via = [channels.sms && 'text', channels.email && 'email'].filter(Boolean).join(' + ')
       b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[${stamp}] Messaged customer (${via}): ${text}`
       extra = { channels }
+      break
+    }
+    case 'send-message-tracked': {
+      // Like 'send-message' but SMS-only and SID-aware: sends via Twilio
+      // (Messaging Service when configured), captures the MessageSid + accept
+      // status, logs to the booking communications history + message timeline as
+      // an admin-initiated message, and (when pollStatus is set) polls Twilio for
+      // the final delivery status. Refuses to re-send an identical message.
+      const text = str(body.text, 2000)
+      if (!text) return NextResponse.json({ error: 'Message text required.' }, { status: 400 })
+      if (!b.customerPhone) return NextResponse.json({ error: 'No phone number on file for this customer.' }, { status: 400 })
+
+      // Duplicate guard — refuse if this exact SMS is already in the log.
+      const norm = (s: string) => s.replace(/\s+/g, ' ').trim()
+      if ((b.communications ?? []).some(c => c.channel !== 'email' && norm(c.body) === norm(text))) {
+        return NextResponse.json({ error: 'This exact message was already sent for this booking.' }, { status: 409 })
+      }
+
+      const sent = await sendSmsDetailed(b.customerPhone, text)
+      if (!sent.ok) {
+        // Nothing logged on failure — surface the exact Twilio reason.
+        return NextResponse.json({ error: `SMS failed: ${sent.error}`, code: sent.code }, { status: 502 })
+      }
+
+      const e164 = toE164(b.customerPhone) ?? b.customerPhone
+      b.communications = [...(b.communications ?? []), {
+        at: Date.now(), channel: 'sms' as const, body: text, by: 'admin', sms: true, ok: true, sid: sent.sid,
+      }].slice(-100)
+      const stamp = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })
+      b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[${stamp}] Messaged customer (text, ${sent.sid}): ${text}`
+
+      try {
+        await recordMessage({
+          direction: 'outbound', channel: 'sms', provider: 'twilio', providerMessageId: sent.sid,
+          to: e164, body: text, customerName: b.customerName, customerPhone: toE164(b.customerPhone) ?? undefined,
+          bookingToken: b.token, bookingNumber: b.bookingNumber, status: 'sent', tags: ['admin-message'],
+        })
+      } catch (e) { console.error('[send-message-tracked] log failed', e) }
+
+      // Optional short server-side poll for the final delivery status.
+      let finalStatus = sent.status
+      let errorCode: number | null = null
+      let errorMessage: string | null = null
+      if (body.pollStatus) {
+        for (let i = 0; i < 10; i++) {
+          await new Promise(r => setTimeout(r, 2500))
+          const s = await getSmsStatus(sent.sid)
+          if (!s) break
+          finalStatus = s.status; errorCode = s.errorCode; errorMessage = s.errorMessage
+          if (['delivered', 'undelivered', 'failed'].includes(finalStatus)) break
+        }
+      }
+      extra = { sms: { sid: sent.sid, acceptStatus: sent.status, finalStatus, errorCode, errorMessage } }
       break
     }
     case 'add-note': {

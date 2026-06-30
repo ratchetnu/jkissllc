@@ -77,6 +77,7 @@ export type CommunicationLog = {
   sms?: boolean                 // delivery result per channel
   email?: boolean
   ok: boolean                   // at least one requested channel succeeded
+  sid?: string                  // Twilio MessageSid (when sent via the tracked path)
 }
 
 // ── Payments ─────────────────────────────────────────────────────────────────
