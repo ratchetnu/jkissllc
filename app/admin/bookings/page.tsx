@@ -546,7 +546,7 @@ function ContinuationCard({ b, run, busy }: { b: Booking; run: (action: string, 
 }
 
 // ── Customer messages panel (texts/emails, both directions) ──────────────────
-function BookingMessages({ token, customerName, reloadKey }: { token: string; customerName: string; reloadKey?: number }) {
+function BookingMessages({ token, customerName, reloadKey, communications }: { token: string; customerName: string; reloadKey?: number; communications?: { at: number; channel: string; body: string; ok?: boolean; sid?: string }[] }) {
   const [msgs, setMsgs] = useState<ThreadMessage[]>([])
   const [loading, setLoading] = useState(true)
   const load = useCallback(async () => {
@@ -557,19 +557,35 @@ function BookingMessages({ token, customerName, reloadKey }: { token: string; cu
     } catch { /* ignore */ } finally { setLoading(false) }
   }, [token])
   useEffect(() => { load() }, [load, reloadKey])
+
+  // Merge the message-store thread with the booking's own communications log so
+  // older admin sends (logged before reply-tracking existed, or that didn't make
+  // it into the thread) still show. Dedup by normalized body text.
+  const merged = useMemo(() => {
+    const norm = (s: string) => (s || '').replace(/\s+/g, ' ').trim()
+    const seen = new Set(msgs.map(m => norm(m.body)))
+    const extra: ThreadMessage[] = (communications ?? [])
+      .filter(c => c.body && !seen.has(norm(c.body)))
+      .map((c, i) => ({
+        id: `comm-${c.at}-${i}`, direction: 'outbound' as const,
+        channel: c.channel === 'email' ? 'email' : 'sms',
+        body: c.body, createdAt: c.at, status: c.ok === false ? 'failed' : 'sent', unread: false,
+      }))
+    return [...msgs, ...extra].sort((a, b) => a.createdAt - b.createdAt)
+  }, [msgs, communications])
   async function markRead(id: string) {
     try {
       await fetch('/api/admin/messages', { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, action: 'read' }) })
     } catch { /* ignore */ }
     await load()
   }
-  const unread = msgs.filter(m => m.unread).length
+  const unread = merged.filter(m => m.unread).length
   return (
     <div>
       {unread > 0 && <p className="text-xs font-bold mb-2" style={{ color: 'var(--red)' }}>{unread} unread</p>}
       {loading
         ? <p className="text-xs" style={{ color: 'var(--muted)' }}>Loading…</p>
-        : <ConversationThread messages={msgs} customerName={customerName} onMarkRead={markRead} emptyHint={`No texts or emails with ${customerName} yet.`} />}
+        : <ConversationThread messages={merged} customerName={customerName} onMarkRead={markRead} emptyHint={`No texts or emails with ${customerName} yet.`} />}
     </div>
   )
 }
@@ -902,7 +918,7 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
         {/* Unified conversation — the full text/email thread, both directions */}
         <div className="mt-5 pt-4" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
           <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)' }}>Conversation</p>
-          <BookingMessages token={b.token} customerName={b.customerName} reloadKey={msgReload} />
+          <BookingMessages token={b.token} customerName={b.customerName} reloadKey={msgReload} communications={b.communications} />
         </div>
       </div>
       </>
