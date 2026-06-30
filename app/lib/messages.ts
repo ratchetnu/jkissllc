@@ -158,6 +158,46 @@ export async function archiveMessage(id: string): Promise<Message | null> {
   return m
 }
 
+// Re-open a message as unread (undo an accidental mark-read).
+export async function markUnread(id: string): Promise<Message | null> {
+  const m = await getMessage(id)
+  if (!m) return null
+  if (m.direction !== 'inbound') return m   // only inbound can be "unread"
+  m.unread = true
+  m.readAt = undefined
+  if (m.status === 'read' || m.status === 'archived') m.status = 'received'
+  await saveMessage(m)
+  return m
+}
+
+// Link an (often unmatched) message to a booking. saveMessage re-indexes it into
+// that booking's timeline so it shows on the booking detail thread.
+export async function attachToBooking(id: string, link: {
+  token: string; bookingNumber?: string; customerName?: string; customerPhone?: string; customerEmail?: string
+}): Promise<Message | null> {
+  const m = await getMessage(id)
+  if (!m) return null
+  m.bookingToken = link.token
+  if (link.bookingNumber) m.bookingNumber = link.bookingNumber
+  if (link.customerName && !m.customerName) m.customerName = link.customerName
+  if (link.customerPhone && !m.customerPhone) m.customerPhone = link.customerPhone
+  if (link.customerEmail && !m.customerEmail) m.customerEmail = link.customerEmail
+  await saveMessage(m)
+  return m
+}
+
+// Triage an unmatched message as not customer-related: archive it and tag it so
+// it never shows in the active inbox again.
+export async function dismissAsNotCustomer(id: string): Promise<Message | null> {
+  const m = await getMessage(id)
+  if (!m) return null
+  m.status = 'archived'
+  m.unread = false
+  m.tags = Array.from(new Set([...(m.tags ?? []), 'not-customer']))
+  await saveMessage(m)
+  return m
+}
+
 // ── read ─────────────────────────────────────────────────────────────────────
 
 export async function getMessage(id: string): Promise<Message | null> {

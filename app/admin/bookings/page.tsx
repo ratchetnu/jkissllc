@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { upload } from '@vercel/blob/client'
 import AdminGate from '../AdminGate'
 import { SkeletonList } from '../../components/Skeleton'
+import { ConversationThread, type ThreadMessage } from '../messaging'
 import type { Booking, Payment, InvoicePhoto } from '../../lib/bookings'
 
 // ── Local label maps + helpers (avoid bundling server lib runtime) ───────────
@@ -545,15 +546,14 @@ function ContinuationCard({ b, run, busy }: { b: Booking; run: (action: string, 
 }
 
 // ── Customer messages panel (texts/emails, both directions) ──────────────────
-type ConvoMsg = { id: string; direction: string; channel: string; body: string; from?: string; createdAt: number; unread: boolean; tags?: string[] }
 function BookingMessages({ token, customerName }: { token: string; customerName: string }) {
-  const [msgs, setMsgs] = useState<ConvoMsg[]>([])
+  const [msgs, setMsgs] = useState<ThreadMessage[]>([])
   const [loading, setLoading] = useState(true)
   const load = useCallback(async () => {
     setLoading(true)
     try {
       const res = await fetch(`/api/admin/messages?tab=all&booking=${encodeURIComponent(token)}`, { credentials: 'same-origin' })
-      if (res.ok) { const j = await res.json(); setMsgs(((j.items ?? []) as ConvoMsg[]).slice().reverse()) }
+      if (res.ok) { const j = await res.json(); setMsgs(((j.items ?? []) as ThreadMessage[]).slice().reverse()) }
     } catch { /* ignore */ } finally { setLoading(false) }
   }, [token])
   useEffect(() => { load() }, [load])
@@ -569,28 +569,10 @@ function BookingMessages({ token, customerName }: { token: string; customerName:
       <summary className="cursor-pointer text-sm font-black text-white">
         Customer Messages{unread > 0 && <span style={{ color: 'var(--red)' }}> · {unread} unread</span>}
       </summary>
-      <div className="mt-3 space-y-2">
-        {loading ? (
-          <p className="text-xs" style={{ color: 'var(--muted)' }}>Loading…</p>
-        ) : msgs.length === 0 ? (
-          <p className="text-xs" style={{ color: 'var(--muted)' }}>No texts or emails with {customerName} yet.</p>
-        ) : msgs.map(m => {
-          const inbound = m.direction === 'inbound'
-          return (
-            <div key={m.id} style={{ display: 'flex', justifyContent: inbound ? 'flex-start' : 'flex-end' }}>
-              <div style={{ maxWidth: '82%', padding: '8px 12px', borderRadius: 12, background: inbound ? 'rgba(255,255,255,.06)' : 'rgba(224,0,42,.12)', borderLeft: m.unread ? '3px solid var(--red)' : '3px solid transparent' }}>
-                <p className="text-xs" style={{ color: 'var(--muted)', marginBottom: 2 }}>
-                  {inbound ? (customerName || 'Customer') : 'J KISS'} · {(m.channel || '').toUpperCase()} · {new Date(m.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                  {m.tags?.includes('opt-out') && <span style={{ color: '#fbbf24' }}> · OPT-OUT</span>}
-                </p>
-                <p className="text-sm" style={{ color: '#e5e7eb', whiteSpace: 'pre-wrap' }}>{m.body}</p>
-                {inbound && m.unread && (
-                  <button onClick={() => markRead(m.id)} className="text-xs mt-1 font-semibold" style={{ color: 'var(--red)' }}>Mark read</button>
-                )}
-              </div>
-            </div>
-          )
-        })}
+      <div className="mt-3">
+        {loading
+          ? <p className="text-xs" style={{ color: 'var(--muted)' }}>Loading…</p>
+          : <ConversationThread messages={msgs} customerName={customerName} onMarkRead={markRead} emptyHint={`No texts or emails with ${customerName} yet.`} />}
       </div>
     </details>
   )

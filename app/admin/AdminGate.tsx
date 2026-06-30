@@ -63,12 +63,14 @@ export default function AdminGate({ title, children }: { title: string; children
   useIdleLogout(authed, signOut)
 
   const Header = () => (
-    <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-5 py-3.5"
+    <header className="fixed top-0 left-0 right-0 z-50 flex items-center gap-3 px-3 sm:px-5 py-3.5"
       style={{ background: 'rgba(11,11,12,0.96)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
-      <a href="/admin/bookings" className="text-lg font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
+      <style>{`.adminnav::-webkit-scrollbar{display:none}`}</style>
+      <a href="/admin/bookings" className="text-lg font-black tracking-tight shrink-0" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
         J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
       </a>
-      <div className="flex items-center gap-1.5 text-xs font-semibold">
+      <div className="adminnav flex items-center gap-1.5 text-xs font-semibold overflow-x-auto whitespace-nowrap"
+        style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch', marginLeft: 'auto' }}>
         <Link href="/" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Home</Link>
         <a href="/admin/bookings" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Bookings</a>
         <a href="/admin/inbox" className="relative px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: unread ? '#fff' : 'var(--muted)' }}>
