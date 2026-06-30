@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { rateLimit } from '../../lib/rate-limit'
 import { getDepositCents, unitsForLoad } from '../../lib/availability'
 import { getDisposalSettings, priceJob, categoryFor } from '../../lib/disposal'
+import { getCalibration } from '../../lib/job-learning'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,9 +23,9 @@ export async function POST(req: NextRequest) {
   const units = unitsForLoad(loadSize)
 
   if (JOB_BASED.includes(service)) {
-    const settings = await getDisposalSettings()
-    const q = priceJob({ settings, category: categoryFor(service, debris), loadSize })
-    return NextResponse.json({ ok: true, hasPrice: true, low: q.low, high: q.high, confidence: q.confidence, depositCents, units })
+    const [settings, calibration] = await Promise.all([getDisposalSettings(), getCalibration()])
+    const q = priceJob({ settings, category: categoryFor(service, debris), loadSize, calibration })
+    return NextResponse.json({ ok: true, hasPrice: true, low: q.low, high: q.high, confidence: q.confidence, requiresReview: q.requiresReview, landfillTrips: q.landfillTrips, depositCents, units })
   }
   // Non-job-based (moving/appliance/etc.): no instant range, just the deposit to hold.
   return NextResponse.json({ ok: true, hasPrice: false, depositCents, units })

@@ -18,6 +18,7 @@ export default function AdminGate({ title, children }: { title: string; children
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [unread, setUnread] = useState(0)
 
   useEffect(() => {
     fetch('/api/admin/session')
@@ -26,6 +27,17 @@ export default function AdminGate({ title, children }: { title: string; children
       .catch(() => {})
       .finally(() => setChecked(true))
   }, [])
+
+  // Poll the unread customer-reply count for the Inbox nav badge while signed in.
+  useEffect(() => {
+    if (!authed) return
+    let alive = true
+    const tick = () => fetch('/api/admin/messages/count', { credentials: 'same-origin' })
+      .then(r => r.json()).then(j => { if (alive) setUnread(j.unread ?? 0) }).catch(() => {})
+    tick()
+    const t = setInterval(tick, 45000)
+    return () => { alive = false; clearInterval(t) }
+  }, [authed])
 
   async function login(e: React.FormEvent) {
     e.preventDefault()
@@ -59,6 +71,10 @@ export default function AdminGate({ title, children }: { title: string; children
       <div className="flex items-center gap-1.5 text-xs font-semibold">
         <Link href="/" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Home</Link>
         <a href="/admin/bookings" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Bookings</a>
+        <a href="/admin/inbox" className="relative px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: unread ? '#fff' : 'var(--muted)' }}>
+          Inbox
+          {unread > 0 && <span style={{ position: 'absolute', top: -5, right: -5, minWidth: 17, height: 17, padding: '0 4px', borderRadius: 99, background: 'var(--red)', color: '#fff', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{unread > 99 ? '99+' : unread}</span>}
+        </a>
         <a href="/admin/promos" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Promos</a>
         <a href="/admin/staff" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Crew</a>
         <a href="/admin/availability" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Availability</a>

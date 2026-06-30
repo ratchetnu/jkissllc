@@ -6,6 +6,8 @@
 //            or: TWILIO_AUTH_TOKEN
 // Sender (either): TWILIO_FROM (a Twilio number)  or  TWILIO_MESSAGING_SERVICE_SID (MG…)
 
+import { redis } from './redis'
+
 function authPair(): { user: string; pass: string } | null {
   if (process.env.TWILIO_API_KEY_SID && process.env.TWILIO_API_KEY_SECRET) {
     return { user: process.env.TWILIO_API_KEY_SID, pass: process.env.TWILIO_API_KEY_SECRET }
@@ -39,6 +41,10 @@ export async function sendSms(to: string | undefined | null, body: string): Prom
   if (!smsConfigured()) return false
   const dest = toE164(to)
   if (!dest) return false
+
+  // Honor app-level opt-out (set when a customer texts STOP). Twilio also blocks
+  // opted-out numbers; we skip proactively so reminders don't even attempt a send.
+  try { if (await redis.get(`sms:optout:${dest}`)) return false } catch { /* non-fatal */ }
 
   const accountSid = process.env.TWILIO_ACCOUNT_SID!
   const auth = authPair()!

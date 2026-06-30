@@ -39,7 +39,10 @@ export type BookingStatus =
   | 'in_progress'
   | 'continued'
   | 'completed'
+  | 'partially_completed'
+  | 'could_not_complete'
   | 'cancelled'
+  | 'refunded'
 
 export const BOOKING_STATUS_LABEL: Record<BookingStatus, string> = {
   quote_received: 'Quote Received',
@@ -54,7 +57,26 @@ export const BOOKING_STATUS_LABEL: Record<BookingStatus, string> = {
   in_progress: 'In Progress',
   continued: 'Continued — Return Needed',
   completed: 'Completed',
+  partially_completed: 'Partially Completed',
+  could_not_complete: 'Could Not Complete',
   cancelled: 'Cancelled',
+  refunded: 'Refunded',
+}
+
+// Terminal/closed states — the job is over (one way or another). Normal reminder &
+// balance-due automation must NOT fire on these, and recompute must not override them.
+export const CLOSED_STATUSES: BookingStatus[] = ['completed', 'partially_completed', 'could_not_complete', 'cancelled', 'refunded']
+export function isClosed(b: Booking): boolean { return CLOSED_STATUSES.includes(b.status) }
+
+// One entry per outbound customer message the owner sends from the admin.
+export type CommunicationLog = {
+  at: number
+  channel: 'sms' | 'email' | 'both'
+  body: string
+  by: string                    // 'admin' | 'system'
+  sms?: boolean                 // delivery result per channel
+  email?: boolean
+  ok: boolean                   // at least one requested channel succeeded
 }
 
 // ── Payments ─────────────────────────────────────────────────────────────────
@@ -110,6 +132,10 @@ export type Booking = {
   customerPhone?: string
   customerEmail?: string
 
+  // Customer communications / reply-driven automation (added with the message log)
+  automationPaused?: boolean    // true once the customer replies — cron skips nagging reminders
+  lastCustomerReplyAt?: number  // epoch ms of the most recent inbound reply
+
   // Invoice
   invoiceNumber?: string
   invoiceDate?: string         // display string, e.g. "June 16, 2026"
@@ -158,6 +184,7 @@ export type Booking = {
 
   // Internal (never exposed to the customer)
   internalNotes?: string
+  communications?: CommunicationLog[]   // outbound texts/emails sent from the admin
   assignedTo?: string          // lead crew/rep assigned to the job (shown to customer)
   assignedHelper?: string      // helper / second rep (shown to customer)
   disposalEstimateCents?: number // estimated dump/disposal cost (from the quote)
@@ -387,9 +414,10 @@ export function recompute(b: Booking): Booking {
   const paidSomething = b.amountPaidCents > 0
   const timeVerified = !!b.customerTimeVerifiedAt && !!b.selectedDate && !!b.selectedWindow
 
-  // Never downgrade terminal/active workflow states. 'in_progress' and 'continued'
-  // are mid-job states a human set — payment/time changes must not revert them.
-  if (!['cancelled', 'completed', 'in_progress', 'continued'].includes(b.status)) {
+  // Never downgrade terminal/active workflow states. Closed states + the mid-job
+  // states 'in_progress'/'continued' are human-set — payment/time changes must not
+  // revert them.
+  if (!isClosed(b) && b.status !== 'in_progress' && b.status !== 'continued') {
     if (timeVerified && paidSomething) {
       b.status = 'confirmed'
       if (!b.confirmedAt) b.confirmedAt = Date.now()

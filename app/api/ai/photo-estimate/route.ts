@@ -7,7 +7,12 @@ export const maxDuration = 30
 
 // Rough price guide so the model returns sane junk-removal numbers (USD per load).
 // "Truck" = J Kiss LLC's 24 ft box truck (~1,200 cu ft), so judge capacity against that.
-const GUIDE = `Operations use a 24 ft box truck (about 1,200 cubic feet). Judge how much of THAT truck the items would fill. Pricing guide (USD): a few items $75–150; quarter of the 24 ft truck $150–275; half $275–425; three-quarter $425–575; a full 24 ft truck load $575–775; more than one truckload $800+. Heavy items, stairs, or long carries push toward the high end. J Kiss LLC does NOT haul hazardous materials (paint, chemicals, solvents, motor oil, propane/gas tanks, tires, batteries, asbestos, or medical/biohazard waste) — exclude any such items from the estimate. If the load is mostly hazardous, set low and high to 0 and use the summary to say we can't haul hazardous materials and to contact us.`
+// Prices mirror the disposal-protected pricing engine (app/lib/disposal.ts): every
+// job carries a landfill trip ($75+ disposal minimum) plus crew, fuel, and dump-run
+// time, so even small loads start in the low hundreds. Loose, non-compacting loads
+// (brush, branches, mattresses) burn truck space fast and need multiple dump trips,
+// which is why they're priced high.
+const GUIDE = `Operations use a 24 ft box truck (about 1,200 cubic feet). Judge how much of THAT truck the items would fill. Every job includes a landfill trip, so pricing starts in the low hundreds. Pricing guide (USD): a few items $200–325; quarter of the 24 ft truck $325–475; half $475–650; three-quarter $650–850; a full 24 ft truck load $900–1,150; more than one truckload $1,500+. Loose non-compacting loads — brush, tree limbs, mattresses — fill the truck far faster than they look and often need multiple dump trips, so price those toward the high end or above. Heavy items, stairs, or long carries also push toward the high end. J Kiss LLC does NOT haul hazardous materials (paint, chemicals, solvents, motor oil, propane/gas tanks, tires, batteries, asbestos, or medical/biohazard waste) — exclude any such items from the estimate. If the load is mostly hazardous, set low and high to 0 and use the summary to say we can't haul hazardous materials and to contact us.`
 
 // POST /api/ai/photo-estimate — customer uploads a photo of their junk/load and
 // gets an AI-suggested load size + ballpark price range. Public, so it's rate-limited

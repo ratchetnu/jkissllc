@@ -48,4 +48,10 @@ export const redis = {
   async pexpire(key: string, ms: number): Promise<void> {
     await call(['PEXPIRE', key, ms])
   },
+  async zcard(key: string): Promise<number> {
+    return ((await call(['ZCARD', key])) ?? 0) as number
+  },
+  async zrange(key: string, start: number, stop: number): Promise<string[]> {
+    return ((await call(['ZRANGE', key, start, stop])) ?? []) as string[]
+  },
 }

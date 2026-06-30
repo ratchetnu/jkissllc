@@ -10,6 +10,7 @@ const INTENTS: Record<string, string> = {
   reminder: 'a polite reminder about their upcoming service and any balance due',
   thanks: 'a warm thank-you after the job, inviting a review',
   reschedule: 'a helpful note offering to reschedule and asking for a better date',
+  cancellation: 'a sincere apology that, due to unforeseen scheduling issues and the driver being unavailable, the job must be cancelled for now, expressing regret and an eagerness to reschedule as soon as possible, and inviting them to email info@jkissllc.com if they need any further help (do NOT include a phone number)',
   custom: 'a helpful, professional message',
 }
 

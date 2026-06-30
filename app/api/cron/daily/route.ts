@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { listBookings, saveBooking, balanceDueCents, paymentSummaryStatus, type Booking } from '../../../lib/bookings'
+import { listBookings, saveBooking, balanceDueCents, paymentSummaryStatus, type Booking, type BookingStatus } from '../../../lib/bookings'
 import { notifyBookingReminder, notifyPaymentReminder, notifyJobTomorrow, notifyReviewRequest } from '../../../lib/notify'
 import { isAbandonedOnlineHold } from '../../../lib/availability'
 
@@ -27,8 +27,11 @@ async function run(): Promise<Record<string, number>> {
   const counts = { processed: 0, recovery: 0, payment: 0, dayBefore: 0, review: 0, errors: 0 }
   const bookings = await listBookings(1000)
 
+  // Dead statuses get NO automation at all. 'completed' is intentionally excluded —
+  // it still flows below to the post-job review request.
+  const NO_AUTOMATION: BookingStatus[] = ['cancelled', 'could_not_complete', 'partially_completed', 'refunded']
   for (const b of bookings) {
-    if (b.status === 'cancelled') continue
+    if (NO_AUTOMATION.includes(b.status)) continue
     counts.processed++
     const reachable = Boolean(b.customerEmail || b.customerPhone)
     if (!reachable) continue
@@ -48,7 +51,7 @@ async function run(): Promise<Record<string, number>> {
 
       // 2. Abandoned-booking recovery — link sent, never verified or paid, 2d+ stale.
       if (
-        !nudgedThisRun && !r.recoverySentAt && !b.customerTimeVerifiedAt &&
+        !nudgedThisRun && !b.automationPaused && !r.recoverySentAt && !b.customerTimeVerifiedAt &&
         b.amountPaidCents === 0 && balanceDueCents(b) > 0 &&
         daysSince(b.confirmationLinkSentAt) >= 2
       ) {
@@ -58,7 +61,7 @@ async function run(): Promise<Record<string, number>> {
 
       // 3. Payment reminder — engaged customer with an unpaid balance, 3d+ stale.
       if (
-        !nudgedThisRun && !r.paymentSentAt && !b.collectInPerson &&
+        !nudgedThisRun && !b.automationPaused && !r.paymentSentAt && !b.collectInPerson &&
         balanceDueCents(b) > 0 && paymentSummaryStatus(b) !== 'paid_in_full' &&
         (b.customerTimeVerifiedAt || b.amountPaidCents > 0) &&
         daysSince(b.confirmationLinkSentAt ?? b.createdAt) >= 3

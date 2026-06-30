@@ -87,7 +87,33 @@ async function send(args: { to: string[]; subject: string; html: string; replyTo
   }
 }
 
+// Generic raw send (no booking shell) — used by owner-alert notifications & internal ops.
+export async function emailRaw(args: { to: string[]; subject: string; html: string; replyTo?: string }): Promise<void> {
+  return send(args)
+}
+
 // ── Customer-facing ──────────────────────────────────────────────────────────
+
+// A free-form message the owner composes in the admin, delivered as a branded email.
+// Returns true only if it actually went out (Resend configured + send succeeded) so
+// the communications log can record per-channel results.
+export async function emailCustomerMessage(b: Booking, text: string): Promise<boolean> {
+  if (!b.customerEmail) return false
+  const client = resend()
+  if (!client) return false
+  const para = esc(text).replace(/\n/g, '<br/>')
+  const html = shell('A message from J Kiss LLC', `<p style="font-size:15px;line-height:1.6;color:#333;margin:0">${para}</p>`)
+  try {
+    await client.emails.send({
+      from: FROM, to: [b.customerEmail], replyTo: 'info@jkissllc.com',
+      subject: `J Kiss LLC — regarding your booking (${b.bookingNumber})`, html,
+    })
+    return true
+  } catch (err) {
+    console.error('[booking-emails] customer message', err)
+    return false
+  }
+}
 
 export async function emailConfirmationLink(b: Booking): Promise<void> {
   if (!b.customerEmail) return

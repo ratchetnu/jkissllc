@@ -1,0 +1,101 @@
+import { redis } from './redis'
+import { DEBRIS_CATEGORIES, type DebrisCategory, type CalibrationBias } from './disposal'
+
+// ── Self-learning pricing loop ───────────────────────────────────────────────
+// After every completed job the owner logs what ACTUALLY happened (true truck
+// fill, dump trips, disposal, labor, profit). We keep the raw history and a
+// running per-category calibration bias — actual ÷ estimated truck fill — so the
+// estimator gets more accurate after every job while still protecting margin.
+//
+// The objective: tighten truck-fill estimation (the single biggest driver of
+// disposal trips and labor), so jobs like the underpriced $350 brush load stop
+// happening.
+
+export type JobOutcome = {
+  id: string
+  date: string                 // ISO yyyy-mm-dd
+  category: DebrisCategory
+  service?: string
+  // Estimated (what the quote assumed):
+  estFillPct: number           // effective fill %, whole number
+  estTrips: number
+  estDisposalCents: number
+  estLaborCents: number
+  estProfitCents: number
+  // Actual (what the crew measured on completion):
+  actualFillPct: number
+  actualTrips: number
+  actualDisposalCents: number
+  actualLaborCents: number
+  actualProfitCents: number
+  finalPriceCents: number      // what the customer actually paid
+  notes?: string
+}
+
+export type Calibration = CalibrationBias & {
+  fillBias: Partial<Record<DebrisCategory, number>>
+  samples: Partial<Record<DebrisCategory, number>>
+  updatedAt: string
+}
+
+const OUTCOMES_KEY = 'learn:jobs'
+const CALIB_KEY = 'learn:calibration'
+const MAX_OUTCOMES = 250
+const ALPHA = 0.3            // EWMA weight for the newest sample
+const BIAS_MIN = 0.4, BIAS_MAX = 3   // keep a single weird job from blowing up estimates
+
+export async function listOutcomes(limit = 50): Promise<JobOutcome[]> {
+  const raw = await redis.get(OUTCOMES_KEY)
+  if (!raw) return []
+  try {
+    const all = JSON.parse(raw) as JobOutcome[]
+    return Array.isArray(all) ? all.slice(0, limit) : []
+  } catch { return [] }
+}
+
+export async function getCalibration(): Promise<Calibration> {
+  const raw = await redis.get(CALIB_KEY)
+  const empty: Calibration = { fillBias: {}, samples: {}, updatedAt: '' }
+  if (!raw) return empty
+  try {
+    const c = JSON.parse(raw) as Calibration
+    return { fillBias: c.fillBias ?? {}, samples: c.samples ?? {}, updatedAt: c.updatedAt ?? '' }
+  } catch { return empty }
+}
+
+// Record a completed job and fold its actual-vs-estimated fill into the bias.
+export async function recordJobOutcome(o: JobOutcome): Promise<Calibration> {
+  // Prepend to the capped history.
+  const history = await listOutcomes(MAX_OUTCOMES)
+  history.unshift(o)
+  await redis.set(OUTCOMES_KEY, JSON.stringify(history.slice(0, MAX_OUTCOMES)))
+
+  // Update the per-category fill bias via EWMA of (actual ÷ estimated).
+  const calib = await getCalibration()
+  if (o.estFillPct > 0 && o.actualFillPct > 0 && (DEBRIS_CATEGORIES as string[]).includes(o.category)) {
+    const ratio = o.actualFillPct / o.estFillPct
+    const prev = calib.fillBias[o.category]
+    const next = prev == null ? ratio : prev * (1 - ALPHA) + ratio * ALPHA
+    calib.fillBias[o.category] = Math.min(BIAS_MAX, Math.max(BIAS_MIN, Number(next.toFixed(3))))
+    calib.samples[o.category] = (calib.samples[o.category] ?? 0) + 1
+  }
+  calib.updatedAt = o.date
+  await redis.set(CALIB_KEY, JSON.stringify(calib))
+  return calib
+}
+
+// Quick accuracy read-out for the admin dashboard.
+export function accuracyStats(outcomes: JobOutcome[]) {
+  if (!outcomes.length) return null
+  const n = outcomes.length
+  const absPct = (a: number, b: number) => (b === 0 ? 0 : Math.abs(a - b) / b)
+  const avg = (f: (o: JobOutcome) => number) => outcomes.reduce((s, o) => s + f(o), 0) / n
+  return {
+    jobs: n,
+    fillMape: Math.round(avg(o => absPct(o.estFillPct, o.actualFillPct)) * 100),
+    tripMape: Math.round(avg(o => absPct(o.estTrips, o.actualTrips)) * 100),
+    disposalMape: Math.round(avg(o => absPct(o.estDisposalCents, o.actualDisposalCents)) * 100),
+    avgProfitCents: Math.round(avg(o => o.actualProfitCents)),
+    underpriced: outcomes.filter(o => o.actualProfitCents < o.estProfitCents).length,
+  }
+}

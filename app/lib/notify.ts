@@ -9,8 +9,10 @@ import {
   emailCancelledCustomer, emailOpsCancelledByCustomer,
   emailContinuationCustomer, continuationMessage,
   emailOpsReturnConfirmed, emailOpsReturnChangeRequest,
+  emailCustomerMessage,
 } from './booking-emails'
 import { sendSms, smsConfigured, toE164 } from './sms'
+import { recordMessage } from './messages'
 
 export type Channels = { email: boolean; sms: boolean }
 
@@ -161,6 +163,29 @@ export async function notifyReturnConfirmed(b: Booking): Promise<Channels> {
 export async function notifyReturnChangeRequest(b: Booking): Promise<Channels> {
   await emailOpsReturnChangeRequest(b)
   return { email: false, sms: false }
+}
+
+// Ad-hoc message the owner composes (e.g. an apology/cancellation, a heads-up) sent
+// straight to the customer. Free-form body, sent verbatim. `channel` chooses which
+// rails to use; each is still gated on having contact info + a configured provider.
+export async function notifyCustomerMessage(b: Booking, bodyText: string, channel: 'sms' | 'email' | 'both' = 'both'): Promise<Channels> {
+  const out: Channels = { email: false, sms: false }
+  const text = bodyText.trim()
+  if (!text) return out
+  if ((channel === 'sms' || channel === 'both') && hasSms(b)) out.sms = await sendSms(b.customerPhone, text)
+  if ((channel === 'email' || channel === 'both') && hasEmail(b)) out.email = await emailCustomerMessage(b, text)
+  // Log the admin reply into the communications timeline so the booking shows both sides.
+  if (out.sms || out.email) {
+    try {
+      await recordMessage({
+        direction: 'outbound', channel: out.sms ? 'sms' : 'email', provider: out.sms ? 'twilio' : 'resend',
+        body: text, to: out.sms ? (toE164(b.customerPhone) ?? b.customerPhone ?? undefined) : b.customerEmail,
+        customerName: b.customerName, customerPhone: toE164(b.customerPhone) ?? undefined, customerEmail: b.customerEmail,
+        bookingToken: b.token, bookingNumber: b.bookingNumber, status: 'sent', tags: ['admin-message'],
+      })
+    } catch (e) { console.error('[notify] log admin message failed', e) }
+  }
+  return out
 }
 
 // Customer cancelled their own booking — confirm to them (with refund terms) + alert ops.

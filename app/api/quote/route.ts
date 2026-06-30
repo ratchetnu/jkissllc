@@ -5,6 +5,7 @@ import { escapeHtml, isValidEmail } from '../../lib/validators'
 import { isBlockedBot } from '../../lib/botcheck'
 import { getPromo, validatePromo, normalizeCode } from '../../lib/promo'
 import { getDisposalSettings, priceJob, categoryFor, type DisposalQuote } from '../../lib/disposal'
+import { getCalibration } from '../../lib/job-learning'
 
 // Look up a US ZIP via zippopotam.us (free, no key required).
 async function lookupZip(zip: string): Promise<{ lat: number; lon: number; city: string; state: string } | null> {
@@ -163,8 +164,8 @@ export async function POST(request: NextRequest) {
   // INSTANT price with disposal cost folded in and margin + minimums protecting profit.
   let disposal: DisposalQuote | null = null
   if (isJobBased) {
-    const settings = await getDisposalSettings()
-    disposal = priceJob({ settings, category: categoryFor(serviceType, body.debris), loadSize })
+    const [settings, calibration] = await Promise.all([getDisposalSettings(), getCalibration()])
+    disposal = priceJob({ settings, category: categoryFor(serviceType, body.debris), loadSize, calibration })
     low = disposal.low + addOnTotal
     high = disposal.high + addOnTotal
   }
@@ -255,7 +256,8 @@ export async function POST(request: NextRequest) {
           <h2 style="color:#E0002A;margin-bottom:4px">${isJobBased ? `${jobLabel} Request` : 'Instant Quote Request'}</h2>
           <p style="color:#666;margin-top:0">Submitted via jkissllc.com/quote · Customer was shown $${low.toLocaleString()}–$${high.toLocaleString()}</p>
           ${disposal ? `<table style="width:100%;border-collapse:collapse;background:#fafafa;border-radius:8px;margin:8px 0"><tr><td colspan="2" style="padding:8px 10px;font-weight:700;color:#E0002A">Pricing intelligence (internal)</td></tr>
-            <tr><td style="padding:4px 10px;color:#999;width:200px">Disposal estimate</td><td style="padding:4px 10px;font-weight:600">$${Math.round(disposal.disposalCents / 100)}</td></tr>
+            <tr><td style="padding:4px 10px;color:#999;width:200px">Truck fill / loads / trips</td><td style="padding:4px 10px;font-weight:600">${disposal.fillPct}% · ${disposal.truckLoads} load${disposal.truckLoads > 1 ? 's' : ''} · ${disposal.landfillTrips} trip${disposal.landfillTrips > 1 ? 's' : ''}</td></tr>
+            <tr><td style="padding:4px 10px;color:#999">Disposal estimate</td><td style="padding:4px 10px;font-weight:600">$${Math.round(disposal.disposalCents / 100)} ${disposal.requiresReview ? '⚠ review' : ''}</td></tr>
             <tr><td style="padding:4px 10px;color:#999">Labor estimate</td><td style="padding:4px 10px">$${Math.round(disposal.laborCents / 100)}</td></tr>
             <tr><td style="padding:4px 10px;color:#999">Cost basis</td><td style="padding:4px 10px">$${Math.round(disposal.costBasisCents / 100)}</td></tr>
             <tr><td style="padding:4px 10px;color:#999">Est. profit (at low)</td><td style="padding:4px 10px;font-weight:600">$${Math.round(disposal.profitLowCents / 100)}</td></tr>

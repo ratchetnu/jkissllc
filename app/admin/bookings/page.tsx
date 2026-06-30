@@ -17,8 +17,15 @@ const STATUS_LABEL: Record<string, string> = {
   quote_received: 'Quote Received', pending_payment: 'Pending Payment', payment_received: 'Payment Received',
   booking_created: 'Booking Created', confirmation_link_sent: 'Link Sent', customer_viewed: 'Viewed',
   time_verification_pending: 'Awaiting Time', time_verified: 'Time Verified', confirmed: 'Confirmed',
-  in_progress: 'In Progress', continued: 'Continued — Return Needed', completed: 'Completed', cancelled: 'Cancelled',
+  in_progress: 'In Progress', continued: 'Continued — Return Needed', completed: 'Completed',
+  partially_completed: 'Partially Completed', could_not_complete: 'Could Not Complete', cancelled: 'Cancelled', refunded: 'Refunded',
 }
+// Statuses offered in the detail-panel dropdown (the owner's working set).
+const STATUS_OPTIONS: [string, string][] = [
+  ['pending_payment', 'Pending'], ['confirmed', 'Confirmed'], ['in_progress', 'In Progress'],
+  ['continued', 'Continued / Return Needed'], ['completed', 'Completed'], ['partially_completed', 'Partially Completed'],
+  ['could_not_complete', 'Could Not Complete'], ['cancelled', 'Cancelled'], ['refunded', 'Refunded'],
+]
 const usd = (c: number) => ((c || 0) / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 const fmtTs = (ts?: number) => ts ? new Date(ts).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '—'
 // Net invoice = gross minus any discount/promo (mirrors lib/bookings.netInvoiceCents).
@@ -58,8 +65,8 @@ function paySummary(b: Booking): string {
 }
 function statusColor(s: string): string {
   if (s === 'confirmed' || s === 'completed') return '#34d399'
-  if (s === 'cancelled') return '#f87171'
-  if (s === 'continued') return '#fb923c'
+  if (s === 'cancelled' || s === 'could_not_complete' || s === 'refunded') return '#f87171'
+  if (s === 'continued' || s === 'partially_completed') return '#fb923c'
   if (s === 'in_progress') return '#60a5fa'
   if (s === 'time_verified' || s === 'payment_received') return '#fbbf24'
   return 'var(--muted)'
@@ -537,13 +544,70 @@ function ContinuationCard({ b, run, busy }: { b: Booking; run: (action: string, 
   )
 }
 
+// ── Customer messages panel (texts/emails, both directions) ──────────────────
+type ConvoMsg = { id: string; direction: string; channel: string; body: string; from?: string; createdAt: number; unread: boolean; tags?: string[] }
+function BookingMessages({ token, customerName }: { token: string; customerName: string }) {
+  const [msgs, setMsgs] = useState<ConvoMsg[]>([])
+  const [loading, setLoading] = useState(true)
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/admin/messages?tab=all&booking=${encodeURIComponent(token)}`, { credentials: 'same-origin' })
+      if (res.ok) { const j = await res.json(); setMsgs(((j.items ?? []) as ConvoMsg[]).slice().reverse()) }
+    } catch { /* ignore */ } finally { setLoading(false) }
+  }, [token])
+  useEffect(() => { load() }, [load])
+  async function markRead(id: string) {
+    try {
+      await fetch('/api/admin/messages', { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, action: 'read' }) })
+    } catch { /* ignore */ }
+    await load()
+  }
+  const unread = msgs.filter(m => m.unread).length
+  return (
+    <details className="glass-card p-5" style={{ borderRadius: '16px' }} open>
+      <summary className="cursor-pointer text-sm font-black text-white">
+        Customer Messages{unread > 0 && <span style={{ color: 'var(--red)' }}> · {unread} unread</span>}
+      </summary>
+      <div className="mt-3 space-y-2">
+        {loading ? (
+          <p className="text-xs" style={{ color: 'var(--muted)' }}>Loading…</p>
+        ) : msgs.length === 0 ? (
+          <p className="text-xs" style={{ color: 'var(--muted)' }}>No texts or emails with {customerName} yet.</p>
+        ) : msgs.map(m => {
+          const inbound = m.direction === 'inbound'
+          return (
+            <div key={m.id} style={{ display: 'flex', justifyContent: inbound ? 'flex-start' : 'flex-end' }}>
+              <div style={{ maxWidth: '82%', padding: '8px 12px', borderRadius: 12, background: inbound ? 'rgba(255,255,255,.06)' : 'rgba(224,0,42,.12)', borderLeft: m.unread ? '3px solid var(--red)' : '3px solid transparent' }}>
+                <p className="text-xs" style={{ color: 'var(--muted)', marginBottom: 2 }}>
+                  {inbound ? (customerName || 'Customer') : 'J KISS'} · {(m.channel || '').toUpperCase()} · {new Date(m.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                  {m.tags?.includes('opt-out') && <span style={{ color: '#fbbf24' }}> · OPT-OUT</span>}
+                </p>
+                <p className="text-sm" style={{ color: '#e5e7eb', whiteSpace: 'pre-wrap' }}>{m.body}</p>
+                {inbound && m.unread && (
+                  <button onClick={() => markRead(m.id)} className="text-xs mt-1 font-semibold" style={{ color: 'var(--red)' }}>Mark read</button>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </details>
+  )
+}
+
 // ── Detail + actions ─────────────────────────────────────────────────────────
 function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booking; onBack: () => void; onEdit: () => void; onChanged: () => Promise<void>; onDuplicate: () => void }) {
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
-  const [aiMsg, setAiMsg] = useState('')
   const [aiBusy, setAiBusy] = useState('')
+  // Message Customer composer
+  const [msgText, setMsgText] = useState('')
+  const [msgTpl, setMsgTpl] = useState('')
+  const [msgBusy, setMsgBusy] = useState<'sms' | 'email' | 'both' | ''>('')
+  const [msgInfo, setMsgInfo] = useState('')
+  const [msgErr, setMsgErr] = useState('')
   const [staffNames, setStaffNames] = useState<string[]>([])
   useEffect(() => {
     fetch('/api/admin/staff', { credentials: 'same-origin' })
@@ -553,18 +617,56 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
   }, [])
   const link = typeof window !== 'undefined' ? `${window.location.origin}/booking/${b.token}` : ''
 
-  async function draftMessage(intent: string) {
-    setAiBusy(intent); setErr(''); setAiMsg('')
+  // Personalized message templates (client-side so they work even without AI).
+  const firstName = (b.customerName || '').trim().split(/\s+/)[0] || 'there'
+  const svcLabel = SERVICE_LABELS[b.serviceType] ?? 'service'
+  const MSG_TEMPLATES: [string, string, string][] = [
+    ['could_not_complete', 'Could Not Complete — won’t return this week',
+      `Hi ${firstName}, this is J KISS LLC. I apologize, but due to unforeseen scheduling issues, we will not be able to return this week to complete the remaining work. Because the job will not be completed, there will be no remaining balance due. The deposit has been applied toward the work already completed and disposal costs. I apologize for the inconvenience and appreciate your understanding.`],
+    ['cancel_driver', 'Cancellation — driver unavailable',
+      `Hi ${firstName}, this is J KISS LLC. I'm very sorry, but due to unforeseen scheduling issues our driver won't be able to make it as scheduled, so we have to cancel for now. I sincerely apologize for the inconvenience and would love to reschedule as soon as we're able. If you need any further help, please email us at info@jkissllc.com. Thank you for your understanding.`],
+    ['running_late', 'Running late',
+      `Hi ${firstName}, this is J KISS LLC. We're running a little behind schedule today and wanted to keep you posted — we'll be there as soon as we can. Thank you for your patience.`],
+    ['on_the_way', 'On the way',
+      `Hi ${firstName}, this is J KISS LLC — our crew is on the way for your ${svcLabel}. See you soon!`],
+    ['followup', 'Follow-up',
+      `Hi ${firstName}, this is J KISS LLC following up on your ${svcLabel} (${b.bookingNumber}). Do you have any questions, or anything we can help with?`],
+    ['thanks', 'Thank you',
+      `Hi ${firstName}, thank you for choosing J KISS LLC — we appreciate your business! If you have a moment, we'd love a quick review.`],
+  ]
+
+  function applyTemplate(key: string) {
+    setMsgTpl(key); setMsgErr(''); setMsgInfo('')
+    const t = MSG_TEMPLATES.find(([k]) => k === key)
+    if (t) setMsgText(t[2])
+  }
+
+  // Best-effort AI polish of whatever's in the box (no-ops gracefully if AI is off).
+  async function improveWithAI() {
+    if (!msgText.trim()) { setMsgErr('Write or pick a message first.'); return }
+    setAiBusy('improve'); setMsgErr(''); setMsgInfo('')
     try {
       const res = await fetch('/api/admin/ai/message', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: b.token, intent }),
+        body: JSON.stringify({ token: b.token, intent: 'custom', note: `Clean up and professionally reword this message, keeping the meaning: ${msgText}` }),
       })
       const j = await res.json()
-      if (!res.ok) throw new Error(j.error ?? 'Could not draft a message.')
-      setAiMsg(j.message)
-    } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') }
+      if (!res.ok) throw new Error(j.error ?? 'AI is unavailable — edit the text manually.')
+      setMsgText(j.message)
+    } catch (e) { setMsgErr(e instanceof Error ? e.message : 'Failed') }
     finally { setAiBusy('') }
+  }
+
+  async function sendMessage(channel: 'sms' | 'email' | 'both') {
+    if (!msgText.trim()) { setMsgErr('Write a message first.'); return }
+    setMsgBusy(channel); setMsgInfo(''); setMsgErr('')
+    try {
+      const j = await patch(b.token, { action: 'send-message', text: msgText, channel })
+      const ch = [j.channels?.sms && 'text', j.channels?.email && 'email'].filter(Boolean)
+      setMsgInfo(ch.length ? `Sent via ${ch.join(' + ')}.` : 'Sent.')
+      await onChanged()
+    } catch (e) { setMsgErr(e instanceof Error ? e.message : 'Failed to send.') }
+    finally { setMsgBusy('') }
   }
 
   async function run(action: string, body: Record<string, unknown> = {}, confirmMsg?: string) {
@@ -581,6 +683,8 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
       } else if (action === 'send-continuation' && j.channels) {
         const ch = [j.channels.email && 'email', j.channels.sms && 'text'].filter(Boolean)
         setMsg(ch.length ? `Continuation message sent via ${ch.join(' + ')}.` : 'No email/phone on file — copy the message and send it manually.')
+      } else if (action === 'update' && body.status) {
+        setMsg(`Status updated to "${STATUS_LABEL[String(body.status)] ?? String(body.status)}".`)
       } else setMsg('Done.')
       await onChanged()
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') }
@@ -630,6 +734,16 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
             </p>
           </div>
           <StatusBadge s={b.status} />
+        </div>
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <span className="text-sm font-semibold" style={{ color: 'var(--muted)', minWidth: 90 }}>Status</span>
+          <select value={STATUS_OPTIONS.some(([v]) => v === b.status) ? b.status : ''} disabled={busy === 'update'}
+            onChange={e => { if (e.target.value) run('update', { status: e.target.value }) }}
+            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 9, color: '#f3f4f6', fontSize: 14, padding: '8px 12px', cursor: 'pointer', minWidth: 210 }}>
+            {!STATUS_OPTIONS.some(([v]) => v === b.status) && <option value="">{STATUS_LABEL[b.status] ?? b.status}</option>}
+            {STATUS_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          {busy === 'update' && <span className="text-xs" style={{ color: 'var(--muted)' }}>Saving…</span>}
         </div>
         <KV k="Phone" v={b.customerPhone} /><KV k="Email" v={b.customerEmail} />
         <KV k="Pickup" v={b.pickupAddress} /><KV k="Drop-off" v={b.dropoffAddress} /><KV k="Job Site" v={b.jobSiteAddress} />
@@ -747,28 +861,62 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
         {err && <p className="text-sm mt-2" style={{ color: '#f87171' }}>{err}</p>}
       </div>
 
-      {/* AI assistant */}
+      {/* Message Customer */}
       <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px', border: '1px solid rgba(224,0,42,.22)' }}>
-        <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)' }}>✨ AI — Draft a Customer Message</p>
-        <div className="flex flex-wrap gap-2">
-          {([['followup', 'Follow-up'], ['reminder', 'Reminder'], ['thanks', 'Thank-you'], ['reschedule', 'Reschedule']] as const).map(([k, label]) => (
-            <button key={k} onClick={() => draftMessage(k)} disabled={!!aiBusy} className="text-xs font-semibold px-3 py-1.5 rounded-lg"
-              style={{ background: aiBusy === k ? 'var(--red)' : 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: aiBusy === k ? '#fff' : 'var(--text)' }}>
-              {aiBusy === k ? '…' : label}
-            </button>
-          ))}
+        <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--muted)' }}>💬 Message Customer</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--muted)' }}>
+          {b.customerPhone ? `Text → ${b.customerPhone}` : 'No phone on file'} · {b.customerEmail ? `Email → ${b.customerEmail}` : 'No email on file'}
+        </p>
+
+        <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 4 }}>Template</label>
+        <select value={msgTpl} onChange={e => applyTemplate(e.target.value)}
+          style={{ width: '100%', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 9, color: '#f3f4f6', fontSize: 14, padding: '9px 12px', cursor: 'pointer', marginBottom: 10 }}>
+          <option value="">Choose a template…</option>
+          {MSG_TEMPLATES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+        </select>
+
+        <textarea value={msgText} onChange={e => { setMsgText(e.target.value); setMsgInfo(''); setMsgErr('') }} rows={6}
+          placeholder="Write a message to the customer, or pick a template above…"
+          style={{ width: '100%', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 9, color: '#f3f4f6', fontSize: 14, padding: '10px 12px', outline: 'none', resize: 'vertical', lineHeight: 1.5 }} />
+        <div className="flex items-center justify-between mt-1 gap-2 flex-wrap">
+          <span className="text-xs" style={{ color: 'var(--muted)' }}>{msgText.length} chars</span>
+          <button onClick={improveWithAI} disabled={aiBusy === 'improve' || !msgText.trim()} className="text-xs font-semibold px-3 py-1.5 rounded-lg"
+            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--text)' }}>{aiBusy === 'improve' ? 'Improving…' : '✨ Improve with AI'}</button>
         </div>
-        {aiMsg && (
-          <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
-            <p className="text-sm" style={{ color: 'var(--text)', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{aiMsg}</p>
-            <button onClick={() => { navigator.clipboard?.writeText(aiMsg); setMsg('Message copied.') }} className="text-xs font-semibold px-3 py-1.5 rounded-lg mt-2"
-              style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--text)' }}>Copy</button>
+
+        <div className="flex flex-wrap gap-2 mt-3">
+          <button onClick={() => sendMessage('sms')} disabled={!b.customerPhone || !!msgBusy} className="text-xs font-bold px-4 py-2 rounded-lg"
+            style={{ background: 'var(--red)', border: '1px solid var(--red)', color: '#fff', opacity: !b.customerPhone || !!msgBusy ? 0.5 : 1 }}>{msgBusy === 'sms' ? 'Sending…' : 'Send SMS'}</button>
+          <button onClick={() => sendMessage('email')} disabled={!b.customerEmail || !!msgBusy} className="text-xs font-bold px-4 py-2 rounded-lg"
+            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', color: 'var(--text)', opacity: !b.customerEmail || !!msgBusy ? 0.5 : 1 }}>{msgBusy === 'email' ? 'Sending…' : 'Send Email'}</button>
+          <button onClick={() => sendMessage('both')} disabled={(!b.customerPhone && !b.customerEmail) || !!msgBusy} className="text-xs font-bold px-4 py-2 rounded-lg"
+            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', color: 'var(--text)', opacity: (!b.customerPhone && !b.customerEmail) || !!msgBusy ? 0.5 : 1 }}>{msgBusy === 'both' ? 'Sending…' : 'Send Both'}</button>
+        </div>
+        {msgInfo && <p className="text-sm mt-2" style={{ color: '#34d399' }}>{msgInfo}</p>}
+        {msgErr && <p className="text-sm mt-2" role="alert" style={{ color: '#f87171' }}>{msgErr}</p>}
+
+        {b.communications && b.communications.length > 0 && (
+          <div className="mt-4 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
+            <p className="text-xs font-semibold mb-2" style={{ color: 'var(--muted)' }}>Message history</p>
+            <div className="space-y-2">
+              {b.communications.slice().reverse().map((c, i) => (
+                <div key={i} className="text-xs" style={{ color: 'var(--muted)', paddingTop: i ? 8 : 0, borderTop: i ? '1px solid rgba(255,255,255,.06)' : undefined }}>
+                  <div>
+                    <span style={{ color: c.ok ? '#34d399' : '#f87171' }}>{c.ok ? '✓ sent' : '✗ failed'}</span> · {fmtTs(c.at)} · {c.channel === 'both' ? 'text + email' : c.channel}
+                  </div>
+                  <p style={{ color: 'var(--text)', whiteSpace: 'pre-wrap', marginTop: 3, lineHeight: 1.5 }}>{c.body}</p>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
 
       {/* Customer timeline */}
       <Timeline b={b} />
+
+      {/* Customer messages (texts/emails both ways) */}
+      <BookingMessages token={b.token} customerName={b.customerName} />
 
       {/* Chargeback evidence */}
       <details className="glass-card p-5" style={{ borderRadius: '16px' }}>

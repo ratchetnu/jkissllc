@@ -7,7 +7,7 @@ import {
   type BookingStatus,
 } from '../../../../lib/bookings'
 import { getPolicyVersion, getCurrentPolicy } from '../../../../lib/policy'
-import { sendConfirmationLink, notifyJobCompleted, notifyBookingConfirmed, notifyPaidInFull, notifyContinuation } from '../../../../lib/notify'
+import { sendConfirmationLink, notifyJobCompleted, notifyBookingConfirmed, notifyPaidInFull, notifyContinuation, notifyCustomerMessage } from '../../../../lib/notify'
 import { emailOpsPaymentReceived, emailPaymentReceiptCustomer, emailRefundCustomer, bookingLink } from '../../../../lib/booking-emails'
 import { str, strList, num } from '../../../../lib/validators'
 import { ensureLoyaltyCode } from '../../../../lib/promo'
@@ -93,7 +93,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if ('disposalEstimate' in f) b.disposalEstimateCents = dollarsToCents(f.disposalEstimate) || undefined
       if ('disposalActual' in f) b.disposalActualCents = dollarsToCents(f.disposalActual) || undefined
       if ('collectInPerson' in f) b.collectInPerson = f.collectInPerson === true || f.collectInPerson === 'true' || f.collectInPerson === 'on'
-      if (f.status && (Object.keys(STATUS_SET) as BookingStatus[]).includes(f.status)) b.status = f.status as BookingStatus
+      if (f.status && STATUS_SET[f.status as BookingStatus]) {
+        b.status = f.status as BookingStatus
+        // Stamp lifecycle timestamps so the timeline + reporting stay accurate.
+        if ((b.status === 'completed' || b.status === 'partially_completed') && !b.completedAt) b.completedAt = Date.now()
+        if ((b.status === 'cancelled' || b.status === 'could_not_complete' || b.status === 'refunded') && !b.cancelledAt) b.cancelledAt = Date.now()
+      }
       break
     }
     case 'send-link': {
@@ -225,6 +230,35 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (str(body.reason, 500)) b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[CANCELLED] ${str(body.reason, 500)}`
       break
     }
+    case 'send-message': {
+      // Owner-composed message to the customer (apology, cancellation heads-up, etc.)
+      // over SMS, email, or both. Logged to the booking's communications history.
+      const text = str(body.text, 1200)
+      const channel = (['sms', 'email', 'both'].includes(body.channel) ? body.channel : 'both') as 'sms' | 'email' | 'both'
+      if (!text) return NextResponse.json({ error: 'Message text required.' }, { status: 400 })
+      if ((channel === 'sms' || channel === 'both') && !b.customerPhone && channel !== 'both') {
+        return NextResponse.json({ error: 'No phone number on file for this customer.' }, { status: 400 })
+      }
+      if (channel === 'sms' && !b.customerPhone) return NextResponse.json({ error: 'No phone number on file for this customer.' }, { status: 400 })
+      if (channel === 'email' && !b.customerEmail) return NextResponse.json({ error: 'No email address on file for this customer.' }, { status: 400 })
+      if (channel === 'both' && !b.customerPhone && !b.customerEmail) return NextResponse.json({ error: 'No phone or email on file for this customer.' }, { status: 400 })
+
+      const channels = await notifyCustomerMessage(b, text, channel)
+      const ok = !!(channels.sms || channels.email)
+      b.communications = [...(b.communications ?? []), {
+        at: Date.now(), channel, body: text, by: 'admin',
+        sms: channels.sms, email: channels.email, ok,
+      }].slice(-100)
+      if (!ok) {
+        await saveBooking(b)   // persist the failed attempt for the log
+        return NextResponse.json({ error: 'Message failed to send — check contact info and that SMS/email are configured.', channels }, { status: 502 })
+      }
+      const stamp = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })
+      const via = [channels.sms && 'text', channels.email && 'email'].filter(Boolean).join(' + ')
+      b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[${stamp}] Messaged customer (${via}): ${text}`
+      extra = { channels }
+      break
+    }
     case 'add-note': {
       const note = str(body.note, 1000)
       if (!note) return NextResponse.json({ error: 'note required' }, { status: 400 })
@@ -335,5 +369,6 @@ async function sendReceipts(b: Booking, p: Payment): Promise<void> {
 const STATUS_SET: Record<BookingStatus, true> = {
   quote_received: true, pending_payment: true, payment_received: true, booking_created: true,
   confirmation_link_sent: true, customer_viewed: true, time_verification_pending: true,
-  time_verified: true, confirmed: true, in_progress: true, continued: true, completed: true, cancelled: true,
+  time_verified: true, confirmed: true, in_progress: true, continued: true, completed: true,
+  partially_completed: true, could_not_complete: true, cancelled: true, refunded: true,
 }
