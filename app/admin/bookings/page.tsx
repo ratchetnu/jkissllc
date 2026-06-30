@@ -546,7 +546,7 @@ function ContinuationCard({ b, run, busy }: { b: Booking; run: (action: string, 
 }
 
 // ── Customer messages panel (texts/emails, both directions) ──────────────────
-function BookingMessages({ token, customerName }: { token: string; customerName: string }) {
+function BookingMessages({ token, customerName, reloadKey }: { token: string; customerName: string; reloadKey?: number }) {
   const [msgs, setMsgs] = useState<ThreadMessage[]>([])
   const [loading, setLoading] = useState(true)
   const load = useCallback(async () => {
@@ -556,7 +556,7 @@ function BookingMessages({ token, customerName }: { token: string; customerName:
       if (res.ok) { const j = await res.json(); setMsgs(((j.items ?? []) as ThreadMessage[]).slice().reverse()) }
     } catch { /* ignore */ } finally { setLoading(false) }
   }, [token])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load() }, [load, reloadKey])
   async function markRead(id: string) {
     try {
       await fetch('/api/admin/messages', { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, action: 'read' }) })
@@ -565,16 +565,12 @@ function BookingMessages({ token, customerName }: { token: string; customerName:
   }
   const unread = msgs.filter(m => m.unread).length
   return (
-    <details className="glass-card p-5" style={{ borderRadius: '16px' }} open>
-      <summary className="cursor-pointer text-sm font-black text-white">
-        Customer Messages{unread > 0 && <span style={{ color: 'var(--red)' }}> · {unread} unread</span>}
-      </summary>
-      <div className="mt-3">
-        {loading
-          ? <p className="text-xs" style={{ color: 'var(--muted)' }}>Loading…</p>
-          : <ConversationThread messages={msgs} customerName={customerName} onMarkRead={markRead} emptyHint={`No texts or emails with ${customerName} yet.`} />}
-      </div>
-    </details>
+    <div>
+      {unread > 0 && <p className="text-xs font-bold mb-2" style={{ color: 'var(--red)' }}>{unread} unread</p>}
+      {loading
+        ? <p className="text-xs" style={{ color: 'var(--muted)' }}>Loading…</p>
+        : <ConversationThread messages={msgs} customerName={customerName} onMarkRead={markRead} emptyHint={`No texts or emails with ${customerName} yet.`} />}
+    </div>
   )
 }
 
@@ -590,6 +586,8 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
   const [msgBusy, setMsgBusy] = useState<'sms' | 'email' | 'both' | ''>('')
   const [msgInfo, setMsgInfo] = useState('')
   const [msgErr, setMsgErr] = useState('')
+  const [tabKey, setTabKey] = useState<'overview' | 'messages' | 'timeline' | 'actions'>('overview')
+  const [msgReload, setMsgReload] = useState(0)
   const [staffNames, setStaffNames] = useState<string[]>([])
   useEffect(() => {
     fetch('/api/admin/staff', { credentials: 'same-origin' })
@@ -646,7 +644,9 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
       const j = await patch(b.token, { action: 'send-message', text: msgText, channel })
       const ch = [j.channels?.sms && 'text', j.channels?.email && 'email'].filter(Boolean)
       setMsgInfo(ch.length ? `Sent via ${ch.join(' + ')}.` : 'Sent.')
+      setMsgText(''); setMsgTpl('')
       await onChanged()
+      setMsgReload(n => n + 1)
     } catch (e) { setMsgErr(e instanceof Error ? e.message : 'Failed to send.') }
     finally { setMsgBusy('') }
   }
@@ -763,6 +763,20 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
         )}
       </div>
 
+      {/* Tabs */}
+      <div className="flex gap-1.5 mb-4 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+        {(([['overview', 'Overview'], ['messages', 'Messages'], ['timeline', 'Timeline'], ['actions', 'Actions']]) as [typeof tabKey, string][]).map(([k, label]) => (
+          <button key={k} onClick={() => setTabKey(k)} style={{
+            fontSize: 13, fontWeight: 800, padding: '8px 16px', borderRadius: 10, whiteSpace: 'nowrap', cursor: 'pointer', border: '1px solid',
+            background: tabKey === k ? 'var(--red)' : 'rgba(255,255,255,.05)',
+            borderColor: tabKey === k ? 'var(--red)' : 'rgba(255,255,255,.1)',
+            color: tabKey === k ? '#fff' : 'var(--muted)',
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {tabKey === 'overview' && (
+      <>
       {/* Money */}
       <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
         <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)' }}>Payment — {paySummary(b)}</p>
@@ -821,7 +835,11 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
         })()}
         <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Enter the real dump cost after the job — it feeds your profit reporting on the dashboard.</p>
       </div>
+      </>
+      )}
 
+      {tabKey === 'actions' && (
+      <>
       {/* Actions */}
       <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
         <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)' }}>Actions</p>
@@ -842,7 +860,11 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
         {msg && <p className="text-sm mt-2" style={{ color: '#34d399' }}>{msg}</p>}
         {err && <p className="text-sm mt-2" style={{ color: '#f87171' }}>{err}</p>}
       </div>
+      </>
+      )}
 
+      {tabKey === 'messages' && (
+      <>
       {/* Message Customer */}
       <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px', border: '1px solid rgba(224,0,42,.22)' }}>
         <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--muted)' }}>💬 Message Customer</p>
@@ -877,28 +899,19 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
         {msgInfo && <p className="text-sm mt-2" style={{ color: '#34d399' }}>{msgInfo}</p>}
         {msgErr && <p className="text-sm mt-2" role="alert" style={{ color: '#f87171' }}>{msgErr}</p>}
 
-        {b.communications && b.communications.length > 0 && (
-          <div className="mt-4 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
-            <p className="text-xs font-semibold mb-2" style={{ color: 'var(--muted)' }}>Message history</p>
-            <div className="space-y-2">
-              {b.communications.slice().reverse().map((c, i) => (
-                <div key={i} className="text-xs" style={{ color: 'var(--muted)', paddingTop: i ? 8 : 0, borderTop: i ? '1px solid rgba(255,255,255,.06)' : undefined }}>
-                  <div>
-                    <span style={{ color: c.ok ? '#34d399' : '#f87171' }}>{c.ok ? '✓ sent' : '✗ failed'}</span> · {fmtTs(c.at)} · {c.channel === 'both' ? 'text + email' : c.channel}
-                  </div>
-                  <p style={{ color: 'var(--text)', whiteSpace: 'pre-wrap', marginTop: 3, lineHeight: 1.5 }}>{c.body}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Unified conversation — the full text/email thread, both directions */}
+        <div className="mt-5 pt-4" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
+          <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)' }}>Conversation</p>
+          <BookingMessages token={b.token} customerName={b.customerName} reloadKey={msgReload} />
+        </div>
       </div>
+      </>
+      )}
 
+      {tabKey === 'timeline' && (
+      <>
       {/* Customer timeline */}
       <Timeline b={b} />
-
-      {/* Customer messages (texts/emails both ways) */}
-      <BookingMessages token={b.token} customerName={b.customerName} />
 
       {/* Chargeback evidence */}
       <details className="glass-card p-5" style={{ borderRadius: '16px' }}>
@@ -920,6 +933,8 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
           <a href={`/api/booking/${b.token}/confirmation`} target="_blank" rel="noreferrer" className="inline-block text-xs font-semibold mt-3" style={{ color: 'var(--red)' }}>Open Confirmation Record →</a>
         </div>
       </details>
+      </>
+      )}
     </div>
   )
 
