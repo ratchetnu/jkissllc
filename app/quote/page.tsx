@@ -20,8 +20,7 @@ const JOB_BASED = ['junk-removal', 'eviction', 'estate-cleanout', 'garage-cleano
 const WINDOWS = ['8am–10am', '10am–12pm', '12pm–2pm', '2pm–4pm', '4pm–6pm']
 const STEP_LABELS = ['Service', 'Job details', 'Estimate', 'Date & time', 'Your info', 'Review']
 
-function InstantBook() {
-  const [open, setOpen] = useState(false)
+function InstantBook({ open, setOpen }: { open: boolean; setOpen: React.Dispatch<React.SetStateAction<boolean>> }) {
   const [step, setStep] = useState(1)
   const [service, setService] = useState('junk-removal')
   const [loadSize, setLoadSize] = useState('quarter')
@@ -101,8 +100,8 @@ function InstantBook() {
     <div className="glass-card mb-8" style={{ borderRadius: 20, border: '1px solid rgba(224,0,42,.3)', overflow: 'hidden' }}>
       <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between gap-3 p-6 text-left" aria-expanded={open}>
         <div>
-          <p className="text-lg font-black text-white">⚡ Book Instantly</p>
-          <p className="text-sm" style={{ color: 'var(--muted)' }}>Get a price, pick an open date, and lock it in with a deposit.</p>
+          <p className="text-lg font-black text-white">⚡ Book Now</p>
+          <p className="text-sm" style={{ color: 'var(--muted)' }}>The fastest way onto the schedule — get your price, pick a date, and lock it in with a deposit.</p>
         </div>
         <span style={{ color: 'var(--red)', fontSize: 22 }}>{open ? '–' : '+'}</span>
       </button>
@@ -283,6 +282,8 @@ export default function QuotePage() {
   const [estimate, setEstimate] = useState<Estimate | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [service, setService] = useState('dock-to-dock')
+  const [showEstimate, setShowEstimate] = useState(false) // secondary "just need a price" path
+  const [bookOpen, setBookOpen] = useState(true)          // Book Now wizard open by default (primary path)
   // AI photo estimate (junk-removal / cleanout)
   const [photoEst, setPhotoEst] = useState<{ loadSize: string; low: number; high: number; summary: string } | null>(null)
   const [photoBusy, setPhotoBusy] = useState(false)
@@ -361,23 +362,29 @@ export default function QuotePage() {
 
       <section className="pt-32 pb-20 px-6">
         <div className="max-w-3xl mx-auto">
-          <div className="label mb-6">{isJobBased ? 'Request a Quote' : 'Instant Estimate'}</div>
+          <div className="label mb-6">{showEstimate ? 'Instant Estimate' : 'Book Online'}</div>
           <h1 className="text-4xl md:text-5xl font-black text-white mb-5" style={{ letterSpacing: '-0.045em', lineHeight: 1.05, fontFamily: 'var(--font-display)' }}>
-            {isEviction ? (
-              <>Get a Property Cleanout Quote<br /><span style={{ color: 'var(--red)' }}>Priced for the Job.</span></>
-            ) : isJunk ? (
-              <>Get a Junk Removal Quote<br /><span style={{ color: 'var(--red)' }}>Priced for the Job.</span></>
+            {showEstimate ? (
+              <>Get a Price Estimate<br /><span style={{ color: 'var(--red)' }}>In 30 Seconds.</span></>
             ) : (
-              <>Get a Box-Truck Quote<br /><span style={{ color: 'var(--red)' }}>In 30 Seconds.</span></>
+              <>Book Your Job<br /><span style={{ color: 'var(--red)' }}>Priced &amp; Scheduled in Minutes.</span></>
             )}
           </h1>
           <p className="text-lg mb-10" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>
-            {isJobBased
-              ? `Tell us the job site, what needs to go, and how soon. ${jobNoun} is priced per job, so ops will send you a custom quote within 1 business day.`
-              : 'Enter pickup and delivery ZIPs, load details, and service type. We’ll compute a price range right away and ops will follow up with a firm number within 1 business day.'}
+            {showEstimate
+              ? 'Enter your service, location, and load details and we’ll compute a price range right away — then ops follows up with a firm number within 1 business day. Ready to lock in a date? Book instantly instead.'
+              : 'Pick your service, get an instant price, choose an open date, and lock it in with a small refundable deposit — no waiting on a callback. Just need a number, or a freight / box-truck quote? You can request a custom estimate instead.'}
           </p>
 
-          {status !== 'sent' && <InstantBook />}
+          {status !== 'sent' && !showEstimate && (
+            <>
+              <InstantBook open={bookOpen} setOpen={setBookOpen} />
+              <div className="text-center">
+                <p className="text-sm mb-3" style={{ color: 'var(--muted)' }}>Just need a price, or a freight / box-truck quote?</p>
+                <button type="button" onClick={() => setShowEstimate(true)} className="btn-ghost">Get a price estimate instead →</button>
+              </div>
+            </>
+          )}
 
           {status === 'sent' && estimate ? (
             <div className="glass-card p-10" style={{ borderRadius: '20px' }}>
@@ -407,8 +414,8 @@ export default function QuotePage() {
                 </p>
               </div>
               <div className="mt-8 flex justify-center gap-3 flex-wrap">
+                <button onClick={() => { setStatus('idle'); setEstimate(null); setService('dock-to-dock'); setShowEstimate(false); setBookOpen(true); window.scrollTo({ top: 0, behavior: 'smooth' }) }} className="btn">⚡ Book This Job Now</button>
                 <button onClick={() => { setStatus('idle'); setEstimate(null); setService('dock-to-dock') }} className="btn-ghost">Get Another Quote</button>
-                <Link href="/" className="btn">← Back to Home</Link>
               </div>
             </div>
           ) : status === 'sent' ? (
@@ -422,11 +429,13 @@ export default function QuotePage() {
                 Need it handled fast? Call or email us at info@jkissllc.com.
               </p>
               <div className="mt-8 flex justify-center gap-3 flex-wrap">
+                <button onClick={() => { setStatus('idle'); setEstimate(null); setService('dock-to-dock'); setShowEstimate(false); setBookOpen(true); window.scrollTo({ top: 0, behavior: 'smooth' }) }} className="btn">⚡ Book Now Instead</button>
                 <button onClick={() => { setStatus('idle'); setEstimate(null); setService('dock-to-dock') }} className="btn-ghost">Submit Another Request</button>
-                <Link href="/" className="btn">← Back to Home</Link>
               </div>
             </div>
-          ) : (
+          ) : showEstimate ? (
+            <>
+            <button type="button" onClick={() => setShowEstimate(false)} className="btn-ghost mb-4">← Back to instant booking</button>
             <form onSubmit={handleSubmit} className="glass-card p-8 space-y-5" style={{ borderRadius: '20px' }}>
               <div>
                 <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>1. Service</p>
@@ -625,7 +634,8 @@ export default function QuotePage() {
                 <a href="/privacy" className="underline" style={{ color: 'rgba(255,255,255,.55)' }}>Privacy Policy</a>.
               </p>
             </form>
-          )}
+            </>
+          ) : null}
         </div>
       </section>
 
