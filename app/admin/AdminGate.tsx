@@ -66,9 +66,9 @@ export default function AdminGate({ title, children }: { title: string; children
     <header className="fixed top-0 left-0 right-0 z-50 flex items-center gap-3 px-3 sm:px-5 py-3.5"
       style={{ background: 'rgba(11,11,12,0.96)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
       <style>{`.adminnav::-webkit-scrollbar{display:none}`}</style>
-      <a href="/" className="text-lg font-black tracking-tight shrink-0" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
+      <Link href="/" className="text-lg font-black tracking-tight shrink-0" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
         J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
-      </a>
+      </Link>
       <div className="adminnav flex items-center gap-1.5 text-xs font-semibold overflow-x-auto whitespace-nowrap"
         style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch', marginLeft: 'auto' }}>
         <Link href="/" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Home</Link>
@@ -79,6 +79,7 @@ export default function AdminGate({ title, children }: { title: string; children
         </a>
         <a href="/admin/promos" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Promos</a>
         <a href="/admin/staff" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Crew</a>
+        <a href="/admin/careers" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Careers</a>
         <a href="/admin/availability" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Availability</a>
         <a href="/admin/disposal" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Disposal</a>
         <a href="/admin/policy" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Policy</a>

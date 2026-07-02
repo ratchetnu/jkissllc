@@ -225,8 +225,9 @@ function Nav() {
           ))}
         </nav>
 
-        <div className="hidden md:flex items-center gap-5">
+        <div className="hidden md:flex items-center gap-4">
           <a href="/admin/bookings" className="text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)' }}>Admin</a>
+          <a href="/careers" className="btn-ghost" style={{ padding: '10px 18px', fontSize: '13px' }}>Apply Now</a>
           <a href="/quote" className="btn" style={{ padding: '10px 20px', fontSize: '13px' }}>Instant Quote</a>
         </div>
 
@@ -244,9 +245,11 @@ function Nav() {
           {[['Services', '#services'], ['Coverage', '#coverage'], ['Track Shipment', '/track'], ['Safety / FMCSA', '/safety'], ['Reviews', '/reviews'], ['Request COI', '/coi']].map(([label, href]) => (
             <a key={href} href={href} className="text-base font-medium py-2" style={{ color: 'var(--muted)' }} onClick={() => setOpen(false)}>{label}</a>
           ))}
+          <a href="/careers" className="text-base font-bold py-2" style={{ color: '#ff6680' }} onClick={() => setOpen(false)}>Careers — We&apos;re Hiring</a>
           <a href="/start-your-carrier" className="text-base font-bold py-2" style={{ color: '#ff6680' }} onClick={() => setOpen(false)}>Start a Carrier (Guide)</a>
           <a href="/admin/bookings" className="text-base font-medium py-2" style={{ color: 'var(--muted)' }} onClick={() => setOpen(false)}>Admin Login</a>
-          <a href="/quote" className="btn mt-2" onClick={() => setOpen(false)}>Instant Quote</a>
+          <a href="/careers" className="btn-ghost mt-2" onClick={() => setOpen(false)}>Apply Now</a>
+          <a href="/quote" className="btn" onClick={() => setOpen(false)}>Instant Quote</a>
         </div>
       )}
     </header>
