@@ -16,10 +16,18 @@
  */
 
 var WEBHOOK_URL = 'https://www.jkissllc.com/api/webhooks/email';
-var SECRET = 'PASTE_SAME_VALUE_AS_EMAIL_WEBHOOK_SECRET';
+var SECRET = '814a1fa8458932d0690ed52d8a592269ca88740cf42ef177';
 
-// Addresses that are US (don't forward our own outbound).
+// Our own addresses — never forward our own outbound, but DO use these to decide
+// "did we start/participate in this thread?" (i.e. is the inbound a reply to us).
 var OURS = /jkissllc\.com|jkissbiz@gmail\.com/i;
+
+// A booking number anywhere in the subject (JK-B-1003, JK-Q-204, "JK B 1003"…).
+var JK_NUM = /JK[-\s]?[A-Z][-\s]?\d+/i;
+
+// Automated / bulk senders that are never a customer reply. Belt-and-suspenders;
+// the thread-participation check below already excludes most of these.
+var AUTOMATED = /(^|[._-])(no[-_.]?reply|donotreply|do[-_.]?not[-_.]?reply|mailer[-_.]?daemon|postmaster|bounce|notifications?|mailer|newsletter|dmarc|abuse|support@.*twilio|@.*netlify|@.*\badr\.org)\b/i;
 
 function forwardReplies() {
   var props = PropertiesService.getScriptProperties();
@@ -27,18 +35,37 @@ function forwardReplies() {
   var floor = last || (Date.now() - 24 * 3600 * 1000); // first run: look back 24h
   var sinceSec = Math.floor(floor / 1000);
   var startedAt = Date.now();
+  var sent = 0, skipped = 0;
 
   var threads = GmailApp.search('in:inbox after:' + sinceSec, 0, 50);
   for (var i = 0; i < threads.length; i++) {
     var msgs = threads[i].getMessages();
+
+    // Did WE participate earlier in this thread? If so, an inbound message here is
+    // a reply to one of our emails — exactly what we want to capture.
+    var weParticipated = false;
+    for (var k = 0; k < msgs.length; k++) {
+      if (OURS.test(msgs[k].getFrom())) { weParticipated = true; break; }
+    }
+
     for (var j = 0; j < msgs.length; j++) {
       var m = msgs[j];
       if (m.getDate().getTime() < floor) continue;     // only messages newer than last run
       if (OURS.test(m.getFrom())) continue;            // skip our own outbound
+
+      var subject = m.getSubject() || '';
+      var from = m.getFrom() || '';
+
+      // Forward ONLY genuine customer replies: a reply in a thread we started, OR
+      // anything that references a booking number. Everything else (DMARC reports,
+      // newsletters, Twilio/Netlify notices, cold automated mail) is skipped.
+      var isReply = weParticipated || JK_NUM.test(subject);
+      if (!isReply || AUTOMATED.test(from)) { skipped++; continue; }
+
       var payload = {
-        from: m.getFrom(),
+        from: from,
         to: m.getTo(),
-        subject: m.getSubject(),
+        subject: subject,
         text: m.getPlainBody().slice(0, 5000),
         messageId: m.getId(),                          // server dedups on this
       };
@@ -49,10 +76,12 @@ function forwardReplies() {
           payload: JSON.stringify(payload),
           muteHttpExceptions: true,
         });
+        sent++;
       } catch (e) {
         Logger.log('forward failed for ' + m.getId() + ': ' + e);
       }
     }
   }
   props.setProperty('lastRun', String(startedAt));
+  Logger.log('forwardReplies: sent ' + sent + ', skipped ' + skipped);
 }
