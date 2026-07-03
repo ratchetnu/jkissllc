@@ -77,6 +77,11 @@ const PRICING = {
     disposal: 50,
     'extra-labor': 65,
     assembly: 55,
+    // Premium service upgrades surfaced in the guided quote wizard.
+    'same-day': 120,
+    'inside-placement': 60,
+    'appliance-hookup': 45,
+    priority: 40,
   } as Record<string, number>,
   // Range spread around point estimate (low, high)
   rangeLow: 0.85,
@@ -84,8 +89,10 @@ const PRICING = {
 }
 
 const ADDON_LABELS: Record<string, string> = {
-  stairs: 'Stairs / no elevator', 'extra-stop': 'Extra stop', packing: 'Packing / wrapping',
-  disposal: 'Haul-away / disposal', 'extra-labor': 'Extra labor', assembly: 'Assembly / disassembly',
+  stairs: 'Stairs / no elevator', 'extra-stop': 'Extra stop', packing: 'Protective wrapping',
+  disposal: 'Dump run / haul-away', 'extra-labor': 'Extra labor', assembly: 'Furniture assembly',
+  'same-day': 'Same-day service', 'inside-placement': 'Inside placement',
+  'appliance-hookup': 'Appliance hookup', priority: 'Priority scheduling',
 }
 
 export async function POST(request: NextRequest) {
@@ -144,6 +151,12 @@ export async function POST(request: NextRequest) {
     : []
   const addOnTotal = selectedAddOns.reduce((s, a) => s + (PRICING.addOns[a] ?? 0), 0)
   const addOnLabels = selectedAddOns.map(a => `${ADDON_LABELS[a] ?? a} (+$${PRICING.addOns[a]})`)
+
+  // Job photos uploaded via /api/upload (Vercel Blob) — carried into the ops email
+  // so the team can size the job accurately. Only trusted http(s) URLs, capped at 6.
+  const photoUrls: string[] = Array.isArray(body.photos)
+    ? body.photos.map((u: unknown) => String(u)).filter((u: string) => /^https?:\/\//.test(u)).slice(0, 6)
+    : []
 
   // Compute estimate (delivery only — job-based services are quoted by hand)
   let low = 0
@@ -286,6 +299,12 @@ export async function POST(request: NextRequest) {
 
           <p style="color:#999;margin:18px 0 6px 0">${isJobBased ? 'What needs to go' : 'Notes'}</p>
           <p style="background:#f9f9f9;padding:14px;border-radius:8px;margin:0;white-space:pre-wrap">${safe.notes}</p>
+
+          ${photoUrls.length ? `
+          <p style="color:#999;margin:18px 0 6px 0">Photos (${photoUrls.length})</p>
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            ${photoUrls.map(u => `<a href="${u}" style="display:inline-block"><img src="${u}" alt="Job photo" width="92" height="92" style="width:92px;height:92px;object-fit:cover;border-radius:8px;border:1px solid #eee" /></a>`).join('')}
+          </div>` : ''}
         </div>
       `,
     })

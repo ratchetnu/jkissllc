@@ -140,6 +140,22 @@ h1, h2, h3, .display { font-family: var(--font-display); font-feature-settings: 
   .hero-mesh, .hero-grid { animation: none !important; }
 }
 
+/* ── Guided quote wizard: flow polish (J Kiss brand — no external theme) ───── */
+@keyframes wiz-reveal-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.wiz-reveal { animation: wiz-reveal-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) both; }
+@keyframes wiz-fade { from { opacity: 0; } to { opacity: 1; } }
+.wiz-fade { animation: wiz-fade 0.7s ease-out both; }
+/* Selectable card + interactive surfaces: signature calm, decelerating ease. */
+.wiz-ease { transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s ease, background-color 0.25s ease, box-shadow 0.25s ease; }
+.wiz-ease:active { transform: scale(0.985); }
+@media (prefers-reduced-motion: reduce) {
+  .wiz-reveal, .wiz-fade { animation: none; }
+  .wiz-ease, .wiz-ease:active { transition: none; transform: none; }
+}
+
 /* ── Scroll progress bar ──────────────────────────────────────────────────── */
 .scroll-progress {
   position: fixed;

@@ -1,9 +1,77 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import {
+  Trash2, Truck, Refrigerator, Sofa, Boxes, Trees, HardHat, Building2, KeyRound, HelpCircle,
+  Zap, DoorOpen, PlugZap, Wrench, Users, Recycle, CalendarClock, ShieldCheck,
+  Camera, Check, ArrowLeft, ArrowRight, X, MapPin, Loader2, Star,
+  type LucideIcon,
+} from 'lucide-react'
 
-type Estimate = { low: number; high: number; miles: number; fuelCharge?: number; promoCode?: string; promoPct?: number; confidence?: 'high' | 'medium' | 'low'; jobBased?: boolean; pickupLabel: string; deliveryLabel: string }
+// ─────────────────────────────────────────────────────────────────────────────
+// A guided, concierge-style quote experience for J Kiss LLC. Same premium
+// multi-step FLOW as our best work — rendered entirely in the J Kiss brand
+// (red #E0002A on near-black, Space Grotesk display). All existing business
+// logic is preserved: the primary CTA files a lead via /api/quote, and eligible
+// jobs can optionally lock a date via /api/book + Stripe.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const RED = '#E0002A'
+const STEP_LABELS = ['Service', 'The job', 'Photos', 'Upgrades', 'Your info', 'Review']
+const WINDOWS = ['8am–10am', '10am–12pm', '12pm–2pm', '2pm–4pm', '4pm–6pm']
+
+type Svc = {
+  id: string
+  label: string
+  icon: LucideIcon
+  desc: string
+  turnaround: string
+  starting?: string
+  quoteType: string       // → /api/quote serviceType (drives pricing)
+  bookType: string        // → /api/book service (booking enum)
+  jobBased: boolean       // single-site, disposal-priced
+  debris?: string
+}
+
+// Card catalog. Each card carries BOTH vocabularies so pricing (quoteType) and
+// booking (bookType) stay correct while the customer only ever sees one choice.
+const SERVICES: Svc[] = [
+  { id: 'junk-removal', label: 'Junk Removal', icon: Trash2, desc: 'A few items up to a full truck — hauled away and gone.', turnaround: 'Same / next-day', starting: 'from $99', quoteType: 'junk-removal', bookType: 'junk-removal', jobBased: true, debris: 'general' },
+  { id: 'moving', label: 'Moving Services', icon: Truck, desc: 'Homes and offices — loaded, moved, and set in place.', turnaround: '2–4 days', quoteType: 'moving', bookType: 'moving', jobBased: false },
+  { id: 'appliance-delivery', label: 'Appliance Delivery', icon: Refrigerator, desc: 'Fridges, washers, ranges — delivered and positioned.', turnaround: 'Next-day', quoteType: 'appliance-delivery', bookType: 'appliance-delivery', jobBased: false },
+  { id: 'furniture-delivery', label: 'Furniture Delivery', icon: Sofa, desc: 'White-glove furniture delivery to the room of your choice.', turnaround: 'Next-day', quoteType: 'white-glove', bookType: 'moving', jobBased: false },
+  { id: 'freight', label: 'Freight Delivery', icon: Boxes, desc: 'Palletized freight, dock-to-dock across the metroplex.', turnaround: '2–4 days', quoteType: 'dock-to-dock', bookType: 'freight', jobBased: false },
+  { id: 'brush-debris', label: 'Brush & Debris Removal', icon: Trees, desc: 'Yard waste, branches, and storm debris cleared out.', turnaround: 'Same / next-day', starting: 'from $99', quoteType: 'junk-removal', bookType: 'junk-removal', jobBased: true, debris: 'yard-waste' },
+  { id: 'construction-hauling', label: 'Construction Material Hauling', icon: HardHat, desc: 'Building materials delivered — or jobsite debris hauled off.', turnaround: '1–3 days', quoteType: 'last-mile-curbside', bookType: 'freight', jobBased: false },
+  { id: 'commercial-delivery', label: 'Commercial Delivery', icon: Building2, desc: 'Retail replenishment and B2B box-truck runs.', turnaround: 'Scheduled', quoteType: 'dock-to-dock', bookType: 'freight', jobBased: false },
+  { id: 'eviction', label: 'Property Cleanout', icon: KeyRound, desc: 'Eviction, foreclosure, and estate clear-outs, start to finish.', turnaround: '1–2 days', quoteType: 'eviction', bookType: 'eviction', jobBased: true, debris: 'eviction-cleanout' },
+  { id: 'other', label: 'Something Else', icon: HelpCircle, desc: "Not sure which fits? Tell us the job and we'll advise.", turnaround: "We'll advise", quoteType: 'other', bookType: 'other', jobBased: false },
+]
+
+// Shared load-size scale. `pallets` feeds distance pricing for delivery services;
+// `id` feeds the disposal engine + scheduling units for job-based services.
+const SIZES = [
+  { id: 'few-items', label: 'A few items', hint: '1–3 pieces', pallets: 1 },
+  { id: 'quarter', label: 'Quarter load', hint: 'A small room', pallets: 2 },
+  { id: 'half', label: 'Half load', hint: 'A room or two', pallets: 3 },
+  { id: 'three-quarter', label: 'Three-quarter', hint: 'Most of a home', pallets: 4 },
+  { id: 'full', label: 'Full truck', hint: 'A whole home or office', pallets: 6 },
+  { id: 'multiple', label: 'Multiple loads', hint: 'More than one truck', pallets: 10 },
+]
+
+// Optional upgrades. Prices MUST match PRICING.addOns in /api/quote so the range
+// the customer sees equals what the server computes.
+const UPGRADES: { id: string; label: string; price: number; icon: LucideIcon; why: string }[] = [
+  { id: 'same-day', label: 'Same-Day Service', price: 120, icon: Zap, why: 'Jump the queue — we come today when a slot is open.' },
+  { id: 'inside-placement', label: 'Inside Placement', price: 60, icon: DoorOpen, why: 'Carried inside to the exact room, not left at the curb.' },
+  { id: 'appliance-hookup', label: 'Appliance Hookup', price: 45, icon: PlugZap, why: 'Connect and test washers, dryers, ranges, and fridges.' },
+  { id: 'assembly', label: 'Furniture Assembly', price: 55, icon: Wrench, why: 'Beds, tables, and shelving assembled and ready to use.' },
+  { id: 'extra-labor', label: 'Extra Labor', price: 65, icon: Users, why: 'An extra mover for heavy, tight, or high-volume jobs.' },
+  { id: 'disposal', label: 'Dump Run / Haul-Away', price: 50, icon: Recycle, why: 'We take the old stuff away and dispose of it for you.' },
+  { id: 'priority', label: 'Priority Scheduling', price: 40, icon: CalendarClock, why: 'First arrival window and a tighter time promise.' },
+  { id: 'packing', label: 'Protective Wrapping', price: 75, icon: ShieldCheck, why: 'Blankets and shrink-wrap so nothing gets scratched.' },
+]
 
 // ISO yyyy-mm-dd → "Fri, Jul 4, 2026" (parsed LOCAL so it never slips a day).
 function fmtDateLabel(iso: string): string {
@@ -12,249 +80,13 @@ function fmtDateLabel(iso: string): string {
   return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-// ── Instant booking wizard ───────────────────────────────────────────────────
-// Flow: 1 service → 2 job details/photos/address → 3 price/deposit estimate →
-// 4 availability + date/time → 5 contact info → 6 review & pay. Availability is
-// shown after the estimate and BEFORE contact info, sized to the selected job.
-const JOB_BASED = ['junk-removal', 'eviction', 'estate-cleanout', 'garage-cleanout']
-const WINDOWS = ['8am–10am', '10am–12pm', '12pm–2pm', '2pm–4pm', '4pm–6pm']
-const STEP_LABELS = ['Service', 'Job details', 'Estimate', 'Date & time', 'Your info', 'Review']
-
-function InstantBook({ open, setOpen }: { open: boolean; setOpen: React.Dispatch<React.SetStateAction<boolean>> }) {
-  const [step, setStep] = useState(1)
-  const [service, setService] = useState('junk-removal')
-  const [loadSize, setLoadSize] = useState('quarter')
-  const [debris, setDebris] = useState('general')
-  const [address, setAddress] = useState('')
-  const [notes, setNotes] = useState('')
-  const [photos, setPhotos] = useState<string[]>([])
-  const [photoBusy, setPhotoBusy] = useState(false)
-  const [estimate, setEstimate] = useState<{ hasPrice: boolean; low?: number; high?: number; depositCents: number; confidence?: string; units: number } | null>(null)
-  const [avail, setAvail] = useState<{ dates: string[]; depositCents: number } | null>(null)
-  const [date, setDate] = useState('')
-  const [win, setWin] = useState('')
-  const [name, setName] = useState(''); const [phone, setPhone] = useState(''); const [email, setEmail] = useState('')
-  const [promo, setPromo] = useState('')
-  const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
-
-  const isJob = JOB_BASED.includes(service)
-  const deposit = ((estimate?.depositCents ?? avail?.depositCents ?? 5000) / 100).toFixed(0)
-  const inp: React.CSSProperties = { width: '100%', padding: '12px 14px', background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.10)', borderRadius: 10, color: '#f3f4f6', fontSize: 16, outline: 'none' }
-  const sel: React.CSSProperties = { ...inp, cursor: 'pointer', colorScheme: 'dark' }
-  const lbl: React.CSSProperties = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 6 }
-  const pill = (active: boolean): React.CSSProperties => ({ background: active ? 'var(--red)' : 'rgba(255,255,255,.05)', border: `1px solid ${active ? 'var(--red)' : 'rgba(255,255,255,.12)'}`, color: active ? '#fff' : 'var(--text)', borderRadius: 12, padding: '10px 14px', fontSize: 14, fontWeight: 600, cursor: 'pointer' })
-
-  async function addPhotos(files: FileList) {
-    setPhotoBusy(true); setErr('')
-    try {
-      for (const file of Array.from(files).slice(0, 6)) {
-        const dataUrl = await downscaleToDataUrl(file)
-        const res = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }) })
-        const j = await res.json()
-        if (res.ok && j.url) setPhotos(p => [...p, j.url])
-      }
-    } catch { setErr('A photo failed to upload — you can still continue.') }
-    finally { setPhotoBusy(false) }
-  }
-
-  async function loadEstimate() {
-    setBusy(true); setErr('')
-    try {
-      const res = await fetch('/api/estimate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ service, loadSize: isJob ? loadSize : undefined, debris: isJob ? debris : undefined }) })
-      const j = await res.json()
-      if (!res.ok) { setErr(j.error ?? 'Could not load an estimate.'); setBusy(false); return }
-      setEstimate(j); setStep(3)
-    } catch { setErr('Connection error — please try again.') }
-    setBusy(false)
-  }
-  async function loadAvailability() {
-    setBusy(true); setErr(''); setAvail(null)
-    try {
-      const res = await fetch(`/api/availability?units=${estimate?.units ?? 1}`)
-      const j = await res.json()
-      setAvail({ dates: j.dates ?? [], depositCents: j.depositCents ?? 5000 }); setStep(4)
-    } catch { setErr('Could not load availability.') }
-    setBusy(false)
-  }
-  async function submit() {
-    setBusy(true); setErr('')
-    try {
-      const res = await fetch('/api/book', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ service, loadSize: isJob ? loadSize : undefined, debris: isJob ? debris : undefined, address, notes, photos, date, window: win, name, phone, email, promo }),
-      })
-      const j = await res.json()
-      if (!res.ok) { setErr(j.error ?? 'Could not complete your booking.'); setBusy(false); return }
-      if (j.url) { window.location.href = j.url; return }
-      if (j.bookingUrl) { window.location.href = j.bookingUrl; return }
-      setBusy(false)
-    } catch { setErr('Connection error — please try again.'); setBusy(false) }
-  }
-
-  const Back = () => <button type="button" onClick={() => { setErr(''); setStep(s => Math.max(1, s - 1)) }} className="btn-ghost" style={{ padding: '12px 18px', fontSize: 14 }}>← Back</button>
-  const Next = ({ onClick, disabled, label = 'Continue →' }: { onClick: () => void; disabled?: boolean; label?: string }) => (
-    <button type="button" onClick={onClick} disabled={disabled || busy} className="btn" style={{ padding: '12px 22px', fontSize: 15, flex: 1, justifyContent: 'center' }}>{busy ? '…' : label}</button>
-  )
-
-  return (
-    <div className="glass-card mb-8" style={{ borderRadius: 20, border: '1px solid rgba(224,0,42,.3)', overflow: 'hidden' }}>
-      <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between gap-3 p-6 text-left" aria-expanded={open}>
-        <div>
-          <p className="text-lg font-black text-white">⚡ Book Now</p>
-          <p className="text-sm" style={{ color: 'var(--muted)' }}>The fastest way onto the schedule — get your price, pick a date, and lock it in with a deposit.</p>
-        </div>
-        <span style={{ color: 'var(--red)', fontSize: 22 }}>{open ? '–' : '+'}</span>
-      </button>
-
-      {open && (
-        <div className="px-6 pb-6" style={{ borderTop: '1px solid var(--line)' }}>
-          <p className="text-xs font-bold uppercase tracking-widest pt-4 mb-4" style={{ color: 'var(--muted)' }}>Step {step} of 6 · {STEP_LABELS[step - 1]}</p>
-
-          {/* 1 — Service */}
-          {step === 1 && (
-            <>
-              <div className="grid sm:grid-cols-2 gap-2">
-                {[['junk-removal', 'Junk Removal'], ['eviction', 'Eviction / Cleanout'], ['estate-cleanout', 'Estate Cleanout'], ['garage-cleanout', 'Garage Cleanout'], ['moving', 'Moving / Delivery'], ['appliance-delivery', 'Appliance Delivery'], ['other', 'Other']].map(([v, l]) => (
-                  <button key={v} type="button" onClick={() => setService(v)} style={{ ...pill(service === v), textAlign: 'left' }}>{l}</button>
-                ))}
-              </div>
-              <div className="flex gap-2 mt-4"><Next onClick={() => setStep(2)} /></div>
-            </>
-          )}
-
-          {/* 2 — Job details + photos + address */}
-          {step === 2 && (
-            <>
-              {isJob && (
-                <div className="grid sm:grid-cols-2 gap-3 mb-3">
-                  <div><label style={lbl}>How much is there?</label>
-                    <select value={loadSize} onChange={e => setLoadSize(e.target.value)} style={sel}>
-                      <option value="few-items">A few items</option>
-                      <option value="quarter">About a quarter truck</option>
-                      <option value="half">About a half truck</option>
-                      <option value="three-quarter">About three-quarter truck</option>
-                      <option value="full">Full truck load</option>
-                      <option value="multiple">More than one truck</option>
-                    </select>
-                  </div>
-                  <div><label style={lbl}>What are you removing?</label>
-                    <select value={debris} onChange={e => setDebris(e.target.value)} style={sel}>
-                      <option value="general">General / mixed junk</option>
-                      <option value="furniture">Furniture / bulky items</option>
-                      <option value="appliance">Appliances</option>
-                      <option value="mattress">Mattresses</option>
-                      <option value="yard-waste">Yard waste / brush</option>
-                      <option value="construction-debris">Construction debris</option>
-                      <option value="eviction-cleanout">Eviction / full cleanout</option>
-                    </select>
-                  </div>
-                </div>
-              )}
-              <div className="mb-3"><label style={lbl}>Service address or ZIP</label><input value={address} onChange={e => setAddress(e.target.value)} placeholder="123 Main St, Dallas TX 75201" style={inp} /></div>
-              <div className="mb-3"><label style={lbl}>Notes <span style={{ fontWeight: 400 }}>(optional)</span></label><input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Stairs, gate code, anything heavy…" style={inp} /></div>
-              <div>
-                <label style={lbl}>Photos <span style={{ fontWeight: 400 }}>(optional — sharpens your quote)</span></label>
-                <label className="btn-ghost" style={{ padding: '10px 16px', fontSize: 14, cursor: photoBusy ? 'wait' : 'pointer', display: 'inline-flex' }}>
-                  {photoBusy ? 'Uploading…' : photos.length ? '+ Add more' : '📷 Add photos'}
-                  <input type="file" accept="image/*" multiple onChange={e => { const fs = e.target.files; e.target.value = ''; if (fs?.length) addPhotos(fs) }} disabled={photoBusy} style={{ display: 'none' }} />
-                </label>
-                {photos.length > 0 && (
-                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 mt-3">
-                    {photos.map((url, i) => (
-                      <div key={url} style={{ position: 'relative', aspectRatio: '1 / 1', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}>
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                        <button type="button" onClick={() => setPhotos(p => p.filter((_, idx) => idx !== i))} aria-label="Remove photo" style={{ position: 'absolute', top: 2, right: 2, width: 22, height: 22, borderRadius: 999, border: 'none', background: 'rgba(0,0,0,.65)', color: '#fff', cursor: 'pointer', fontSize: 13, lineHeight: '22px' }}>×</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="flex gap-2 mt-4"><Back /><Next onClick={loadEstimate} disabled={!address.trim()} label="Get my estimate →" /></div>
-            </>
-          )}
-
-          {/* 3 — Estimate */}
-          {step === 3 && estimate && (
-            <>
-              <div className="glass-card p-6 text-center" style={{ borderRadius: 16, background: 'rgba(224,0,42,.06)' }}>
-                {estimate.hasPrice ? (
-                  <>
-                    <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--muted)' }}>Estimated price</p>
-                    <p className="text-4xl font-black" style={{ color: 'var(--red)', letterSpacing: '-0.03em' }}>${estimate.low?.toLocaleString()}–${estimate.high?.toLocaleString()}</p>
-                    {(estimate.confidence === 'medium' || estimate.confidence === 'low') && <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.5)' }}>Instant estimate — final price confirmed on site (your photos help).</p>}
-                  </>
-                ) : (
-                  <p className="text-sm" style={{ color: 'var(--text)', lineHeight: 1.6 }}>We&apos;ll confirm your custom price after we review the details. Reserve your spot now with a deposit.</p>
-                )}
-                <p className="text-sm mt-3" style={{ color: 'var(--text)' }}>Deposit to reserve: <strong className="text-white">${deposit}</strong> <span style={{ color: 'var(--muted)' }}>(refundable if we can&apos;t make your date)</span></p>
-              </div>
-              <div className="flex gap-2 mt-4"><Back /><Next onClick={loadAvailability} label="Pick a date →" /></div>
-            </>
-          )}
-
-          {/* 4 — Availability: date + time window (shown BEFORE contact info) */}
-          {step === 4 && (
-            <>
-              {!avail ? <p className="text-sm" style={{ color: 'var(--muted)' }}>Loading open dates…</p> : avail.dates.length === 0 ? (
-                <p className="text-sm" style={{ color: 'var(--muted)' }}>No online dates are open for a job this size right now — submit the quote form below and we&apos;ll get you scheduled.</p>
-              ) : (
-                <>
-                  <label style={lbl}>Choose an open date</label>
-                  <div className="flex flex-wrap gap-2 mb-4" style={{ maxHeight: 180, overflowY: 'auto' }}>
-                    {avail.dates.map(d => <button key={d} type="button" onClick={() => setDate(d)} style={pill(date === d)}>{fmtDateLabel(d)}</button>)}
-                  </div>
-                  {date && (
-                    <>
-                      <label style={lbl}>Preferred arrival window</label>
-                      <div className="flex flex-wrap gap-2">
-                        {WINDOWS.map(w => <button key={w} type="button" onClick={() => setWin(w)} style={pill(win === w)}>{w}</button>)}
-                      </div>
-                    </>
-                  )}
-                </>
-              )}
-              <div className="flex gap-2 mt-4"><Back /><Next onClick={() => setStep(5)} disabled={!date || !win} /></div>
-            </>
-          )}
-
-          {/* 5 — Contact info */}
-          {step === 5 && (
-            <>
-              <div className="grid sm:grid-cols-2 gap-3">
-                <div className="sm:col-span-2"><label style={lbl}>Full name</label><input value={name} onChange={e => setName(e.target.value)} autoCapitalize="words" style={inp} /></div>
-                <div><label style={lbl}>Phone</label><input value={phone} onChange={e => setPhone(e.target.value)} type="tel" style={inp} /></div>
-                <div><label style={lbl}>Email</label><input value={email} onChange={e => setEmail(e.target.value)} type="email" style={inp} /></div>
-                <div className="sm:col-span-2"><label style={lbl}>Promo code <span style={{ fontWeight: 400 }}>(optional)</span></label><input value={promo} onChange={e => setPromo(e.target.value.toUpperCase())} style={{ ...inp, textTransform: 'uppercase' }} /></div>
-              </div>
-              <div className="flex gap-2 mt-4"><Back /><Next onClick={() => setStep(6)} disabled={!name.trim() || (!email.trim() && !phone.trim())} label="Review →" /></div>
-            </>
-          )}
-
-          {/* 6 — Review & pay */}
-          {step === 6 && (
-            <>
-              <div className="glass-card p-5" style={{ borderRadius: 14 }}>
-                {[['Service', service.replace(/-/g, ' ')], ['When', `${fmtDateLabel(date)} · ${win}`], ['Where', address], ['Name', name], ['Contact', [email, phone].filter(Boolean).join(' · ')], estimate?.hasPrice ? ['Estimated price', `$${estimate.low}–$${estimate.high}`] : ['Price', 'Custom — confirmed on site'], ['Deposit now', `$${deposit} (refundable)`]].filter(Boolean).map((row, i) => {
-                  const [k, v] = row as [string, string]
-                  return <div key={i} className="flex justify-between gap-3 py-1.5 text-sm" style={i > 0 ? { borderTop: '1px solid rgba(255,255,255,.06)' } : undefined}><span style={{ color: 'var(--muted)' }}>{k}</span><span className="text-white text-right" style={{ textTransform: k === 'Service' ? 'capitalize' : undefined }}>{v || '—'}</span></div>
-                })}
-              </div>
-              {err && <p className="text-sm mt-3" role="alert" style={{ color: '#f87171' }}>{err}</p>}
-              <div className="flex gap-2 mt-4"><Back /><Next onClick={submit} label={`Reserve & Pay $${deposit} →`} /></div>
-              <p className="text-xs text-center mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Your ${deposit} deposit holds the date and is <strong>fully refunded</strong> if we can&apos;t make it. The balance is settled after the job.</p>
-            </>
-          )}
-
-          {err && step !== 6 && <p className="text-sm mt-3" role="alert" style={{ color: '#f87171' }}>{err}</p>}
-        </div>
-      )}
-    </div>
-  )
+function parseZip(s: string): string {
+  const m = s.match(/\b(\d{5})\b/)
+  return m ? m[1] : ''
 }
 
-// Downscale an image to a small JPEG data URL for the AI photo estimate. Falls
-// back to the original (e.g. HEIC the browser can't decode to canvas).
+// Downscale an image to a small JPEG data URL before upload. Falls back to the
+// original (e.g. a HEIC the browser can't decode to canvas).
 async function downscaleToDataUrl(file: File, maxDim = 1280, quality = 0.7): Promise<string> {
   try {
     const bitmap = await createImageBitmap(file)
@@ -277,371 +109,798 @@ async function downscaleToDataUrl(file: File, maxDim = 1280, quality = 0.7): Pro
   }
 }
 
-export default function QuotePage() {
-  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
-  const [estimate, setEstimate] = useState<Estimate | null>(null)
-  const [errorMsg, setErrorMsg] = useState('')
-  const [service, setService] = useState('dock-to-dock')
-  const [showEstimate, setShowEstimate] = useState(false) // secondary "just need a price" path
-  const [bookOpen, setBookOpen] = useState(true)          // Book Now wizard open by default (primary path)
-  // AI photo estimate (junk-removal / cleanout)
-  const [photoEst, setPhotoEst] = useState<{ loadSize: string; low: number; high: number; summary: string } | null>(null)
-  const [photoBusy, setPhotoBusy] = useState(false)
-  const [photoErr, setPhotoErr] = useState('')
-  const isJunk = service === 'junk-removal'
-  const isEviction = service === 'eviction'
+// ── Small shared styles (J Kiss brand) ──────────────────────────────────────
+const inp: React.CSSProperties = { width: '100%', padding: '13px 15px', background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.10)', borderRadius: 12, color: '#f3f4f6', fontSize: 16, outline: 'none' }
+const lbl: React.CSSProperties = { display: 'block', fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }
 
-  async function estimateFromPhoto(file: File) {
-    setPhotoErr(''); setPhotoEst(null); setPhotoBusy(true)
+export default function QuotePage() {
+  // Flow state
+  const [step, setStep] = useState(0)
+  const [svcId, setSvcId] = useState('')
+  const svc = SERVICES.find(s => s.id === svcId)
+  const singleSite = !!svc && (svc.jobBased || svc.id === 'other')
+
+  // Step 1 — the job
+  const [pickupText, setPickupText] = useState('')
+  const [deliveryText, setDeliveryText] = useState('')
+  const [sizeId, setSizeId] = useState('')
+  const [heavy, setHeavy] = useState<boolean | null>(null)
+  const [stairs, setStairs] = useState<boolean | null>(null)
+  const [elevator, setElevator] = useState<boolean | null>(null)
+  const [prefDate, setPrefDate] = useState('')
+
+  // Step 2 — photos
+  const [photos, setPhotos] = useState<string[]>([])
+  const [photoBusy, setPhotoBusy] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
+
+  // Step 3 — upgrades
+  const [upgrades, setUpgrades] = useState<string[]>([])
+
+  // Step 4 — contact
+  const [name, setName] = useState(''); const [company, setCompany] = useState('')
+  const [phone, setPhone] = useState(''); const [email, setEmail] = useState('')
+  const [contactMethod, setContactMethod] = useState('Text message')
+  const [promo, setPromo] = useState('')
+
+  // Estimate + reserve
+  const [est, setEst] = useState<{ hasPrice: boolean; low?: number; high?: number; depositCents: number; confidence?: string; units: number } | null>(null)
+  const [reserveOpen, setReserveOpen] = useState(false)
+  const [avail, setAvail] = useState<{ dates: string[]; depositCents: number } | null>(null)
+  const [bookDate, setBookDate] = useState(''); const [bookWin, setBookWin] = useState('')
+
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
+  const [sent, setSent] = useState<{ estimate?: Estimate } | null>(null)
+
+  // Deep-link: /quote?service=junk-removal preselects a card and jumps to step 2.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get('service')
+    if (!q) return
+    const match = SERVICES.find(s => s.id === q || s.quoteType === q || s.bookType === q)
+    if (match) { setSvcId(match.id); setStep(1) }
+  }, [])
+
+  const size = SIZES.find(s => s.id === sizeId)
+  const upgradeTotal = UPGRADES.filter(u => upgrades.includes(u.id)).reduce((s, u) => s + u.price, 0)
+  const deposit = ((est?.depositCents ?? avail?.depositCents ?? 5000) / 100).toFixed(0)
+  const showLow = est?.hasPrice && est.low != null ? est.low + upgradeTotal : null
+  const showHigh = est?.hasPrice && est.high != null ? est.high + upgradeTotal : null
+
+  function toggleUpgrade(id: string) {
+    setUpgrades(u => u.includes(id) ? u.filter(x => x !== id) : [...u, id])
+  }
+
+  async function addPhotos(files: FileList) {
+    setPhotoBusy(true); setErr('')
     try {
-      const dataUrl = await downscaleToDataUrl(file)
-      const res = await fetch('/api/ai/photo-estimate', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }),
-      })
-      const j = await res.json()
-      if (!res.ok) { setPhotoErr(j.error ?? 'Could not estimate from that photo.'); return }
-      setPhotoEst({ loadSize: j.loadSize, low: j.low, high: j.high, summary: j.summary })
-    } catch { setPhotoErr('Could not read that photo. Try another, or request a custom quote below.') }
+      for (const file of Array.from(files).slice(0, 8)) {
+        if (!file.type.startsWith('image/')) continue
+        const dataUrl = await downscaleToDataUrl(file)
+        const res = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }) })
+        const j = await res.json()
+        if (res.ok && j.url) setPhotos(p => [...p, j.url].slice(0, 8))
+      }
+    } catch { setErr('A photo failed to upload — you can still continue without it.') }
     finally { setPhotoBusy(false) }
   }
-  // Junk removal and eviction/property cleanouts are single-site, priced per job —
-  // same form shape and request-only flow (no instant price).
-  const isJobBased = isJunk || isEviction
-  const jobNoun = isEviction ? 'Property cleanout' : 'Junk removal'
 
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    setStatus('sending')
-    setErrorMsg('')
-    const form = e.currentTarget
-    const fd = new FormData(form)
-    const data = Object.fromEntries(fd) as Record<string, string>
-    const addOns = fd.getAll('addOns').map(String)
-    // Job-based services (junk removal, eviction cleanouts) are single-site —
-    // mirror the job ZIP into deliveryZip so route validation/lookup passes and
-    // distance resolves to 0.
-    if (isJobBased) data.deliveryZip = data.pickupZip
+  // Instant, email-free price/deposit preview once service + size are known.
+  async function loadEstimate() {
+    if (!svc) return
     try {
-      const res = await fetch('/api/quote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...data, addOns }),
-      })
+      const res = await fetch('/api/estimate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ service: svc.quoteType, loadSize: sizeId, debris: svc.debris }) })
       const j = await res.json()
-      if (res.ok && (j.estimate || j.requested)) {
-        // Delivery returns a price range; junk removal returns a request ack only.
-        setEstimate(j.estimate ?? null)
-        setStatus('sent')
-        form.reset()
-      } else {
-        setStatus('error')
-        setErrorMsg(j.error ?? 'Failed to compute quote.')
-      }
-    } catch {
-      setStatus('error')
-      setErrorMsg('Connection error. Please email info@jkissllc.com directly.')
-    }
+      if (res.ok) setEst(j)
+    } catch { /* non-blocking — the summary just omits a live range */ }
   }
 
-  const iStyle: React.CSSProperties = {
-    width: '100%', padding: '12px 14px',
-    background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.10)',
-    borderRadius: '10px', color: '#f3f4f6', fontSize: '14px', outline: 'none',
+  function validate(): string {
+    if (step === 0 && !svcId) return 'Choose the service you need to continue.'
+    if (step === 1) {
+      if (!parseZip(pickupText)) return singleSite ? 'Add the job address or ZIP so we can price it.' : 'Add the pickup address or ZIP so we can price the route.'
+      if (!singleSite && !parseZip(deliveryText)) return 'Add the delivery address or ZIP.'
+      if (!sizeId) return 'Tell us roughly how much there is.'
+    }
+    if (step === 4) {
+      if (!name.trim()) return 'Please add your name.'
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Please add a valid email so we can send your quote.'
+    }
+    return ''
+  }
+
+  function next() {
+    const v = validate()
+    if (v) { setErr(v); return }
+    setErr('')
+    if (step === 1) loadEstimate()          // fetch as we leave the job-details step
+    setStep(s => Math.min(5, s + 1))
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+  function back() {
+    setErr(''); setReserveOpen(false)
+    setStep(s => Math.max(0, s - 1))
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function buildNotes(): string {
+    return [
+      !singleSite && deliveryText ? `Delivery: ${deliveryText}` : '',
+      size ? `Size: ${size.label}` : '',
+      heavy ? 'Has large / heavy items' : '',
+      stairs ? 'Stairs on site' : '',
+      elevator ? 'Elevator available' : '',
+      prefDate ? `Preferred date: ${fmtDateLabel(prefDate)}` : '',
+      contactMethod ? `Best contact: ${contactMethod}` : '',
+    ].filter(Boolean).join(' · ')
+  }
+
+  // Primary CTA — file the quote request (lead) via the existing engine.
+  async function submitLead() {
+    if (!svc) return
+    setBusy(true); setErr('')
+    const pickupZip = parseZip(pickupText)
+    const deliveryZip = singleSite ? pickupZip : parseZip(deliveryText)
+    try {
+      const res = await fetch('/api/quote', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          serviceType: svc.quoteType, timing: 'standard',
+          pickupZip, deliveryZip,
+          pallets: String(size?.pallets ?? 1), weight: '',
+          loadSize: sizeId, debris: svc.debris ?? 'general',
+          name, email, phone, company,
+          notes: buildNotes(), referral: '', promo,
+          addOns: upgrades, photos,
+        }),
+      })
+      const j = await res.json()
+      if (res.ok && j.estimate) { setSent({ estimate: j.estimate }); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+      else setErr(j.error ?? 'Could not submit your request. Please try again.')
+    } catch { setErr('Connection error — please try again or email info@jkissllc.com.') }
+    setBusy(false)
+  }
+
+  // Secondary CTA — lock a real open date + pay the deposit via /api/book.
+  async function openReserve() {
+    setReserveOpen(true); setErr(''); setAvail(null)
+    try {
+      const res = await fetch(`/api/availability?loadSize=${encodeURIComponent(sizeId)}`)
+      const j = await res.json()
+      setAvail({ dates: j.dates ?? [], depositCents: j.depositCents ?? 5000 })
+    } catch { setErr('Could not load open dates — you can still request a quote above.') }
+  }
+  async function submitBooking() {
+    if (!svc) return
+    setBusy(true); setErr('')
+    try {
+      const res = await fetch('/api/book', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          service: svc.bookType, loadSize: sizeId, debris: svc.debris,
+          address: pickupText, notes: buildNotes(), photos,
+          date: bookDate, window: bookWin, name, phone, email, promo,
+        }),
+      })
+      const j = await res.json()
+      if (!res.ok) { setErr(j.error ?? 'Could not complete your reservation.'); setBusy(false); return }
+      if (j.url) { window.location.href = j.url; return }
+      if (j.bookingUrl) { window.location.href = j.bookingUrl; return }
+      setBusy(false)
+    } catch { setErr('Connection error — please try again.'); setBusy(false) }
   }
 
   return (
     <main className="min-h-screen" style={{ background: 'var(--bg)' }}>
-      <header className="fixed top-0 left-0 right-0 z-50" style={{ background: 'rgba(11,11,12,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--line)' }}>
+      {/* Restrained brand glow — J Kiss red, not an all-over wash */}
+      <div aria-hidden className="pointer-events-none fixed inset-0" style={{ background: 'radial-gradient(900px 520px at 82% -6%, rgba(224,0,42,.14), transparent 60%), radial-gradient(760px 520px at 6% 108%, rgba(224,0,42,.06), transparent 60%)', zIndex: 0 }} />
+
+      <header className="fixed top-0 left-0 right-0 z-50" style={{ background: 'rgba(11,11,12,0.9)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--line)' }}>
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/" className="text-xl font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
-            J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+            J Kiss <span style={{ color: RED }}>LLC</span>
           </Link>
           <Link href="/" className="text-sm font-semibold transition hover:text-white" style={{ color: 'var(--muted)' }}>← Back to Home</Link>
         </div>
       </header>
 
-      <section className="pt-32 pb-20 px-6">
-        <div className="max-w-3xl mx-auto">
-          <div className="label mb-6">{showEstimate ? 'Instant Estimate' : 'Book Online'}</div>
-          <h1 className="text-4xl md:text-5xl font-black text-white mb-5" style={{ letterSpacing: '-0.045em', lineHeight: 1.05, fontFamily: 'var(--font-display)' }}>
-            {showEstimate ? (
-              <>Get a Price Estimate<br /><span style={{ color: 'var(--red)' }}>In 30 Seconds.</span></>
-            ) : (
-              <>Book Your Job<br /><span style={{ color: 'var(--red)' }}>Priced &amp; Scheduled in Minutes.</span></>
-            )}
-          </h1>
-          <p className="text-lg mb-10" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>
-            {showEstimate
-              ? 'Enter your service, location, and load details and we’ll compute a price range right away — then ops follows up with a firm number within 1 business day. Ready to lock in a date? Book instantly instead.'
-              : 'Pick your service, get an instant price, choose an open date, and lock it in with a small refundable deposit — no waiting on a callback. Just need a number, or a freight / box-truck quote? You can request a custom estimate instead.'}
-          </p>
-
-          {status !== 'sent' && !showEstimate && (
+      <section className="relative z-10 pt-28 md:pt-32 pb-28 lg:pb-20 px-5 sm:px-6">
+        <div className="max-w-6xl mx-auto">
+          {sent ? (
+            <SuccessView sent={sent} deposit={deposit} onReset={() => { setSent(null); setStep(0); setSvcId(''); setPickupText(''); setDeliveryText(''); setSizeId(''); setHeavy(null); setStairs(null); setElevator(null); setPrefDate(''); setPhotos([]); setUpgrades([]); setName(''); setCompany(''); setPhone(''); setEmail(''); setPromo(''); setEst(null); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
+          ) : (
             <>
-              <InstantBook open={bookOpen} setOpen={setBookOpen} />
-              <div className="text-center">
-                <p className="text-sm mb-3" style={{ color: 'var(--muted)' }}>Just need a price, or a freight / box-truck quote?</p>
-                <button type="button" onClick={() => setShowEstimate(true)} className="btn-ghost">Get a price estimate instead →</button>
-              </div>
-            </>
-          )}
-
-          {status === 'sent' && estimate ? (
-            <div className="glass-card p-10" style={{ borderRadius: '20px' }}>
-              <div className="text-center mb-8">
-                <div className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.14em' }}>Estimated Price Range</div>
-                <p className="text-6xl md:text-7xl font-black tabular-nums" style={{ color: 'var(--red)', letterSpacing: '-0.05em', lineHeight: 1, fontFamily: 'var(--font-display)' }}>
-                  ${estimate.low.toLocaleString()}–${estimate.high.toLocaleString()}
-                </p>
-                <p className="text-sm mt-4" style={{ color: 'var(--muted)' }}>
-                  {estimate.jobBased
-                    ? `${estimate.pickupLabel} · priced by load + disposal`
-                    : `${estimate.pickupLabel} → ${estimate.deliveryLabel} · ${estimate.miles} mi (${estimate.miles * 2} mi round trip)`}
-                </p>
-                {!!estimate.fuelCharge && estimate.fuelCharge > 0 && (
-                  <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,.45)' }}>Includes a ${estimate.fuelCharge} fuel charge for the round-trip distance.</p>
-                )}
-                {estimate.promoCode && (
-                  <p className="text-xs mt-1 font-semibold" style={{ color: '#34d399' }}>✓ Promo {estimate.promoCode} applied{estimate.promoPct ? ` — ${estimate.promoPct}% off` : ''}.</p>
-                )}
-                {(estimate.confidence === 'medium' || estimate.confidence === 'low') && (
-                  <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.5)' }}>Instant estimate — the final price may need a photo or a quick review to confirm.</p>
-                )}
-              </div>
-              <div className="pt-6" style={{ borderTop: '1px solid var(--line)' }}>
-                <p className="text-sm text-center leading-relaxed" style={{ color: 'var(--muted)' }}>
-                  Estimate based on distance, load size, and service type. Final quote depends on appointment windows, dock conditions, and any special handling — typically lands within this range. Our team will email you a firm number shortly.
+              {/* Intro */}
+              <div className="max-w-2xl mb-8">
+                <div className="label mb-5">Book a Job</div>
+                <h1 className="text-4xl md:text-5xl font-black text-white mb-4" style={{ letterSpacing: '-0.045em', lineHeight: 1.05, fontFamily: 'var(--font-display)' }}>
+                  Let&apos;s Plan Your <span style={{ color: RED }}>Move.</span>
+                </h1>
+                <p className="text-lg" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>
+                  Answer a few quick questions and our team will price your job by hand — most quotes come back within one business hour during operating hours.
                 </p>
               </div>
-              <div className="mt-8 flex justify-center gap-3 flex-wrap">
-                <button onClick={() => { setStatus('idle'); setEstimate(null); setService('dock-to-dock'); setShowEstimate(false); setBookOpen(true); window.scrollTo({ top: 0, behavior: 'smooth' }) }} className="btn">⚡ Book This Job Now</button>
-                <button onClick={() => { setStatus('idle'); setEstimate(null); setService('dock-to-dock') }} className="btn-ghost">Get Another Quote</button>
-              </div>
-            </div>
-          ) : status === 'sent' ? (
-            <div className="glass-card p-10 text-center" style={{ borderRadius: '20px' }}>
-              <div className="text-5xl mb-5">✓</div>
-              <h2 className="text-2xl font-black text-white mb-3" style={{ letterSpacing: '-0.02em' }}>Request Received</h2>
-              <p className="text-base leading-relaxed mb-2" style={{ color: 'var(--muted)' }}>
-                {`Thanks — we've got your ${jobNoun.toLowerCase()} details. Because every job is different, our team will review what's involved and email you a custom quote within 1 business day.`}
-              </p>
-              <p className="text-sm" style={{ color: 'rgba(255,255,255,.4)' }}>
-                Need it handled fast? Call or email us at info@jkissllc.com.
-              </p>
-              <div className="mt-8 flex justify-center gap-3 flex-wrap">
-                <button onClick={() => { setStatus('idle'); setEstimate(null); setService('dock-to-dock'); setShowEstimate(false); setBookOpen(true); window.scrollTo({ top: 0, behavior: 'smooth' }) }} className="btn">⚡ Book Now Instead</button>
-                <button onClick={() => { setStatus('idle'); setEstimate(null); setService('dock-to-dock') }} className="btn-ghost">Submit Another Request</button>
-              </div>
-            </div>
-          ) : showEstimate ? (
-            <>
-            <button type="button" onClick={() => setShowEstimate(false)} className="btn-ghost mb-4">← Back to instant booking</button>
-            <form onSubmit={handleSubmit} className="glass-card p-8 space-y-5" style={{ borderRadius: '20px' }}>
-              <div>
-                <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>1. Service</p>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Service Type</label>
-                    <select name="serviceType" value={service} onChange={(e) => setService(e.target.value)} style={{ ...iStyle, cursor: 'pointer' }}>
-                      <option value="dock-to-dock">Dock-to-Dock</option>
-                      <option value="last-mile-curbside">Last-Mile Curbside</option>
-                      <option value="white-glove">White-Glove (room-of-choice)</option>
-                      <option value="junk-removal">Junk Removal</option>
-                      <option value="eviction">Eviction / Property Cleanout</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Timing</label>
-                    <select name="timing" defaultValue="standard" style={{ ...iStyle, cursor: 'pointer' }}>
-                      <option value="standard">Standard (2–4 business days)</option>
-                      <option value="next-day">Next-Day</option>
-                      <option value="same-day">Same-Day</option>
-                      <option value="weekend">Weekend</option>
-                      <option value="after-hours">After-Hours (evening)</option>
-                      <option value="emergency">Emergency / ASAP</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
 
-              <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
-                <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>{isJobBased ? '2. Job Location' : '2. Route'}</p>
-                {isJobBased ? (
-                  <div>
-                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Job ZIP*</label>
-                    <input name="pickupZip" required maxLength={5} placeholder="75201" pattern="\d{5}" style={iStyle} />
-                  </div>
-                ) : (
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Pickup ZIP*</label>
-                      <input name="pickupZip" required maxLength={5} placeholder="75201" pattern="\d{5}" style={iStyle} />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Delivery ZIP*</label>
-                      <input name="deliveryZip" required maxLength={5} placeholder="76102" pattern="\d{5}" style={iStyle} />
-                    </div>
-                  </div>
-                )}
-              </div>
+              <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] items-start">
+                {/* ── Wizard column ── */}
+                <div className="glass-card wiz-fade" style={{ border: '1px solid rgba(224,0,42,.22)', borderRadius: 24, overflow: 'hidden' }}>
+                  <ProgressBar step={step} setStep={setStep} />
 
-              <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
-                <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>{isJobBased ? '3. Load Size' : '3. Load'}</p>
-                {isJobBased ? (
-                  <div>
-                    <div className="grid sm:grid-cols-2 gap-4 mb-3">
-                      <div>
-                        <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Estimated Load Size</label>
-                        <select name="loadSize" defaultValue="quarter" style={{ ...iStyle, cursor: 'pointer' }}>
-                          <option value="few-items">A few items</option>
-                          <option value="quarter">About a quarter truck</option>
-                          <option value="half">About a half truck</option>
-                          <option value="three-quarter">About three-quarter truck</option>
-                          <option value="full">Full truck load</option>
-                          <option value="multiple">More than one truck</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>What are you removing?</label>
-                        <select name="debris" defaultValue={isEviction ? 'eviction-cleanout' : 'general'} style={{ ...iStyle, cursor: 'pointer' }}>
-                          <option value="general">General / mixed junk</option>
-                          <option value="furniture">Furniture / bulky items</option>
-                          <option value="appliance">Appliances</option>
-                          <option value="mattress">Mattresses</option>
-                          <option value="yard-waste">Yard waste / brush</option>
-                          <option value="construction-debris">Construction debris</option>
-                          <option value="eviction-cleanout">Eviction / full cleanout</option>
-                        </select>
-                      </div>
+                  <div className="px-5 sm:px-8 py-7">
+                    <div key={step} className="wiz-reveal">
+                      {step === 0 && <StepService svcId={svcId} onPick={setSvcId} />}
+                      {step === 1 && (
+                        <StepJob
+                          svc={svc!} singleSite={singleSite}
+                          pickupText={pickupText} setPickupText={setPickupText}
+                          deliveryText={deliveryText} setDeliveryText={setDeliveryText}
+                          sizeId={sizeId} setSizeId={setSizeId}
+                          heavy={heavy} setHeavy={setHeavy}
+                          stairs={stairs} setStairs={setStairs}
+                          elevator={elevator} setElevator={setElevator}
+                          prefDate={prefDate} setPrefDate={setPrefDate}
+                        />
+                      )}
+                      {step === 2 && (
+                        <StepPhotos
+                          photos={photos} photoBusy={photoBusy} dragOver={dragOver} setDragOver={setDragOver}
+                          onAdd={addPhotos} onRemove={(i) => setPhotos(p => p.filter((_, idx) => idx !== i))}
+                        />
+                      )}
+                      {step === 3 && <StepUpgrades selected={upgrades} onToggle={toggleUpgrade} />}
+                      {step === 4 && (
+                        <StepContact
+                          name={name} setName={setName} company={company} setCompany={setCompany}
+                          phone={phone} setPhone={setPhone} email={email} setEmail={setEmail}
+                          contactMethod={contactMethod} setContactMethod={setContactMethod}
+                          promo={promo} setPromo={setPromo}
+                        />
+                      )}
+                      {step === 5 && svc && (
+                        <StepReview
+                          svc={svc} singleSite={singleSite} pickupText={pickupText} deliveryText={deliveryText}
+                          size={size} photos={photos} upgrades={upgrades} prefDate={prefDate}
+                          name={name} company={company} email={email} phone={phone} contactMethod={contactMethod}
+                          showLow={showLow} showHigh={showHigh} deposit={deposit} est={est}
+                          reserveOpen={reserveOpen} avail={avail} bookDate={bookDate} setBookDate={setBookDate}
+                          bookWin={bookWin} setBookWin={setBookWin} onOpenReserve={openReserve} onReserve={submitBooking}
+                          jobBased={svc.jobBased}
+                        />
+                      )}
                     </div>
-                    <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>We&apos;ll give you an instant range based on load size, item type, and disposal. Add a photo below for a sharper estimate — final price confirmed on site.</p>
 
-                    {/* AI photo estimate */}
-                    <div className="mt-4 rounded-xl p-4" style={{ background: 'rgba(224,0,42,.06)', border: '1px solid rgba(224,0,42,.25)' }}>
-                      <p className="text-sm font-bold text-white mb-1">✨ Instant estimate from a photo</p>
-                      <p className="text-xs mb-3" style={{ color: 'rgba(255,255,255,.55)', lineHeight: 1.5 }}>Snap a pic of the pile and our AI will ballpark the load size + price. Final quote is confirmed on site.</p>
-                      <label className="btn-ghost" style={{ padding: '10px 16px', fontSize: 14, cursor: photoBusy ? 'wait' : 'pointer', display: 'inline-flex' }}>
-                        {photoBusy ? 'Analyzing…' : photoEst ? 'Try another photo' : '📷 Add a photo'}
-                        <input type="file" accept="image/*" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) estimateFromPhoto(f) }} disabled={photoBusy} style={{ display: 'none' }} />
-                      </label>
-                      {photoErr && <p className="text-xs mt-2" role="alert" style={{ color: '#ff8a9b' }}>{photoErr}</p>}
-                      {photoEst && (
-                        <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,.1)' }}>
-                          {photoEst.high > 0 ? (
-                            <>
-                              <p className="text-lg font-black text-white">${photoEst.low}–${photoEst.high} <span className="text-sm font-semibold" style={{ color: 'var(--muted)' }}>· {photoEst.loadSize}</span></p>
-                              {photoEst.summary && <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,.6)', lineHeight: 1.5 }}>{photoEst.summary}</p>}
-                              <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Estimate only — submit the form below to lock in your custom quote.</p>
-                            </>
-                          ) : (
-                            <p className="text-sm" style={{ color: '#ff8a9b', lineHeight: 1.5 }}>{photoEst.summary || 'We may not be able to haul some of those items — please describe the job below and we’ll advise.'}</p>
-                          )}
-                        </div>
+                    {err && <p role="alert" className="mt-5 text-sm rounded-xl px-4 py-3" style={{ color: '#ffb3c0', background: 'rgba(224,0,42,.10)', border: '1px solid rgba(224,0,42,.35)' }}>{err}</p>}
+
+                    {/* Nav */}
+                    <div className="flex items-center gap-3 mt-7">
+                      {step > 0 && (
+                        <button type="button" onClick={back} className="btn-ghost wiz-ease" style={{ padding: '13px 20px' }}>
+                          <ArrowLeft size={16} /> Back
+                        </button>
+                      )}
+                      {step < 5 ? (
+                        <button type="button" onClick={next} className="btn wiz-ease" style={{ flex: 1, justifyContent: 'center', padding: '15px 24px', fontSize: 15 }}>
+                          {step === 2 && photos.length === 0 ? 'Skip for now' : 'Continue'} <ArrowRight size={16} />
+                        </button>
+                      ) : (
+                        <button type="button" onClick={submitLead} disabled={busy} className="btn wiz-ease" style={{ flex: 1, justifyContent: 'center', padding: '16px 24px', fontSize: 16 }}>
+                          {busy ? <Loader2 size={18} className="animate-spin" /> : <>Request My Quote <ArrowRight size={16} /></>}
+                        </button>
                       )}
                     </div>
                   </div>
-                ) : (
-                  <>
-                    <div className="grid sm:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Pallets</label>
-                        <input name="pallets" type="number" min={0} max={20} defaultValue={1} style={iStyle} />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Total Weight (lbs)</label>
-                        <input name="weight" type="number" min={0} max={20000} step={50} placeholder="2000" style={iStyle} />
-                      </div>
-                    </div>
-                    <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Box-truck capacity is ~10,000 lb usable payload. Larger loads contact ops for multi-truck options.</p>
-                  </>
-                )}
-              </div>
-
-              <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
-                <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>4. Contact</p>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Name*</label>
-                    <input name="name" required placeholder="Your name" style={iStyle} />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Company</label>
-                    <input name="company" placeholder="Company name" style={iStyle} />
-                  </div>
                 </div>
-                <div className="grid sm:grid-cols-2 gap-4 mt-4">
-                  <div>
-                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Email*</label>
-                    <input name="email" type="email" required placeholder="you@company.com" style={iStyle} />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Phone</label>
-                    <input name="phone" type="tel" placeholder="(555) 000-0000" style={iStyle} />
-                  </div>
-                </div>
-                <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,.4)', lineHeight: 1.5 }}>
-                  By providing your phone number, you agree to receive booking and service-related text messages
-                  (confirmations, scheduling, and updates) from J Kiss LLC at the number provided, including messages
-                  sent by autodialer. Consent is not a condition of purchase. Message &amp; data rates may apply.
-                  Reply STOP to opt out, HELP for help.
-                </p>
+
+                {/* ── Sticky desktop summary ── */}
+                <aside className="hidden lg:block lg:sticky lg:top-28 self-start">
+                  <SummaryCard
+                    svc={svc} size={size} singleSite={singleSite} pickupText={pickupText} deliveryText={deliveryText}
+                    photos={photos} upgrades={upgrades} prefDate={prefDate}
+                    showLow={showLow} showHigh={showHigh} deposit={deposit} est={est}
+                  />
+                </aside>
               </div>
-
-              {!isJobBased && (
-                <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
-                  <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>Add-ons (optional)</p>
-                  <div className="grid sm:grid-cols-2 gap-2">
-                    {[
-                      { v: 'stairs', l: 'Stairs / no elevator', p: 40 },
-                      { v: 'extra-stop', l: 'Extra stop', p: 60 },
-                      { v: 'packing', l: 'Packing / wrapping', p: 75 },
-                      { v: 'disposal', l: 'Haul-away / disposal', p: 50 },
-                      { v: 'extra-labor', l: 'Extra labor', p: 65 },
-                      { v: 'assembly', l: 'Assembly / disassembly', p: 55 },
-                    ].map(a => (
-                      <label key={a.v} className="flex items-center gap-2.5 text-sm px-3 py-2.5 rounded-xl cursor-pointer" style={{ background: 'rgba(255,255,255,.04)', border: '1px solid var(--line)', color: 'var(--text)' }}>
-                        <input type="checkbox" name="addOns" value={a.v} style={{ width: 16, height: 16, accentColor: '#E0002A', flexShrink: 0 }} />
-                        <span className="flex-1">{a.l}</span>
-                        <span style={{ color: 'var(--muted)' }}>+${a.p}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="pt-3" style={{ borderTop: '1px solid var(--line)' }}>
-                <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>{isJobBased ? 'What needs to go?' : 'Notes (optional)'}</label>
-                <textarea name="notes" rows={3} placeholder={isEviction ? 'e.g. full apartment/house trash-out, tenant belongings left behind, furniture & appliances, number of bedrooms, stairs/elevator access…' : isJunk ? 'e.g. garage cleanout, old appliances & furniture, construction debris, stairs/elevator access, heavy items… (note: we can’t haul hazardous materials)' : 'Special handling, appointment requirements, dock conditions, etc.'} style={{ ...iStyle, resize: 'vertical' }} />
-                <label className="block text-xs font-semibold mb-1.5 mt-3" style={{ color: 'var(--muted)' }}>How did you hear about us? <span style={{ fontWeight: 400 }}>(optional — referral name)</span></label>
-                <input name="referral" placeholder="e.g. Google, or a friend's name" style={iStyle} />
-                <label className="block text-xs font-semibold mb-1.5 mt-3" style={{ color: 'var(--muted)' }}>Promo code <span style={{ fontWeight: 400 }}>(optional)</span></label>
-                <input name="promo" placeholder="Enter a code for a discount" style={{ ...iStyle, textTransform: 'uppercase' }} />
-              </div>
-
-              {status === 'error' && <p className="text-sm" style={{ color: '#f87171' }}>{errorMsg}</p>}
-
-              <button type="submit" disabled={status === 'sending'} className="btn w-full" style={{ justifyContent: 'center' }}>
-                {status === 'sending' ? (isJobBased ? 'Sending…' : 'Computing…') : (isJobBased ? 'Request My Quote →' : 'Get My Estimate →')}
-              </button>
-              <p className="text-xs text-center" style={{ color: 'rgba(255,255,255,.4)' }}>
-                {isJobBased
-                  ? 'No instant price — every job is different. We’ll review the details and send a custom quote within 1 business day.'
-                  : 'Estimate is non-binding. Final quote depends on appointment windows, dock conditions, and handling needs.'}
-              </p>
-              <p className="text-xs text-center" style={{ color: 'rgba(255,255,255,.3)' }}>
-                By submitting, you agree to our{' '}
-                <a href="/terms" className="underline" style={{ color: 'rgba(255,255,255,.55)' }}>Terms</a> and{' '}
-                <a href="/privacy" className="underline" style={{ color: 'rgba(255,255,255,.55)' }}>Privacy Policy</a>.
-              </p>
-            </form>
             </>
-          ) : null}
+          )}
         </div>
       </section>
 
-      <footer className="py-10 px-6 text-center text-xs" style={{ borderTop: '1px solid var(--line)', color: 'rgba(255,255,255,.3)' }}>
+      {/* ── Mobile sticky summary bar ── */}
+      {!sent && svc && (
+        <div className="lg:hidden fixed inset-x-0 bottom-0 z-40 px-4 py-3" style={{ background: 'rgba(11,11,12,0.96)', backdropFilter: 'blur(14px)', borderTop: '1px solid var(--line)' }}>
+          <div className="flex items-center justify-between gap-3">
+            <div style={{ minWidth: 0 }}>
+              <p className="text-xs" style={{ color: 'var(--muted)' }}>Step {step + 1} of 6 · {STEP_LABELS[step]}</p>
+              <p className="text-sm font-bold text-white truncate">{svc.label}{size ? ` · ${size.label}` : ''}</p>
+            </div>
+            <div className="text-right" style={{ flexShrink: 0 }}>
+              {showLow != null ? (
+                <p className="text-base font-black" style={{ color: RED }}>${showLow.toLocaleString()}–${showHigh!.toLocaleString()}</p>
+              ) : (
+                <p className="text-xs" style={{ color: 'var(--muted)' }}>Quoted by our team</p>
+              )}
+              <p className="text-[11px]" style={{ color: 'rgba(255,255,255,.4)' }}>Deposit ${deposit}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <footer className="relative z-10 py-10 px-6 text-center text-xs" style={{ borderTop: '1px solid var(--line)', color: 'rgba(255,255,255,.3)' }}>
         © {new Date().getFullYear()} J Kiss LLC · US DOT 3484556 · MC 01155352
       </footer>
     </main>
+  )
+}
+
+type Estimate = { low: number; high: number; miles: number; fuelCharge?: number; promoCode?: string; promoPct?: number; confidence?: string; jobBased?: boolean; pickupLabel?: string; deliveryLabel?: string }
+
+// ── Progress indicator ───────────────────────────────────────────────────────
+function ProgressBar({ step, setStep }: { step: number; setStep: (n: number) => void }) {
+  return (
+    <div className="px-5 sm:px-8 pt-6 pb-5" style={{ borderBottom: '1px solid var(--line)' }}>
+      {/* Mobile: label + fill bar */}
+      <div className="sm:hidden">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Step {step + 1} of 6</span>
+          <span className="text-xs font-bold" style={{ color: RED }}>{STEP_LABELS[step]}</span>
+        </div>
+        <div style={{ height: 6, borderRadius: 999, background: 'rgba(255,255,255,.08)', overflow: 'hidden' }}>
+          <div style={{ height: '100%', width: `${((step + 1) / 6) * 100}%`, borderRadius: 999, background: `linear-gradient(90deg, ${RED}, #ff6680)`, transition: 'width .5s cubic-bezier(.16,1,.3,1)' }} />
+        </div>
+      </div>
+      {/* Desktop: clickable step chips */}
+      <ol className="hidden sm:flex gap-2">
+        {STEP_LABELS.map((label, i) => {
+          const state = i === step ? 'current' : i < step ? 'done' : 'future'
+          return (
+            <li key={label} className="flex-1">
+              <button
+                type="button"
+                disabled={i > step}
+                onClick={() => i < step && setStep(i)}
+                className="w-full text-left rounded-xl px-3 py-2.5 wiz-ease"
+                style={{
+                  cursor: i < step ? 'pointer' : 'default',
+                  border: `1px solid ${state === 'current' ? RED : state === 'done' ? 'rgba(255,255,255,.14)' : 'rgba(255,255,255,.06)'}`,
+                  background: state === 'current' ? 'rgba(224,0,42,.10)' : 'transparent',
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 999, fontSize: 11, fontWeight: 800, border: `1px solid ${state === 'future' ? 'rgba(255,255,255,.2)' : RED}`, background: state === 'done' ? RED : 'transparent', color: state === 'done' ? '#fff' : state === 'current' ? RED : 'rgba(255,255,255,.35)' }}>
+                    {state === 'done' ? <Check size={11} /> : i + 1}
+                  </span>
+                  <span className="text-xs font-semibold truncate" style={{ color: state === 'future' ? 'rgba(255,255,255,.3)' : state === 'current' ? '#fff' : 'var(--muted)' }}>{label}</span>
+                </div>
+              </button>
+            </li>
+          )
+        })}
+      </ol>
+    </div>
+  )
+}
+
+// ── Step 1: Service ──────────────────────────────────────────────────────────
+function StepService({ svcId, onPick }: { svcId: string; onPick: (id: string) => void }) {
+  return (
+    <>
+      <StepHeading kicker="What can we handle for you?" title="What do you need moved?" sub="Pick the closest fit — you can add details next." />
+      <div className="grid sm:grid-cols-2 gap-3">
+        {SERVICES.map(s => {
+          const active = svcId === s.id
+          const Icon = s.icon
+          return (
+            <button
+              key={s.id} type="button" onClick={() => onPick(s.id)}
+              className="text-left rounded-2xl p-4 wiz-ease group"
+              style={{
+                border: `1px solid ${active ? RED : 'rgba(255,255,255,.08)'}`,
+                background: active ? 'rgba(224,0,42,.07)' : 'rgba(255,255,255,.02)',
+                boxShadow: active ? '0 0 0 1px rgba(224,0,42,.35), 0 18px 50px -22px rgba(224,0,42,.4)' : 'none',
+              }}
+            >
+              <div className="flex items-start gap-3">
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 42, height: 42, borderRadius: 12, flexShrink: 0, background: active ? RED : 'rgba(255,255,255,.06)', color: active ? '#fff' : RED, transition: 'background .25s, color .25s' }}>
+                  <Icon size={20} />
+                </span>
+                <div style={{ minWidth: 0 }}>
+                  <p className="font-bold text-white leading-tight">{s.label}</p>
+                  <p className="text-sm mt-1" style={{ color: 'var(--muted)', lineHeight: 1.4 }}>{s.desc}</p>
+                </div>
+                <span style={{ marginLeft: 'auto', flexShrink: 0, width: 20, height: 20, borderRadius: 999, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${active ? RED : 'rgba(255,255,255,.2)'}`, background: active ? RED : 'transparent', color: '#fff' }}>
+                  {active && <Check size={12} />}
+                </span>
+              </div>
+              <div className="flex items-center gap-3 mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,.06)' }}>
+                <span className="text-xs font-semibold flex items-center gap-1" style={{ color: 'var(--muted)' }}><CalendarClock size={13} /> {s.turnaround}</span>
+                {s.starting && <span className="text-xs font-bold ml-auto" style={{ color: RED }}>{s.starting}</span>}
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    </>
+  )
+}
+
+// ── Step 2: The job ──────────────────────────────────────────────────────────
+function StepJob(props: {
+  svc: Svc; singleSite: boolean
+  pickupText: string; setPickupText: (v: string) => void
+  deliveryText: string; setDeliveryText: (v: string) => void
+  sizeId: string; setSizeId: (v: string) => void
+  heavy: boolean | null; setHeavy: (v: boolean) => void
+  stairs: boolean | null; setStairs: (v: boolean) => void
+  elevator: boolean | null; setElevator: (v: boolean) => void
+  prefDate: string; setPrefDate: (v: string) => void
+}) {
+  const { svc, singleSite } = props
+  const today = new Date(); const min = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  return (
+    <>
+      <StepHeading kicker={svc.label} title="Tell us about the job." sub="Just the essentials — we'll confirm the rest when we reach out." />
+
+      <div className="grid gap-4">
+        <div>
+          <label style={lbl}>{singleSite ? 'Where is the job?' : 'Where are we picking up?'}</label>
+          <div style={{ position: 'relative' }}>
+            <MapPin size={16} style={{ position: 'absolute', left: 14, top: 15, color: 'var(--muted)' }} />
+            <input value={props.pickupText} onChange={e => props.setPickupText(e.target.value)} placeholder="Address or ZIP — e.g. 123 Main St, Dallas 75201" style={{ ...inp, paddingLeft: 40 }} />
+          </div>
+        </div>
+        {!singleSite && (
+          <div>
+            <label style={lbl}>Where are we delivering?</label>
+            <div style={{ position: 'relative' }}>
+              <MapPin size={16} style={{ position: 'absolute', left: 14, top: 15, color: 'var(--muted)' }} />
+              <input value={props.deliveryText} onChange={e => props.setDeliveryText(e.target.value)} placeholder="Address or ZIP — e.g. 456 Oak Ave, Fort Worth 76102" style={{ ...inp, paddingLeft: 40 }} />
+            </div>
+          </div>
+        )}
+
+        <div>
+          <label style={lbl}>How much are we moving?</label>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {SIZES.map(s => {
+              const active = props.sizeId === s.id
+              return (
+                <button key={s.id} type="button" onClick={() => props.setSizeId(s.id)} className="text-left rounded-xl px-3 py-2.5 wiz-ease"
+                  style={{ border: `1px solid ${active ? RED : 'rgba(255,255,255,.08)'}`, background: active ? 'rgba(224,0,42,.07)' : 'rgba(255,255,255,.02)' }}>
+                  <p className="text-sm font-bold text-white leading-tight">{s.label}</p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>{s.hint}</p>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="grid sm:grid-cols-3 gap-3">
+          <YesNo label="Large or heavy items?" value={props.heavy} onChange={props.setHeavy} />
+          <YesNo label="Any stairs?" value={props.stairs} onChange={props.setStairs} />
+          <YesNo label="Elevator access?" value={props.elevator} onChange={props.setElevator} />
+        </div>
+
+        <div>
+          <label style={lbl}>Preferred date <span style={{ textTransform: 'none', fontWeight: 400 }}>(optional)</span></label>
+          <input type="date" min={min} value={props.prefDate} onChange={e => props.setPrefDate(e.target.value)} style={{ ...inp, colorScheme: 'dark', cursor: 'pointer' }} />
+        </div>
+      </div>
+    </>
+  )
+}
+
+function YesNo({ label, value, onChange }: { label: string; value: boolean | null; onChange: (v: boolean) => void }) {
+  return (
+    <div>
+      <label style={lbl}>{label}</label>
+      <div className="flex gap-2">
+        {[['Yes', true], ['No', false]].map(([t, v]) => {
+          const active = value === v
+          return (
+            <button key={String(v)} type="button" onClick={() => onChange(v as boolean)} className="flex-1 rounded-xl py-2.5 text-sm font-bold wiz-ease"
+              style={{ border: `1px solid ${active ? RED : 'rgba(255,255,255,.1)'}`, background: active ? 'rgba(224,0,42,.10)' : 'rgba(255,255,255,.02)', color: active ? '#fff' : 'var(--muted)' }}>
+              {t as string}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── Step 3: Photos ───────────────────────────────────────────────────────────
+function StepPhotos(props: {
+  photos: string[]; photoBusy: boolean; dragOver: boolean; setDragOver: (v: boolean) => void
+  onAdd: (f: FileList) => void; onRemove: (i: number) => void
+}) {
+  return (
+    <>
+      <StepHeading kicker="Help us see the job" title="Show us what we're moving." sub="The more photos you provide, the more accurate your quote will be. This step is optional — but it really helps." />
+      <label
+        onDragOver={e => { e.preventDefault(); props.setDragOver(true) }}
+        onDragLeave={() => props.setDragOver(false)}
+        onDrop={e => { e.preventDefault(); props.setDragOver(false); if (e.dataTransfer.files?.length) props.onAdd(e.dataTransfer.files) }}
+        className="flex flex-col items-center justify-center text-center rounded-2xl wiz-ease"
+        style={{ padding: '38px 20px', cursor: props.photoBusy ? 'wait' : 'pointer', border: `1.5px dashed ${props.dragOver ? RED : 'rgba(255,255,255,.18)'}`, background: props.dragOver ? 'rgba(224,0,42,.06)' : 'rgba(255,255,255,.02)' }}
+      >
+        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 52, height: 52, borderRadius: 999, background: 'rgba(224,0,42,.12)', color: RED, marginBottom: 12 }}>
+          {props.photoBusy ? <Loader2 size={24} className="animate-spin" /> : <Camera size={24} />}
+        </span>
+        <p className="font-bold text-white">{props.photoBusy ? 'Uploading…' : 'Drag photos here, or tap to browse'}</p>
+        <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>JPG, PNG or HEIC · up to 8 photos</p>
+        <input type="file" accept="image/*" multiple onChange={e => { const fs = e.target.files; e.target.value = ''; if (fs?.length) props.onAdd(fs) }} disabled={props.photoBusy} style={{ display: 'none' }} />
+      </label>
+
+      {props.photos.length > 0 && (
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5 mt-4">
+          {props.photos.map((url, i) => (
+            <div key={url} style={{ position: 'relative', aspectRatio: '1 / 1', borderRadius: 12, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={url} alt="Job photo" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <button type="button" onClick={() => props.onRemove(i)} aria-label="Remove photo" style={{ position: 'absolute', top: 4, right: 4, width: 24, height: 24, borderRadius: 999, border: 'none', background: 'rgba(0,0,0,.7)', color: '#fff', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  )
+}
+
+// ── Step 4: Upgrades ─────────────────────────────────────────────────────────
+function StepUpgrades({ selected, onToggle }: { selected: string[]; onToggle: (id: string) => void }) {
+  return (
+    <>
+      <StepHeading kicker="Make it effortless" title="Customize your service." sub="Optional upgrades that save you time and hassle. Add what you need — skip the rest." />
+      <div className="grid sm:grid-cols-2 gap-3">
+        {UPGRADES.map(u => {
+          const active = selected.includes(u.id)
+          const Icon = u.icon
+          return (
+            <button key={u.id} type="button" onClick={() => onToggle(u.id)} className="text-left rounded-2xl p-4 wiz-ease"
+              style={{ border: `1px solid ${active ? RED : 'rgba(255,255,255,.08)'}`, background: active ? 'rgba(224,0,42,.07)' : 'rgba(255,255,255,.02)', boxShadow: active ? '0 0 0 1px rgba(224,0,42,.35)' : 'none' }}>
+              <div className="flex items-start gap-3">
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 38, height: 38, borderRadius: 10, flexShrink: 0, background: active ? RED : 'rgba(255,255,255,.06)', color: active ? '#fff' : RED, transition: 'background .25s, color .25s' }}>
+                  <Icon size={18} />
+                </span>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div className="flex items-center gap-2">
+                    <p className="font-bold text-white leading-tight">{u.label}</p>
+                    <span className="text-xs font-bold ml-auto" style={{ color: active ? RED : 'var(--muted)' }}>+${u.price}</span>
+                  </div>
+                  <p className="text-sm mt-1" style={{ color: 'var(--muted)', lineHeight: 1.4 }}>{u.why}</p>
+                </div>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+      <p className="text-xs mt-4 text-center" style={{ color: 'rgba(255,255,255,.4)' }}>Add-on prices are estimates — your final quote confirms everything. No upgrades? Just continue.</p>
+    </>
+  )
+}
+
+// ── Step 5: Your info ────────────────────────────────────────────────────────
+function StepContact(props: {
+  name: string; setName: (v: string) => void; company: string; setCompany: (v: string) => void
+  phone: string; setPhone: (v: string) => void; email: string; setEmail: (v: string) => void
+  contactMethod: string; setContactMethod: (v: string) => void; promo: string; setPromo: (v: string) => void
+}) {
+  return (
+    <>
+      <StepHeading kicker="Almost there" title="Where should we send your quote?" sub="We'll only use this to send your quote and coordinate the job." />
+      <div className="grid sm:grid-cols-2 gap-4">
+        <div className="sm:col-span-2"><label style={lbl}>Full name</label><input value={props.name} onChange={e => props.setName(e.target.value)} autoCapitalize="words" placeholder="Jordan Kiss" style={inp} /></div>
+        <div><label style={lbl}>Company <span style={{ textTransform: 'none', fontWeight: 400 }}>(optional)</span></label><input value={props.company} onChange={e => props.setCompany(e.target.value)} placeholder="Company name" style={inp} /></div>
+        <div><label style={lbl}>Phone</label><input value={props.phone} onChange={e => props.setPhone(e.target.value)} type="tel" placeholder="(555) 000-0000" style={inp} /></div>
+        <div><label style={lbl}>Email</label><input value={props.email} onChange={e => props.setEmail(e.target.value)} type="email" placeholder="you@email.com" style={inp} /></div>
+        <div>
+          <label style={lbl}>Best way to reach you</label>
+          <select value={props.contactMethod} onChange={e => props.setContactMethod(e.target.value)} style={{ ...inp, cursor: 'pointer', colorScheme: 'dark' }}>
+            <option>Text message</option>
+            <option>Phone call</option>
+            <option>Email</option>
+          </select>
+        </div>
+        <div className="sm:col-span-2"><label style={lbl}>Promo code <span style={{ textTransform: 'none', fontWeight: 400 }}>(optional)</span></label><input value={props.promo} onChange={e => props.setPromo(e.target.value.toUpperCase())} placeholder="Have a code?" style={{ ...inp, textTransform: 'uppercase' }} /></div>
+      </div>
+      <p className="text-xs mt-4" style={{ color: 'rgba(255,255,255,.4)', lineHeight: 1.5 }}>
+        By providing your phone number, you agree to receive booking and service-related text messages from J Kiss LLC at the number provided, including messages sent by autodialer. Consent is not a condition of purchase. Message &amp; data rates may apply. Reply STOP to opt out, HELP for help.
+      </p>
+    </>
+  )
+}
+
+// ── Step 6: Review ───────────────────────────────────────────────────────────
+function StepReview(props: {
+  svc: Svc; singleSite: boolean; pickupText: string; deliveryText: string
+  size?: { label: string }; photos: string[]; upgrades: string[]; prefDate: string
+  name: string; company: string; email: string; phone: string; contactMethod: string
+  showLow: number | null; showHigh: number | null; deposit: string
+  est: { hasPrice: boolean } | null
+  reserveOpen: boolean; avail: { dates: string[]; depositCents: number } | null
+  bookDate: string; setBookDate: (v: string) => void; bookWin: string; setBookWin: (v: string) => void
+  onOpenReserve: () => void; onReserve: () => void; jobBased: boolean
+}) {
+  const rows: [string, string][] = [
+    ['Service', props.svc.label],
+    [props.singleSite ? 'Job location' : 'Pickup', props.pickupText || '—'],
+    ...(!props.singleSite ? [['Delivery', props.deliveryText || '—'] as [string, string]] : []),
+    ['Size', props.size?.label ?? '—'],
+    ['Photos', props.photos.length ? `${props.photos.length} attached` : 'None'],
+    ['Upgrades', props.upgrades.length ? props.upgrades.map(id => UPGRADES.find(u => u.id === id)?.label).filter(Boolean).join(', ') : 'None'],
+    ['Preferred date', props.prefDate ? fmtDateLabel(props.prefDate) : 'Flexible'],
+    ['Name', props.name || '—'],
+    ...(props.company ? [['Company', props.company] as [string, string]] : []),
+    ['Contact', [props.email, props.phone].filter(Boolean).join(' · ') || '—'],
+    ['Preferred contact', props.contactMethod],
+  ]
+  return (
+    <>
+      <StepHeading kicker="One last look" title="Review & request." sub="Confirm the details below — then we'll get to work on your number." />
+
+      <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--line)' }}>
+        {props.showLow != null && (
+          <div className="px-5 py-4 text-center" style={{ background: 'rgba(224,0,42,.07)', borderBottom: '1px solid var(--line)' }}>
+            <p className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Estimated range</p>
+            <p className="text-3xl font-black mt-1" style={{ color: RED, letterSpacing: '-0.03em' }}>${props.showLow.toLocaleString()}–${props.showHigh!.toLocaleString()}</p>
+            <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,.5)' }}>Instant estimate — your team confirms the firm number.</p>
+          </div>
+        )}
+        <div className="px-5 py-2">
+          {rows.map(([k, v], i) => (
+            <div key={k} className="flex justify-between gap-4 py-2.5 text-sm" style={i > 0 ? { borderTop: '1px solid rgba(255,255,255,.06)' } : undefined}>
+              <span style={{ color: 'var(--muted)', flexShrink: 0 }}>{k}</span>
+              <span className="text-white text-right" style={{ minWidth: 0 }}>{v}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3 mt-5 rounded-xl px-4 py-3" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+        <Star size={16} style={{ color: RED, flexShrink: 0, marginTop: 2 }} />
+        <p className="text-sm" style={{ color: 'var(--muted)', lineHeight: 1.5 }}>
+          <strong className="text-white">Most quotes are returned within one business hour</strong> during operating hours. We&apos;ll reach out by your preferred method with a firm number.
+        </p>
+      </div>
+
+      {/* Optional: lock a date now (eligible job-based services) */}
+      {props.jobBased && (
+        <div className="mt-5 rounded-2xl" style={{ border: '1px solid rgba(224,0,42,.22)', overflow: 'hidden' }}>
+          {!props.reserveOpen ? (
+            <button type="button" onClick={props.onOpenReserve} className="w-full text-left px-5 py-4 wiz-ease" style={{ background: 'rgba(224,0,42,.05)' }}>
+              <p className="font-bold text-white flex items-center gap-2"><Zap size={15} style={{ color: RED }} /> Rather lock your date now?</p>
+              <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>Reserve an open date with a fully-refundable ${props.deposit} deposit — skip the callback.</p>
+            </button>
+          ) : (
+            <div className="px-5 py-4 wiz-fade">
+              <p className="font-bold text-white mb-3 flex items-center gap-2"><Zap size={15} style={{ color: RED }} /> Reserve your date</p>
+              {!props.avail ? (
+                <p className="text-sm flex items-center gap-2" style={{ color: 'var(--muted)' }}><Loader2 size={14} className="animate-spin" /> Loading open dates…</p>
+              ) : props.avail.dates.length === 0 ? (
+                <p className="text-sm" style={{ color: 'var(--muted)' }}>No online dates are open for a job this size right now — request your quote above and we&apos;ll schedule you.</p>
+              ) : (
+                <>
+                  <label style={lbl}>Open dates</label>
+                  <div className="flex flex-wrap gap-2 mb-4" style={{ maxHeight: 150, overflowY: 'auto' }}>
+                    {props.avail.dates.map(d => {
+                      const active = props.bookDate === d
+                      return <button key={d} type="button" onClick={() => props.setBookDate(d)} className="rounded-xl px-3 py-2 text-sm font-semibold wiz-ease" style={{ border: `1px solid ${active ? RED : 'rgba(255,255,255,.12)'}`, background: active ? RED : 'rgba(255,255,255,.04)', color: active ? '#fff' : 'var(--text)' }}>{fmtDateLabel(d)}</button>
+                    })}
+                  </div>
+                  {props.bookDate && (
+                    <>
+                      <label style={lbl}>Arrival window</label>
+                      <div className="flex flex-wrap gap-2 mb-4">
+                        {WINDOWS.map(w => {
+                          const active = props.bookWin === w
+                          return <button key={w} type="button" onClick={() => props.setBookWin(w)} className="rounded-xl px-3 py-2 text-sm font-semibold wiz-ease" style={{ border: `1px solid ${active ? RED : 'rgba(255,255,255,.12)'}`, background: active ? RED : 'rgba(255,255,255,.04)', color: active ? '#fff' : 'var(--text)' }}>{w}</button>
+                        })}
+                      </div>
+                    </>
+                  )}
+                  <button type="button" onClick={props.onReserve} disabled={!props.bookDate || !props.bookWin} className="btn w-full wiz-ease" style={{ justifyContent: 'center', opacity: props.bookDate && props.bookWin ? 1 : 0.5 }}>
+                    Reserve &amp; Pay ${props.deposit} <ArrowRight size={16} />
+                  </button>
+                  <p className="text-xs text-center mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Your deposit holds the date and is fully refunded if we can&apos;t make it.</p>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  )
+}
+
+// ── Sticky summary card ──────────────────────────────────────────────────────
+function SummaryCard(props: {
+  svc?: Svc; size?: { label: string }; singleSite: boolean; pickupText: string; deliveryText: string
+  photos: string[]; upgrades: string[]; prefDate: string
+  showLow: number | null; showHigh: number | null; deposit: string; est: { hasPrice: boolean } | null
+}) {
+  const { svc } = props
+  const Row = ({ k, v }: { k: string; v: string }) => (
+    <div className="flex justify-between gap-3 py-1.5 text-sm">
+      <span style={{ color: 'var(--muted)', flexShrink: 0 }}>{k}</span>
+      <span className="text-white text-right" style={{ minWidth: 0 }}>{v}</span>
+    </div>
+  )
+  return (
+    <div className="glass-card" style={{ borderRadius: 20, overflow: 'hidden' }}>
+      <div className="px-5 py-4" style={{ background: 'linear-gradient(135deg, rgba(224,0,42,.12), rgba(255,255,255,.02))', borderBottom: '1px solid var(--line)' }}>
+        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: RED }}>Your job</p>
+        <p className="text-lg font-black text-white mt-0.5">{svc?.label ?? 'Choose a service'}</p>
+      </div>
+      <div className="px-5 py-4">
+        {!svc ? (
+          <p className="text-sm" style={{ color: 'var(--muted)', lineHeight: 1.5 }}>Pick a service to see your quote take shape here.</p>
+        ) : (
+          <>
+            {props.size && <Row k="Size" v={props.size.label} />}
+            {props.pickupText && <Row k={props.singleSite ? 'Location' : 'Pickup'} v={props.pickupText} />}
+            {!props.singleSite && props.deliveryText && <Row k="Delivery" v={props.deliveryText} />}
+            {props.photos.length > 0 && <Row k="Photos" v={`${props.photos.length} attached`} />}
+            {props.upgrades.length > 0 && <Row k="Upgrades" v={`${props.upgrades.length} selected`} />}
+            {props.prefDate && <Row k="Preferred" v={fmtDateLabel(props.prefDate)} />}
+
+            <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--line)' }}>
+              {props.showLow != null ? (
+                <>
+                  <p className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Estimated range</p>
+                  <p className="text-2xl font-black mt-0.5" style={{ color: RED, letterSpacing: '-0.02em' }}>${props.showLow.toLocaleString()}–${props.showHigh!.toLocaleString()}</p>
+                </>
+              ) : (
+                <p className="text-sm" style={{ color: 'var(--muted)' }}>Priced by our team — most quotes back within <strong className="text-white">one business hour</strong>.</p>
+              )}
+              <p className="text-xs mt-1.5" style={{ color: 'rgba(255,255,255,.45)' }}>Refundable deposit to reserve: <strong style={{ color: '#fff' }}>${props.deposit}</strong></p>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Success ──────────────────────────────────────────────────────────────────
+function SuccessView({ sent, deposit, onReset }: { sent: { estimate?: Estimate }; deposit: string; onReset: () => void }) {
+  const e = sent.estimate
+  return (
+    <div className="max-w-2xl mx-auto wiz-reveal">
+      <div className="glass-card p-8 sm:p-10 text-center" style={{ borderRadius: 24, border: '1px solid rgba(224,0,42,.25)' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 64, height: 64, borderRadius: 999, background: 'rgba(224,0,42,.12)', color: RED, marginBottom: 18 }}>
+          <Check size={32} />
+        </span>
+        <h1 className="text-3xl md:text-4xl font-black text-white mb-3" style={{ letterSpacing: '-0.03em', fontFamily: 'var(--font-display)' }}>Request received.</h1>
+        {e && e.low > 0 ? (
+          <>
+            <p className="text-base mb-4" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>Here&apos;s your instant estimate. Our team is already reviewing the details and will confirm a firm number shortly.</p>
+            <div className="inline-block rounded-2xl px-8 py-5 mb-4" style={{ background: 'rgba(224,0,42,.07)', border: '1px solid rgba(224,0,42,.25)' }}>
+              <p className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Estimated range</p>
+              <p className="text-5xl font-black tabular-nums mt-1" style={{ color: RED, letterSpacing: '-0.04em', fontFamily: 'var(--font-display)' }}>${e.low.toLocaleString()}–${e.high.toLocaleString()}</p>
+              {e.promoCode && <p className="text-xs mt-2 font-semibold" style={{ color: '#34d399' }}>✓ Promo {e.promoCode} applied{e.promoPct ? ` — ${e.promoPct}% off` : ''}.</p>}
+            </div>
+          </>
+        ) : (
+          <p className="text-base mb-4" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>Because every job is a little different, our team will review your details and send a custom quote — most come back within one business hour during operating hours.</p>
+        )}
+        <p className="text-sm" style={{ color: 'rgba(255,255,255,.5)', lineHeight: 1.6 }}>Need it handled fast? Call or email us at <a href="mailto:info@jkissllc.com" className="underline" style={{ color: '#fff' }}>info@jkissllc.com</a>.</p>
+        <div className="mt-8 flex justify-center gap-3 flex-wrap">
+          <button onClick={onReset} className="btn wiz-ease">Request Another Quote</button>
+          <Link href="/" className="btn-ghost wiz-ease">Back to Home</Link>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Shared heading ───────────────────────────────────────────────────────────
+function StepHeading({ kicker, title, sub }: { kicker: string; title: string; sub: string }) {
+  return (
+    <div className="mb-6">
+      <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: RED, letterSpacing: '0.14em' }}>{kicker}</p>
+      <h2 className="text-2xl font-black text-white" style={{ letterSpacing: '-0.02em', fontFamily: 'var(--font-display)' }}>{title}</h2>
+      <p className="text-sm mt-2" style={{ color: 'var(--muted)', lineHeight: 1.55 }}>{sub}</p>
+    </div>
   )
 }
