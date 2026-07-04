@@ -153,7 +153,10 @@ export default function QuotePage() {
   const [sent, setSent] = useState<{ estimate?: Estimate } | null>(null)
 
   // Deep-link: /quote?service=junk-removal preselects a card and jumps to step 2.
+  // Always land at the top — Next's client navigation keeps the homepage's scroll
+  // position, so reset it on mount whether or not a service was deep-linked.
   useEffect(() => {
+    window.scrollTo(0, 0)
     const q = new URLSearchParams(window.location.search).get('service')
     if (!q) return
     const match = SERVICES.find(s => s.id === q || s.quoteType === q || s.bookType === q)
