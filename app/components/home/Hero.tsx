@@ -28,7 +28,7 @@ export default function Hero() {
 
       <div className="wrap" style={{ position: 'relative', paddingTop: 128, paddingBottom: 88 }}>
         <Reveal>
-          <span className="eyebrow">Box-Truck Delivery · Junk Removal · Cleanouts</span>
+          <span className="eyebrow">Box-Truck&nbsp;Delivery ·&nbsp;Junk&nbsp;Removal ·&nbsp;Cleanouts</span>
         </Reveal>
 
         <Reveal as="h1" delay={80} className="display-1" style={{ marginTop: 22, maxWidth: '15ch' }}>

@@ -354,7 +354,12 @@ h1, h2, h3, .display { font-family: var(--font-display); font-feature-settings: 
   font-family: var(--font-mono); font-size: 12px; font-weight: 600;
   letter-spacing: 0.16em; text-transform: uppercase; color: var(--red);
 }
-.eyebrow::before { content: ''; width: 22px; height: 1px; background: var(--red); opacity: .6; }
+.eyebrow::before { content: ''; width: 22px; height: 1px; background: var(--red); opacity: .6; flex-shrink: 0; }
+/* On phones, tighten the eyebrow so multi-item lines fit cleanly (no orphaned word / dangling separator). */
+@media (max-width: 640px) {
+  .eyebrow { font-size: 11px; letter-spacing: 0.07em; }
+  .eyebrow::before { width: 16px; }
+}
 
 /* Display type scale */
 .display-1 { font-family: var(--font-display); font-weight: 700; letter-spacing: -0.03em; line-height: 1.02; font-size: clamp(2.6rem, 6vw, 4.6rem); }
