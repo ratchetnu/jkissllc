@@ -81,16 +81,16 @@ function Hub() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {active.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} upcoming={workload[s.id] || []} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
+          {active.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} upcoming={workload[s.id] || []} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
           {inactive.length > 0 && <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)', margin: '14px 0 2px' }}>Inactive</div>}
-          {inactive.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} upcoming={workload[s.id] || []} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
+          {inactive.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} upcoming={workload[s.id] || []} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
         </div>
       )}
     </div>
   )
 }
 
-function EmployeeCard({ s, st, upcoming, open, onToggle, onChanged, setMsg, delay }: { s: Staff; st?: CStats; upcoming: RouteLite[]; open: boolean; onToggle: () => void; onChanged: () => void; setMsg: (m: string) => void; delay: number }) {
+function EmployeeCard({ s, st, upcoming, open, onToggle, onOpen, onChanged, setMsg, delay }: { s: Staff; st?: CStats; upcoming: RouteLite[]; open: boolean; onToggle: () => void; onOpen: () => void; onChanged: () => void; setMsg: (m: string) => void; delay: number }) {
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
   const score = st?.score
@@ -105,7 +105,7 @@ function EmployeeCard({ s, st, upcoming, open, onToggle, onChanged, setMsg, dela
 
   return (
     <div className="os-card os-rise" style={{ overflow: 'hidden', opacity: s.active ? 1 : .6, animationDelay: `${Math.min(delay * 40, 200)}ms` }}>
-      <button onClick={onToggle} className="os-tap" style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 15, display: 'flex', alignItems: 'center', gap: 13 }}>
+      <div onClick={onToggle} className="os-tap" style={{ cursor: 'pointer', padding: 15, display: 'flex', alignItems: 'center', gap: 13 }}>
         <Avatar s={s} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -119,8 +119,12 @@ function EmployeeCard({ s, st, upcoming, open, onToggle, onChanged, setMsg, dela
             {!s.phone && <span style={{ color: '#fca5a5', display: 'inline-flex', alignItems: 'center', gap: 3 }}><Phone size={11} /> no phone</span>}
           </div>
         </div>
+        <button onClick={e => { e.stopPropagation(); onOpen(); setEditing(true) }} aria-label={`Edit ${s.name}`} className="os-tap"
+          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 10, background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', color: 'var(--muted)', cursor: 'pointer', flexShrink: 0 }}>
+          <Pencil size={15} />
+        </button>
         <ChevronDown size={19} style={{ color: 'var(--muted)', flexShrink: 0, transition: 'transform .3s var(--os-ease)', transform: open ? 'rotate(180deg)' : 'none' }} />
-      </button>
+      </div>
 
       <div className={`os-expand${open ? ' open' : ''}`}>
         <div><div style={{ padding: '0 15px 16px' }}>
