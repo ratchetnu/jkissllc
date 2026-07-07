@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { usePathname } from 'next/navigation'
 import { useIdleLogout } from './useIdleLogout'
 
 const iStyle: React.CSSProperties = {
@@ -9,6 +10,31 @@ const iStyle: React.CSSProperties = {
   background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.10)',
   borderRadius: '10px', color: '#f3f4f6', fontSize: '14px', outline: 'none',
 }
+
+// Grouped admin destinations for the Menu dropdown.
+const NAV_GROUPS: { label: string; items: { href: string; label: string; badge?: boolean }[] }[] = [
+  { label: 'Operations', items: [
+    { href: '/admin/routes', label: 'Route Dispatch' },
+    { href: '/admin/routes/pay', label: 'Contractor Pay' },
+    { href: '/admin/routes/invoices', label: 'Client Invoices' },
+  ] },
+  { label: 'Customers', items: [
+    { href: '/admin/bookings', label: 'Bookings' },
+    { href: '/admin/inbox', label: 'Inbox', badge: true },
+    { href: '/admin/promos', label: 'Promos' },
+    { href: '/admin/reviews', label: 'Reviews' },
+  ] },
+  { label: 'Team', items: [
+    { href: '/admin/staff', label: 'Crew' },
+    { href: '/admin/careers', label: 'Careers' },
+    { href: '/admin/availability', label: 'Availability' },
+  ] },
+  { label: 'Business', items: [
+    { href: '/admin/disposal', label: 'Disposal Pricing' },
+    { href: '/admin/policy', label: 'Policy' },
+    { href: '/admin', label: 'Analytics' },
+  ] },
+]
 
 // Shared admin auth gate. Checks the httpOnly session, renders a login form when
 // signed out, and renders children + a nav header once authenticated.
@@ -19,6 +45,19 @@ export default function AdminGate({ title, children }: { title: string; children
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [unread, setUnread] = useState(0)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const pathname = usePathname()
+  const navRef = useRef<HTMLDivElement>(null)
+
+  // Close the menu on outside click / Escape, and whenever the route changes.
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDoc = (e: MouseEvent) => { if (navRef.current && !navRef.current.contains(e.target as Node)) setMenuOpen(false) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false) }
+    document.addEventListener('mousedown', onDoc); document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey) }
+  }, [menuOpen])
+  useEffect(() => { setMenuOpen(false) }, [pathname])
 
   useEffect(() => {
     fetch('/api/admin/session')
@@ -62,34 +101,61 @@ export default function AdminGate({ title, children }: { title: string; children
   // Auto sign-out after 10 minutes of inactivity.
   useIdleLogout(authed, signOut)
 
+  // Longest-prefix active match (so /admin/routes/pay highlights Contractor Pay).
+  const allItems = NAV_GROUPS.flatMap(g => g.items)
+  const activeHref = pathname === '/'
+    ? '/'
+    : allItems.filter(i => pathname === i.href || pathname.startsWith(i.href + '/')).sort((a, b) => b.href.length - a.href.length)[0]?.href
+
   const Header = () => (
-    <header className="fixed top-0 left-0 right-0 z-50 flex items-center gap-3 px-3 sm:px-5 py-3.5"
+    <header className="fixed top-0 left-0 right-0 z-50 flex items-center gap-2.5 px-4 sm:px-6 py-3.5"
       style={{ background: 'rgba(11,11,12,0.96)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
-      <style>{`.adminnav::-webkit-scrollbar{display:none}`}</style>
       <Link href="/" className="text-lg font-black tracking-tight shrink-0" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
         J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
       </Link>
-      <div className="adminnav flex items-center gap-1.5 text-xs font-semibold overflow-x-auto whitespace-nowrap"
-        style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch', marginLeft: 'auto' }}>
-        <Link href="/" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Home</Link>
-        <a href="/admin/operations" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(224,0,42,.14)', color: '#fff', fontWeight: 800 }}>✦ Operations</a>
-        <a href="/admin/bookings" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Bookings</a>
-        <a href="/admin/routes" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Routes</a>
-        <a href="/admin/routes/pay" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Pay</a>
-        <a href="/admin/routes/invoices" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Invoices</a>
-        <a href="/admin/inbox" className="relative px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: unread ? '#fff' : 'var(--muted)' }}>
-          Inbox
-          {unread > 0 && <span style={{ position: 'absolute', top: -5, right: -5, minWidth: 17, height: 17, padding: '0 4px', borderRadius: 99, background: 'var(--red)', color: '#fff', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{unread > 99 ? '99+' : unread}</span>}
-        </a>
-        <a href="/admin/promos" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Promos</a>
-        <a href="/admin/staff" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Crew</a>
-        <a href="/admin/careers" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Careers</a>
-        <a href="/admin/availability" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Availability</a>
-        <a href="/admin/disposal" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Disposal</a>
-        <a href="/admin/policy" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Policy</a>
-        <a href="/admin/reviews" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Reviews</a>
-        <a href="/admin" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Analytics</a>
-        {authed && <button onClick={signOut} className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Sign Out</button>}
+      {title && <span className="text-sm font-semibold shrink truncate" style={{ color: 'var(--muted)' }}>· {title}</span>}
+
+      <div ref={navRef} className="relative shrink-0" style={{ marginLeft: 'auto' }}>
+        <a href="/admin/operations" className="hidden sm:inline-flex items-center px-3 py-2 rounded-xl text-sm font-bold mr-1.5" style={{ background: 'rgba(224,0,42,.14)', color: '#fff', verticalAlign: 'middle' }}>✦ Operations</a>
+        <button onClick={() => setMenuOpen(o => !o)} aria-label="Menu" aria-expanded={menuOpen}
+          className="relative inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-bold"
+          style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.12)', color: '#fff' }}>
+          <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 3 }} aria-hidden>
+            <span style={{ width: 15, height: 2, background: '#fff', borderRadius: 2 }} />
+            <span style={{ width: 15, height: 2, background: '#fff', borderRadius: 2 }} />
+            <span style={{ width: 15, height: 2, background: '#fff', borderRadius: 2 }} />
+          </span>
+          Menu
+          {!menuOpen && unread > 0 && <span style={{ position: 'absolute', top: -5, right: -5, minWidth: 17, height: 17, padding: '0 4px', borderRadius: 99, background: 'var(--red)', color: '#fff', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{unread > 99 ? '99+' : unread}</span>}
+        </button>
+
+        {menuOpen && (
+          <div className="absolute right-0 mt-2 rounded-2xl overflow-hidden"
+            style={{ width: 268, maxHeight: '78vh', overflowY: 'auto', background: 'rgba(18,18,20,0.98)', backdropFilter: 'blur(16px)', border: '1px solid rgba(255,255,255,.12)', boxShadow: '0 18px 54px rgba(0,0,0,.55)' }}>
+            <a href="/admin/operations" onClick={() => setMenuOpen(false)} className="flex items-center px-4 py-3" style={{ background: 'rgba(224,0,42,.16)', color: '#fff', fontWeight: 800, fontSize: 14 }}>✦ Operations Home</a>
+            {NAV_GROUPS.map(g => (
+              <div key={g.label} style={{ borderTop: '1px solid rgba(255,255,255,.07)', padding: '7px 0' }}>
+                <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', padding: '3px 16px 5px' }}>{g.label}</div>
+                {g.items.map(it => {
+                  const active = it.href === activeHref
+                  return (
+                    <a key={it.href} href={it.href} onClick={() => setMenuOpen(false)} className="flex items-center justify-between px-4 py-2.5"
+                      style={{ fontSize: 14, fontWeight: 600, color: active ? '#fff' : 'var(--muted)', background: active ? 'rgba(255,255,255,.06)' : 'transparent' }}>
+                      <span>{it.label}</span>
+                      {it.badge && unread > 0
+                        ? <span style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 99, background: 'var(--red)', color: '#fff', fontSize: 10.5, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{unread > 99 ? '99+' : unread}</span>
+                        : active ? <span style={{ width: 6, height: 6, borderRadius: 99, background: 'var(--red)' }} /> : null}
+                    </a>
+                  )
+                })}
+              </div>
+            ))}
+            <div style={{ borderTop: '1px solid rgba(255,255,255,.07)' }}>
+              <a href="/" onClick={() => setMenuOpen(false)} className="block px-4 py-2.5" style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)' }}>← Public site</a>
+              {authed && <button onClick={() => { setMenuOpen(false); signOut() }} className="block w-full text-left px-4 py-2.5" style={{ fontSize: 14, fontWeight: 700, color: '#fca5a5', background: 'none', border: 'none', cursor: 'pointer' }}>Sign Out</button>}
+            </div>
+          </div>
+        )}
       </div>
     </header>
   )
