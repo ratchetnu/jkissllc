@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import AdminGate from '../AdminGate'
+import WeekView from './WeekView'
+import Templates from './Templates'
 
 type RouteStatus = 'draft' | 'assigned' | 'text_sent' | 'confirmed' | 'declined' | 'no_response' | 'no_show' | 'completed' | 'cancelled'
 type Route = {
@@ -48,6 +50,7 @@ function Dashboard() {
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
   const [busyTok, setBusyTok] = useState('')
+  const [view, setView] = useState<'list' | 'week'>('list')
   const blank = { businessName: '', reportAddress: '', reportTime: '', routeDate: '', contactPerson: '', contactPhone: '', vehicle: '', payRate: '', description: '', specialNotes: '', staffId: '' }
   const [form, setForm] = useState(blank)
   const [creating, setCreating] = useState(false)
@@ -145,6 +148,9 @@ function Dashboard() {
         </div>
       </form>
 
+      {/* Recurring templates */}
+      <Templates staff={staff} onGenerated={load} />
+
       {/* Crew reliability */}
       {staff.some(s => (stats[s.id]?.assignments ?? 0) > 0) && (
         <div className="glass-card mb-8" style={{ borderRadius: 16, padding: 18 }}>
@@ -167,9 +173,16 @@ function Dashboard() {
         </div>
       )}
 
-      {/* Route list */}
+      {/* View toggle */}
+      <div className="flex items-center gap-2 mb-4">
+        <button onClick={() => setView('list')} style={view === 'list' ? tabOn : tabOff}>List</button>
+        <button onClick={() => setView('week')} style={view === 'week' ? tabOn : tabOff}>Week</button>
+      </div>
+
+      {/* Routes */}
       {loading ? <p style={{ color: 'var(--muted)' }}>Loading…</p>
         : error ? <p style={{ color: '#f87171' }}>{error}</p>
+        : view === 'week' ? <WeekView routes={routes} />
         : routes.length === 0 ? <p style={{ color: 'var(--muted)' }}>No routes yet. Create one above.</p>
         : (
         <div className="flex flex-col gap-3">
@@ -245,6 +258,9 @@ function Dashboard() {
 }
 
 const btn: React.CSSProperties = { padding: '6px 12px', fontSize: 12, fontWeight: 700, borderRadius: 8, background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', color: 'var(--muted)', cursor: 'pointer' }
+const tabBase: React.CSSProperties = { padding: '7px 18px', fontSize: 13, fontWeight: 700, borderRadius: 9, cursor: 'pointer' }
+const tabOn: React.CSSProperties = { ...tabBase, background: 'var(--red)', border: '1px solid var(--red)', color: '#fff' }
+const tabOff: React.CSSProperties = { ...tabBase, background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', color: 'var(--muted)' }
 
 export default function RoutesAdminPage() {
   return <AdminGate title="Route Dispatch"><Dashboard /></AdminGate>

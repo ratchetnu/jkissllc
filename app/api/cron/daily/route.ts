@@ -4,6 +4,7 @@ import { notifyBookingReminder, notifyPaymentReminder, notifyJobTomorrow, notify
 import { isAbandonedOnlineHold } from '../../../lib/availability'
 import { listRoutes, saveRoute, setStatus, pushAudit } from '../../../lib/routes'
 import { reminderSms, morningOfSms, alertOwnerRouteEvent } from '../../../lib/route-notify'
+import { listTemplates, materializeTemplate } from '../../../lib/route-templates'
 import { sendSms } from '../../../lib/sms'
 
 export const dynamic = 'force-dynamic'
@@ -164,6 +165,21 @@ async function runRoutes(now: number): Promise<Record<string, number>> {
   return counts
 }
 
+// Materialize routes from active recurring templates for the next 14 days, so
+// standing contracts always have their routes created without manual work.
+// materializeTemplate skips dates already generated, so this is idempotent.
+async function runTemplates(now: number): Promise<Record<string, number>> {
+  const today = centralDate(now)
+  const templates = await listTemplates()
+  let generated = 0
+  for (const t of templates) {
+    if (!t.active) continue
+    try { generated += (await materializeTemplate(t, today, 14)).created.length }
+    catch (e) { console.error('[cron/templates]', t.id, e) }
+  }
+  return { templatesActive: templates.filter(t => t.active).length, routesGenerated: generated }
+}
+
 function authorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET
   if (!secret) return true // not configured — allow (Vercel adds the bearer once set)
@@ -176,9 +192,10 @@ export async function GET(req: NextRequest) {
   const dryRun = new URL(req.url).searchParams.get('dryRun') === '1'
   try {
     const counts = dryRun ? { skipped: 'reminders (dry-run)' } : await run()
+    const templates = dryRun ? { skipped: 'templates (dry-run)' } : await runTemplates(Date.now())
     const routes = dryRun ? { skipped: 'routes (dry-run)' } : await runRoutes(Date.now())
     const cleanup = await cleanupAbandonedHolds(Date.now(), dryRun)
-    return NextResponse.json({ ok: true, dryRun, ...counts, routes, cleanup })
+    return NextResponse.json({ ok: true, dryRun, ...counts, templates, routes, cleanup })
   } catch (e) {
     console.error('[cron/daily] fatal', e)
     return NextResponse.json({ error: 'failed' }, { status: 500 })

@@ -92,6 +92,7 @@ export type RouteRecord = {
   audit: AuditEntry[]
 
   // Lifecycle
+  templateId?: string           // set when generated from a recurring template
   createdAt: number
   updatedAt: number
   createdBy?: string
