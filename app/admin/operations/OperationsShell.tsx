@@ -4,7 +4,8 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { useIdleLogout } from '../useIdleLogout'
-import { Home, ClipboardList, Users, Building2, MessageSquare, Settings, LogOut } from 'lucide-react'
+import { Home, ClipboardList, Users, Building2, MessageSquare, Settings, LogOut, Search } from 'lucide-react'
+import CommandPalette from './CommandPalette'
 
 const NAV = [
   { href: '/admin/operations', label: 'Home', Icon: Home },
@@ -68,12 +69,17 @@ export default function OperationsShell({ children }: { children: React.ReactNod
 
   return (
     <div className="jkos">
+      <CommandPalette />
+      <button onClick={() => window.dispatchEvent(new Event('jkos-open-search'))} aria-label="Search" className="os-tap"
+        style={{ position: 'fixed', top: 16, left: 16, zIndex: 60, display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)', cursor: 'pointer' }}>
+        <Search size={14} /> Search <kbd className="hidden sm:inline" style={{ fontSize: 10.5, fontWeight: 700, border: '1px solid var(--line)', borderRadius: 5, padding: '1px 5px', marginLeft: 2 }}>⌘K</kbd>
+      </button>
       <button onClick={signOut} aria-label="Sign out" className="os-tap"
         style={{ position: 'fixed', top: 16, right: 16, zIndex: 60, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)', cursor: 'pointer' }}>
         <LogOut size={14} /> Sign out
       </button>
 
-      <main style={{ maxWidth: 940, margin: '0 auto', padding: '26px 18px 132px' }}>{children}</main>
+      <main style={{ maxWidth: 940, margin: '0 auto', padding: '64px 18px 132px' }}>{children}</main>
 
       {/* Desktop floating dock */}
       <nav className="os-glass" style={{ position: 'fixed', bottom: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 50, display: 'none', gap: 2, padding: 7, borderRadius: 999, boxShadow: 'var(--os-shadow)' }} data-dock="desktop">
