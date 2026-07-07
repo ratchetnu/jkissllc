@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
     routeDate,
     description: S(body.description, 2000) || undefined,
     payRate: S(body.payRate, 80) || undefined,
-    vehicle: S(body.vehicle, 200) || undefined,
+    vehicle: S(body.vehicle, 200) || 'Box truck',   // J KISS is box-truck only
     specialNotes: S(body.specialNotes, 2000) || undefined,
     events: [],
     audit: [],

@@ -72,7 +72,7 @@ function Dashboard() {
           <p style={{ fontSize: 13, fontWeight: 700, letterSpacing: '.02em', color: 'var(--muted)' }}>{dateLabel}</p>
           <h1 className="jkos-h" style={{ fontSize: 'clamp(30px,6vw,44px)', marginTop: 2 }}>{greeting}.</h1>
         </div>
-        <Link href="/admin/routes" className="btn os-tap" style={{ borderRadius: 999, height: 46, paddingLeft: 20, paddingRight: 22 }}><Plus size={18} /> New assignment</Link>
+        <Link href="/admin/operations/new" className="btn os-tap" style={{ borderRadius: 999, height: 46, paddingLeft: 20, paddingRight: 22 }}><Plus size={18} /> New assignment</Link>
       </div>
 
       {loading ? <SkeletonHome />
@@ -192,7 +192,7 @@ function EmptyFocus({ evening }: { evening: boolean }) {
       <CheckCircle2 size={30} style={{ color: '#86efac' }} />
       <p className="jkos-h" style={{ fontSize: 18, marginTop: 12 }}>{evening ? 'Nothing scheduled for tomorrow yet' : 'You’re all clear'}</p>
       <p style={{ fontSize: 14, color: 'var(--muted)', marginTop: 6 }}>{evening ? 'Assign tomorrow’s work whenever you’re ready.' : 'No operations on the board for right now.'}</p>
-      <Link href="/admin/routes" className="btn os-tap" style={{ borderRadius: 999, marginTop: 18, display: 'inline-flex' }}><Plus size={17} /> New assignment</Link>
+      <Link href="/admin/operations/new" className="btn os-tap" style={{ borderRadius: 999, marginTop: 18, display: 'inline-flex' }}><Plus size={17} /> New assignment</Link>
     </div>
   )
 }

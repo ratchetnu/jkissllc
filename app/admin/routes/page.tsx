@@ -52,7 +52,7 @@ function Dashboard() {
   const [note, setNote] = useState('')
   const [busyTok, setBusyTok] = useState('')
   const [view, setView] = useState<'list' | 'week'>('list')
-  const blank = { businessName: '', reportAddress: '', reportTime: '', routeDate: '', contactPerson: '', contactPhone: '', vehicle: '', payRate: '', description: '', specialNotes: '', staffId: '' }
+  const blank = { businessName: '', reportAddress: '', reportTime: '', routeDate: '', contactPerson: '', contactPhone: '', vehicle: 'Box truck', payRate: '', description: '', specialNotes: '', staffId: '' }
   const [form, setForm] = useState(blank)
   const [creating, setCreating] = useState(false)
 

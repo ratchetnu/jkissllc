@@ -19,7 +19,7 @@ export default function Templates({ staff, onGenerated }: { staff: Staff[]; onGe
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
-  const blank = { label: '', businessName: '', reportAddress: '', reportTime: '', contactPerson: '', contactPhone: '', vehicle: '', payRate: '', description: '', specialNotes: '', defaultStaffId: '', autoNotify: false, weekdays: [] as number[] }
+  const blank = { label: '', businessName: '', reportAddress: '', reportTime: '', contactPerson: '', contactPhone: '', vehicle: 'Box truck', payRate: '', description: '', specialNotes: '', defaultStaffId: '', autoNotify: false, weekdays: [] as number[] }
   const [form, setForm] = useState(blank)
   const [creating, setCreating] = useState(false)
 
