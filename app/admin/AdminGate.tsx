@@ -75,6 +75,7 @@ export default function AdminGate({ title, children }: { title: string; children
         <a href="/admin/bookings" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Bookings</a>
         <a href="/admin/routes" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Routes</a>
         <a href="/admin/routes/pay" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Pay</a>
+        <a href="/admin/routes/invoices" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Invoices</a>
         <a href="/admin/inbox" className="relative px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: unread ? '#fff' : 'var(--muted)' }}>
           Inbox
           {unread > 0 && <span style={{ position: 'absolute', top: -5, right: -5, minWidth: 17, height: 17, padding: '0 4px', borderRadius: 99, background: 'var(--red)', color: '#fff', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{unread > 99 ? '99+' : unread}</span>}

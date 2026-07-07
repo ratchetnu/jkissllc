@@ -118,7 +118,10 @@ function Dashboard() {
     <div className="max-w-4xl mx-auto">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h1 className="text-3xl font-black text-white" style={{ letterSpacing: '-0.03em' }}>Route Dispatch</h1>
-        <a href="/admin/routes/pay" style={{ ...btn, textDecoration: 'none', color: '#86efac' }}>Contractor pay →</a>
+        <div className="flex gap-2">
+          <a href="/admin/routes/pay" style={{ ...btn, textDecoration: 'none', color: '#86efac' }}>Contractor pay →</a>
+          <a href="/admin/routes/invoices" style={{ ...btn, textDecoration: 'none', color: '#93c5fd' }}>Client invoices →</a>
+        </div>
       </div>
       <p className="text-sm mb-6" style={{ color: 'var(--muted)' }}>Create contract routes, assign crew, and text a confirmation link.</p>
 

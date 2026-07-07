@@ -93,6 +93,7 @@ export type RouteRecord = {
 
   // Lifecycle
   templateId?: string           // set when generated from a recurring template
+  invoiceId?: string            // set when this completed route has been billed to a client
   createdAt: number
   updatedAt: number
   createdBy?: string
