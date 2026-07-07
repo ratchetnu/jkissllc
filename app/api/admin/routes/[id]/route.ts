@@ -30,6 +30,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   } else if (action === 'status') {
     const status = S(body.status, 40) as RouteStatus
     if (!(status in ROUTE_STATUS_LABEL)) return NextResponse.json({ error: 'Invalid status.' }, { status: 400 })
+    // Stamp completion metadata when an admin closes a route out by hand.
+    if (status === 'completed' && !route.completedAt) {
+      route.completedAt = Date.now()
+      route.completedBy = 'admin'
+    }
     setStatus(route, status, 'admin', S(body.note, 300) || undefined)
   } else if (action === 'update') {
     // Edit route details (kept simple — admin-trusted, audited).

@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { listBookings, saveBooking, balanceDueCents, paymentSummaryStatus, type Booking, type BookingStatus } from '../../../lib/bookings'
 import { notifyBookingReminder, notifyPaymentReminder, notifyJobTomorrow, notifyReviewRequest } from '../../../lib/notify'
 import { isAbandonedOnlineHold } from '../../../lib/availability'
+import { listRoutes, saveRoute, setStatus, pushAudit } from '../../../lib/routes'
+import { reminderSms, morningOfSms, alertOwnerRouteEvent } from '../../../lib/route-notify'
+import { sendSms } from '../../../lib/sms'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -110,6 +113,57 @@ async function cleanupAbandonedHolds(now: number, dryRun: boolean): Promise<{ ma
   return { matched, cancelled, dryRun }
 }
 
+// Route Dispatch automation. Daily pass (9am Central):
+//   • assigned/text_sent but unconfirmed, date today or tomorrow → confirm nudge
+//   • confirmed and happening today → morning-of reminder
+//   • assigned/text_sent but unconfirmed and the date has passed → mark No Response
+//     and alert the owner so it can be reassigned.
+// Each action carries a one-shot dedupe stamp; a send error never aborts the pass.
+async function runRoutes(now: number): Promise<Record<string, number>> {
+  const today = centralDate(now)
+  const tomorrow = addDaysStr(today, 1)
+  const counts = { routesProcessed: 0, routeReminders: 0, routeMorningOf: 0, routeNoResponse: 0, routeErrors: 0 }
+  const routes = await listRoutes(1000)
+
+  for (const r of routes) {
+    // Terminal / not-yet-live statuses get no automation.
+    if (r.status === 'cancelled' || r.status === 'completed' || r.status === 'declined' ||
+        r.status === 'no_show' || r.status === 'draft') continue
+    counts.routesProcessed++
+    let changed = false
+    const pendingConfirm = r.status === 'assigned' || r.status === 'text_sent'
+
+    try {
+      if (pendingConfirm && r.routeDate < today) {
+        // Past its date, never confirmed → No Response + one-time owner alert.
+        if (r.status !== 'no_response') { setStatus(r, 'no_response', 'system', 'No confirmation by route date'); changed = true }
+        if (!r.noResponseAlertedAt) {
+          await alertOwnerRouteEvent(r, 'no_response')
+          r.noResponseAlertedAt = now; counts.routeNoResponse++; changed = true
+        }
+      } else if (pendingConfirm && (r.routeDate === today || r.routeDate === tomorrow) && !r.reminderSentAt) {
+        // Imminent and still unconfirmed → nudge the contractor to confirm.
+        if (r.assignedStaffPhone) await sendSms(r.assignedStaffPhone, reminderSms(r))
+        r.reminderSentAt = now; pushAudit(r, 'system', 'Confirmation reminder sent'); counts.routeReminders++; changed = true
+      }
+
+      if (r.status === 'confirmed' && r.routeDate === today && !r.morningOfSentAt) {
+        // Confirmed and happening today → morning-of reminder.
+        if (r.assignedStaffPhone) await sendSms(r.assignedStaffPhone, morningOfSms(r))
+        r.morningOfSentAt = now; pushAudit(r, 'system', 'Morning-of reminder sent'); counts.routeMorningOf++; changed = true
+      }
+    } catch (e) {
+      counts.routeErrors++
+      console.error('[cron/routes]', r.routeNumber, e)
+    }
+
+    if (changed) {
+      try { await saveRoute(r) } catch (e) { console.error('[cron/routes save]', r.routeNumber, e) }
+    }
+  }
+  return counts
+}
+
 function authorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET
   if (!secret) return true // not configured — allow (Vercel adds the bearer once set)
@@ -122,8 +176,9 @@ export async function GET(req: NextRequest) {
   const dryRun = new URL(req.url).searchParams.get('dryRun') === '1'
   try {
     const counts = dryRun ? { skipped: 'reminders (dry-run)' } : await run()
+    const routes = dryRun ? { skipped: 'routes (dry-run)' } : await runRoutes(Date.now())
     const cleanup = await cleanupAbandonedHolds(Date.now(), dryRun)
-    return NextResponse.json({ ok: true, dryRun, ...counts, cleanup })
+    return NextResponse.json({ ok: true, dryRun, ...counts, routes, cleanup })
   } catch (e) {
     console.error('[cron/daily] fatal', e)
     return NextResponse.json({ error: 'failed' }, { status: 500 })

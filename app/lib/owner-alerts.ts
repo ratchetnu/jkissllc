@@ -55,6 +55,25 @@ function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
+// Generic owner alert on the same runtime-editable channels/destinations as the
+// reply alerts above. Fire-and-forget — never throws; a failed alert must not
+// break the flow that triggered it (a contractor's decline, a cron pass, etc.).
+export async function sendOwnerAlert(opts: {
+  smsBody: string
+  emailSubject: string
+  emailHtml: string
+}): Promise<void> {
+  let cfg: OwnerAlertConfig
+  try { cfg = await getOwnerAlertConfig() } catch { return }
+  if (cfg.sms && cfg.smsTo) {
+    try { await sendSms(cfg.smsTo, opts.smsBody) } catch (e) { console.error('[owner-alert sms]', e) }
+  }
+  if (cfg.email && cfg.emailTo) {
+    try { await emailRaw({ to: [cfg.emailTo], subject: opts.emailSubject, html: opts.emailHtml }) }
+    catch (e) { console.error('[owner-alert email]', e) }
+  }
+}
+
 // Fire-and-forget owner alert about an inbound customer reply. Never throws —
 // a failed alert must not break the webhook that received the reply.
 export async function notifyOwnerOfReply(opts: {

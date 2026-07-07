@@ -12,6 +12,7 @@ type Route = {
   assignedStaffId?: string; assignedStaffName?: string
   smsStatus?: string; smsError?: string
   linkOpenedAt?: number; confirmedAt?: number; declinedAt?: number
+  completedAt?: number; completedBy?: 'contractor' | 'admin'; completionNote?: string; completionPhotos?: string[]
   createdAt: number
 }
 type Staff = { id: string; name: string; phone?: string; role?: string; active: boolean }
@@ -149,6 +150,24 @@ function Dashboard() {
                     </p>
                   </div>
                 </div>
+
+                {/* Proof of completion */}
+                {(r.completionNote || (r.completionPhotos && r.completionPhotos.length > 0)) && (
+                  <div style={{ marginTop: 10, padding: 11, borderRadius: 10, background: 'rgba(34,197,94,.06)', border: '1px solid rgba(34,197,94,.2)' }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: '#86efac' }}>
+                      Proof of completion{r.completedBy ? ` · by ${r.completedBy}` : ''}
+                    </div>
+                    {r.completionNote && <p style={{ fontSize: 13, color: '#d1fae5', marginTop: 5 }}>{r.completionNote}</p>}
+                    {r.completionPhotos && r.completionPhotos.length > 0 && (
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 7 }}>
+                        {r.completionPhotos.map((u, i) => (
+                          /* eslint-disable-next-line @next/next/no-img-element */
+                          <a key={i} href={u} target="_blank" rel="noopener noreferrer"><img src={u} alt="Proof" style={{ width: 54, height: 54, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line)' }} /></a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Actions */}
                 <div className="flex items-center gap-2 flex-wrap mt-3 pt-3" style={{ borderTop: '1px solid var(--line)' }}>

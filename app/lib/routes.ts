@@ -31,7 +31,7 @@ export type AuditEntry = {
   note?: string
 }
 
-export type ConfirmEventType = 'link_opened' | 'disclaimer_viewed' | 'confirmed' | 'declined'
+export type ConfirmEventType = 'link_opened' | 'disclaimer_viewed' | 'confirmed' | 'declined' | 'completed'
 export type ConfirmEvent = {
   at: number
   type: ConfirmEventType
@@ -70,11 +70,22 @@ export type RouteRecord = {
   confirmIp?: string
   confirmPhone?: string
 
+  // Completion + proof (marked on-site by the contractor, or by an admin)
+  completedAt?: number
+  completedBy?: 'contractor' | 'admin'
+  completionNote?: string
+  completionPhotos?: string[]   // Vercel Blob URLs
+
   // Outbound SMS (assignment text)
   smsSid?: string
   smsStatus?: string            // Twilio message status: sent | delivered | failed | ...
   smsError?: string
   smsSentAt?: number
+
+  // Automation dedupe stamps (one-shot; written by the daily cron)
+  reminderSentAt?: number       // "please confirm" nudge to the contractor
+  morningOfSentAt?: number      // day-of reminder for a confirmed route
+  noResponseAlertedAt?: number  // owner alerted the route went unanswered past its date
 
   // Logs
   events: ConfirmEvent[]
@@ -105,6 +116,9 @@ export type PublicRoute = {
   assignedStaffName?: string
   confirmedAt?: number
   declinedAt?: number
+  completedAt?: number
+  completionNote?: string
+  completionPhotos?: string[]
   expired: boolean
 }
 
@@ -215,6 +229,9 @@ export function toPublicRoute(r: RouteRecord): PublicRoute {
     assignedStaffName: r.assignedStaffName,
     confirmedAt: r.confirmedAt,
     declinedAt: r.declinedAt,
+    completedAt: r.completedAt,
+    completionNote: r.completionNote,
+    completionPhotos: r.completionPhotos,
     expired: isExpired(r),
   }
 }

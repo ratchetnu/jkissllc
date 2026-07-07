@@ -1,7 +1,7 @@
 'use client'
 
 import { use, useEffect, useState } from 'react'
-import { MapPin, Clock, CalendarDays, Building2, Truck, DollarSign, User, Phone, FileText, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react'
+import { MapPin, Clock, CalendarDays, Building2, Truck, DollarSign, User, Phone, FileText, CheckCircle2, XCircle, AlertTriangle, Camera } from 'lucide-react'
 
 type PublicRoute = {
   token: string
@@ -20,6 +20,9 @@ type PublicRoute = {
   assignedStaffName?: string
   confirmedAt?: number
   declinedAt?: number
+  completedAt?: number
+  completionNote?: string
+  completionPhotos?: string[]
   expired: boolean
 }
 
@@ -37,8 +40,12 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const [agreed, setAgreed] = useState(false)
-  const [busy, setBusy] = useState<'' | 'confirm' | 'decline'>('')
+  const [busy, setBusy] = useState<'' | 'confirm' | 'decline' | 'complete'>('')
   const [err, setErr] = useState('')
+  const [completeMode, setCompleteMode] = useState(false)
+  const [note, setNote] = useState('')
+  const [photos, setPhotos] = useState<string[]>([])
+  const [uploading, setUploading] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -61,6 +68,40 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
       const d = await res.json().catch(() => ({}))
       if (!res.ok && !d.route) { setErr(d.error === 'expired' ? 'This route link has expired.' : d.error === 'cancelled' ? 'This route was cancelled.' : (d.error || 'Something went wrong. Please try again.')) }
       if (d.route) setRoute(d.route)
+    } catch { setErr('Network error — please try again.') }
+    finally { setBusy('') }
+  }
+
+  async function onPickPhotos(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''
+    if (!files.length) return
+    setUploading(true); setErr('')
+    for (const f of files) {
+      if (photos.length >= 6) break
+      try {
+        const dataUrl = await new Promise<string>((res, rej) => {
+          const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.onerror = rej; fr.readAsDataURL(f)
+        })
+        const up = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }) })
+        const j = await up.json().catch(() => ({}))
+        if (up.ok && j.url) setPhotos(p => [...p, j.url].slice(0, 6))
+        else setErr(j.error || 'A photo failed to upload.')
+      } catch { setErr('A photo failed to upload.') }
+    }
+    setUploading(false)
+  }
+
+  async function submitComplete() {
+    setBusy('complete'); setErr('')
+    try {
+      const res = await fetch(`/api/route/${token}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'complete', note: note.trim() || undefined, photos }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (d.route) setRoute(d.route)
+      else if (!res.ok) setErr(d.error || 'Could not submit — please try again.')
     } catch { setErr('Network error — please try again.') }
     finally { setBusy('') }
   }
@@ -130,12 +171,72 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
   // ── Terminal states ──
   if (route.expired) return wrap(<div style={card('rgba(245,158,11,.08)', 'rgba(245,158,11,.3)')}><AlertTriangle size={26} color="#f59e0b" /><h1 style={{ fontSize: 18, fontWeight: 800, marginTop: 10 }}>This route link has expired</h1><p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>The route date has passed. If you have questions, contact dispatch at (817) 909-4312.</p></div>)
   if (route.status === 'cancelled') return wrap(<div style={card('rgba(255,255,255,.04)', 'var(--line)')}><XCircle size={26} color="var(--muted)" /><h1 style={{ fontSize: 18, fontWeight: 800, marginTop: 10 }}>Route cancelled</h1><p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>This route has been cancelled by dispatch. No action is needed.</p></div>)
+  if (route.status === 'completed') return wrap(
+    <div style={card('rgba(34,197,94,.08)', 'rgba(34,197,94,.3)')}>
+      <CheckCircle2 size={28} color="#22c55e" />
+      <h1 style={{ fontSize: 20, fontWeight: 800, marginTop: 10 }}>Route completed ✓</h1>
+      <p style={{ color: 'var(--muted)', marginTop: 6, fontSize: 14 }}>Thanks{route.assignedStaffName ? `, ${route.assignedStaffName.split(' ')[0]}` : ''} — this route is marked done{route.completedAt ? ` on ${new Date(route.completedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}` : ''}.</p>
+      {route.completionNote && <p style={{ marginTop: 12, fontSize: 14, padding: 12, borderRadius: 10, background: 'rgba(255,255,255,.04)', border: '1px solid var(--line)' }}>{route.completionNote}</p>}
+      {route.completionPhotos && route.completionPhotos.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+          {route.completionPhotos.map((u, i) => (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <a key={i} href={u} target="_blank" rel="noopener noreferrer"><img src={u} alt="Completion photo" style={{ width: 76, height: 76, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--line)' }} /></a>
+          ))}
+        </div>
+      )}
+      <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--line)' }}><Details /></div>
+    </div>
+  )
   if (route.status === 'confirmed') return wrap(
     <div style={card('rgba(34,197,94,.08)', 'rgba(34,197,94,.3)')}>
       <CheckCircle2 size={28} color="#22c55e" />
       <h1 style={{ fontSize: 20, fontWeight: 800, marginTop: 10 }}>You’re confirmed ✓</h1>
       <p style={{ color: 'var(--muted)', marginTop: 6, fontSize: 14 }}>Thanks{route.assignedStaffName ? `, ${route.assignedStaffName.split(' ')[0]}` : ''} — you’re set for this route. Please report on time.</p>
       <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--line)' }}><Details /></div>
+
+      <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--line)' }}>
+        {!completeMode ? (
+          <button onClick={() => setCompleteMode(true)}
+            style={{ width: '100%', padding: '13px', borderRadius: 12, border: '1px solid rgba(34,197,94,.4)', background: 'rgba(34,197,94,.1)', color: '#22c55e', fontWeight: 800, fontSize: 14.5, cursor: 'pointer' }}>
+            Mark Route Complete
+          </button>
+        ) : (
+          <div>
+            <div style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 8 }}>Wrap up this route</div>
+            <textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
+              placeholder="Optional note — how it went, anything dispatch should know…"
+              style={{ width: '100%', padding: '11px 12px', borderRadius: 10, background: 'rgba(255,255,255,.04)', border: '1px solid var(--line)', color: 'var(--text)', fontSize: 14, resize: 'vertical', fontFamily: 'inherit' }} />
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 10, padding: '9px 13px', borderRadius: 10, border: '1px solid var(--line)', background: 'rgba(255,255,255,.03)', fontSize: 13.5, fontWeight: 600, cursor: photos.length >= 6 ? 'not-allowed' : 'pointer', color: 'var(--muted)', opacity: photos.length >= 6 ? .5 : 1 }}>
+              <Camera size={16} /> {uploading ? 'Uploading…' : photos.length >= 6 ? 'Max 6 photos' : 'Add photo'}
+              <input type="file" accept="image/*" capture="environment" multiple onChange={onPickPhotos} style={{ display: 'none' }} disabled={uploading || photos.length >= 6} />
+            </label>
+            {photos.length > 0 && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+                {photos.map((u, i) => (
+                  <div key={i} style={{ position: 'relative' }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={u} alt="Route photo" style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--line)' }} />
+                    <button onClick={() => setPhotos(p => p.filter((_, j) => j !== i))} aria-label="Remove photo"
+                      style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: 99, border: 'none', background: '#111', color: '#fff', fontSize: 13, cursor: 'pointer', lineHeight: 1 }}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {err && <p style={{ color: '#f87171', fontSize: 13, marginTop: 10 }}>{err}</p>}
+            <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+              <button onClick={submitComplete} disabled={busy === 'complete' || uploading}
+                style={{ flex: 1, padding: '13px', borderRadius: 12, border: 'none', fontWeight: 800, fontSize: 14.5, color: '#fff', background: '#16a34a', cursor: 'pointer', opacity: busy === 'complete' ? .7 : 1 }}>
+                {busy === 'complete' ? 'Submitting…' : 'Submit — Route Done'}
+              </button>
+              <button onClick={() => { setCompleteMode(false); setErr('') }} disabled={busy === 'complete'}
+                style={{ padding: '13px 16px', borderRadius: 12, border: '1px solid var(--line)', fontWeight: 700, fontSize: 14.5, color: 'var(--muted)', background: 'transparent', cursor: 'pointer' }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
   if (route.status === 'declined') return wrap(<div style={card('rgba(255,255,255,.04)', 'var(--line)')}><XCircle size={26} color="#f87171" /><h1 style={{ fontSize: 18, fontWeight: 800, marginTop: 10 }}>You declined this route</h1><p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>Dispatch has been notified and will reassign it. Thanks for letting us know.</p></div>)
