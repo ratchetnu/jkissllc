@@ -12,7 +12,7 @@ const NAV = [
   { href: '/admin/operations/list', label: 'Operations', Icon: ClipboardList },
   { href: '/admin/operations/employees', label: 'Employees', Icon: Users },
   { href: '/admin/operations/businesses', label: 'Businesses', Icon: Building2 },
-  { href: '/admin/inbox', label: 'Messages', Icon: MessageSquare },
+  { href: '/admin/operations/messages', label: 'Messages', Icon: MessageSquare },
   { href: '/admin/operations/settings', label: 'Settings', Icon: Settings },
 ]
 
