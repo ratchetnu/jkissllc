@@ -213,7 +213,23 @@ function EmployeeForm({ existing, onDone, onCancel }: { existing?: Staff; onDone
         <input placeholder="Name" value={name} onChange={e => setName(e.target.value)} style={field} />
         <input placeholder="Phone" value={phone} onChange={e => setPhone(e.target.value)} style={field} />
       </div>
-      <input placeholder="Role (e.g. Driver, Helper)" value={role} onChange={e => setRole(e.target.value)} style={{ ...field, marginTop: 10 }} />
+      <div style={{ marginTop: 12 }}>
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', marginBottom: 7 }}>Role</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {['Driver', 'Helper'].map(r => {
+            const on = role === r
+            return (
+              <button key={r} type="button" onClick={() => setRole(on ? '' : r)}
+                style={{ padding: '9px 18px', borderRadius: 999, fontSize: 13.5, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'var(--red)' : 'transparent', color: on ? '#fff' : 'var(--muted)' }}>{r}</button>
+            )
+          })}
+          <button type="button" onClick={() => setRole(role === 'Driver' || role === 'Helper' || role === '' ? 'Other' : '')}
+            style={{ padding: '9px 18px', borderRadius: 999, fontSize: 13.5, fontWeight: 700, cursor: 'pointer', border: `1px solid ${role && role !== 'Driver' && role !== 'Helper' ? 'var(--red)' : 'var(--line)'}`, background: role && role !== 'Driver' && role !== 'Helper' ? 'var(--red)' : 'transparent', color: role && role !== 'Driver' && role !== 'Helper' ? '#fff' : 'var(--muted)' }}>Other</button>
+        </div>
+        {role !== '' && role !== 'Driver' && role !== 'Helper' && (
+          <input autoFocus placeholder="Role name" value={role === 'Other' ? '' : role} onChange={e => setRole(e.target.value)} style={{ ...field, marginTop: 8 }} />
+        )}
+      </div>
       {err && <p style={{ color: '#f87171', fontSize: 13, marginTop: 10 }}>{err}</p>}
       <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
         <button onClick={save} disabled={saving || uploading} className="btn os-tap" style={{ borderRadius: 11, height: 40, flex: 1, justifyContent: 'center' }}>{saving ? 'Saving…' : existing ? 'Save changes' : 'Add contractor'}</button>
