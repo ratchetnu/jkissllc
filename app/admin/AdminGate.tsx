@@ -115,11 +115,11 @@ export default function AdminGate({ title, children }: { title: string; children
       </Link>
       {title && <span className="text-sm font-semibold shrink truncate" style={{ color: 'var(--muted)' }}>· {title}</span>}
 
-      <div ref={navRef} className="relative shrink-0" style={{ marginLeft: 'auto' }}>
-        <a href="/admin/operations" className="hidden sm:inline-flex items-center px-3 py-2 rounded-xl text-sm font-bold mr-1.5" style={{ background: 'rgba(224,0,42,.14)', color: '#fff', verticalAlign: 'middle' }}>✦ Operations</a>
+      <div ref={navRef} className="relative shrink-0 flex items-center gap-2" style={{ marginLeft: 'auto' }}>
+        <a href="/admin/operations" className="hidden sm:inline-flex items-center gap-1.5 px-3.5 rounded-xl text-sm font-bold" style={{ height: 40, background: 'rgba(224,0,42,.16)', border: '1px solid rgba(224,0,42,.45)', color: '#fff' }}>✦ Operations</a>
         <button onClick={() => setMenuOpen(o => !o)} aria-label="Menu" aria-expanded={menuOpen}
-          className="relative inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-bold"
-          style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.12)', color: '#fff' }}>
+          className="relative inline-flex items-center gap-2 px-3.5 rounded-xl text-sm font-bold"
+          style={{ height: 40, background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.12)', color: '#fff' }}>
           <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 3 }} aria-hidden>
             <span style={{ width: 15, height: 2, background: '#fff', borderRadius: 2 }} />
             <span style={{ width: 15, height: 2, background: '#fff', borderRadius: 2 }} />
@@ -130,7 +130,7 @@ export default function AdminGate({ title, children }: { title: string; children
         </button>
 
         {menuOpen && (
-          <div className="absolute right-0 mt-2 rounded-2xl overflow-hidden"
+          <div className="absolute right-0 top-full mt-2 rounded-2xl overflow-hidden"
             style={{ width: 268, maxHeight: '78vh', overflowY: 'auto', background: 'rgba(18,18,20,0.98)', backdropFilter: 'blur(16px)', border: '1px solid rgba(255,255,255,.12)', boxShadow: '0 18px 54px rgba(0,0,0,.55)' }}>
             <a href="/admin/operations" onClick={() => setMenuOpen(false)} className="flex items-center px-4 py-3" style={{ background: 'rgba(224,0,42,.16)', color: '#fff', fontWeight: 800, fontSize: 14 }}>✦ Operations Home</a>
             {NAV_GROUPS.map(g => (
