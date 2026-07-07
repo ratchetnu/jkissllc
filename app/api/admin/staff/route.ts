@@ -20,6 +20,7 @@ export async function POST(req: NextRequest) {
     id, name,
     phone: typeof body.phone === 'string' ? body.phone.trim().slice(0, 40) || undefined : existingRaw?.phone,
     role: typeof body.role === 'string' ? body.role.trim().slice(0, 60) || undefined : existingRaw?.role,
+    photoUrl: typeof body.photoUrl === 'string' ? body.photoUrl.trim().slice(0, 600) || undefined : existingRaw?.photoUrl,
     active: body.active !== false && body.active !== 'false',
     createdAt: existingRaw?.createdAt ?? now,
     updatedAt: now,

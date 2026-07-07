@@ -7,6 +7,7 @@ export type Staff = {
   name: string
   phone?: string
   role?: string
+  photoUrl?: string
   active: boolean
   createdAt: number
   updatedAt: number
