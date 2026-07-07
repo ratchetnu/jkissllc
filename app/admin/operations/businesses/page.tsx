@@ -10,7 +10,7 @@ type RouteLite = { routeNumber: string; businessName: string; status: string; ro
 type Portal = { token: string; businessName: string; label?: string }
 type Invoice = { token: string; invoiceNumber: string; businessName: string; status: 'draft' | 'sent' | 'paid' | 'void'; subtotalCents: number; amountPaidCents: number }
 type Template = { id: string; label: string; businessName: string; reportTime: string; weekdays: number[]; defaultStaffId?: string; autoNotify: boolean; active: boolean }
-type BusinessRec = { key: string; name: string; contactName?: string; contactPhone?: string; contactEmail?: string; address?: string; notes?: string }
+type BusinessRec = { key: string; name: string; contactName?: string; contactPhone?: string; contactEmail?: string; address?: string; notes?: string; requiresHelper?: boolean }
 
 type Biz = {
   key: string; name: string
@@ -122,12 +122,13 @@ function BusinessForm({ b, onDone, onCancel }: { b: Biz; onDone: () => void; onC
   const [contactEmail, setContactEmail] = useState(r?.contactEmail || '')
   const [address, setAddress] = useState(r?.address || '')
   const [notes, setNotes] = useState(r?.notes || '')
+  const [requiresHelper, setRequiresHelper] = useState(!!r?.requiresHelper)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   async function save() {
     setSaving(true); setErr('')
     try {
-      const res = await fetch('/api/admin/businesses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ name: b.name, contactName, contactPhone, contactEmail, address, notes }) })
+      const res = await fetch('/api/admin/businesses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ name: b.name, contactName, contactPhone, contactEmail, address, notes, requiresHelper }) })
       const d = await res.json()
       if (!res.ok) { setErr(d.error || 'Could not save.'); return }
       onDone()
@@ -144,6 +145,12 @@ function BusinessForm({ b, onDone, onCancel }: { b: Biz; onDone: () => void; onC
       <input placeholder="Contact email" value={contactEmail} onChange={e => setContactEmail(e.target.value)} style={{ ...bf, marginTop: 10 }} />
       <input placeholder="Address" value={address} onChange={e => setAddress(e.target.value)} style={{ ...bf, marginTop: 10 }} />
       <textarea placeholder="Notes" value={notes} onChange={e => setNotes(e.target.value)} rows={2} style={{ ...bf, marginTop: 10, resize: 'vertical' }} />
+      <label style={{ display: 'flex', alignItems: 'center', gap: 11, marginTop: 12, padding: '11px 13px', borderRadius: 11, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', cursor: 'pointer' }}>
+        <button type="button" role="switch" aria-checked={requiresHelper} onClick={() => setRequiresHelper(v => !v)} className="os-tap" style={{ width: 46, height: 28, borderRadius: 999, border: 'none', cursor: 'pointer', padding: 3, background: requiresHelper ? 'var(--red)' : 'rgba(255,255,255,.14)', flexShrink: 0 }}>
+          <span style={{ display: 'block', width: 22, height: 22, borderRadius: 999, background: '#fff', transform: requiresHelper ? 'translateX(18px)' : 'translateX(0)', transition: 'transform .2s var(--os-spring)' }} />
+        </button>
+        <div><div style={{ fontSize: 13.5, fontWeight: 700 }}>Routes need a driver + helper</div><div style={{ fontSize: 12, color: 'var(--muted)' }}>Flags this client’s routes until both roles are assigned.</div></div>
+      </label>
       {err && <p style={{ color: '#f87171', fontSize: 13, marginTop: 8 }}>{err}</p>}
       <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
         <button onClick={save} disabled={saving} className="btn os-tap" style={{ borderRadius: 11, height: 40, flex: 1, justifyContent: 'center' }}>{saving ? 'Saving…' : 'Save changes'}</button>
@@ -181,6 +188,7 @@ function BizCard({ b, open, onToggle, onOpen, onCreatePortal, onReload, setMsg, 
             {activeTmpl && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#c4b5fd' }}><Repeat size={11} /> {weekdaysLabel(activeTmpl.weekdays)}</span>}
             {b.outstandingCents > 0 && <span style={{ color: '#fcd34d' }}>{money(b.outstandingCents)} due</span>}
             {b.portal && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#86efac' }}><Check size={11} /> portal</span>}
+            {b.record?.requiresHelper && <span style={{ color: '#c4b5fd' }}>driver + helper</span>}
           </div>
         </div>
         <button onClick={e => { e.stopPropagation(); onOpen(); setEditing(true) }} aria-label={`Edit ${b.name}`} className="os-tap" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 10, background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', color: 'var(--muted)', cursor: 'pointer', flexShrink: 0 }}><Pencil size={15} /></button>

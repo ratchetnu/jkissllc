@@ -7,7 +7,8 @@ import OperationsShell from '../OperationsShell'
 import { useOps } from '../useOps'
 import { STATUS as CHIP, ymd, fmtDay, type RouteStatus } from '../ui'
 
-type Op = { token: string; routeNumber: string; status: RouteStatus; businessName: string; reportAddress: string; reportTime: string; routeDate: string; assignedStaffName?: string }
+type Op = { token: string; routeNumber: string; status: RouteStatus; businessName: string; reportAddress: string; reportTime: string; routeDate: string; assignedStaffName?: string; requiresHelper?: boolean; assignees?: { role?: string }[] }
+const crewGap = (o: Op) => !!o.requiresHelper && !['cancelled', 'completed'].includes(o.status) && (!(o.assignees ?? []).some(a => /driver/i.test(a.role || '')) || !(o.assignees ?? []).some(a => /helper/i.test(a.role || '')))
 
 type Filter = 'attention' | 'upcoming' | 'completed' | 'all'
 const FILTERS: { key: Filter; label: string }[] = [{ key: 'attention', label: 'Attention' }, { key: 'upcoming', label: 'Upcoming' }, { key: 'completed', label: 'Completed' }, { key: 'all', label: 'All' }]
@@ -19,13 +20,13 @@ function List() {
 
   const today = ymd(new Date())
   const counts = useMemo(() => {
-    const attention = ops.filter(o => o.status === 'declined' || o.status === 'no_response' || (o.status === 'draft' && o.routeDate >= today) || ((o.status === 'assigned' || o.status === 'text_sent') && o.routeDate < today)).length
+    const attention = ops.filter(o => o.status === 'declined' || o.status === 'no_response' || (o.status === 'draft' && o.routeDate >= today) || ((o.status === 'assigned' || o.status === 'text_sent') && o.routeDate < today) || (crewGap(o) && o.routeDate >= today)).length
     return { attention }
   }, [ops, today])
 
   const shown = useMemo(() => {
     let list = ops
-    if (filter === 'attention') list = ops.filter(o => o.status === 'declined' || o.status === 'no_response' || (o.status === 'draft' && o.routeDate >= today) || ((o.status === 'assigned' || o.status === 'text_sent') && o.routeDate < today))
+    if (filter === 'attention') list = ops.filter(o => o.status === 'declined' || o.status === 'no_response' || (o.status === 'draft' && o.routeDate >= today) || ((o.status === 'assigned' || o.status === 'text_sent') && o.routeDate < today) || (crewGap(o) && o.routeDate >= today))
     else if (filter === 'upcoming') list = ops.filter(o => o.routeDate >= today && !['cancelled', 'completed'].includes(o.status))
     else if (filter === 'completed') list = ops.filter(o => o.status === 'completed')
     const query = q.trim().toLowerCase()
@@ -75,6 +76,7 @@ function List() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <span style={{ fontWeight: 700, fontSize: 15.5 }}>{o.businessName}</span>
                     <span style={{ fontSize: 10.5, fontWeight: 800, padding: '2px 8px', borderRadius: 99, background: chip.bg, color: chip.fg }}>{chip.label}</span>
+                    {crewGap(o) && <span style={{ fontSize: 10.5, fontWeight: 800, padding: '2px 8px', borderRadius: 99, background: 'rgba(196,181,253,.14)', color: '#c4b5fd' }}>needs driver + helper</span>}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4, fontSize: 12.5, color: 'var(--muted)', flexWrap: 'wrap' }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><CalendarDays size={13} /> {fmtDay(o.routeDate)}</span>

@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
     contactEmail: S(b.contactEmail, 200) || undefined,
     address: S(b.address, 300) || undefined,
     notes: S(b.notes, 1000) || undefined,
+    requiresHelper: typeof b.requiresHelper === 'boolean' ? b.requiresHelper : existing?.requiresHelper,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   }

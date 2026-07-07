@@ -7,6 +7,7 @@ import {
   generateToken, nextRouteNumber, saveRoute, listRoutes, pushAudit, type RouteRecord,
 } from './routes'
 import { assignAndNotify } from './route-notify'
+import { getBusiness, bizKey } from './businesses'
 import { listStaff } from './staff'
 
 export type RouteTemplate = {
@@ -93,6 +94,7 @@ export async function materializeTemplate(
     ? (await listStaff()).find(s => s.id === tpl.defaultStaffId)
     : undefined
 
+  const biz = await getBusiness(bizKey(tpl.businessName)).catch(() => null)
   const created: string[] = []
   for (let i = 0; i <= horizonDays; i++) {
     const day = addDaysStr(todayStr, i)
@@ -114,6 +116,7 @@ export async function materializeTemplate(
       vehicle: tpl.vehicle,
       specialNotes: tpl.specialNotes,
       templateId: tpl.id,
+      requiresHelper: biz?.requiresHelper || undefined,
       events: [],
       audit: [],
       createdAt: now,

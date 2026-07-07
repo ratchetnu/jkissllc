@@ -17,6 +17,7 @@ type Op = {
   token: string; routeNumber: string; status: string
   businessName: string; reportAddress: string; reportTime: string; routeDate: string
   vehicle?: string; payRate?: string; description?: string; specialNotes?: string; contactPerson?: string; contactPhone?: string
+  requiresHelper?: boolean
   assignees?: Assignee[]
   completedAt?: number; completionNote?: string; completionPhotos?: string[]
   audit?: Audit[]; events?: Event[]
@@ -114,6 +115,13 @@ function Detail({ token }: { token: string }) {
           <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)' }}>Crew</div>
           {live && <button onClick={() => setReassigning(r => !r)} className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>{reassigning ? 'Done' : '+ Add crew'}</button>}
         </div>
+
+        {(() => {
+          if (!op.requiresHelper) return null
+          const roles = (op.assignees ?? []).map(a => (a.role || '').toLowerCase())
+          const miss = [!roles.some(x => x.includes('driver')) && 'a driver', !roles.some(x => x.includes('helper')) && 'a helper'].filter(Boolean)
+          return miss.length ? <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 10, background: 'rgba(196,181,253,.1)', border: '1px solid rgba(196,181,253,.3)', color: '#c4b5fd', fontSize: 13, fontWeight: 600 }}>This client needs a driver + helper — still missing {miss.join(' and ')}.</div> : null
+        })()}
 
         {(op.assignees ?? []).length === 0 && !reassigning && <p style={{ marginTop: 10, color: '#fcd34d', fontWeight: 600, fontSize: 14 }}>No crew assigned yet</p>}
 

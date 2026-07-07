@@ -6,6 +6,7 @@ import {
 } from '../../../lib/routes'
 import { addCrew } from '../../../lib/route-notify'
 import { contractorStatsObject } from '../../../lib/route-stats'
+import { getBusiness, bizKey } from '../../../lib/businesses'
 import { listStaff } from '../../../lib/staff'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
@@ -60,6 +61,9 @@ export async function POST(req: NextRequest) {
     createdBy: 'admin',
   }
   pushAudit(route, 'admin', `Route created for ${businessName}`)
+
+  // Inherit the client's crew requirement (driver + helper), if set.
+  try { const biz = await getBusiness(bizKey(businessName)); if (biz?.requiresHelper) route.requiresHelper = true } catch { /* non-fatal */ }
 
   // Optionally add crew (no text — the owner sends it explicitly). Accepts a
   // single staffId or a crew:[{staffId,pay}] array; pay is per-person.

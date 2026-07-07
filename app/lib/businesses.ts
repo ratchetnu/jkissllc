@@ -12,6 +12,7 @@ export type Business = {
   contactEmail?: string
   address?: string
   notes?: string
+  requiresHelper?: boolean   // routes for this client need a driver + a helper
   createdAt: number
   updatedAt: number
 }

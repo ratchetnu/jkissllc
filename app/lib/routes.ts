@@ -89,6 +89,7 @@ export type RouteRecord = {
 
   // Crew (source of truth for multi-person assignment)
   assignees?: Assignee[]
+  requiresHelper?: boolean       // stamped from the client's setting — needs a driver + helper
 
   // Legacy single-assignee mirror (= assignees[0], the "lead"). Kept so existing
   // reads keep working; write via syncLead().
@@ -206,6 +207,15 @@ function normalize(r: RouteRecord): RouteRecord {
       : []
   }
   return r
+}
+
+// When a client requires a driver + helper, what's still missing on the crew.
+export function crewGap(r: RouteRecord): { needsDriver: boolean; needsHelper: boolean; incomplete: boolean } {
+  if (!r.requiresHelper) return { needsDriver: false, needsHelper: false, incomplete: false }
+  const roles = (r.assignees ?? []).map(a => (a.role || '').toLowerCase())
+  const needsDriver = !roles.some(x => x.includes('driver'))
+  const needsHelper = !roles.some(x => x.includes('helper'))
+  return { needsDriver, needsHelper, incomplete: needsDriver || needsHelper }
 }
 
 // Route-level status rolled up from the crew (best-effort, for board chips).
