@@ -36,10 +36,12 @@ export async function computeContractorStats(prefetched?: RouteRecord[]): Promis
       let e = acc.get(id)
       if (!e) { e = { staffId: id, assignments: 0, confirmed: 0, completed: 0, declined: 0, noResponse: 0, noShow: 0, score: null, sum: 0 }; acc.set(id, e) }
 
+      // The person's OWN outcome wins — a decliner is a decline even if the route
+      // later completed with the rest of the crew.
       let pts: number | null = null
-      if (r.status === 'completed') { if (!a.declinedAt) { e.completed++; pts = WEIGHT.completed } }
+      if (a.declinedAt) { e.declined++; pts = WEIGHT.declined }
+      else if (r.status === 'completed') { e.completed++; pts = WEIGHT.completed }
       else if (r.status === 'no_show' && a.confirmedAt) { e.noShow++; pts = WEIGHT.no_show }
-      else if (a.declinedAt) { e.declined++; pts = WEIGHT.declined }
       else if (a.confirmedAt) { e.confirmed++; pts = WEIGHT.confirmed }
       else if (r.status === 'no_response' || r.status === 'declined') { e.noResponse++; pts = WEIGHT.no_response }
       // draft / assigned / text_sent / cancelled with no per-person outcome — ignore.
