@@ -322,13 +322,15 @@ export default function AdminPage() {
 
   // ── Persistent top header (shown on both login and dashboard) ─────────────
   const PortalHeader = () => (
-    <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4"
+    <header className="fixed top-0 left-0 right-0 z-50 flex items-center gap-3 px-3 sm:px-5 py-3.5"
       style={{ background: 'rgba(11,11,12,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
-      <Link href="/" className="text-xl font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
+      <style>{`.adminnav::-webkit-scrollbar{display:none}`}</style>
+      <Link href="/" className="text-lg font-black tracking-tight shrink-0" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
         J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
       </Link>
       {authed ? (
-        <div className="flex items-center gap-1.5 text-sm font-semibold">
+        <div className="adminnav flex items-center gap-1.5 text-xs font-semibold overflow-x-auto whitespace-nowrap"
+          style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch', marginLeft: 'auto' }}>
           <Link href="/" className="px-3 py-2 rounded-xl transition hover:text-white"
             style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Home</Link>
           <a href="/admin/bookings" className="px-3 py-2 rounded-xl transition hover:text-white"
@@ -397,7 +399,7 @@ export default function AdminPage() {
   return (
     <>
       <PortalHeader />
-      <main className="min-h-screen px-6 pt-24 pb-10" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
+      <main className="min-h-screen px-6 pt-20 pb-10" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
         <div className="max-w-6xl mx-auto">
 
         {/* Tab switcher */}
