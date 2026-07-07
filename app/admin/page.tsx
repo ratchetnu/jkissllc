@@ -335,6 +335,8 @@ export default function AdminPage() {
             style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Home</Link>
           <a href="/admin/bookings" className="px-3 py-2 rounded-xl transition hover:text-white"
             style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Bookings</a>
+          <a href="/admin/routes" className="px-3 py-2 rounded-xl transition hover:text-white"
+            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Routes</a>
           <a href="/admin/inbox" className="relative px-3 py-2 rounded-xl transition hover:text-white"
             style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: unreadMsgs ? '#fff' : 'var(--muted)' }}>Inbox
             {unreadMsgs > 0 && <span style={{ position: 'absolute', top: -5, right: -5, minWidth: 18, height: 18, padding: '0 4px', borderRadius: 99, background: 'var(--red)', color: '#fff', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{unreadMsgs > 99 ? '99+' : unreadMsgs}</span>}
