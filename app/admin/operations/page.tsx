@@ -165,7 +165,7 @@ function OpCard({ op, score, delay }: { op: Op; score?: number | null; delay: nu
             <Row Icon={MapPin} label="Report to" val={op.reportAddress} href={mapsUrl(op.reportAddress)} />
             {op.contactPerson && <Row Icon={User} label="On-site contact" val={`${op.contactPerson}${op.contactPhone ? ` · ${op.contactPhone}` : ''}`} />}
             {(op.description || op.specialNotes) && <Row Icon={CheckCircle2} label="Instructions" val={[op.description, op.specialNotes].filter(Boolean).join(' · ')} />}
-            <Link href="/admin/routes" className="btn-ghost os-tap" style={{ borderRadius: 10, justifyContent: 'center', marginTop: 4 }}>Manage in Operations →</Link>
+            <Link href={`/admin/operations/${op.token}`} className="btn-ghost os-tap" style={{ borderRadius: 10, justifyContent: 'center', marginTop: 4 }}>Open operation →</Link>
           </div>
         </div>
       </div>
