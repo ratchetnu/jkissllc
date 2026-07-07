@@ -8,7 +8,7 @@ import { Home, ClipboardList, Users, Building2, MessageSquare, Settings, LogOut 
 
 const NAV = [
   { href: '/admin/operations', label: 'Home', Icon: Home },
-  { href: '/admin/routes', label: 'Operations', Icon: ClipboardList },
+  { href: '/admin/operations/list', label: 'Operations', Icon: ClipboardList },
   { href: '/admin/operations/employees', label: 'Employees', Icon: Users },
   { href: '/admin/operations/businesses', label: 'Businesses', Icon: Building2 },
   { href: '/admin/inbox', label: 'Messages', Icon: MessageSquare },
