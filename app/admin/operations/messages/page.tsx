@@ -7,8 +7,9 @@ import OperationsShell from './../OperationsShell'
 type Msg = {
   id: string; direction: 'inbound' | 'outbound'; channel: string; body: string; subject?: string
   from?: string; customerName?: string; customerPhone?: string; customerEmail?: string
-  bookingNumber?: string; status: string; unread: boolean; createdAt: number
+  bookingNumber?: string; status: string; unread: boolean; createdAt: number; tags?: string[]
 }
+const isEmployee = (m: Msg) => (m.tags ?? []).includes('route')
 
 const fmtTs = (t: number) => {
   const d = new Date(t), now = new Date()
@@ -18,23 +19,25 @@ const fmtTs = (t: number) => {
 const who = (m: Msg) => m.customerName || m.customerPhone || m.from || m.customerEmail || 'Unknown'
 
 function Messages() {
-  const [tab, setTab] = useState<'unread' | 'all'>('unread')
+  const [cat, setCat] = useState<'customer' | 'employee'>('customer')
   const [items, setItems] = useState<Msg[]>([])
-  const [unread, setUnread] = useState(0)
   const [loading, setLoading] = useState(true)
   const [openId, setOpenId] = useState('')
   const [busy, setBusy] = useState('')
 
-  const load = useCallback(async (t: 'unread' | 'all') => {
+  const load = useCallback(async () => {
     setLoading(true)
-    try { const d = await fetch(`/api/admin/messages?tab=${t}`, { credentials: 'same-origin' }).then(r => r.json()); setItems(d.items || []); setUnread(d.unread ?? 0) }
+    try { const d = await fetch('/api/admin/messages?tab=all', { credentials: 'same-origin' }).then(r => r.json()); setItems(d.items || []) }
     catch { /* ignore */ } finally { setLoading(false) }
   }, [])
-  useEffect(() => { load(tab) }, [load, tab])
+  useEffect(() => { load() }, [load])
+
+  const shown = items.filter(m => cat === 'employee' ? isEmployee(m) : !isEmployee(m))
+  const unreadCount = (c: 'customer' | 'employee') => items.filter(m => m.unread && (c === 'employee' ? isEmployee(m) : !isEmployee(m))).length
 
   async function act(id: string, action: string) {
     setBusy(id)
-    try { const d = await fetch('/api/admin/messages', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ id, action }) }).then(r => r.json()); if (d.unread != null) setUnread(d.unread); load(tab) }
+    try { await fetch('/api/admin/messages', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ id, action }) }); load() }
     finally { setBusy('') }
   }
 
@@ -42,30 +45,32 @@ function Messages() {
     <div style={{ maxWidth: 640, margin: '0 auto' }}>
       <div className="os-rise" style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         <div>
-          <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)' }}>{unread} unread</p>
+          <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)' }}>{unreadCount('customer') + unreadCount('employee')} unread</p>
           <h1 className="jkos-h" style={{ fontSize: 'clamp(28px,6vw,40px)' }}>Messages</h1>
         </div>
         <a href="/admin/inbox" className="btn-ghost os-tap" style={{ borderRadius: 999, height: 40, fontSize: 13 }}><ExternalLink size={15} /> Full inbox</a>
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        {(['unread', 'all'] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)} className="os-tap"
-            style={{ padding: '8px 16px', borderRadius: 999, fontSize: 13.5, fontWeight: 700, cursor: 'pointer', textTransform: 'capitalize', border: `1px solid ${tab === t ? 'var(--red)' : 'var(--line)'}`, background: tab === t ? 'var(--red)' : 'transparent', color: tab === t ? '#fff' : 'var(--muted)' }}>{t}</button>
+        {(['customer', 'employee'] as const).map(c => (
+          <button key={c} onClick={() => setCat(c)} className="os-tap"
+            style={{ padding: '8px 18px', borderRadius: 999, fontSize: 13.5, fontWeight: 700, cursor: 'pointer', textTransform: 'capitalize', border: `1px solid ${cat === c ? 'var(--red)' : 'var(--line)'}`, background: cat === c ? 'var(--red)' : 'transparent', color: cat === c ? '#fff' : 'var(--muted)' }}>
+            {c}{unreadCount(c) > 0 && <span style={{ marginLeft: 6, fontSize: 11, opacity: .9 }}>{unreadCount(c)}</span>}
+          </button>
         ))}
       </div>
 
       {loading ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{[0, 1, 2].map(i => <div key={i} className="os-card" style={{ padding: 15 }}><div className="skeleton" style={{ width: '40%', height: 14, borderRadius: 7 }} /><div className="skeleton" style={{ width: '75%', height: 12, borderRadius: 6, marginTop: 9 }} /></div>)}</div>
-      ) : items.length === 0 ? (
+      ) : shown.length === 0 ? (
         <div className="os-card os-rise" style={{ padding: 34, textAlign: 'center' }}>
           <Check size={28} style={{ color: '#86efac' }} />
-          <p className="jkos-h" style={{ fontSize: 18, marginTop: 10 }}>{tab === 'unread' ? 'All caught up' : 'No messages'}</p>
-          <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 6 }}>{tab === 'unread' ? 'No unread messages right now.' : 'Customer replies will show here.'}</p>
+          <p className="jkos-h" style={{ fontSize: 18, marginTop: 10 }}>No {cat} messages</p>
+          <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 6 }}>{cat === 'employee' ? 'Crew confirmation texts you send will show here.' : 'Customer replies will show here.'}</p>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {items.map((m, i) => {
+          {shown.map((m, i) => {
             const open = openId === m.id
             const Ch = m.channel === 'email' ? Mail : MessageSquare
             const Dir = m.direction === 'inbound' ? ArrowDownLeft : ArrowUpRight

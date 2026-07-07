@@ -78,20 +78,22 @@ export async function computePay(startIn: string, endIn: string): Promise<PaySum
     if (r.status !== 'completed') continue
     if (r.routeDate < start || r.routeDate > end) continue
     routeCount++
-    const id = r.assignedStaffId || 'unassigned'
-    let cp = byStaff.get(id)
-    if (!cp) { cp = { staffId: id, name: nameOf.get(id) || r.assignedStaffName || 'Unassigned', routes: [], count: 0, totalCents: 0, unpricedCount: 0 }; byStaff.set(id, cp) }
-
-    const cents = parsePayCents(r.payRate)
-    cp.routes.push({
-      routeNumber: r.routeNumber, routeDate: r.routeDate, businessName: r.businessName,
-      amountCents: cents, payRateRaw: r.payRate,
-      hasProof: Boolean((r.completionPhotos && r.completionPhotos.length) || r.completionNote),
-      completedBy: r.completedBy,
-    })
-    cp.count++
-    if (cents == null) { cp.unpricedCount++; unpriced++ }
-    else { cp.totalCents += cents; grand += cents }
+    const hasProof = Boolean((r.completionPhotos && r.completionPhotos.length) || r.completionNote)
+    // Each crew member who didn't decline earns their OWN pay for the route.
+    const crew = (r.assignees ?? []).filter(a => !a.declinedAt)
+    const lines = crew.length
+      ? crew.map(a => ({ id: a.staffId, name: a.name, pay: a.pay }))
+      : (r.assignedStaffId ? [{ id: r.assignedStaffId, name: r.assignedStaffName || '', pay: r.payRate }] : [])
+    for (const l of lines) {
+      const id = l.id || 'unassigned'
+      let cp = byStaff.get(id)
+      if (!cp) { cp = { staffId: id, name: nameOf.get(id) || l.name || 'Unassigned', routes: [], count: 0, totalCents: 0, unpricedCount: 0 }; byStaff.set(id, cp) }
+      const cents = parsePayCents(l.pay)
+      cp.routes.push({ routeNumber: r.routeNumber, routeDate: r.routeDate, businessName: r.businessName, amountCents: cents, payRateRaw: l.pay, hasProof, completedBy: r.completedBy })
+      cp.count++
+      if (cents == null) { cp.unpricedCount++; unpriced++ }
+      else { cp.totalCents += cents; grand += cents }
+    }
   }
 
   const contractors = [...byStaff.values()].sort((a, b) => b.totalCents - a.totalCents || a.name.localeCompare(b.name))

@@ -4,6 +4,7 @@
 import { sendSmsDetailed } from './sms'
 import { pushAudit, addAssignee, removeAssignee, syncLead, type RouteRecord, type Assignee } from './routes'
 import { sendOwnerAlert } from './owner-alerts'
+import { recordMessage } from './messages'
 import type { Staff } from './staff'
 
 const BASE = (process.env.NEXT_PUBLIC_SITE_URL || 'https://jkissllc.com').replace(/\/$/, '')
@@ -64,6 +65,15 @@ export async function sendAssignmentText(route: RouteRecord, assignee: Assignee)
     assignee.smsStatus = res.status || 'sent'
     assignee.smsError = undefined
     pushAudit(route, 'system', `Confirmation text sent to ${assignee.name}`)
+    // Log to the Messages hub under the "route" (employee) category.
+    try {
+      await recordMessage({
+        direction: 'outbound', channel: 'sms', provider: 'twilio',
+        to: assignee.phone, body: assignmentSms(route, assignee),
+        customerName: assignee.name, customerPhone: assignee.phone,
+        providerMessageId: res.sid, tags: ['route'], unread: false,
+      })
+    } catch { /* logging is non-fatal */ }
   } else {
     assignee.smsStatus = 'failed'
     assignee.smsError = res.error

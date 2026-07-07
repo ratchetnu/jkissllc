@@ -38,6 +38,7 @@ function Builder() {
   const [form, setForm] = useState({ businessName: '', description: '', payRate: '', reportAddress: '', contactPerson: '', contactPhone: '', routeDate: '', reportTime: '', staffId: '', specialNotes: '' })
   const [repeats, setRepeats] = useState(false)
   const [weekdays, setWeekdays] = useState<number[]>([])
+  const [crew, setCrew] = useState<{ staffId: string; pay: string }[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [done, setDone] = useState<null | { recurring?: boolean; generated?: number; schedule?: string; routeNumber?: string; token?: string; assigned?: boolean; sent?: boolean }>(null)
@@ -98,7 +99,7 @@ function Builder() {
             label: `${form.businessName} — ${weekdaysLabel(weekdays)}`, businessName: form.businessName,
             reportAddress: form.reportAddress, reportTime: form.reportTime, contactPerson: form.contactPerson,
             contactPhone: form.contactPhone, vehicle: VEHICLE, payRate: form.payRate, description: form.description,
-            specialNotes: form.specialNotes, weekdays, defaultStaffId: form.staffId || undefined, autoNotify: Boolean(form.staffId),
+            specialNotes: form.specialNotes, weekdays, defaultStaffId: crew[0]?.staffId || undefined, autoNotify: crew.length > 0,
           }),
         })
         const d = await res.json()
@@ -111,11 +112,11 @@ function Builder() {
       }
       const res = await fetch('/api/admin/routes', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-        body: JSON.stringify({ ...form, vehicle: VEHICLE }),
+        body: JSON.stringify({ ...form, vehicle: VEHICLE, crew: crew.filter(c => c.staffId) }),
       })
       const d = await res.json()
       if (!res.ok) { setError(d.error || 'Could not create the assignment.'); return }
-      setDone({ routeNumber: d.route?.routeNumber || '', token: d.route?.token, assigned: Boolean(form.staffId) })
+      setDone({ routeNumber: d.route?.routeNumber || '', token: d.route?.token, assigned: crew.length > 0 })
     } catch { setError('Network error — please try again.') } finally { setSubmitting(false) }
   }
 
@@ -130,7 +131,12 @@ function Builder() {
     } catch { setError('Network error — please try again.') } finally { setSending(false) }
   }
 
-  const selectedStaff = staff.find(s => s.id === form.staffId)
+  const crewStaff = crew.map(c => ({ ...c, staff: staff.find(s => s.id === c.staffId) })).filter((x): x is { staffId: string; pay: string; staff: Staff } => !!x.staff)
+  const primaryStaff = crewStaff[0]?.staff
+  const inCrew = (id: string) => crew.some(c => c.staffId === id)
+  const toggleCrew = (id: string) => setCrew(c => c.some(x => x.staffId === id) ? c.filter(x => x.staffId !== id) : [...c, { staffId: id, pay: '' }])
+  const setCrewPay = (id: string, pay: string) => setCrew(c => c.map(x => x.staffId === id ? { ...x, pay } : x))
+  const crewLabel = crewStaff.length === 0 ? '' : crewStaff.length === 1 ? crewStaff[0].staff.name.split(' ')[0] : `${crewStaff[0].staff.name.split(' ')[0]} +${crewStaff.length - 1}`
 
   if (done) return (
     <div className="os-rise" style={{ maxWidth: 460, margin: '6vh auto 0', textAlign: 'center' }}>
@@ -139,17 +145,17 @@ function Builder() {
         <h1 className="jkos-h" style={{ fontSize: 24, marginTop: 16 }}>{done.recurring ? 'Recurring contract set' : 'Assignment created'}</h1>
         <p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14.5 }}>
           {done.recurring
-            ? `${done.schedule} · ${done.generated} route${done.generated === 1 ? '' : 's'} generated for the next 2 weeks${selectedStaff ? `, assigned to ${selectedStaff.name.split(' ')[0]}` : ''}. New routes keep generating automatically — no daily setup.`
-            : <>{done.routeNumber && <b style={{ color: 'var(--text)' }}>{done.routeNumber}</b>} · {done.sent ? `confirmation text sent to ${selectedStaff?.name?.split(' ')[0] || 'the crew'}.` : done.assigned ? `assigned to ${selectedStaff?.name?.split(' ')[0] || 'the crew'} — nothing was texted yet.` : 'saved as a draft.'}</>}
+            ? `${done.schedule} · ${done.generated} route${done.generated === 1 ? '' : 's'} generated for the next 2 weeks${primaryStaff ? `, assigned to ${crewLabel}` : ''}. New routes keep generating automatically — no daily setup.`
+            : <>{done.routeNumber && <b style={{ color: 'var(--text)' }}>{done.routeNumber}</b>} · {done.sent ? `confirmation text sent to ${crewLabel || 'the crew'}.` : done.assigned ? `assigned to ${crewLabel || 'the crew'} — nothing was texted yet.` : 'saved as a draft.'}</>}
         </p>
         {!done.recurring && done.assigned && !done.sent && (
           <button onClick={sendText} disabled={sending} className="btn os-tap" style={{ borderRadius: 12, justifyContent: 'center', marginTop: 18, width: '100%' }}>
-            <Send size={17} /> {sending ? 'Sending…' : `Send confirmation text${selectedStaff ? ` to ${selectedStaff.name.split(' ')[0]}` : ''}`}
+            <Send size={17} /> {sending ? 'Sending…' : `Text ${crewStaff.length > 1 ? 'the crew' : (crewLabel || 'the crew')} to confirm`}
           </button>
         )}
         {error && <p style={{ color: '#f87171', fontSize: 13.5, marginTop: 12 }}>{error}</p>}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
-          <button onClick={() => { setDone(null); setStep(0); setRepeats(false); setWeekdays([]); setForm({ businessName: form.businessName, description: '', payRate: '', reportAddress: '', contactPerson: '', contactPhone: '', routeDate: '', reportTime: '', staffId: '', specialNotes: '' }) }} className="btn os-tap" style={{ borderRadius: 12, justifyContent: 'center' }}>Create another</button>
+          <button onClick={() => { setDone(null); setStep(0); setRepeats(false); setWeekdays([]); setCrew([]); setForm({ businessName: form.businessName, description: '', payRate: '', reportAddress: '', contactPerson: '', contactPhone: '', routeDate: '', reportTime: '', staffId: '', specialNotes: '' }) }} className="btn os-tap" style={{ borderRadius: 12, justifyContent: 'center' }}>Create another</button>
           <Link href="/admin/operations" className="btn-ghost os-tap" style={{ borderRadius: 12, justifyContent: 'center' }}>Back to Operations</Link>
         </div>
       </div>
@@ -245,32 +251,39 @@ function Builder() {
 
         {step === 4 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {staff.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 14 }}>No active crew yet. You can save this as a draft and assign later.</p>}
+            <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: -8 }}>Pick everyone on this route — driver and any helpers. Set each person’s pay.</p>
+            {staff.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 14 }}>No active crew yet. You can save this as a draft and add crew later.</p>}
             {[...staff].sort((a, b) => (a.id === recommendedId ? -1 : b.id === recommendedId ? 1 : (stats[b.id]?.score ?? 70) - (stats[a.id]?.score ?? 70))).map(s => {
-              const sel = form.staffId === s.id
+              const sel = inCrew(s.id)
               const rec = s.id === recommendedId
               const score = stats[s.id]?.score
+              const payVal = crew.find(c => c.staffId === s.id)?.pay ?? ''
               return (
-                <button key={s.id} onClick={() => set('staffId', sel ? '' : s.id)} className="os-card os-tap" style={{ padding: 14, textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 13, borderColor: sel ? 'var(--red)' : 'var(--line)', borderWidth: sel ? 2 : 1 }}>
-                  <Avatar name={s.name} size={46} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
-                      <span style={{ fontWeight: 700, fontSize: 15.5 }}>{s.name}</span>
-                      {rec && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10.5, fontWeight: 800, padding: '2px 8px', borderRadius: 99, background: 'rgba(224,0,42,.16)', color: '#fff' }}><Sparkles size={11} /> Recommended</span>}
+                <div key={s.id} className="os-card" style={{ padding: 0, overflow: 'hidden', borderColor: sel ? 'var(--red)' : 'var(--line)', borderWidth: sel ? 2 : 1 }}>
+                  <button onClick={() => toggleCrew(s.id)} className="os-tap" style={{ width: '100%', padding: 14, textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 13, background: 'none', border: 'none' }}>
+                    <Avatar name={s.name} size={46} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 700, fontSize: 15.5 }}>{s.name}</span>
+                        {s.role && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{s.role}</span>}
+                        {rec && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10.5, fontWeight: 800, padding: '2px 8px', borderRadius: 99, background: 'rgba(224,0,42,.16)', color: '#fff' }}><Sparkles size={11} /> Recommended</span>}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 3, fontSize: 12.5, color: 'var(--muted)' }}>
+                        <span>Reliability <b style={{ color: scoreColor(score) }}>{score == null ? 'new' : score}</b></span>
+                        <span>{workload[s.id] || 0} upcoming</span>
+                        {!s.phone && <span style={{ color: '#fca5a5', display: 'inline-flex', alignItems: 'center', gap: 3 }}><Phone size={11} /> no phone</span>}
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 3, fontSize: 12.5, color: 'var(--muted)' }}>
-                      <span>Reliability <b style={{ color: scoreColor(score) }}>{score == null ? 'new' : score}</b></span>
-                      <span>{workload[s.id] || 0} upcoming</span>
-                      {!s.phone && <span style={{ color: '#fca5a5', display: 'inline-flex', alignItems: 'center', gap: 3 }}><Phone size={11} /> no phone</span>}
+                    <div style={{ width: 22, height: 22, borderRadius: 999, flexShrink: 0, border: `2px solid ${sel ? 'var(--red)' : 'var(--line)'}`, background: sel ? 'var(--red)' : 'transparent', display: 'grid', placeItems: 'center' }}>{sel && <CheckCircle2 size={16} color="#fff" />}</div>
+                  </button>
+                  {sel && (
+                    <div style={{ padding: '0 14px 12px 73px' }}>
+                      <input value={payVal} onChange={e => setCrewPay(s.id, e.target.value)} placeholder="Their pay for this route (e.g. $175)" style={{ ...field, padding: '9px 12px', fontSize: 14 }} />
                     </div>
-                  </div>
-                  <div style={{ width: 22, height: 22, borderRadius: 999, flexShrink: 0, border: `2px solid ${sel ? 'var(--red)' : 'var(--line)'}`, background: sel ? 'var(--red)' : 'transparent', display: 'grid', placeItems: 'center' }}>{sel && <CheckCircle2 size={16} color="#fff" />}</div>
-                </button>
+                  )}
+                </div>
               )
             })}
-            <button onClick={() => set('staffId', '')} className="os-tap" style={{ padding: 14, borderRadius: 14, textAlign: 'left', cursor: 'pointer', background: 'transparent', border: `1px dashed ${form.staffId === '' ? 'var(--red)' : 'var(--line)'}`, color: form.staffId === '' ? 'var(--text)' : 'var(--muted)', fontWeight: 600, fontSize: 14 }}>
-              Assign later — save as a draft
-            </button>
           </div>
         )}
 
@@ -281,15 +294,15 @@ function Builder() {
               <SummaryRow label="Work" val={[form.description || 'Contract route', `· ${VEHICLE}`, form.payRate && `· ${form.payRate}`].filter(Boolean).join(' ')} />
               <SummaryRow label="Report to" val={form.reportAddress} />
               <SummaryRow label="When" val={repeats ? `Repeats ${weekdaysLabel(weekdays)} · ${form.reportTime}` : `${fmtLongDay(form.routeDate)} · ${form.reportTime}`} />
-              <SummaryRow label={repeats ? 'Crew (each route)' : 'Assigned'} val={selectedStaff ? selectedStaff.name : repeats ? 'Unassigned (drafts)' : 'Unassigned (draft)'} last />
+              <SummaryRow label={repeats ? 'Crew (each route)' : 'Crew'} val={crewStaff.length ? crewStaff.map(c => `${c.staff.name.split(' ')[0]}${c.pay ? ` (${c.pay})` : ''}`).join(', ') : repeats ? 'Unassigned (drafts)' : 'Unassigned (draft)'} last />
             </div>
             {repeats ? (
               <div style={{ padding: 14, borderRadius: 14, background: 'rgba(224,0,42,.08)', border: '1px solid rgba(224,0,42,.22)' }}>
-                <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'var(--text)' }}>Routes generate automatically for <b>{weekdaysLabel(weekdays)}</b>, 2 weeks out and rolling.{selectedStaff?.phone ? ` Each one texts ${selectedStaff.name.split(' ')[0]} to confirm.` : ''}</p>
+                <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'var(--text)' }}>Routes generate automatically for <b>{weekdaysLabel(weekdays)}</b>, 2 weeks out and rolling.{primaryStaff?.phone ? ` Each one texts ${primaryStaff.name.split(' ')[0]} to confirm.` : ''}</p>
               </div>
-            ) : selectedStaff?.phone && (
+            ) : crewStaff.some(c => c.staff.phone) && (
               <div style={{ padding: 14, borderRadius: 14, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
-                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>You’ll send them this text (not automatic)</div>
+                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>Each crew member gets their own link (you send it — not automatic)</div>
                 <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'var(--text)' }}>J KISS LLC Route Assignment: You have been assigned a route for {fmtLongDay(form.routeDate).replace(/,.*/, '')} at {form.reportTime}. Location: {form.reportAddress}. Confirm here: <span style={{ color: 'var(--red)' }}>[secure link]</span>. Reply STOP to opt out.</p>
               </div>
             )}
@@ -303,7 +316,7 @@ function Builder() {
         {step > 0 && <button onClick={() => setStep(s => s - 1)} className="btn-ghost os-tap" style={{ borderRadius: 12, paddingLeft: 16, paddingRight: 18 }}><ChevronLeft size={17} /> Back</button>}
         {step < 5
           ? <button onClick={() => canContinue() && setStep(s => s + 1)} disabled={!canContinue()} className="btn os-tap" style={{ borderRadius: 12, flex: 1, justifyContent: 'center', opacity: canContinue() ? 1 : .5 }}>Continue</button>
-          : <button onClick={submit} disabled={submitting} className="btn os-tap" style={{ borderRadius: 12, flex: 1, justifyContent: 'center' }}>{submitting ? 'Creating…' : repeats ? 'Create recurring contract' : form.staffId ? 'Create assignment' : 'Save as draft'}</button>}
+          : <button onClick={submit} disabled={submitting} className="btn os-tap" style={{ borderRadius: 12, flex: 1, justifyContent: 'center' }}>{submitting ? 'Creating…' : repeats ? 'Create recurring contract' : crew.length ? 'Create assignment' : 'Save as draft'}</button>}
       </div>
     </div>
   )

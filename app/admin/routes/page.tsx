@@ -13,6 +13,7 @@ type Route = {
   reportAddress: string; reportTime: string; routeDate: string
   description?: string; payRate?: string; vehicle?: string; specialNotes?: string
   assignedStaffId?: string; assignedStaffName?: string
+  assignees?: { staffId: string; name: string; confirmedAt?: number; declinedAt?: number }[]
   smsStatus?: string; smsError?: string
   linkOpenedAt?: number; confirmedAt?: number; declinedAt?: number; declineReason?: string
   completedAt?: number; completedBy?: 'contractor' | 'admin'; completionNote?: string; completionPhotos?: string[]
@@ -210,7 +211,7 @@ function Dashboard() {
                     <p className="text-white font-bold mt-1" style={{ fontSize: 16 }}>{r.businessName}</p>
                     <p style={{ color: 'var(--muted)', fontSize: 13 }}>{fmtDate(r.routeDate)} · {r.reportTime} · {r.reportAddress}</p>
                     <p style={{ fontSize: 13, marginTop: 4, color: 'var(--muted)' }}>
-                      {r.assignedStaffName ? <>Assigned: <b style={{ color: '#e5e7eb' }}>{r.assignedStaffName}</b></> : <span style={{ color: '#fcd34d' }}>Unassigned</span>}
+                      {r.assignedStaffName ? <>Crew: <b style={{ color: '#e5e7eb' }}>{r.assignedStaffName}</b>{(r.assignees?.length ?? 0) > 1 ? <span style={{ color: 'var(--muted)' }}> +{(r.assignees!.length - 1)} · {r.assignees!.filter(a => a.confirmedAt).length}/{r.assignees!.length} confirmed</span> : null}</> : <span style={{ color: '#fcd34d' }}>Unassigned</span>}
                       {r.assignedStaffId && stats[r.assignedStaffId]?.score != null && (
                         <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 800, padding: '1px 7px', borderRadius: 99, background: 'rgba(255,255,255,.07)', color: scoreColor(stats[r.assignedStaffId]!.score) }} title="Reliability score">{stats[r.assignedStaffId]!.score}</span>
                       )}

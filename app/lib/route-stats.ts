@@ -26,21 +26,25 @@ export async function computeContractorStats(prefetched?: RouteRecord[]): Promis
   const acc = new Map<string, ContractorStats & { sum: number }>()
 
   for (const r of routes) {
-    const id = r.assignedStaffId
-    if (!id) continue
-    let e = acc.get(id)
-    if (!e) { e = { staffId: id, assignments: 0, confirmed: 0, completed: 0, declined: 0, noResponse: 0, noShow: 0, score: null, sum: 0 }; acc.set(id, e) }
+    // Score each crew member on their OWN outcome for the route.
+    const crew = (r.assignees && r.assignees.length)
+      ? r.assignees.map(a => ({ id: a.staffId, confirmedAt: a.confirmedAt, declinedAt: a.declinedAt }))
+      : (r.assignedStaffId ? [{ id: r.assignedStaffId, confirmedAt: r.confirmedAt, declinedAt: r.declinedAt }] : [])
+    for (const a of crew) {
+      const id = a.id
+      if (!id) continue
+      let e = acc.get(id)
+      if (!e) { e = { staffId: id, assignments: 0, confirmed: 0, completed: 0, declined: 0, noResponse: 0, noShow: 0, score: null, sum: 0 }; acc.set(id, e) }
 
-    let pts: number | null = null
-    switch (r.status) {
-      case 'completed': e.completed++; pts = WEIGHT.completed; break
-      case 'confirmed': e.confirmed++; pts = WEIGHT.confirmed; break
-      case 'declined': e.declined++; pts = WEIGHT.declined; break
-      case 'no_response': e.noResponse++; pts = WEIGHT.no_response; break
-      case 'no_show': e.noShow++; pts = WEIGHT.no_show; break
-      // draft / assigned / text_sent / cancelled — not a resolved outcome; ignore.
+      let pts: number | null = null
+      if (r.status === 'completed') { if (!a.declinedAt) { e.completed++; pts = WEIGHT.completed } }
+      else if (r.status === 'no_show' && a.confirmedAt) { e.noShow++; pts = WEIGHT.no_show }
+      else if (a.declinedAt) { e.declined++; pts = WEIGHT.declined }
+      else if (a.confirmedAt) { e.confirmed++; pts = WEIGHT.confirmed }
+      else if (r.status === 'no_response' || r.status === 'declined') { e.noResponse++; pts = WEIGHT.no_response }
+      // draft / assigned / text_sent / cancelled with no per-person outcome — ignore.
+      if (pts !== null) { e.assignments++; e.sum += pts }
     }
-    if (pts !== null) { e.assignments++; e.sum += pts }
   }
 
   const out = new Map<string, ContractorStats>()

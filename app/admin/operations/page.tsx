@@ -10,7 +10,7 @@ import { STATUS as CHIP, scoreColor, ymd, fmtDay, mapsUrl, type RouteStatus } fr
 type Op = {
   token: string; routeNumber: string; status: RouteStatus
   businessName: string; reportAddress: string; reportTime: string; routeDate: string
-  assignedStaffId?: string; assignedStaffName?: string
+  assignedStaffId?: string; assignedStaffName?: string; assignees?: { staffId: string }[]
   description?: string; specialNotes?: string; contactPerson?: string; contactPhone?: string
   declineReason?: string; confirmedAt?: number; declinedAt?: number
 }
@@ -123,6 +123,7 @@ function OpCard({ op, score, delay }: { op: Op; score?: number | null; delay: nu
           <User size={15} style={{ color: 'var(--muted)' }} />
           {op.assignedStaffName
             ? <><span style={{ fontSize: 14, fontWeight: 600 }}>{op.assignedStaffName}</span>
+                {(op.assignees?.length ?? 0) > 1 && <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>+{op.assignees!.length - 1}</span>}
                 {score != null && <span style={{ fontSize: 10.5, fontWeight: 800, padding: '1px 7px', borderRadius: 99, background: 'rgba(255,255,255,.07)', color: scoreColor(score) }}>{score}</span>}</>
             : <span style={{ fontSize: 14, fontWeight: 600, color: '#fcd34d' }}>Unassigned</span>}
         </div>
