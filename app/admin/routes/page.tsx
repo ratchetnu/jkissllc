@@ -116,7 +116,10 @@ function Dashboard() {
 
   return (
     <div className="max-w-4xl mx-auto">
-      <h1 className="text-3xl font-black text-white" style={{ letterSpacing: '-0.03em' }}>Route Dispatch</h1>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h1 className="text-3xl font-black text-white" style={{ letterSpacing: '-0.03em' }}>Route Dispatch</h1>
+        <a href="/admin/routes/pay" style={{ ...btn, textDecoration: 'none', color: '#86efac' }}>Contractor pay →</a>
+      </div>
       <p className="text-sm mb-6" style={{ color: 'var(--muted)' }}>Create contract routes, assign crew, and text a confirmation link.</p>
 
       {note && <div className="mb-4 text-sm" style={{ padding: '10px 14px', borderRadius: 10, background: 'rgba(224,0,42,.08)', border: '1px solid rgba(224,0,42,.2)', color: '#fca5a5' }}>{note}</div>}
