@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import AdminGate from '../AdminGate'
 import WeekView from './WeekView'
 import Templates from './Templates'
+import ClientPortals from './ClientPortals'
 
 type RouteStatus = 'draft' | 'assigned' | 'text_sent' | 'confirmed' | 'declined' | 'no_response' | 'no_show' | 'completed' | 'cancelled'
 type Route = {
@@ -150,6 +151,9 @@ function Dashboard() {
 
       {/* Recurring templates */}
       <Templates staff={staff} onGenerated={load} />
+
+      {/* Client portals */}
+      <ClientPortals businessNames={[...new Set(routes.map(r => r.businessName).filter(Boolean))].sort()} />
 
       {/* Crew reliability */}
       {staff.some(s => (stats[s.id]?.assignments ?? 0) > 0) && (
