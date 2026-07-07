@@ -4,7 +4,7 @@ import {
   listRoutes, saveRoute, generateToken, nextRouteNumber, pushAudit,
   type RouteRecord,
 } from '../../../lib/routes'
-import { assignStaff } from '../../../lib/route-notify'
+import { addCrew } from '../../../lib/route-notify'
 import { contractorStatsObject } from '../../../lib/route-stats'
 import { listStaff } from '../../../lib/staff'
 
@@ -61,12 +61,17 @@ export async function POST(req: NextRequest) {
   }
   pushAudit(route, 'admin', `Route created for ${businessName}`)
 
-  // Optionally assign a contractor (no text — the owner sends it explicitly).
-  const staffId = S(body.staffId, 80)
-  if (staffId) {
-    const staff = (await listStaff()).find(s => s.id === staffId)
-    if (!staff) return NextResponse.json({ error: 'Selected contractor not found.' }, { status: 400 })
-    assignStaff(route, staff)
+  // Optionally add crew (no text — the owner sends it explicitly). Accepts a
+  // single staffId or a crew:[{staffId,pay}] array; pay is per-person.
+  const rawCrew: Array<{ staffId: string; pay?: string }> = Array.isArray(body.crew)
+    ? (body.crew as unknown[]).map(c => { const o = c as Record<string, unknown>; return { staffId: S(o.staffId, 80), pay: S(o.pay, 80) || undefined } }).filter(c => c.staffId)
+    : (S(body.staffId, 80) ? [{ staffId: S(body.staffId, 80), pay: S(body.crewPay, 80) || undefined }] : [])
+  if (rawCrew.length) {
+    const staffList = await listStaff()
+    for (const c of rawCrew) {
+      const staff = staffList.find(s => s.id === c.staffId)
+      if (staff) addCrew(route, staff, c.pay)
+    }
   }
 
   await saveRoute(route)

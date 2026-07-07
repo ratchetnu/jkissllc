@@ -3,7 +3,7 @@
 // contractors. Handles expired, cancelled, and already-actioned (idempotent).
 import { NextRequest, NextResponse } from 'next/server'
 import {
-  getRouteByToken, saveRoute, toPublicRoute, setStatus, pushEvent, pushAudit, isExpired,
+  getRouteByConfirmToken, saveRoute, toPublicRouteFor, setStatus, syncLead, pushEvent, pushAudit, isExpired,
   CONFIRM_DISCLAIMER,
 } from '../../../lib/routes'
 import { alertOwnerRouteEvent } from '../../../lib/route-notify'
@@ -13,38 +13,39 @@ const clientIp = (req: NextRequest) => req.headers.get('x-forwarded-for')?.split
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params
-  const route = await getRouteByToken(token)
-  if (!route) return NextResponse.json({ error: 'not_found' }, { status: 404 })
+  const found = await getRouteByConfirmToken(token)
+  if (!found) return NextResponse.json({ error: 'not_found' }, { status: 404 })
+  const { route, assignee } = found
 
-  // Log the first open (drives the "opened but didn't confirm" signal later).
-  if (!route.linkOpenedAt) {
-    route.linkOpenedAt = Date.now()
+  // Log this crew member's first open.
+  if (!assignee.linkOpenedAt) {
+    assignee.linkOpenedAt = Date.now()
     pushEvent(route, 'link_opened', clientIp(req), req.headers.get('user-agent') || undefined)
+    syncLead(route)
     try { await saveRoute(route) } catch { /* non-fatal — still show the page */ }
   }
-  return NextResponse.json({ route: toPublicRoute(route), disclaimer: CONFIRM_DISCLAIMER })
+  return NextResponse.json({ route: toPublicRouteFor(route, assignee), disclaimer: CONFIRM_DISCLAIMER })
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params
-  const route = await getRouteByToken(token)
-  if (!route) return NextResponse.json({ error: 'not_found' }, { status: 404 })
+  const found = await getRouteByConfirmToken(token)
+  if (!found) return NextResponse.json({ error: 'not_found' }, { status: 404 })
+  const { route, assignee } = found
 
-  if (route.status === 'cancelled')
-    return NextResponse.json({ error: 'cancelled', route: toPublicRoute(route) }, { status: 409 })
-  if (isExpired(route))
-    return NextResponse.json({ error: 'expired', route: toPublicRoute(route) }, { status: 410 })
+  const pub = () => toPublicRouteFor(route, assignee)
+  if (route.status === 'cancelled') return NextResponse.json({ error: 'cancelled', route: pub() }, { status: 409 })
+  if (isExpired(route)) return NextResponse.json({ error: 'expired', route: pub() }, { status: 410 })
+
   const body = await req.json().catch(() => ({}))
   const action = S(body.action, 20)
   const ip = clientIp(req)
   const ua = req.headers.get('user-agent') || undefined
 
-  // Completion — contractor marks a confirmed route done on-site (optional note/photos).
+  // Completion — a confirmed crew member marks the whole route done on-site.
   if (action === 'complete') {
-    if (route.status === 'completed')
-      return NextResponse.json({ ok: true, already: true, route: toPublicRoute(route) })
-    if (route.status !== 'confirmed')
-      return NextResponse.json({ error: 'Only a confirmed route can be marked complete.' }, { status: 409 })
+    if (route.status === 'completed') return NextResponse.json({ ok: true, already: true, route: pub() })
+    if (!assignee.confirmedAt) return NextResponse.json({ error: 'Please confirm before marking the route complete.' }, { status: 409 })
     const photos: string[] = Array.isArray(body.photos)
       ? (body.photos as unknown[]).filter((u): u is string => typeof u === 'string' && /^https:\/\/\S+$/.test(u)).slice(0, 6)
       : []
@@ -53,36 +54,34 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     route.completionNote = S(body.note, 500) || undefined
     route.completionPhotos = photos.length ? photos : undefined
     pushEvent(route, 'completed', ip, ua)
-    pushAudit(route, 'contractor', 'Marked route complete')
+    pushAudit(route, 'contractor', `${assignee.name} marked the route complete`)
     setStatus(route, 'completed', 'contractor')
     try { await saveRoute(route) }
     catch { return NextResponse.json({ error: 'Could not save — please try again.' }, { status: 500 }) }
-    return NextResponse.json({ ok: true, route: toPublicRoute(route) })
+    return NextResponse.json({ ok: true, route: pub() })
   }
 
-  // Idempotent — already confirmed or declined (confirm/decline actions only).
-  if (route.status === 'confirmed' || route.status === 'declined')
-    return NextResponse.json({ ok: true, already: true, route: toPublicRoute(route) })
+  // Idempotent — this crew member already confirmed or declined.
+  if (assignee.confirmedAt || assignee.declinedAt) return NextResponse.json({ ok: true, already: true, route: pub() })
 
   if (action === 'confirm') {
     if (body.disclaimerAccepted !== true)
       return NextResponse.json({ error: 'You must accept the agreement to confirm.' }, { status: 400 })
     const now = Date.now()
-    route.disclaimerAcceptedAt = now
-    route.confirmedAt = now
-    route.confirmIp = ip
-    route.confirmPhone = S(body.phone, 40) || undefined
+    assignee.disclaimerAcceptedAt = now
+    assignee.confirmedAt = now
+    assignee.confirmIp = ip
     pushEvent(route, 'disclaimer_viewed', ip, ua)
     pushEvent(route, 'confirmed', ip, ua)
-    pushAudit(route, 'contractor', 'Confirmed — will report')
-    setStatus(route, 'confirmed', 'contractor')
+    pushAudit(route, 'contractor', `${assignee.name} confirmed — will report`)
+    syncLead(route)
   } else if (action === 'decline') {
-    route.declinedAt = Date.now()
-    route.declineReason = S(body.reason, 300) || undefined
-    route.confirmIp = ip
+    assignee.declinedAt = Date.now()
+    assignee.declineReason = S(body.reason, 300) || undefined
+    assignee.confirmIp = ip
     pushEvent(route, 'declined', ip, ua)
-    pushAudit(route, 'contractor', route.declineReason ? `Declined — not available: ${route.declineReason}` : 'Declined route')
-    setStatus(route, 'declined', 'contractor')
+    pushAudit(route, 'contractor', assignee.declineReason ? `${assignee.name} declined — not available: ${assignee.declineReason}` : `${assignee.name} declined`)
+    syncLead(route)
   } else {
     return NextResponse.json({ error: 'Unknown action.' }, { status: 400 })
   }
@@ -93,9 +92,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     return NextResponse.json({ error: 'Could not save — please try again.' }, { status: 500 })
   }
 
-  // Real-time owner alert on a decline so dispatch can reassign immediately.
   if (action === 'decline') {
-    try { await alertOwnerRouteEvent(route, 'declined') } catch { /* non-fatal */ }
+    try { await alertOwnerRouteEvent(route, 'declined', { name: assignee.name, reason: assignee.declineReason }) } catch { /* non-fatal */ }
   }
-  return NextResponse.json({ ok: true, route: toPublicRoute(route) })
+  return NextResponse.json({ ok: true, route: pub() })
 }

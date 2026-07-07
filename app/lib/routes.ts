@@ -63,6 +63,11 @@ export type Assignee = {
   smsStatus?: string
   smsError?: string
   smsSentAt?: number
+
+  // Automation dedupe stamps (per person, one-shot; written by the daily cron)
+  reminderSentAt?: number
+  morningOfSentAt?: number
+  noResponseAlertedAt?: number
 }
 
 export type RouteRecord = {
@@ -353,6 +358,19 @@ export function toPublicRoute(r: RouteRecord): PublicRoute {
     completionPhotos: r.completionPhotos,
     expired: isExpired(r),
   }
+}
+
+// Public projection for ONE crew member — their name + their own confirmation
+// status (not the route rollup). The confirm page consumes the same PublicRoute
+// shape, so it needs no changes.
+export function toPublicRouteFor(r: RouteRecord, a: Assignee): PublicRoute {
+  const status: RouteStatus =
+    r.status === 'cancelled' ? 'cancelled'
+      : r.status === 'completed' ? 'completed'
+        : a.confirmedAt ? 'confirmed'
+          : a.declinedAt ? 'declined'
+            : a.smsSentAt ? 'text_sent' : 'assigned'
+  return { ...toPublicRoute(r), status, assignedStaffName: a.name, confirmedAt: a.confirmedAt, declinedAt: a.declinedAt }
 }
 
 // The contractor disclaimer (1099 framing — eligibility/priority, no auto-fine).

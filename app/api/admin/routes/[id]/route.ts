@@ -4,7 +4,7 @@ import {
   getRouteByToken, saveRoute, deleteRoute, setStatus, pushAudit,
   ROUTE_STATUS_LABEL, type RouteStatus,
 } from '../../../../lib/routes'
-import { assignStaff, sendAssignmentText, unassignStaff } from '../../../../lib/route-notify'
+import { addCrew, removeCrew, sendAssignmentText } from '../../../../lib/route-notify'
 import { listStaff } from '../../../../lib/staff'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
@@ -20,17 +20,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   let smsWarning: string | undefined
 
   if (action === 'assign') {
-    // Assign only — no text. The owner sends the confirmation separately.
+    // Add a crew member (no text) with optional per-person pay.
     const staff = (await listStaff()).find(s => s.id === S(body.staffId, 80))
     if (!staff) return NextResponse.json({ error: 'Contractor not found.' }, { status: 400 })
-    assignStaff(route, staff)
+    addCrew(route, staff, S(body.pay, 80) || undefined)
   } else if (action === 'unassign') {
-    unassignStaff(route)
+    // Remove one crew member (by staffId) or the lead if none specified.
+    const sid = S(body.staffId, 80) || route.assignees?.[0]?.staffId
+    if (sid) removeCrew(route, sid)
   } else if (action === 'send' || action === 'resend') {
-    if (!route.assignedStaffId) return NextResponse.json({ error: 'Assign a contractor first.' }, { status: 400 })
-    pushAudit(route, 'admin', action === 'resend' ? 'Re-sent confirmation text' : 'Sent confirmation text')
-    const r = await sendAssignmentText(route)
-    if (!r.ok) smsWarning = r.error
+    const list = route.assignees ?? []
+    if (!list.length) return NextResponse.json({ error: 'Assign a contractor first.' }, { status: 400 })
+    const sid = S(body.staffId, 80)
+    const targets = sid ? list.filter(a => a.staffId === sid) : list.filter(a => a.phone)
+    if (!targets.length) return NextResponse.json({ error: 'No one to text.' }, { status: 400 })
+    const errs: string[] = []
+    for (const a of targets) { const r = await sendAssignmentText(route, a); if (!r.ok && r.error) errs.push(`${a.name}: ${r.error}`) }
+    if (errs.length) smsWarning = errs.join('; ')
   } else if (action === 'status') {
     const status = S(body.status, 40) as RouteStatus
     if (!(status in ROUTE_STATUS_LABEL)) return NextResponse.json({ error: 'Invalid status.' }, { status: 400 })

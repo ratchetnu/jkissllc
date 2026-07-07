@@ -2,7 +2,7 @@
 // Twilio result on the route. sendSmsDetailed() already enforces the app-level
 // opt-out (sms:optout:{phone}), so opted-out contractors are never texted.
 import { sendSmsDetailed } from './sms'
-import { pushAudit, setStatus, type RouteRecord } from './routes'
+import { pushAudit, addAssignee, removeAssignee, syncLead, type RouteRecord, type Assignee } from './routes'
 import { sendOwnerAlert } from './owner-alerts'
 import type { Staff } from './staff'
 
@@ -19,89 +19,65 @@ export function fmtRouteDate(iso: string): string {
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
 }
 
-export function assignmentSms(route: RouteRecord): string {
+export function assignmentSms(route: RouteRecord, assignee: Assignee): string {
   return `J KISS LLC Route Assignment: You have been assigned a route for ${fmtRouteDate(route.routeDate)} at ${route.reportTime}. ` +
-    `Location: ${route.reportAddress}. Confirm here: ${confirmUrl(route.token)}. Reply STOP to opt out.`
+    `Location: ${route.reportAddress}. Confirm here: ${confirmUrl(assignee.token)}. Reply STOP to opt out.`
 }
 
-// Nudge an assigned-but-unconfirmed contractor as the route date nears.
-export function reminderSms(route: RouteRecord): string {
+// Nudge an assigned-but-unconfirmed crew member as the route date nears.
+export function reminderSms(route: RouteRecord, assignee: Assignee): string {
   return `J KISS LLC reminder: Please confirm your route for ${fmtRouteDate(route.routeDate)} at ${route.reportTime}. ` +
-    `Tap to confirm: ${confirmUrl(route.token)} — Reply STOP to opt out.`
+    `Tap to confirm: ${confirmUrl(assignee.token)} — Reply STOP to opt out.`
 }
 
-// Morning-of reminder for a route the contractor already confirmed.
-export function morningOfSms(route: RouteRecord): string {
+// Morning-of reminder for a crew member who already confirmed.
+export function morningOfSms(route: RouteRecord, assignee: Assignee): string {
   return `J KISS LLC — today's route: report at ${route.reportTime}, ${route.reportAddress}. ` +
-    `Details: ${confirmUrl(route.token)}. Reply STOP to opt out.`
+    `Details: ${confirmUrl(assignee.token)}. Reply STOP to opt out.`
 }
 
-// Assign a crew member to the route — NO text. Status → assigned. The owner
-// sends the confirmation text as a separate, explicit step (sendAssignmentText).
-export function assignStaff(route: RouteRecord, staff: Staff): void {
-  route.assignedStaffId = staff.id
-  route.assignedStaffName = staff.name
-  route.assignedStaffPhone = staff.phone
-  // Clear any prior send/confirmation state (e.g. reassigning to someone new).
-  route.smsSid = undefined
-  route.smsStatus = undefined
-  route.smsError = undefined
-  route.smsSentAt = undefined
-  route.confirmedAt = undefined
-  route.declinedAt = undefined
-  route.declineReason = undefined
-  route.linkOpenedAt = undefined
-  pushAudit(route, 'admin', `Assigned to ${staff.name}`)
-  setStatus(route, 'assigned', 'admin')
+// Add a crew member — NO text. The owner sends confirmations explicitly.
+export function addCrew(route: RouteRecord, staff: Staff, pay?: string): Assignee {
+  return addAssignee(route, { staffId: staff.id, name: staff.name, phone: staff.phone, role: staff.role, pay })
 }
 
-// Remove the assigned crew member — back to an unassigned draft.
-export function unassignStaff(route: RouteRecord): void {
-  const who = route.assignedStaffName
-  route.assignedStaffId = undefined
-  route.assignedStaffName = undefined
-  route.assignedStaffPhone = undefined
-  route.smsSid = undefined
-  route.smsStatus = undefined
-  route.smsError = undefined
-  route.smsSentAt = undefined
-  route.confirmedAt = undefined
-  route.declinedAt = undefined
-  route.declineReason = undefined
-  route.linkOpenedAt = undefined
-  pushAudit(route, 'admin', who ? `Removed ${who} from the route` : 'Removed assignment')
-  setStatus(route, 'draft', 'admin')
+// Remove a crew member. Returns their (now dead) confirm token, or null.
+export function removeCrew(route: RouteRecord, staffId: string): string | null {
+  return removeAssignee(route, staffId)
 }
 
-// Text the currently-assigned contractor the confirmation link. Status →
-// text_sent. Returns { ok } — false on no phone / opt-out / Twilio error.
-export async function sendAssignmentText(route: RouteRecord): Promise<{ ok: boolean; error?: string }> {
-  if (!route.assignedStaffPhone) {
-    route.smsStatus = 'no_phone'
-    route.smsError = 'Contractor has no phone number on file.'
-    pushAudit(route, 'system', 'SMS not sent — no phone on file')
-    return { ok: false, error: 'No phone number on file for this contractor.' }
+// Text ONE crew member their own confirmation link. Updates that assignee's SMS
+// state and rolls up the route. Returns { ok } — false on no phone / opt-out /
+// Twilio error.
+export async function sendAssignmentText(route: RouteRecord, assignee: Assignee): Promise<{ ok: boolean; error?: string }> {
+  if (!assignee.phone) {
+    assignee.smsStatus = 'no_phone'
+    assignee.smsError = 'No phone number on file.'
+    pushAudit(route, 'system', `SMS not sent to ${assignee.name} — no phone on file`)
+    syncLead(route)
+    return { ok: false, error: `No phone number on file for ${assignee.name}.` }
   }
-  route.smsSentAt = Date.now()
-  const res = await sendSmsDetailed(route.assignedStaffPhone, assignmentSms(route))
+  assignee.smsSentAt = Date.now()
+  const res = await sendSmsDetailed(assignee.phone, assignmentSms(route, assignee))
   if (res.ok) {
-    route.smsSid = res.sid
-    route.smsStatus = res.status || 'sent'
-    route.smsError = undefined
-    setStatus(route, 'text_sent', 'system', 'Confirmation text sent')
-    return { ok: true }
+    assignee.smsSid = res.sid
+    assignee.smsStatus = res.status || 'sent'
+    assignee.smsError = undefined
+    pushAudit(route, 'system', `Confirmation text sent to ${assignee.name}`)
+  } else {
+    assignee.smsStatus = 'failed'
+    assignee.smsError = res.error
+    pushAudit(route, 'system', `SMS to ${assignee.name} failed: ${res.error}`)
   }
-  route.smsStatus = 'failed'
-  route.smsError = res.error
-  pushAudit(route, 'system', `SMS failed: ${res.error}`)
-  return { ok: false, error: res.error }
+  syncLead(route)
+  return res.ok ? { ok: true } : { ok: false, error: res.error }
 }
 
-// Assign + text in one step. Used by recurring-template generation (which is an
-// explicit automation the owner opted into), NOT by manual assignment.
+// Assign a single default contractor + text them. Used by recurring-template
+// generation (an explicit automation the owner opted into), NOT manual assign.
 export async function assignAndNotify(route: RouteRecord, staff: Staff): Promise<{ ok: boolean; error?: string }> {
-  assignStaff(route, staff)
-  return sendAssignmentText(route)
+  const a = addCrew(route, staff)
+  return sendAssignmentText(route, a)
 }
 
 const esc = (s: string) =>
@@ -113,18 +89,20 @@ const esc = (s: string) =>
 export async function alertOwnerRouteEvent(
   route: RouteRecord,
   event: 'declined' | 'no_response',
+  person?: { name?: string; reason?: string },
 ): Promise<void> {
   const adminUrl = `${BASE}/admin/routes`
-  const who = route.assignedStaffName || 'A contractor'
+  const who = person?.name || route.assignedStaffName || 'A contractor'
   const when = fmtRouteDate(route.routeDate)
   const ref = route.routeNumber
   const biz = route.businessName
+  const declineReason = person?.reason ?? route.declineReason
 
   let smsBody: string
   let subject: string
   let headline: string
   if (event === 'declined') {
-    const reason = route.declineReason ? ` — “${route.declineReason}”` : ''
+    const reason = declineReason ? ` — “${declineReason}”` : ''
     smsBody = `J KISS: ${who} DECLINED ${ref} (${biz}, ${when})${reason}. Reassign: ${adminUrl}`
     subject = `⚠ Route declined — ${ref} · ${who}`
     headline = `${esc(who)} declined ${esc(ref)}`
@@ -141,8 +119,8 @@ export async function alertOwnerRouteEvent(
     `<tr><td style="padding:2px 12px 2px 0;color:#777">Client</td><td>${esc(biz)}</td></tr>` +
     `<tr><td style="padding:2px 12px 2px 0;color:#777">Date</td><td>${esc(when)} at ${esc(route.reportTime)}</td></tr>` +
     `<tr><td style="padding:2px 12px 2px 0;color:#777">Contractor</td><td>${esc(who)}</td></tr>` +
-    (event === 'declined' && route.declineReason
-      ? `<tr><td style="padding:2px 12px 2px 0;color:#777">Reason</td><td>${esc(route.declineReason)}</td></tr>` : '') +
+    (event === 'declined' && declineReason
+      ? `<tr><td style="padding:2px 12px 2px 0;color:#777">Reason</td><td>${esc(declineReason)}</td></tr>` : '') +
     `</table>` +
     `<p style="margin:16px 0 0"><a href="${adminUrl}" style="background:#e5233a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:700">Reassign this route →</a></p>`
 

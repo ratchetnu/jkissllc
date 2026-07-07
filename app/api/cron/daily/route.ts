@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { listBookings, saveBooking, balanceDueCents, paymentSummaryStatus, type Booking, type BookingStatus } from '../../../lib/bookings'
 import { notifyBookingReminder, notifyPaymentReminder, notifyJobTomorrow, notifyReviewRequest } from '../../../lib/notify'
 import { isAbandonedOnlineHold } from '../../../lib/availability'
-import { listRoutes, saveRoute, setStatus, pushAudit } from '../../../lib/routes'
+import { listRoutes, saveRoute, syncLead, pushAudit } from '../../../lib/routes'
 import { reminderSms, morningOfSms, alertOwnerRouteEvent } from '../../../lib/route-notify'
 import { listTemplates, materializeTemplate } from '../../../lib/route-templates'
 import { sendSms } from '../../../lib/sms'
@@ -127,31 +127,32 @@ async function runRoutes(now: number): Promise<Record<string, number>> {
   const routes = await listRoutes(1000)
 
   for (const r of routes) {
-    // Terminal / not-yet-live statuses get no automation.
-    if (r.status === 'cancelled' || r.status === 'completed' || r.status === 'declined' ||
-        r.status === 'no_show' || r.status === 'draft') continue
+    // Terminal / not-yet-live routes get no automation.
+    if (r.status === 'cancelled' || r.status === 'completed' || r.status === 'no_show' || r.status === 'draft') continue
+    const crew = r.assignees ?? []
+    if (!crew.length) continue
     counts.routesProcessed++
     let changed = false
-    const pendingConfirm = r.status === 'assigned' || r.status === 'text_sent'
 
     try {
-      if (pendingConfirm && r.routeDate < today) {
-        // Past its date, never confirmed → No Response + one-time owner alert.
-        if (r.status !== 'no_response') { setStatus(r, 'no_response', 'system', 'No confirmation by route date'); changed = true }
-        if (!r.noResponseAlertedAt) {
-          await alertOwnerRouteEvent(r, 'no_response')
-          r.noResponseAlertedAt = now; counts.routeNoResponse++; changed = true
+      for (const a of crew) {
+        const pending = !a.confirmedAt && !a.declinedAt
+        if (pending && r.routeDate < today) {
+          // Past its date, never confirmed → one-time owner alert per person.
+          if (!a.noResponseAlertedAt) {
+            await alertOwnerRouteEvent(r, 'no_response')
+            a.noResponseAlertedAt = now; counts.routeNoResponse++; changed = true
+          }
+        } else if (pending && (r.routeDate === today || r.routeDate === tomorrow) && !a.reminderSentAt) {
+          // Imminent and still unconfirmed → nudge this crew member to confirm.
+          if (a.phone) await sendSms(a.phone, reminderSms(r, a))
+          a.reminderSentAt = now; pushAudit(r, 'system', `Confirmation reminder sent to ${a.name}`); counts.routeReminders++; changed = true
         }
-      } else if (pendingConfirm && (r.routeDate === today || r.routeDate === tomorrow) && !r.reminderSentAt) {
-        // Imminent and still unconfirmed → nudge the contractor to confirm.
-        if (r.assignedStaffPhone) await sendSms(r.assignedStaffPhone, reminderSms(r))
-        r.reminderSentAt = now; pushAudit(r, 'system', 'Confirmation reminder sent'); counts.routeReminders++; changed = true
-      }
-
-      if (r.status === 'confirmed' && r.routeDate === today && !r.morningOfSentAt) {
-        // Confirmed and happening today → morning-of reminder.
-        if (r.assignedStaffPhone) await sendSms(r.assignedStaffPhone, morningOfSms(r))
-        r.morningOfSentAt = now; pushAudit(r, 'system', 'Morning-of reminder sent'); counts.routeMorningOf++; changed = true
+        if (a.confirmedAt && r.routeDate === today && !a.morningOfSentAt) {
+          // Confirmed and happening today → morning-of reminder.
+          if (a.phone) await sendSms(a.phone, morningOfSms(r, a))
+          a.morningOfSentAt = now; pushAudit(r, 'system', `Morning-of reminder sent to ${a.name}`); counts.routeMorningOf++; changed = true
+        }
       }
     } catch (e) {
       counts.routeErrors++
@@ -159,6 +160,7 @@ async function runRoutes(now: number): Promise<Record<string, number>> {
     }
 
     if (changed) {
+      syncLead(r)
       try { await saveRoute(r) } catch (e) { console.error('[cron/routes save]', r.routeNumber, e) }
     }
   }
