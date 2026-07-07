@@ -39,10 +39,36 @@ export type ConfirmEvent = {
   ua?: string
 }
 
+// One crew member on a route. Each confirms independently (own token/link) and
+// carries their own pay for THIS route (driver ≠ helper; the route's payRate is
+// not the crew's pay). Confirmation + SMS state is per person.
+export type Assignee = {
+  staffId: string
+  name: string
+  phone?: string
+  role?: string                 // e.g. Driver / Helper (from staff.role)
+  pay?: string                  // per-person pay for this route, free text ("$175")
+  token: string                 // this crew member's own confirmation-link token
+
+  // Confirmation (per person)
+  linkOpenedAt?: number
+  disclaimerAcceptedAt?: number
+  confirmedAt?: number
+  declinedAt?: number
+  declineReason?: string
+  confirmIp?: string
+
+  // Outbound SMS (per person)
+  smsSid?: string
+  smsStatus?: string
+  smsError?: string
+  smsSentAt?: number
+}
+
 export type RouteRecord = {
   token: string
   routeNumber: string           // JK-R-1001
-  status: RouteStatus
+  status: RouteStatus           // route-level rollup (derived from assignees)
 
   // Route details
   businessName: string
@@ -52,16 +78,20 @@ export type RouteRecord = {
   reportTime: string            // free text, e.g. "7:00 AM"
   routeDate: string             // YYYY-MM-DD
   description?: string
-  payRate?: string              // free text (1099 — keep flexible, e.g. "$175/route")
+  payRate?: string              // legacy route-level rate; crew pay lives per-assignee
   vehicle?: string
   specialNotes?: string
 
-  // Assignment (to a crew member from lib/staff)
+  // Crew (source of truth for multi-person assignment)
+  assignees?: Assignee[]
+
+  // Legacy single-assignee mirror (= assignees[0], the "lead"). Kept so existing
+  // reads keep working; write via syncLead().
   assignedStaffId?: string
   assignedStaffName?: string
   assignedStaffPhone?: string
 
-  // Confirmation
+  // Confirmation (mirrors the lead assignee)
   linkOpenedAt?: number
   disclaimerAcceptedAt?: number
   confirmedAt?: number
@@ -129,6 +159,7 @@ const KEY = (token: string) => `rt:${token}`
 const KEY_NUM = (num: string) => `rt:num:${num}`
 const KEY_INDEX = 'rt:index'      // sorted set, score = updatedAt, member = token
 const KEY_COUNTER = 'rt:counter'
+const KEY_ATOK = (t: string) => `rt:atok:${t}`   // assignee confirm-token → route token
 
 // ── Tokens + numbers ─────────────────────────────────────────────────────────
 export function generateToken(): string {
@@ -156,7 +187,85 @@ export function isExpired(r: Pick<RouteRecord, 'routeDate'>): boolean {
 function normalize(r: RouteRecord): RouteRecord {
   r.events = Array.isArray(r.events) ? r.events : []
   r.audit = Array.isArray(r.audit) ? r.audit : []
+  // Migrate a legacy single-assignee route into the assignees[] model. The old
+  // confirm link WAS the route token, so the migrated assignee keeps it.
+  if (!Array.isArray(r.assignees)) {
+    r.assignees = r.assignedStaffId
+      ? [{
+          staffId: r.assignedStaffId, name: r.assignedStaffName || 'Crew', phone: r.assignedStaffPhone,
+          pay: r.payRate, token: r.token,
+          linkOpenedAt: r.linkOpenedAt, disclaimerAcceptedAt: r.disclaimerAcceptedAt,
+          confirmedAt: r.confirmedAt, declinedAt: r.declinedAt, declineReason: r.declineReason, confirmIp: r.confirmIp,
+          smsSid: r.smsSid, smsStatus: r.smsStatus, smsError: r.smsError, smsSentAt: r.smsSentAt,
+        }]
+      : []
+  }
   return r
+}
+
+// Route-level status rolled up from the crew (best-effort, for board chips).
+// Explicit terminal statuses set by an admin (completed/cancelled/no_show) win.
+export function rollupStatus(r: RouteRecord): RouteStatus {
+  if (r.status === 'cancelled' || r.status === 'completed' || r.status === 'no_show') return r.status
+  const a = r.assignees ?? []
+  if (a.length === 0) return 'draft'
+  if (a.every(x => x.confirmedAt)) return 'confirmed'
+  const pending = a.filter(x => !x.confirmedAt && !x.declinedAt)
+  if (pending.length) return pending.some(x => x.smsSentAt) ? 'text_sent' : 'assigned'
+  return a.some(x => x.confirmedAt) ? 'confirmed' : 'declined'  // no pending: some mix / all declined
+}
+
+// Mirror the lead assignee (assignees[0]) onto the legacy route-level fields and
+// recompute the route status. Call after any crew mutation.
+export function syncLead(r: RouteRecord): void {
+  const lead = (r.assignees ?? [])[0]
+  r.assignedStaffId = lead?.staffId
+  r.assignedStaffName = lead?.name
+  r.assignedStaffPhone = lead?.phone
+  r.linkOpenedAt = lead?.linkOpenedAt
+  r.disclaimerAcceptedAt = lead?.disclaimerAcceptedAt
+  r.confirmedAt = lead?.confirmedAt
+  r.declinedAt = lead?.declinedAt
+  r.declineReason = lead?.declineReason
+  r.confirmIp = lead?.confirmIp
+  r.smsSid = lead?.smsSid
+  r.smsStatus = lead?.smsStatus
+  r.smsError = lead?.smsError
+  r.smsSentAt = lead?.smsSentAt
+  r.status = rollupStatus(r)
+}
+
+// Add a crew member (no dupes). Returns the assignee (new or existing).
+export function addAssignee(r: RouteRecord, input: { staffId: string; name: string; phone?: string; role?: string; pay?: string }): Assignee {
+  r.assignees = r.assignees ?? []
+  const existing = r.assignees.find(a => a.staffId === input.staffId)
+  if (existing) return existing
+  const a: Assignee = { staffId: input.staffId, name: input.name, phone: input.phone, role: input.role, pay: input.pay, token: generateToken() }
+  r.assignees.push(a)
+  pushAudit(r, 'admin', `Added ${input.name}${input.role ? ` (${input.role})` : ''} to the crew`)
+  syncLead(r)
+  return a
+}
+
+// Remove a crew member. Returns the removed assignee's token (dead link) or null.
+export function removeAssignee(r: RouteRecord, staffId: string): string | null {
+  const found = (r.assignees ?? []).find(a => a.staffId === staffId)
+  r.assignees = (r.assignees ?? []).filter(a => a.staffId !== staffId)
+  if (found) pushAudit(r, 'admin', `Removed ${found.name} from the crew`)
+  syncLead(r)
+  return found?.token ?? null
+}
+
+// Resolve a public confirm token (assignee token, or a legacy route token) to the
+// route + the specific crew member.
+export async function getRouteByConfirmToken(token: string): Promise<{ route: RouteRecord; assignee: Assignee } | null> {
+  if (!token || !TOKEN_RE.test(token)) return null
+  let routeToken = token
+  try { const mapped = await redis.get(KEY_ATOK(token)); if (mapped) routeToken = mapped } catch { /* fall through */ }
+  const route = await getRouteByToken(routeToken)
+  if (!route) return null
+  const assignee = (route.assignees ?? []).find(a => a.token === token)
+  return assignee ? { route, assignee } : null
 }
 
 export async function getRouteByToken(token: string): Promise<RouteRecord | null> {
@@ -171,12 +280,20 @@ export async function saveRoute(r: RouteRecord): Promise<void> {
   await redis.set(KEY(r.token), JSON.stringify(r))
   await redis.set(KEY_NUM(r.routeNumber.toUpperCase()), r.token)
   await redis.zadd(KEY_INDEX, r.updatedAt, r.token)
+  // Map each assignee's own confirm token → this route (the route token maps to
+  // itself implicitly, so skip it).
+  for (const a of r.assignees ?? []) {
+    if (a.token && a.token !== r.token) await redis.set(KEY_ATOK(a.token), r.token)
+  }
 }
 
 export async function deleteRoute(token: string): Promise<void> {
   const r = await getRouteByToken(token)
   await redis.del(KEY(token))
-  if (r) await redis.del(KEY_NUM(r.routeNumber.toUpperCase()))
+  if (r) {
+    await redis.del(KEY_NUM(r.routeNumber.toUpperCase()))
+    for (const a of r.assignees ?? []) if (a.token && a.token !== token) await redis.del(KEY_ATOK(a.token))
+  }
   await redis.zrem(KEY_INDEX, token)
 }
 
