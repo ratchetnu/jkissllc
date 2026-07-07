@@ -163,6 +163,12 @@ export default function QuotePage() {
     if (match) { setSvcId(match.id); setStep(1) }
   }, [])
 
+  // Scroll to top on each step change, AFTER the new step renders. A scrollTo in
+  // the click handler runs before the re-render and gets undone by the step swap.
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [step])
+
   const size = SIZES.find(s => s.id === sizeId)
   const upgradeTotal = UPGRADES.filter(u => upgrades.includes(u.id)).reduce((s, u) => s + u.price, 0)
   const deposit = ((est?.depositCents ?? avail?.depositCents ?? 5000) / 100).toFixed(0)
@@ -216,13 +222,11 @@ export default function QuotePage() {
     if (v) { setErr(v); return }
     setErr('')
     if (step === 1) loadEstimate()          // fetch as we leave the job-details step
-    setStep(s => Math.min(5, s + 1))
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    setStep(s => Math.min(5, s + 1))        // scroll handled by the [step] effect
   }
   function back() {
     setErr(''); setReserveOpen(false)
     setStep(s => Math.max(0, s - 1))
-    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   function buildNotes(): string {
