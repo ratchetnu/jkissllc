@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { MessageSquare, Mail, Star, Briefcase, CalendarCheck, Trash2, ScrollText, BarChart3, CalendarDays, LogOut, Check } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
+import { osField as field } from '../ui'
 
 type Config = { sms: boolean; email: boolean; smsTo: string; emailTo: string }
 
@@ -16,8 +17,6 @@ const MORE_TOOLS = [
   { href: '/admin/policy', label: 'Policy', Icon: ScrollText },
   { href: '/admin', label: 'Analytics', Icon: BarChart3 },
 ]
-
-const field: React.CSSProperties = { width: '100%', padding: '12px 14px', background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)', borderRadius: 12, color: 'var(--text)', fontSize: 15, outline: 'none' }
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
   return (

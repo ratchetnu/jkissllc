@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Search, Plus, Home, ClipboardList, Users, Building2, Settings, ArrowRight, User, Briefcase } from 'lucide-react'
+import { fmtDay } from './ui'
 
 type Op = { token: string; routeNumber: string; businessName: string; status: string; routeDate: string; reportTime: string; assignedStaffName?: string }
 type Staff = { id: string; name: string; role?: string; active: boolean }
@@ -17,8 +18,6 @@ const ACTIONS: Item[] = [
   { id: 'a-biz', label: 'Businesses', Icon: Building2, href: '/admin/operations/businesses', group: 'Go to' },
   { id: 'a-set', label: 'Settings', Icon: Settings, href: '/admin/operations/settings', group: 'Go to' },
 ]
-
-const fmtDay = (iso: string) => { const d = new Date(`${iso}T12:00:00Z`); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) }
 
 export default function CommandPalette() {
   const router = useRouter()

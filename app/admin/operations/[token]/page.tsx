@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { MapPin, Clock, CalendarDays, Truck, DollarSign, User, Phone, FileText, ChevronLeft, Send, CheckCircle2, XCircle, Link2, Sparkles } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
+import { statusOf, Avatar, scoreColor, fmtLongDay, fmtTs, mapsUrl } from '../ui'
 
 type Audit = { at: number; actor: string; action: string }
 type Event = { at: number; type: string }
@@ -19,20 +20,6 @@ type Op = {
 }
 type Staff = { id: string; name: string; phone?: string; active: boolean }
 type Stats = Record<string, { score: number | null }>
-
-const CHIP: Record<string, { fg: string; bg: string; label: string }> = {
-  draft: { fg: '#cbd5e1', bg: 'rgba(255,255,255,.08)', label: 'Draft' }, assigned: { fg: '#93c5fd', bg: 'rgba(59,130,246,.15)', label: 'Assigned' },
-  text_sent: { fg: '#fcd34d', bg: 'rgba(245,158,11,.15)', label: 'Awaiting confirm' }, confirmed: { fg: '#86efac', bg: 'rgba(34,197,94,.16)', label: 'Confirmed' },
-  declined: { fg: '#fca5a5', bg: 'rgba(239,68,68,.16)', label: 'Declined' }, no_response: { fg: '#fcd34d', bg: 'rgba(245,158,11,.15)', label: 'No response' },
-  no_show: { fg: '#fca5a5', bg: 'rgba(239,68,68,.2)', label: 'No show' }, completed: { fg: '#86efac', bg: 'rgba(34,197,94,.14)', label: 'Completed' },
-  cancelled: { fg: '#94a3b8', bg: 'rgba(255,255,255,.06)', label: 'Cancelled' },
-}
-const initials = (n: string) => n.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || '').join('')
-const avatarHue = (n: string) => { let h = 0; for (const c of n) h = (h * 31 + c.charCodeAt(0)) % 360; return h }
-const scoreColor = (s: number | null | undefined) => s == null ? '#94a3b8' : s >= 85 ? '#86efac' : s >= 60 ? '#fcd34d' : '#fca5a5'
-const fmtDay = (iso: string) => { const d = new Date(`${iso}T12:00:00Z`); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' }) }
-const fmtTs = (t: number) => new Date(t).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-const mapsUrl = (a: string) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a)}`
 
 function Detail({ token }: { token: string }) {
   const router = useRouter()
@@ -85,7 +72,7 @@ function Detail({ token }: { token: string }) {
       <Link href="/admin/operations" className="btn os-tap" style={{ borderRadius: 999, marginTop: 16, display: 'inline-flex' }}>Back to Operations</Link>
     </div>
   )
-  const chip = CHIP[op.status] || CHIP.draft
+  const chip = statusOf(op.status)
   const canComplete = op.status === 'confirmed'
   const live = !['completed', 'cancelled'].includes(op.status)
 
@@ -103,7 +90,7 @@ function Detail({ token }: { token: string }) {
         </div>
         <h1 className="jkos-h" style={{ fontSize: 26, marginTop: 10 }}>{op.businessName}</h1>
         <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: 14, color: 'var(--muted)', flexWrap: 'wrap' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><CalendarDays size={15} /> {fmtDay(op.routeDate)}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><CalendarDays size={15} /> {fmtLongDay(op.routeDate)}</span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Clock size={15} /> {op.reportTime}</span>
         </div>
 
@@ -178,9 +165,6 @@ function Detail({ token }: { token: string }) {
   )
 }
 
-function Avatar({ name, size = 44 }: { name: string; size?: number }) {
-  return <div style={{ width: size, height: size, borderRadius: 999, flexShrink: 0, display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 800, fontSize: size * 0.34, background: `linear-gradient(135deg, hsl(${avatarHue(name)},55%,45%), hsl(${(avatarHue(name) + 40) % 360},55%,38%))` }}>{initials(name)}</div>
-}
 function Row({ Icon, label, val, href }: { Icon: typeof MapPin; label: string; val: string; href?: string }) {
   return (
     <div style={{ display: 'flex', gap: 11, alignItems: 'flex-start' }}>

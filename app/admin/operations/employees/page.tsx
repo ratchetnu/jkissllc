@@ -3,27 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { UserPlus, Camera, ChevronDown, Sparkles, Phone, Pencil, Trash2 } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
+import { Avatar, scoreColor, ymd, fmtDay, onActivate } from '../ui'
 
 type Staff = { id: string; name: string; phone?: string; role?: string; photoUrl?: string; active: boolean }
 type CStats = { score: number | null; assignments: number; confirmed: number; completed: number; declined: number; noResponse: number; noShow: number }
 type RouteLite = { routeNumber: string; assignedStaffId?: string; businessName: string; status: string; routeDate: string; reportTime: string }
 
-const initials = (n: string) => n.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || '').join('')
-const avatarHue = (n: string) => { let h = 0; for (const c of n) h = (h * 31 + c.charCodeAt(0)) % 360; return h }
-const scoreColor = (s: number | null | undefined) => s == null ? '#94a3b8' : s >= 85 ? '#86efac' : s >= 60 ? '#fcd34d' : '#fca5a5'
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-const fmtDay = (iso: string) => { const d = new Date(`${iso}T12:00:00Z`); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) }
-
 const field: React.CSSProperties = { width: '100%', padding: '11px 13px', background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)', borderRadius: 11, color: 'var(--text)', fontSize: 14.5, outline: 'none' }
 const btnSm: React.CSSProperties = { padding: '7px 13px', fontSize: 12.5, fontWeight: 700, borderRadius: 9, background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', color: 'var(--muted)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }
-
-function Avatar({ s, size = 48 }: { s: Staff; size?: number }) {
-  if (s.photoUrl) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={s.photoUrl} alt={s.name} style={{ width: size, height: size, borderRadius: 999, objectFit: 'cover', flexShrink: 0 }} />
-  }
-  return <div style={{ width: size, height: size, borderRadius: 999, flexShrink: 0, display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 800, fontSize: size * 0.34, background: `linear-gradient(135deg, hsl(${avatarHue(s.name)},55%,45%), hsl(${(avatarHue(s.name) + 40) % 360},55%,38%))` }}>{initials(s.name)}</div>
-}
 
 function Hub() {
   const [staff, setStaff] = useState<Staff[]>([])
@@ -105,8 +92,8 @@ function EmployeeCard({ s, st, upcoming, open, onToggle, onOpen, onChanged, setM
 
   return (
     <div className="os-card os-rise" style={{ overflow: 'hidden', opacity: s.active ? 1 : .6, animationDelay: `${Math.min(delay * 40, 200)}ms` }}>
-      <div onClick={onToggle} className="os-tap" style={{ cursor: 'pointer', padding: 15, display: 'flex', alignItems: 'center', gap: 13 }}>
-        <Avatar s={s} />
+      <div onClick={onToggle} onKeyDown={onActivate(onToggle)} role="button" tabIndex={0} aria-expanded={open} className="os-tap" style={{ cursor: 'pointer', padding: 15, display: 'flex', alignItems: 'center', gap: 13 }}>
+        <Avatar name={s.name} photoUrl={s.photoUrl} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 700, fontSize: 16 }}>{s.name}</span>
@@ -216,7 +203,7 @@ function EmployeeForm({ existing, onDone, onCancel }: { existing?: Staff; onDone
     <div className={existing ? '' : 'os-card os-rise'} style={existing ? {} : { padding: 16, marginBottom: 16 }}>
       {!existing && <p style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 12 }}>New contractor</p>}
       <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginBottom: 12 }}>
-        <Avatar s={previewStaff} size={56} />
+        <Avatar name={previewStaff.name} photoUrl={previewStaff.photoUrl} size={56} />
         <label style={{ ...btnSm, cursor: uploading ? 'wait' : 'pointer' }}>
           <Camera size={14} /> {uploading ? 'Uploading…' : photoUrl ? 'Change photo' : 'Add photo'}
           <input type="file" accept="image/*" onChange={pickPhoto} style={{ display: 'none' }} disabled={uploading} />

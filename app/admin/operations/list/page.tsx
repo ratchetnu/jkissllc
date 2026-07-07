@@ -1,36 +1,21 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Plus, Search, Clock, CalendarDays, ChevronRight } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
+import { useOps } from '../useOps'
+import { STATUS as CHIP, ymd, fmtDay, type RouteStatus } from '../ui'
 
-type RouteStatus = 'draft' | 'assigned' | 'text_sent' | 'confirmed' | 'declined' | 'no_response' | 'no_show' | 'completed' | 'cancelled'
 type Op = { token: string; routeNumber: string; status: RouteStatus; businessName: string; reportAddress: string; reportTime: string; routeDate: string; assignedStaffName?: string }
-
-const CHIP: Record<RouteStatus, { fg: string; bg: string; label: string }> = {
-  draft: { fg: '#cbd5e1', bg: 'rgba(255,255,255,.08)', label: 'Draft' }, assigned: { fg: '#93c5fd', bg: 'rgba(59,130,246,.15)', label: 'Assigned' },
-  text_sent: { fg: '#fcd34d', bg: 'rgba(245,158,11,.15)', label: 'Awaiting' }, confirmed: { fg: '#86efac', bg: 'rgba(34,197,94,.16)', label: 'Confirmed' },
-  declined: { fg: '#fca5a5', bg: 'rgba(239,68,68,.16)', label: 'Declined' }, no_response: { fg: '#fcd34d', bg: 'rgba(245,158,11,.15)', label: 'No response' },
-  no_show: { fg: '#fca5a5', bg: 'rgba(239,68,68,.2)', label: 'No show' }, completed: { fg: '#86efac', bg: 'rgba(34,197,94,.14)', label: 'Completed' },
-  cancelled: { fg: '#94a3b8', bg: 'rgba(255,255,255,.06)', label: 'Cancelled' },
-}
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-const fmtDay = (iso: string) => { const d = new Date(`${iso}T12:00:00Z`); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) }
 
 type Filter = 'attention' | 'upcoming' | 'completed' | 'all'
 const FILTERS: { key: Filter; label: string }[] = [{ key: 'attention', label: 'Attention' }, { key: 'upcoming', label: 'Upcoming' }, { key: 'completed', label: 'Completed' }, { key: 'all', label: 'All' }]
 
 function List() {
-  const [ops, setOps] = useState<Op[]>([])
-  const [loading, setLoading] = useState(true)
+  const { routes: ops, loading } = useOps<Op>()
   const [filter, setFilter] = useState<Filter>('attention')
   const [q, setQ] = useState('')
-
-  const load = useCallback(async () => {
-    try { const r = await fetch('/api/admin/routes', { credentials: 'same-origin' }).then(x => x.json()); setOps(r.items || []) } catch { /* ignore */ } finally { setLoading(false) }
-  }, [])
-  useEffect(() => { load() }, [load])
 
   const today = ymd(new Date())
   const counts = useMemo(() => {

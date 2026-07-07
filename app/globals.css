@@ -493,3 +493,9 @@ h1, h2, h3, .display { font-family: var(--font-display); font-feature-settings: 
 @media (prefers-reduced-motion: reduce) {
   .os-tap, .os-rise, .os-expand, .os-dock-item { animation: none !important; transition: none !important; }
 }
+/* Visible keyboard focus across the OS (a11y). */
+.jkos a:focus-visible, .jkos button:focus-visible, .jkos [role="button"]:focus-visible,
+.jkos input:focus-visible, .jkos textarea:focus-visible, .jkos select:focus-visible {
+  outline: 2px solid var(--red-glow, #ff6680);
+  outline-offset: 2px;
+}

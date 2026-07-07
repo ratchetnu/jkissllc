@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Building2, ChevronDown, Link2, FileText, Plus, Check, Repeat, Pencil } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
+import { money, ymd, fmtDay, weekdaysLabel, onActivate } from '../ui'
 
 type RouteLite = { routeNumber: string; businessName: string; status: string; routeDate: string; reportTime: string }
 type Portal = { token: string; businessName: string; label?: string }
@@ -17,18 +18,6 @@ type Biz = {
   portal?: Portal; invoices: Invoice[]; outstandingCents: number; templates: Template[]; record?: BusinessRec
 }
 
-const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-function weekdaysLabel(w: number[]): string {
-  const s = [...w].sort((a, b) => a - b).join(',')
-  if (s === '1,2,3,4,5') return 'Mon–Fri'
-  if (s === '1,2,3,4,5,6') return 'Mon–Sat'
-  if (s === '0,1,2,3,4,5,6') return 'Every day'
-  return [...w].sort((a, b) => a - b).map(d => DOW[d]).join('/')
-}
-
-const money = (c: number) => (c / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-const fmtDay = (iso: string) => { const d = new Date(`${iso}T12:00:00Z`); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) }
 const norm = (s: string) => s.trim().toLowerCase()
 
 const INV_CHIP: Record<Invoice['status'], { fg: string; label: string }> = {
@@ -182,7 +171,7 @@ function BizCard({ b, open, onToggle, onOpen, onCreatePortal, onReload, setMsg, 
 
   return (
     <div className="os-card os-rise" style={{ overflow: 'hidden', animationDelay: `${Math.min(delay * 40, 200)}ms` }}>
-      <div onClick={onToggle} className="os-tap" style={{ cursor: 'pointer', padding: 15, display: 'flex', alignItems: 'center', gap: 13 }}>
+      <div onClick={onToggle} onKeyDown={onActivate(onToggle)} role="button" tabIndex={0} aria-expanded={open} className="os-tap" style={{ cursor: 'pointer', padding: 15, display: 'flex', alignItems: 'center', gap: 13 }}>
         <div style={{ width: 46, height: 46, borderRadius: 12, flexShrink: 0, display: 'grid', placeItems: 'center', background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)' }}><Building2 size={22} style={{ color: 'var(--red-glow)' }} /></div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 16 }}>{b.name}</div>

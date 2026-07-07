@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Building2, ClipboardList, MapPin, CalendarClock, Users, CheckCircle2, ChevronLeft, Send, Sparkles, Truck, Phone } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
+import { ymd, fmtLongDay, scoreColor, DOW, weekdaysLabel, Avatar } from '../ui'
 
 const VEHICLE = 'Box truck' // J KISS is box-truck only — never asked, always this.
 
@@ -21,23 +22,9 @@ const STEP_META = [
   { key: 'review', title: 'Review & send', Icon: CheckCircle2 },
 ]
 
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-const fmtDay = (iso: string) => { const d = new Date(`${iso}T12:00:00Z`); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' }) }
-const initials = (n: string) => n.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || '').join('')
-const avatarHue = (n: string) => { let h = 0; for (const c of n) h = (h * 31 + c.charCodeAt(0)) % 360; return h }
-const scoreColor = (s: number | null | undefined) => s == null ? '#94a3b8' : s >= 85 ? '#86efac' : s >= 60 ? '#fcd34d' : '#fca5a5'
-
 const field: React.CSSProperties = { width: '100%', padding: '14px 15px', background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)', borderRadius: 14, color: 'var(--text)', fontSize: 16, outline: 'none' }
 const labelCss: React.CSSProperties = { fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', marginBottom: 6, display: 'block' }
 
-const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-function weekdaysLabel(w: number[]): string {
-  const s = [...w].sort((a, b) => a - b).join(',')
-  if (s === '1,2,3,4,5') return 'Mon–Fri'
-  if (s === '1,2,3,4,5,6') return 'Mon–Sat'
-  if (s === '0,1,2,3,4,5,6') return 'Every day'
-  return [...w].sort((a, b) => a - b).map(d => DOW[d]).join('/')
-}
 const pill = (on: boolean): React.CSSProperties => ({ flex: 1, padding: '11px', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'var(--red)' : 'transparent', color: on ? '#fff' : 'var(--muted)' })
 const dayChip = (on: boolean): React.CSSProperties => ({ width: 42, height: 42, borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'var(--red)' : 'transparent', color: on ? '#fff' : 'var(--muted)' })
 const presetBtn: React.CSSProperties = { padding: '7px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--line)', background: 'transparent', color: 'var(--muted)' }
@@ -247,7 +234,7 @@ function Builder() {
               const score = stats[s.id]?.score
               return (
                 <button key={s.id} onClick={() => set('staffId', sel ? '' : s.id)} className="os-card os-tap" style={{ padding: 14, textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 13, borderColor: sel ? 'var(--red)' : 'var(--line)', borderWidth: sel ? 2 : 1 }}>
-                  <div style={{ width: 46, height: 46, borderRadius: 999, flexShrink: 0, display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 800, fontSize: 16, background: `linear-gradient(135deg, hsl(${avatarHue(s.name)},55%,45%), hsl(${(avatarHue(s.name) + 40) % 360},55%,38%))` }}>{initials(s.name)}</div>
+                  <Avatar name={s.name} size={46} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
                       <span style={{ fontWeight: 700, fontSize: 15.5 }}>{s.name}</span>
@@ -275,7 +262,7 @@ function Builder() {
               <SummaryRow label="Business" val={form.businessName} />
               <SummaryRow label="Work" val={[form.description || 'Contract route', `· ${VEHICLE}`, form.payRate && `· ${form.payRate}`].filter(Boolean).join(' ')} />
               <SummaryRow label="Report to" val={form.reportAddress} />
-              <SummaryRow label="When" val={repeats ? `Repeats ${weekdaysLabel(weekdays)} · ${form.reportTime}` : `${fmtDay(form.routeDate)} · ${form.reportTime}`} />
+              <SummaryRow label="When" val={repeats ? `Repeats ${weekdaysLabel(weekdays)} · ${form.reportTime}` : `${fmtLongDay(form.routeDate)} · ${form.reportTime}`} />
               <SummaryRow label={repeats ? 'Crew (each route)' : 'Assigned'} val={selectedStaff ? selectedStaff.name : repeats ? 'Unassigned (drafts)' : 'Unassigned (draft)'} last />
             </div>
             {repeats ? (
@@ -285,7 +272,7 @@ function Builder() {
             ) : selectedStaff?.phone && (
               <div style={{ padding: 14, borderRadius: 14, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
                 <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>They’ll get this text</div>
-                <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'var(--text)' }}>J KISS LLC Route Assignment: You have been assigned a route for {fmtDay(form.routeDate).replace(/,.*/, '')} at {form.reportTime}. Location: {form.reportAddress}. Confirm here: <span style={{ color: 'var(--red)' }}>[secure link]</span>. Reply STOP to opt out.</p>
+                <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'var(--text)' }}>J KISS LLC Route Assignment: You have been assigned a route for {fmtLongDay(form.routeDate).replace(/,.*/, '')} at {form.reportTime}. Location: {form.reportAddress}. Confirm here: <span style={{ color: 'var(--red)' }}>[secure link]</span>. Reply STOP to opt out.</p>
               </div>
             )}
             {error && <p style={{ color: '#f87171', fontSize: 14 }}>{error}</p>}
