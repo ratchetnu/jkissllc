@@ -5,6 +5,7 @@ import {
   type RouteRecord,
 } from '../../../lib/routes'
 import { assignAndNotify } from '../../../lib/route-notify'
+import { contractorStatsObject } from '../../../lib/route-stats'
 import { listStaff } from '../../../lib/staff'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
@@ -12,7 +13,8 @@ const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim()
 export async function GET(req: NextRequest) {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
-    return NextResponse.json({ items: await listRoutes(500) })
+    const [items, stats] = await Promise.all([listRoutes(500), contractorStatsObject()])
+    return NextResponse.json({ items, stats })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'list failed'
     if (msg === 'UPSTASH_NOT_CONFIGURED') return NextResponse.json({ error: 'UPSTASH_NOT_CONFIGURED' }, { status: 503 })

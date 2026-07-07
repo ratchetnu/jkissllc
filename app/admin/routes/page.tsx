@@ -16,6 +16,15 @@ type Route = {
   createdAt: number
 }
 type Staff = { id: string; name: string; phone?: string; role?: string; active: boolean }
+type ContractorStats = { staffId: string; assignments: number; confirmed: number; completed: number; declined: number; noResponse: number; noShow: number; score: number | null }
+
+// Reliability score → chip color.
+function scoreColor(s: number | null): string {
+  if (s == null) return '#94a3b8'
+  if (s >= 85) return '#86efac'
+  if (s >= 60) return '#fcd34d'
+  return '#fca5a5'
+}
 
 const CHIP: Record<RouteStatus, { bg: string; fg: string; label: string }> = {
   draft: { bg: 'rgba(255,255,255,.08)', fg: '#cbd5e1', label: 'Draft' },
@@ -34,6 +43,7 @@ const iStyle: React.CSSProperties = { width: '100%', padding: '10px 12px', backg
 function Dashboard() {
   const [routes, setRoutes] = useState<Route[]>([])
   const [staff, setStaff] = useState<Staff[]>([])
+  const [stats, setStats] = useState<Record<string, ContractorStats>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
@@ -51,6 +61,7 @@ function Dashboard() {
       ])
       if (r.error) setError(r.error === 'UPSTASH_NOT_CONFIGURED' ? 'Redis is not configured.' : r.error)
       setRoutes(r.items || [])
+      setStats(r.stats || {})
       setStaff((s.items || []).filter((x: Staff) => x.active))
     } catch { setError('Failed to load routes.') }
     finally { setLoading(false) }
@@ -89,6 +100,16 @@ function Dashboard() {
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => setForm(f => ({ ...f, [k]: e.target.value }))
 
+  // Offer the most reliable contractors first; brand-new (no history) sink to the end.
+  const rankedStaff = [...staff].sort((a, b) => {
+    const va = stats[a.id]?.score ?? -1, vb = stats[b.id]?.score ?? -1
+    return vb - va || a.name.localeCompare(b.name)
+  })
+  const optLabel = (s: Staff) => {
+    const sc = stats[s.id]?.score
+    return `${s.name}${sc == null ? ' · new' : ` · ${sc}`}${s.phone ? '' : ' (no phone)'}`
+  }
+
   return (
     <div className="max-w-4xl mx-auto">
       <h1 className="text-3xl font-black text-white" style={{ letterSpacing: '-0.03em' }}>Route Dispatch</h1>
@@ -116,12 +137,35 @@ function Dashboard() {
             <label className="text-xs font-semibold" style={{ color: 'var(--muted)' }}>Assign contractor (texts them now — optional)</label>
             <select value={form.staffId} onChange={set('staffId')} style={{ ...iStyle, cursor: 'pointer', marginTop: 4 }}>
               <option value="">— Save as draft (assign later) —</option>
-              {staff.map(s => <option key={s.id} value={s.id}>{s.name}{s.phone ? '' : ' (no phone)'}</option>)}
+              {rankedStaff.map(s => <option key={s.id} value={s.id}>{optLabel(s)}</option>)}
             </select>
+            <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>Number = reliability score (0–100) from past routes; contractors are listed best-first.</p>
           </div>
           <button type="submit" disabled={creating} className="btn" style={{ justifyContent: 'center', height: 42 }}>{creating ? 'Saving…' : 'Create route'}</button>
         </div>
       </form>
+
+      {/* Crew reliability */}
+      {staff.some(s => (stats[s.id]?.assignments ?? 0) > 0) && (
+        <div className="glass-card mb-8" style={{ borderRadius: 16, padding: 18 }}>
+          <p className="text-sm font-bold text-white mb-1">Crew reliability</p>
+          <p className="text-xs mb-3" style={{ color: 'var(--muted)' }}>From resolved routes — rewards completions &amp; confirmations, penalizes no-shows.</p>
+          <div className="flex flex-col gap-2">
+            {[...staff].filter(s => (stats[s.id]?.assignments ?? 0) > 0)
+              .sort((a, b) => (stats[b.id]?.score ?? -1) - (stats[a.id]?.score ?? -1))
+              .map(s => {
+                const st = stats[s.id]; if (!st) return null
+                return (
+                  <div key={s.id} className="flex items-center gap-3" style={{ fontSize: 13, flexWrap: 'wrap' }}>
+                    <span style={{ minWidth: 36, textAlign: 'center', fontSize: 13, fontWeight: 800, padding: '3px 0', borderRadius: 8, background: 'rgba(255,255,255,.06)', color: scoreColor(st.score) }}>{st.score}</span>
+                    <b style={{ color: '#e5e7eb', minWidth: 110 }}>{s.name}</b>
+                    <span style={{ color: 'var(--muted)' }}>{st.completed} done · {st.confirmed} confirmed · {st.declined} declined · {st.noResponse} no-response · {st.noShow} no-show</span>
+                  </div>
+                )
+              })}
+          </div>
+        </div>
+      )}
 
       {/* Route list */}
       {loading ? <p style={{ color: 'var(--muted)' }}>Loading…</p>
@@ -144,6 +188,9 @@ function Dashboard() {
                     <p style={{ color: 'var(--muted)', fontSize: 13 }}>{fmtDate(r.routeDate)} · {r.reportTime} · {r.reportAddress}</p>
                     <p style={{ fontSize: 13, marginTop: 4, color: 'var(--muted)' }}>
                       {r.assignedStaffName ? <>Assigned: <b style={{ color: '#e5e7eb' }}>{r.assignedStaffName}</b></> : <span style={{ color: '#fcd34d' }}>Unassigned</span>}
+                      {r.assignedStaffId && stats[r.assignedStaffId]?.score != null && (
+                        <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 800, padding: '1px 7px', borderRadius: 99, background: 'rgba(255,255,255,.07)', color: scoreColor(stats[r.assignedStaffId]!.score) }} title="Reliability score">{stats[r.assignedStaffId]!.score}</span>
+                      )}
                       {r.smsStatus === 'failed' && <span style={{ color: '#f87171' }}> · text failed</span>}
                       {r.smsStatus === 'no_phone' && <span style={{ color: '#f87171' }}> · no phone</span>}
                       {r.linkOpenedAt && !r.confirmedAt && !r.declinedAt && <span style={{ color: '#fcd34d' }}> · opened, not confirmed</span>}
@@ -174,7 +221,7 @@ function Dashboard() {
                   <select defaultValue="" onChange={e => { if (e.target.value) patch(r.token, { action: 'assign', staffId: e.target.value }) }} disabled={busy}
                     style={{ ...iStyle, width: 'auto', padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}>
                     <option value="">{r.assignedStaffName ? 'Reassign…' : 'Assign & text…'}</option>
-                    {staff.map(s => <option key={s.id} value={s.id}>{s.name}{s.phone ? '' : ' (no phone)'}</option>)}
+                    {rankedStaff.map(s => <option key={s.id} value={s.id}>{optLabel(s)}</option>)}
                   </select>
                   {r.assignedStaffId && <button onClick={() => patch(r.token, { action: 'resend' })} disabled={busy} style={btn}>Resend text</button>}
                   <button onClick={() => copyLink(r.token)} style={btn}>Copy link</button>
