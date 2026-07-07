@@ -72,6 +72,7 @@ export default function AdminGate({ title, children }: { title: string; children
       <div className="adminnav flex items-center gap-1.5 text-xs font-semibold overflow-x-auto whitespace-nowrap"
         style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch', marginLeft: 'auto' }}>
         <Link href="/" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Home</Link>
+        <a href="/admin/operations" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(224,0,42,.14)', color: '#fff', fontWeight: 800 }}>✦ Operations</a>
         <a href="/admin/bookings" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Bookings</a>
         <a href="/admin/routes" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Routes</a>
         <a href="/admin/routes/pay" className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.05)', color: 'var(--muted)' }}>Pay</a>
