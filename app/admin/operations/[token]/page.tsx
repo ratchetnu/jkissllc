@@ -3,22 +3,25 @@
 import { use, useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { MapPin, Clock, CalendarDays, Truck, DollarSign, User, Phone, FileText, ChevronLeft, Send, CheckCircle2, XCircle, Link2, Sparkles } from 'lucide-react'
+import { MapPin, Clock, CalendarDays, Truck, DollarSign, User, FileText, ChevronLeft, Send, CheckCircle2, XCircle, Link2, Plus, X } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { statusOf, Avatar, scoreColor, fmtLongDay, fmtTs, mapsUrl } from '../ui'
 
 type Audit = { at: number; actor: string; action: string }
 type Event = { at: number; type: string }
+type Assignee = {
+  staffId: string; name: string; phone?: string; role?: string; pay?: string; token: string
+  smsStatus?: string; smsSentAt?: number; confirmedAt?: number; declinedAt?: number; declineReason?: string
+}
 type Op = {
   token: string; routeNumber: string; status: string
   businessName: string; reportAddress: string; reportTime: string; routeDate: string
   vehicle?: string; payRate?: string; description?: string; specialNotes?: string; contactPerson?: string; contactPhone?: string
-  assignedStaffId?: string; assignedStaffName?: string; smsStatus?: string; smsError?: string; smsSentAt?: number
-  linkOpenedAt?: number; confirmedAt?: number; declinedAt?: number; declineReason?: string
+  assignees?: Assignee[]
   completedAt?: number; completionNote?: string; completionPhotos?: string[]
   audit?: Audit[]; events?: Event[]
 }
-type Staff = { id: string; name: string; phone?: string; active: boolean }
+type Staff = { id: string; name: string; phone?: string; role?: string; active: boolean }
 type Stats = Record<string, { score: number | null }>
 
 function Detail({ token }: { token: string }) {
@@ -30,6 +33,7 @@ function Detail({ token }: { token: string }) {
   const [notFound, setNotFound] = useState(false)
   const [busy, setBusy] = useState('')
   const [reassigning, setReassigning] = useState(false)
+  const [addPay, setAddPay] = useState('')
   const [msg, setMsg] = useState('')
 
   const load = useCallback(async () => {
@@ -93,10 +97,6 @@ function Detail({ token }: { token: string }) {
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><CalendarDays size={15} /> {fmtLongDay(op.routeDate)}</span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Clock size={15} /> {op.reportTime}</span>
         </div>
-
-        {/* Availability response */}
-        {op.confirmedAt && <p style={{ fontSize: 13, color: '#86efac', marginTop: 10 }}>✓ Confirmed available · {fmtTs(op.confirmedAt)}</p>}
-        {op.declinedAt && <p style={{ fontSize: 13, color: '#fca5a5', marginTop: 10 }}>✗ Not available{op.declineReason ? ` — ${op.declineReason}` : ''} · {fmtTs(op.declinedAt)}</p>}
       </div>
 
       {/* Details */}
@@ -108,35 +108,53 @@ function Detail({ token }: { token: string }) {
         {(op.description || op.specialNotes) && <Row Icon={FileText} label="Instructions" val={[op.description, op.specialNotes].filter(Boolean).join(' · ')} />}
       </div>
 
-      {/* Assigned + reassign */}
+      {/* Crew */}
       <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-          <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)' }}>Assigned to</div>
-          {live && (
-            <div style={{ display: 'flex', gap: 14 }}>
-              {op.assignedStaffId && <button onClick={() => patch({ action: 'unassign' }, 'unassign')} disabled={busy !== ''} className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: '#fca5a5', background: 'none', border: 'none', cursor: 'pointer' }}>Remove</button>}
-              <button onClick={() => setReassigning(r => !r)} className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>{op.assignedStaffId ? 'Reassign' : 'Assign'}</button>
-            </div>
-          )}
+          <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)' }}>Crew</div>
+          {live && <button onClick={() => setReassigning(r => !r)} className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>{reassigning ? 'Done' : '+ Add crew'}</button>}
         </div>
-        {op.assignedStaffName
-          ? <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginTop: 10 }}>
-              <Avatar name={op.assignedStaffName} />
-              <div><div style={{ fontWeight: 700, fontSize: 15.5 }}>{op.assignedStaffName}</div>
-                <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{op.smsStatus === 'failed' ? <span style={{ color: '#f87171' }}>text failed</span> : op.smsStatus === 'no_phone' ? <span style={{ color: '#f87171' }}>no phone on file</span> : op.smsSentAt ? 'confirmation text sent' : 'not texted yet — send below'}</div></div>
-            </div>
-          : <p style={{ marginTop: 10, color: '#fcd34d', fontWeight: 600, fontSize: 14 }}>Unassigned</p>}
+
+        {(op.assignees ?? []).length === 0 && !reassigning && <p style={{ marginTop: 10, color: '#fcd34d', fontWeight: 600, fontSize: 14 }}>No crew assigned yet</p>}
+
+        {(op.assignees ?? []).length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
+            {(op.assignees ?? []).map(a => {
+              const st = a.confirmedAt ? { t: '✓ Confirmed', c: '#86efac' } : a.declinedAt ? { t: `✗ Not available${a.declineReason ? ` — ${a.declineReason}` : ''}`, c: '#fca5a5' } : a.smsStatus === 'failed' ? { t: 'text failed', c: '#f87171' } : a.smsSentAt ? 'texted · awaiting reply' : 'not texted yet'
+              const stt = typeof st === 'string' ? { t: st, c: 'var(--muted)' } : st
+              return (
+                <div key={a.staffId} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: 11, borderRadius: 12, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+                  <Avatar name={a.name} size={40} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14.5 }}>{a.name}{a.role ? <span style={{ fontWeight: 500, color: 'var(--muted)', fontSize: 12 }}> · {a.role}</span> : null}{a.pay ? <span style={{ color: '#86efac', fontSize: 12, fontWeight: 700 }}> · {a.pay}</span> : null}</div>
+                    <div style={{ fontSize: 12, color: stt.c }}>{stt.t}</div>
+                  </div>
+                  {live && (
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      <button onClick={() => { navigator.clipboard?.writeText(`${location.origin}/route/${a.token}`); setMsg(`${a.name}'s link copied.`) }} title="Copy link" className="os-tap" style={iconBtn}><Link2 size={14} /></button>
+                      <button onClick={() => patch({ action: 'send', staffId: a.staffId }, `send-${a.staffId}`)} disabled={busy !== ''} title={a.smsSentAt ? 'Resend text' : 'Send text'} className="os-tap" style={iconBtn}><Send size={14} /></button>
+                      <button onClick={() => patch({ action: 'unassign', staffId: a.staffId }, `rm-${a.staffId}`)} disabled={busy !== ''} title="Remove" className="os-tap" style={{ ...iconBtn, color: '#fca5a5' }}><X size={14} /></button>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
 
         {reassigning && (
-          <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {staff.map(s => (
-              <button key={s.id} onClick={() => patch({ action: 'assign', staffId: s.id }, 'assign')} disabled={busy !== ''} className="os-tap" style={{ display: 'flex', alignItems: 'center', gap: 11, padding: 11, borderRadius: 12, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', cursor: 'pointer', textAlign: 'left' }}>
-                <Avatar name={s.name} size={38} />
-                <div style={{ flex: 1 }}><div style={{ fontWeight: 700, fontSize: 14.5 }}>{s.name}</div>
-                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>Reliability <b style={{ color: scoreColor(stats[s.id]?.score) }}>{stats[s.id]?.score ?? 'new'}</b>{!s.phone && <span style={{ color: '#fca5a5' }}> · no phone</span>}</div></div>
-                <Send size={15} style={{ color: 'var(--muted)' }} />
-              </button>
-            ))}
+          <div style={{ marginTop: 14 }}>
+            <input value={addPay} onChange={e => setAddPay(e.target.value)} placeholder="Pay for the next person added (optional, e.g. $175)" style={{ width: '100%', padding: '10px 12px', borderRadius: 10, background: 'rgba(255,255,255,.04)', border: '1px solid var(--line)', color: 'var(--text)', fontSize: 13.5, outline: 'none', marginBottom: 10 }} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {staff.filter(s => !(op.assignees ?? []).some(a => a.staffId === s.id)).map(s => (
+                <button key={s.id} onClick={() => patch({ action: 'assign', staffId: s.id, pay: addPay || undefined }, `add-${s.id}`)} disabled={busy !== ''} className="os-tap" style={{ display: 'flex', alignItems: 'center', gap: 11, padding: 11, borderRadius: 12, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', cursor: 'pointer', textAlign: 'left' }}>
+                  <Avatar name={s.name} size={38} />
+                  <div style={{ flex: 1 }}><div style={{ fontWeight: 700, fontSize: 14.5 }}>{s.name}{s.role ? <span style={{ color: 'var(--muted)', fontWeight: 500, fontSize: 12 }}> · {s.role}</span> : null}</div>
+                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>Reliability <b style={{ color: scoreColor(stats[s.id]?.score) }}>{stats[s.id]?.score ?? 'new'}</b>{!s.phone && <span style={{ color: '#fca5a5' }}> · no phone</span>}</div></div>
+                  <Plus size={15} style={{ color: 'var(--muted)' }} />
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -156,14 +174,11 @@ function Detail({ token }: { token: string }) {
         </div>
       </div>
 
-      {/* Actions */}
+      {/* Route-level actions (send/remove are per-person on the crew card above) */}
       {live && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {op.assignedStaffId && (op.smsSentAt
-            ? <button onClick={() => patch({ action: 'resend' }, 'send')} disabled={busy !== ''} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40 }}><Send size={15} /> Resend text</button>
-            : <button onClick={() => patch({ action: 'send' }, 'send')} disabled={busy !== ''} className="btn os-tap" style={{ borderRadius: 11, height: 40 }}><Send size={15} /> Send text</button>)}
+          {(op.assignees ?? []).some(a => a.phone && !a.smsSentAt) && <button onClick={() => patch({ action: 'send' }, 'sendall')} disabled={busy !== ''} className="btn os-tap" style={{ borderRadius: 11, height: 40 }}><Send size={15} /> Text all crew</button>}
           {canComplete && <button onClick={() => patch({ action: 'status', status: 'completed' }, 'complete')} disabled={busy !== ''} className="btn os-tap" style={{ borderRadius: 11, height: 40, background: '#16a34a' }}><CheckCircle2 size={16} /> Mark complete</button>}
-          <button onClick={() => { if (op.assignedStaffId) { navigator.clipboard?.writeText(`${location.origin}/route/${op.token}`); setMsg('Confirmation link copied.') } }} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40 }}><Link2 size={15} /> Copy link</button>
           {op.status === 'confirmed' && <button onClick={() => patch({ action: 'status', status: 'no_show' }, 'noshow')} disabled={busy !== ''} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40, color: '#fca5a5' }}>No-show</button>}
           <button onClick={() => { if (confirm('Cancel this operation?')) patch({ action: 'status', status: 'cancelled' }, 'cancel') }} disabled={busy !== ''} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40, color: '#f87171', marginLeft: 'auto' }}><XCircle size={15} /> Cancel</button>
         </div>
@@ -171,6 +186,8 @@ function Detail({ token }: { token: string }) {
     </div>
   )
 }
+
+const iconBtn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 9, background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', color: 'var(--muted)', cursor: 'pointer' }
 
 function Row({ Icon, label, val, href }: { Icon: typeof MapPin; label: string; val: string; href?: string }) {
   return (
