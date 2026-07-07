@@ -70,11 +70,15 @@ function Builder() {
     return m
   }, [routes, today])
 
-  // Recommend the most reliable eligible employee, lightest workload as tiebreak.
+  // Recommend a driver first (a route needs one), then most reliable, then
+  // lightest workload.
   const recommendedId = useMemo(() => {
     const eligible = staff.filter(s => s.phone)
     if (!eligible.length) return undefined
+    const isDriver = (s: Staff) => /driver/i.test(s.role || '')
     return [...eligible].sort((a, b) => {
+      const da = isDriver(a), db = isDriver(b)
+      if (da !== db) return da ? -1 : 1
       const sa = stats[a.id]?.score ?? 70, sb = stats[b.id]?.score ?? 70
       if (sb !== sa) return sb - sa
       return (workload[a.id] || 0) - (workload[b.id] || 0)
