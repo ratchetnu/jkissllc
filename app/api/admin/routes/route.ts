@@ -4,7 +4,7 @@ import {
   listRoutes, saveRoute, generateToken, nextRouteNumber, pushAudit,
   type RouteRecord,
 } from '../../../lib/routes'
-import { assignAndNotify } from '../../../lib/route-notify'
+import { assignStaff } from '../../../lib/route-notify'
 import { contractorStatsObject } from '../../../lib/route-stats'
 import { listStaff } from '../../../lib/staff'
 
@@ -61,16 +61,14 @@ export async function POST(req: NextRequest) {
   }
   pushAudit(route, 'admin', `Route created for ${businessName}`)
 
-  // Optionally assign + text a contractor in the same step.
-  let smsWarning: string | undefined
+  // Optionally assign a contractor (no text — the owner sends it explicitly).
   const staffId = S(body.staffId, 80)
   if (staffId) {
     const staff = (await listStaff()).find(s => s.id === staffId)
     if (!staff) return NextResponse.json({ error: 'Selected contractor not found.' }, { status: 400 })
-    const r = await assignAndNotify(route, staff)
-    if (!r.ok) smsWarning = r.error
+    assignStaff(route, staff)
   }
 
   await saveRoute(route)
-  return NextResponse.json({ ok: true, route, smsWarning })
+  return NextResponse.json({ ok: true, route })
 }

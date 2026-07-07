@@ -13,7 +13,7 @@ type Op = {
   token: string; routeNumber: string; status: string
   businessName: string; reportAddress: string; reportTime: string; routeDate: string
   vehicle?: string; payRate?: string; description?: string; specialNotes?: string; contactPerson?: string; contactPhone?: string
-  assignedStaffId?: string; assignedStaffName?: string; smsStatus?: string; smsError?: string
+  assignedStaffId?: string; assignedStaffName?: string; smsStatus?: string; smsError?: string; smsSentAt?: number
   linkOpenedAt?: number; confirmedAt?: number; declinedAt?: number; declineReason?: string
   completedAt?: number; completionNote?: string; completionPhotos?: string[]
   audit?: Audit[]; events?: Event[]
@@ -112,13 +112,18 @@ function Detail({ token }: { token: string }) {
       <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
           <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)' }}>Assigned to</div>
-          {live && <button onClick={() => setReassigning(r => !r)} className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>{op.assignedStaffId ? 'Reassign' : 'Assign'}</button>}
+          {live && (
+            <div style={{ display: 'flex', gap: 14 }}>
+              {op.assignedStaffId && <button onClick={() => patch({ action: 'unassign' }, 'unassign')} disabled={busy !== ''} className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: '#fca5a5', background: 'none', border: 'none', cursor: 'pointer' }}>Remove</button>}
+              <button onClick={() => setReassigning(r => !r)} className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>{op.assignedStaffId ? 'Reassign' : 'Assign'}</button>
+            </div>
+          )}
         </div>
         {op.assignedStaffName
           ? <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginTop: 10 }}>
               <Avatar name={op.assignedStaffName} />
               <div><div style={{ fontWeight: 700, fontSize: 15.5 }}>{op.assignedStaffName}</div>
-                <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{op.smsStatus === 'failed' ? <span style={{ color: '#f87171' }}>text failed</span> : op.smsStatus === 'no_phone' ? <span style={{ color: '#f87171' }}>no phone on file</span> : 'confirmation text sent'}</div></div>
+                <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{op.smsStatus === 'failed' ? <span style={{ color: '#f87171' }}>text failed</span> : op.smsStatus === 'no_phone' ? <span style={{ color: '#f87171' }}>no phone on file</span> : op.smsSentAt ? 'confirmation text sent' : 'not texted yet — send below'}</div></div>
             </div>
           : <p style={{ marginTop: 10, color: '#fcd34d', fontWeight: 600, fontSize: 14 }}>Unassigned</p>}
 
@@ -154,7 +159,9 @@ function Detail({ token }: { token: string }) {
       {/* Actions */}
       {live && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {op.assignedStaffId && <button onClick={() => patch({ action: 'resend' }, 'resend')} disabled={busy !== ''} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40 }}><Send size={15} /> Resend text</button>}
+          {op.assignedStaffId && (op.smsSentAt
+            ? <button onClick={() => patch({ action: 'resend' }, 'send')} disabled={busy !== ''} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40 }}><Send size={15} /> Resend text</button>
+            : <button onClick={() => patch({ action: 'send' }, 'send')} disabled={busy !== ''} className="btn os-tap" style={{ borderRadius: 11, height: 40 }}><Send size={15} /> Send text</button>)}
           {canComplete && <button onClick={() => patch({ action: 'status', status: 'completed' }, 'complete')} disabled={busy !== ''} className="btn os-tap" style={{ borderRadius: 11, height: 40, background: '#16a34a' }}><CheckCircle2 size={16} /> Mark complete</button>}
           <button onClick={() => { if (op.assignedStaffId) { navigator.clipboard?.writeText(`${location.origin}/route/${op.token}`); setMsg('Confirmation link copied.') } }} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40 }}><Link2 size={15} /> Copy link</button>
           {op.status === 'confirmed' && <button onClick={() => patch({ action: 'status', status: 'no_show' }, 'noshow')} disabled={busy !== ''} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40, color: '#fca5a5' }}>No-show</button>}

@@ -40,7 +40,8 @@ function Builder() {
   const [weekdays, setWeekdays] = useState<number[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
-  const [done, setDone] = useState<null | { recurring?: boolean; generated?: number; schedule?: string; routeNumber?: string; texted?: boolean; warning?: string }>(null)
+  const [done, setDone] = useState<null | { recurring?: boolean; generated?: number; schedule?: string; routeNumber?: string; token?: string; assigned?: boolean; sent?: boolean }>(null)
+  const [sending, setSending] = useState(false)
 
   useEffect(() => {
     Promise.all([
@@ -114,8 +115,19 @@ function Builder() {
       })
       const d = await res.json()
       if (!res.ok) { setError(d.error || 'Could not create the assignment.'); return }
-      setDone({ routeNumber: d.route?.routeNumber || '', texted: Boolean(form.staffId) && !d.smsWarning, warning: d.smsWarning })
+      setDone({ routeNumber: d.route?.routeNumber || '', token: d.route?.token, assigned: Boolean(form.staffId) })
     } catch { setError('Network error — please try again.') } finally { setSubmitting(false) }
+  }
+
+  async function sendText() {
+    if (!done?.token) return
+    setSending(true)
+    try {
+      const res = await fetch(`/api/admin/routes/${done.token}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ action: 'send' }) })
+      const d = await res.json()
+      if (res.ok && !d.smsWarning) setDone(prev => prev ? { ...prev, sent: true } : prev)
+      else setError(d.smsWarning || d.error || 'Could not send the text.')
+    } catch { setError('Network error — please try again.') } finally { setSending(false) }
   }
 
   const selectedStaff = staff.find(s => s.id === form.staffId)
@@ -128,9 +140,15 @@ function Builder() {
         <p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14.5 }}>
           {done.recurring
             ? `${done.schedule} · ${done.generated} route${done.generated === 1 ? '' : 's'} generated for the next 2 weeks${selectedStaff ? `, assigned to ${selectedStaff.name.split(' ')[0]}` : ''}. New routes keep generating automatically — no daily setup.`
-            : <>{done.routeNumber && <b style={{ color: 'var(--text)' }}>{done.routeNumber}</b>} · {done.warning ? `saved, but the text didn’t send: ${done.warning}` : done.texted ? `texted to ${selectedStaff?.name?.split(' ')[0] || 'the crew'} for confirmation.` : 'saved as a draft — assign when you’re ready.'}</>}
+            : <>{done.routeNumber && <b style={{ color: 'var(--text)' }}>{done.routeNumber}</b>} · {done.sent ? `confirmation text sent to ${selectedStaff?.name?.split(' ')[0] || 'the crew'}.` : done.assigned ? `assigned to ${selectedStaff?.name?.split(' ')[0] || 'the crew'} — nothing was texted yet.` : 'saved as a draft.'}</>}
         </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 22 }}>
+        {!done.recurring && done.assigned && !done.sent && (
+          <button onClick={sendText} disabled={sending} className="btn os-tap" style={{ borderRadius: 12, justifyContent: 'center', marginTop: 18, width: '100%' }}>
+            <Send size={17} /> {sending ? 'Sending…' : `Send confirmation text${selectedStaff ? ` to ${selectedStaff.name.split(' ')[0]}` : ''}`}
+          </button>
+        )}
+        {error && <p style={{ color: '#f87171', fontSize: 13.5, marginTop: 12 }}>{error}</p>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
           <button onClick={() => { setDone(null); setStep(0); setRepeats(false); setWeekdays([]); setForm({ businessName: form.businessName, description: '', payRate: '', reportAddress: '', contactPerson: '', contactPhone: '', routeDate: '', reportTime: '', staffId: '', specialNotes: '' }) }} className="btn os-tap" style={{ borderRadius: 12, justifyContent: 'center' }}>Create another</button>
           <Link href="/admin/operations" className="btn-ghost os-tap" style={{ borderRadius: 12, justifyContent: 'center' }}>Back to Operations</Link>
         </div>
@@ -271,7 +289,7 @@ function Builder() {
               </div>
             ) : selectedStaff?.phone && (
               <div style={{ padding: 14, borderRadius: 14, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
-                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>They’ll get this text</div>
+                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>You’ll send them this text (not automatic)</div>
                 <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'var(--text)' }}>J KISS LLC Route Assignment: You have been assigned a route for {fmtLongDay(form.routeDate).replace(/,.*/, '')} at {form.reportTime}. Location: {form.reportAddress}. Confirm here: <span style={{ color: 'var(--red)' }}>[secure link]</span>. Reply STOP to opt out.</p>
               </div>
             )}
@@ -285,7 +303,7 @@ function Builder() {
         {step > 0 && <button onClick={() => setStep(s => s - 1)} className="btn-ghost os-tap" style={{ borderRadius: 12, paddingLeft: 16, paddingRight: 18 }}><ChevronLeft size={17} /> Back</button>}
         {step < 5
           ? <button onClick={() => canContinue() && setStep(s => s + 1)} disabled={!canContinue()} className="btn os-tap" style={{ borderRadius: 12, flex: 1, justifyContent: 'center', opacity: canContinue() ? 1 : .5 }}>Continue</button>
-          : <button onClick={submit} disabled={submitting} className="btn os-tap" style={{ borderRadius: 12, flex: 1, justifyContent: 'center' }}>{submitting ? 'Creating…' : repeats ? 'Create recurring contract' : form.staffId ? <> <Send size={17} /> Create &amp; send</> : 'Save as draft'}</button>}
+          : <button onClick={submit} disabled={submitting} className="btn os-tap" style={{ borderRadius: 12, flex: 1, justifyContent: 'center' }}>{submitting ? 'Creating…' : repeats ? 'Create recurring contract' : form.staffId ? 'Create assignment' : 'Save as draft'}</button>}
       </div>
     </div>
   )

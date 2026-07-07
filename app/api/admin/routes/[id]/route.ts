@@ -4,7 +4,7 @@ import {
   getRouteByToken, saveRoute, deleteRoute, setStatus, pushAudit,
   ROUTE_STATUS_LABEL, type RouteStatus,
 } from '../../../../lib/routes'
-import { assignAndNotify } from '../../../../lib/route-notify'
+import { assignStaff, sendAssignmentText, unassignStaff } from '../../../../lib/route-notify'
 import { listStaff } from '../../../../lib/staff'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
@@ -19,13 +19,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const action = S(body.action, 40)
   let smsWarning: string | undefined
 
-  if (action === 'assign' || action === 'resend') {
-    const staffId = action === 'resend' ? route.assignedStaffId ?? '' : S(body.staffId, 80)
-    if (!staffId) return NextResponse.json({ error: 'No contractor to text.' }, { status: 400 })
-    const staff = (await listStaff()).find(s => s.id === staffId)
+  if (action === 'assign') {
+    // Assign only — no text. The owner sends the confirmation separately.
+    const staff = (await listStaff()).find(s => s.id === S(body.staffId, 80))
     if (!staff) return NextResponse.json({ error: 'Contractor not found.' }, { status: 400 })
-    if (action === 'resend') pushAudit(route, 'admin', `Re-sent assignment text to ${staff.name}`)
-    const r = await assignAndNotify(route, staff)
+    assignStaff(route, staff)
+  } else if (action === 'unassign') {
+    unassignStaff(route)
+  } else if (action === 'send' || action === 'resend') {
+    if (!route.assignedStaffId) return NextResponse.json({ error: 'Assign a contractor first.' }, { status: 400 })
+    pushAudit(route, 'admin', action === 'resend' ? 'Re-sent confirmation text' : 'Sent confirmation text')
+    const r = await sendAssignmentText(route)
     if (!r.ok) smsWarning = r.error
   } else if (action === 'status') {
     const status = S(body.status, 40) as RouteStatus

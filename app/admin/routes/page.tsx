@@ -79,7 +79,7 @@ function Dashboard() {
       const d = await res.json()
       if (!res.ok) { setNote(d.error || 'Could not create route.'); return }
       setForm(blank)
-      setNote(d.smsWarning ? `Route created — but text not sent: ${d.smsWarning}` : (form.staffId ? 'Route created and text sent.' : 'Route created (draft).'))
+      setNote(form.staffId ? 'Route created & assigned — send the text when you’re ready.' : 'Route created (draft).')
       load()
     } catch { setNote('Network error.') } finally { setCreating(false) }
   }
@@ -144,7 +144,7 @@ function Dashboard() {
         <textarea placeholder="Special notes" value={form.specialNotes} onChange={set('specialNotes')} rows={2} style={{ ...iStyle, marginTop: 12, resize: 'vertical' }} />
         <div className="grid sm:grid-cols-[1fr_auto] gap-3 mt-3 items-end">
           <div>
-            <label className="text-xs font-semibold" style={{ color: 'var(--muted)' }}>Assign contractor (texts them now — optional)</label>
+            <label className="text-xs font-semibold" style={{ color: 'var(--muted)' }}>Assign contractor (optional — no text sent until you send it)</label>
             <select value={form.staffId} onChange={set('staffId')} style={{ ...iStyle, cursor: 'pointer', marginTop: 4 }}>
               <option value="">— Save as draft (assign later) —</option>
               {rankedStaff.map(s => <option key={s.id} value={s.id}>{optLabel(s)}</option>)}
@@ -254,10 +254,11 @@ function Dashboard() {
                 <div className="flex items-center gap-2 flex-wrap mt-3 pt-3" style={{ borderTop: '1px solid var(--line)' }}>
                   <select defaultValue="" onChange={e => { if (e.target.value) patch(r.token, { action: 'assign', staffId: e.target.value }) }} disabled={busy}
                     style={{ ...iStyle, width: 'auto', padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}>
-                    <option value="">{r.assignedStaffName ? 'Reassign…' : 'Assign & text…'}</option>
+                    <option value="">{r.assignedStaffName ? 'Reassign…' : 'Assign to…'}</option>
                     {rankedStaff.map(s => <option key={s.id} value={s.id}>{optLabel(s)}</option>)}
                   </select>
-                  {r.assignedStaffId && <button onClick={() => patch(r.token, { action: 'resend' })} disabled={busy} style={btn}>Resend text</button>}
+                  {r.assignedStaffId && <button onClick={() => patch(r.token, { action: 'send' })} disabled={busy} style={{ ...btn, color: r.smsStatus ? 'var(--muted)' : '#86efac' }}>{r.smsStatus ? 'Resend text' : 'Send text'}</button>}
+                  {r.assignedStaffId && <button onClick={() => patch(r.token, { action: 'unassign' })} disabled={busy} style={{ ...btn, color: '#fca5a5' }}>Remove</button>}
                   <button onClick={() => copyLink(r.token)} style={btn}>Copy link</button>
                   <select defaultValue="" onChange={e => { if (e.target.value) patch(r.token, { action: 'status', status: e.target.value }) }} disabled={busy}
                     style={{ ...iStyle, width: 'auto', padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}>

@@ -36,36 +36,72 @@ export function morningOfSms(route: RouteRecord): string {
     `Details: ${confirmUrl(route.token)}. Reply STOP to opt out.`
 }
 
-// Assign a crew member and text them the confirmation link. Mutates `route`.
-// Returns { ok } — false when the text couldn't be sent (no phone / opt-out /
-// Twilio error); the route is still assigned so the admin can retry or reassign.
-export async function assignAndNotify(route: RouteRecord, staff: Staff): Promise<{ ok: boolean; error?: string }> {
+// Assign a crew member to the route — NO text. Status → assigned. The owner
+// sends the confirmation text as a separate, explicit step (sendAssignmentText).
+export function assignStaff(route: RouteRecord, staff: Staff): void {
   route.assignedStaffId = staff.id
   route.assignedStaffName = staff.name
   route.assignedStaffPhone = staff.phone
+  // Clear any prior send/confirmation state (e.g. reassigning to someone new).
+  route.smsSid = undefined
+  route.smsStatus = undefined
+  route.smsError = undefined
+  route.smsSentAt = undefined
+  route.confirmedAt = undefined
+  route.declinedAt = undefined
+  route.declineReason = undefined
+  route.linkOpenedAt = undefined
   pushAudit(route, 'admin', `Assigned to ${staff.name}`)
   setStatus(route, 'assigned', 'admin')
+}
 
-  if (!staff.phone) {
+// Remove the assigned crew member — back to an unassigned draft.
+export function unassignStaff(route: RouteRecord): void {
+  const who = route.assignedStaffName
+  route.assignedStaffId = undefined
+  route.assignedStaffName = undefined
+  route.assignedStaffPhone = undefined
+  route.smsSid = undefined
+  route.smsStatus = undefined
+  route.smsError = undefined
+  route.smsSentAt = undefined
+  route.confirmedAt = undefined
+  route.declinedAt = undefined
+  route.declineReason = undefined
+  route.linkOpenedAt = undefined
+  pushAudit(route, 'admin', who ? `Removed ${who} from the route` : 'Removed assignment')
+  setStatus(route, 'draft', 'admin')
+}
+
+// Text the currently-assigned contractor the confirmation link. Status →
+// text_sent. Returns { ok } — false on no phone / opt-out / Twilio error.
+export async function sendAssignmentText(route: RouteRecord): Promise<{ ok: boolean; error?: string }> {
+  if (!route.assignedStaffPhone) {
     route.smsStatus = 'no_phone'
     route.smsError = 'Contractor has no phone number on file.'
     pushAudit(route, 'system', 'SMS not sent — no phone on file')
     return { ok: false, error: 'No phone number on file for this contractor.' }
   }
-
   route.smsSentAt = Date.now()
-  const res = await sendSmsDetailed(staff.phone, assignmentSms(route))
+  const res = await sendSmsDetailed(route.assignedStaffPhone, assignmentSms(route))
   if (res.ok) {
     route.smsSid = res.sid
     route.smsStatus = res.status || 'sent'
     route.smsError = undefined
-    setStatus(route, 'text_sent', 'system', 'Assignment text sent')
+    setStatus(route, 'text_sent', 'system', 'Confirmation text sent')
     return { ok: true }
   }
   route.smsStatus = 'failed'
   route.smsError = res.error
   pushAudit(route, 'system', `SMS failed: ${res.error}`)
   return { ok: false, error: res.error }
+}
+
+// Assign + text in one step. Used by recurring-template generation (which is an
+// explicit automation the owner opted into), NOT by manual assignment.
+export async function assignAndNotify(route: RouteRecord, staff: Staff): Promise<{ ok: boolean; error?: string }> {
+  assignStaff(route, staff)
+  return sendAssignmentText(route)
 }
 
 const esc = (s: string) =>
