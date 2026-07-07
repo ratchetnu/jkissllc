@@ -1,7 +1,7 @@
 // Contractor reliability — derived entirely from route history (no new store).
 // A 0–100 score summarizing how a contractor handles the routes they're offered,
 // alongside the raw counts so dispatch can see exactly what drives it.
-import { listRoutes } from './routes'
+import { listRoutes, type RouteRecord } from './routes'
 
 export type ContractorStats = {
   staffId: string
@@ -19,8 +19,10 @@ export type ContractorStats = {
 // contractor communicated, but a decline still costs dispatch a reassignment.
 const WEIGHT = { completed: 1, confirmed: 0.85, declined: 0.5, no_response: 0, no_show: -0.75 }
 
-export async function computeContractorStats(): Promise<Map<string, ContractorStats>> {
-  const routes = await listRoutes(1000)
+// Accepts a pre-fetched route list so a caller that already loaded routes (e.g.
+// the admin routes GET) doesn't trigger a second full scan.
+export async function computeContractorStats(prefetched?: RouteRecord[]): Promise<Map<string, ContractorStats>> {
+  const routes = prefetched ?? await listRoutes(1000)
   const acc = new Map<string, ContractorStats & { sum: number }>()
 
   for (const r of routes) {
@@ -53,6 +55,6 @@ export async function computeContractorStats(): Promise<Map<string, ContractorSt
 }
 
 // Plain-object form for JSON responses (keyed by staffId).
-export async function contractorStatsObject(): Promise<Record<string, ContractorStats>> {
-  return Object.fromEntries(await computeContractorStats())
+export async function contractorStatsObject(prefetched?: RouteRecord[]): Promise<Record<string, ContractorStats>> {
+  return Object.fromEntries(await computeContractorStats(prefetched))
 }

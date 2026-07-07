@@ -13,8 +13,10 @@ const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim()
 export async function GET(req: NextRequest) {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
-    const [items, stats] = await Promise.all([listRoutes(500), contractorStatsObject()])
-    return NextResponse.json({ items, stats })
+    // One scan: load once, derive stats from the same list, return the newest 500.
+    const routes = await listRoutes(1000)
+    const stats = await contractorStatsObject(routes)
+    return NextResponse.json({ items: routes.slice(0, 500), stats })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'list failed'
     if (msg === 'UPSTASH_NOT_CONFIGURED') return NextResponse.json({ error: 'UPSTASH_NOT_CONFIGURED' }, { status: 503 })
