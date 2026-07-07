@@ -14,7 +14,7 @@ type Route = {
   description?: string; payRate?: string; vehicle?: string; specialNotes?: string
   assignedStaffId?: string; assignedStaffName?: string
   smsStatus?: string; smsError?: string
-  linkOpenedAt?: number; confirmedAt?: number; declinedAt?: number
+  linkOpenedAt?: number; confirmedAt?: number; declinedAt?: number; declineReason?: string
   completedAt?: number; completedBy?: 'contractor' | 'admin'; completionNote?: string; completionPhotos?: string[]
   createdAt: number
 }
@@ -218,6 +218,17 @@ function Dashboard() {
                       {r.smsStatus === 'no_phone' && <span style={{ color: '#f87171' }}> · no phone</span>}
                       {r.linkOpenedAt && !r.confirmedAt && !r.declinedAt && <span style={{ color: '#fcd34d' }}> · opened, not confirmed</span>}
                     </p>
+                    {/* Availability response log */}
+                    {r.confirmedAt && (
+                      <p style={{ fontSize: 12.5, color: '#86efac', marginTop: 3 }}>
+                        ✓ Confirmed available · {new Date(r.confirmedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                      </p>
+                    )}
+                    {r.declinedAt && (
+                      <p style={{ fontSize: 12.5, color: '#fca5a5', marginTop: 3 }}>
+                        ✗ Not available{r.declineReason ? ` — ${r.declineReason}` : ''} · {new Date(r.declinedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                      </p>
+                    )}
                   </div>
                 </div>
 

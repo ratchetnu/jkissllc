@@ -81,7 +81,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     route.declineReason = S(body.reason, 300) || undefined
     route.confirmIp = ip
     pushEvent(route, 'declined', ip, ua)
-    pushAudit(route, 'contractor', 'Declined route')
+    pushAudit(route, 'contractor', route.declineReason ? `Declined — not available: ${route.declineReason}` : 'Declined route')
     setStatus(route, 'declined', 'contractor')
   } else {
     return NextResponse.json({ error: 'Unknown action.' }, { status: 400 })

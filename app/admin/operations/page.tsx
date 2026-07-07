@@ -11,6 +11,7 @@ type Op = {
   businessName: string; reportAddress: string; reportTime: string; routeDate: string
   assignedStaffId?: string; assignedStaffName?: string
   description?: string; specialNotes?: string; contactPerson?: string; contactPhone?: string
+  declineReason?: string; confirmedAt?: number; declinedAt?: number
 }
 type Stats = Record<string, { score: number | null }>
 
@@ -160,6 +161,7 @@ function OpCard({ op, score, delay }: { op: Op; score?: number | null; delay: nu
         <div>
           <div style={{ padding: '0 18px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div style={{ height: 1, background: 'var(--line)' }} />
+            {op.status === 'declined' && op.declineReason && <Row Icon={AlertTriangle} label="Not available" val={op.declineReason} />}
             <Row Icon={MapPin} label="Report to" val={op.reportAddress} href={mapsUrl(op.reportAddress)} />
             {op.contactPerson && <Row Icon={User} label="On-site contact" val={`${op.contactPerson}${op.contactPhone ? ` · ${op.contactPhone}` : ''}`} />}
             {(op.description || op.specialNotes) && <Row Icon={CheckCircle2} label="Instructions" val={[op.description, op.specialNotes].filter(Boolean).join(' · ')} />}

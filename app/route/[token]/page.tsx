@@ -32,6 +32,7 @@ function fmtDate(iso: string): string {
   return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
 }
 const mapsUrl = (addr: string) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`
+const DECLINE_REASONS = ['Not available that day', 'Time doesn’t work', 'Too far', 'Already committed', 'Other']
 
 export default function RouteConfirmPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params)
@@ -43,6 +44,9 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
   const [busy, setBusy] = useState<'' | 'confirm' | 'decline' | 'complete'>('')
   const [err, setErr] = useState('')
   const [completeMode, setCompleteMode] = useState(false)
+  const [declineMode, setDeclineMode] = useState(false)
+  const [declineReason, setDeclineReason] = useState('')
+  const [declineNote, setDeclineNote] = useState('')
   const [note, setNote] = useState('')
   const [photos, setPhotos] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
@@ -57,13 +61,13 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
     return () => { alive = false }
   }, [token])
 
-  async function act(action: 'confirm' | 'decline') {
+  async function act(action: 'confirm' | 'decline', reason?: string) {
     if (action === 'confirm' && !agreed) { setErr('Please check the box to agree before confirming.'); return }
     setBusy(action); setErr('')
     try {
       const res = await fetch(`/api/route/${token}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(action === 'confirm' ? { action, disclaimerAccepted: true } : { action }),
+        body: JSON.stringify(action === 'confirm' ? { action, disclaimerAccepted: true } : { action, reason: reason || undefined }),
       })
       const d = await res.json().catch(() => ({}))
       if (!res.ok && !d.route) { setErr(d.error === 'expired' ? 'This route link has expired.' : d.error === 'cancelled' ? 'This route was cancelled.' : (d.error || 'Something went wrong. Please try again.')) }
@@ -260,10 +264,39 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
           style={{ width: '100%', padding: '15px', borderRadius: 12, border: 'none', fontWeight: 800, fontSize: 15, color: '#fff', cursor: agreed ? 'pointer' : 'not-allowed', background: agreed ? 'var(--red)' : 'rgba(255,255,255,.1)', opacity: busy === 'confirm' ? .7 : 1 }}>
           {busy === 'confirm' ? 'Confirming…' : 'I Confirm I Will Be There'}
         </button>
-        <button onClick={() => act('decline')} disabled={busy !== ''}
-          style={{ width: '100%', padding: '15px', borderRadius: 12, border: '1px solid var(--line)', fontWeight: 700, fontSize: 15, color: 'var(--muted)', background: 'transparent', cursor: 'pointer', opacity: busy === 'decline' ? .7 : 1 }}>
-          {busy === 'decline' ? 'Sending…' : 'I Cannot Take This Route'}
-        </button>
+        {!declineMode ? (
+          <button onClick={() => setDeclineMode(true)} disabled={busy !== ''}
+            style={{ width: '100%', padding: '15px', borderRadius: 12, border: '1px solid var(--line)', fontWeight: 700, fontSize: 15, color: 'var(--muted)', background: 'transparent', cursor: 'pointer' }}>
+            I Cannot Take This Route
+          </button>
+        ) : (
+          <div style={{ padding: 15, borderRadius: 12, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800 }}>Can’t make this one?</div>
+            <p style={{ fontSize: 12.5, color: 'var(--muted)', margin: '3px 0 11px' }}>Tell dispatch why so they can plan — your response is logged.</p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+              {DECLINE_REASONS.map(rz => (
+                <button key={rz} type="button" onClick={() => setDeclineReason(rz)}
+                  style={{ padding: '7px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
+                    border: `1px solid ${declineReason === rz ? 'var(--red)' : 'var(--line)'}`,
+                    background: declineReason === rz ? 'var(--red)' : 'transparent',
+                    color: declineReason === rz ? '#fff' : 'var(--muted)' }}>{rz}</button>
+              ))}
+            </div>
+            <textarea value={declineNote} onChange={e => setDeclineNote(e.target.value)} rows={2}
+              placeholder="Add a detail (optional) — e.g. free after 10am, out of town Friday…"
+              style={{ width: '100%', marginTop: 11, padding: '10px 12px', borderRadius: 10, background: 'rgba(255,255,255,.04)', border: '1px solid var(--line)', color: 'var(--text)', fontSize: 13.5, resize: 'vertical', fontFamily: 'inherit' }} />
+            <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+              <button onClick={() => act('decline', [declineReason, declineNote.trim()].filter(Boolean).join(' — '))} disabled={busy !== '' || !declineReason}
+                style={{ flex: 1, padding: '13px', borderRadius: 12, border: 'none', fontWeight: 800, fontSize: 14.5, color: '#fff', background: declineReason ? '#b91c1c' : 'rgba(255,255,255,.1)', cursor: declineReason ? 'pointer' : 'not-allowed', opacity: busy === 'decline' ? .7 : 1 }}>
+                {busy === 'decline' ? 'Sending…' : 'Send response'}
+              </button>
+              <button onClick={() => { setDeclineMode(false); setDeclineReason(''); setDeclineNote(''); setErr('') }} disabled={busy !== ''}
+                style={{ padding: '13px 16px', borderRadius: 12, border: '1px solid var(--line)', fontWeight: 700, fontSize: 14.5, color: 'var(--muted)', background: 'transparent', cursor: 'pointer' }}>
+                Back
+              </button>
+            </div>
+          </div>
+        )}
       </div>
       <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 14, textAlign: 'center' }}>Questions? Text or call dispatch at (817) 909-4312.</p>
     </div>
