@@ -2,17 +2,28 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Building2, ChevronDown, Link2, FileText, Plus, Check } from 'lucide-react'
+import { Building2, ChevronDown, Link2, FileText, Plus, Check, Repeat, Pencil } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 
 type RouteLite = { routeNumber: string; businessName: string; status: string; routeDate: string; reportTime: string }
 type Portal = { token: string; businessName: string; label?: string }
 type Invoice = { token: string; invoiceNumber: string; businessName: string; status: 'draft' | 'sent' | 'paid' | 'void'; subtotalCents: number; amountPaidCents: number }
+type Template = { id: string; label: string; businessName: string; reportTime: string; weekdays: number[]; defaultStaffId?: string; autoNotify: boolean; active: boolean }
+type BusinessRec = { key: string; name: string; contactName?: string; contactPhone?: string; contactEmail?: string; address?: string; notes?: string }
 
 type Biz = {
   key: string; name: string
   routeCount: number; upcoming: RouteLite[]; lastDate?: string
-  portal?: Portal; invoices: Invoice[]; outstandingCents: number
+  portal?: Portal; invoices: Invoice[]; outstandingCents: number; templates: Template[]; record?: BusinessRec
+}
+
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+function weekdaysLabel(w: number[]): string {
+  const s = [...w].sort((a, b) => a - b).join(',')
+  if (s === '1,2,3,4,5') return 'Mon–Fri'
+  if (s === '1,2,3,4,5,6') return 'Mon–Sat'
+  if (s === '0,1,2,3,4,5,6') return 'Every day'
+  return [...w].sort((a, b) => a - b).map(d => DOW[d]).join('/')
 }
 
 const money = (c: number) => (c / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
@@ -28,6 +39,8 @@ function Hub() {
   const [routes, setRoutes] = useState<RouteLite[]>([])
   const [portals, setPortals] = useState<Portal[]>([])
   const [invoices, setInvoices] = useState<Invoice[]>([])
+  const [templates, setTemplates] = useState<Template[]>([])
+  const [records, setRecords] = useState<BusinessRec[]>([])
   const [loading, setLoading] = useState(true)
   const [openKey, setOpenKey] = useState('')
   const [msg, setMsg] = useState('')
@@ -35,12 +48,14 @@ function Hub() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [r, p, i] = await Promise.all([
+      const [r, p, i, t, b] = await Promise.all([
         fetch('/api/admin/routes', { credentials: 'same-origin' }).then(x => x.json()),
         fetch('/api/admin/client-portals', { credentials: 'same-origin' }).then(x => x.json()),
         fetch('/api/admin/route-invoices', { credentials: 'same-origin' }).then(x => x.json()),
+        fetch('/api/admin/route-templates', { credentials: 'same-origin' }).then(x => x.json()),
+        fetch('/api/admin/businesses', { credentials: 'same-origin' }).then(x => x.json()),
       ])
-      setRoutes(r.items || []); setPortals(p.items || []); setInvoices(i.items || [])
+      setRoutes(r.items || []); setPortals(p.items || []); setInvoices(i.items || []); setTemplates(t.items || []); setRecords(b.items || [])
     } catch { /* ignore */ } finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
@@ -51,7 +66,7 @@ function Hub() {
     const get = (name: string) => {
       const k = norm(name)
       let b = map.get(k)
-      if (!b) { b = { key: k, name: name.trim(), routeCount: 0, upcoming: [], invoices: [], outstandingCents: 0 }; map.set(k, b) }
+      if (!b) { b = { key: k, name: name.trim(), routeCount: 0, upcoming: [], invoices: [], outstandingCents: 0, templates: [] }; map.set(k, b) }
       return b
     }
     for (const r of routes) {
@@ -62,6 +77,8 @@ function Hub() {
       if (['assigned', 'text_sent', 'confirmed', 'draft'].includes(r.status) && r.routeDate >= today) b.upcoming.push(r)
     }
     for (const p of portals) if (p.businessName) { const b = get(p.businessName); b.portal = p }
+    for (const t of templates) if (t.businessName) get(t.businessName).templates.push(t)
+    for (const rec of records) if (rec.name) get(rec.name).record = rec
     for (const inv of invoices) {
       if (!inv.businessName) continue
       const b = get(inv.businessName)
@@ -70,7 +87,7 @@ function Hub() {
     }
     for (const b of map.values()) b.upcoming.sort((a, c) => a.routeDate.localeCompare(c.routeDate))
     return [...map.values()].sort((a, b) => (b.lastDate || '').localeCompare(a.lastDate || '') || a.name.localeCompare(b.name))
-  }, [routes, portals, invoices, today])
+  }, [routes, portals, invoices, templates, records, today])
 
   async function createPortal(name: string) {
     try {
@@ -99,34 +116,125 @@ function Hub() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {businesses.map((b, i) => <BizCard key={b.key} b={b} open={openKey === b.key} onToggle={() => setOpenKey(o => o === b.key ? '' : b.key)} onCreatePortal={() => createPortal(b.name)} setMsg={setMsg} delay={i} />)}
+          {businesses.map((b, i) => <BizCard key={b.key} b={b} open={openKey === b.key} onToggle={() => setOpenKey(o => o === b.key ? '' : b.key)} onOpen={() => setOpenKey(b.key)} onCreatePortal={() => createPortal(b.name)} onReload={load} setMsg={setMsg} delay={i} />)}
         </div>
       )}
     </div>
   )
 }
 
-function BizCard({ b, open, onToggle, onCreatePortal, setMsg, delay }: { b: Biz; open: boolean; onToggle: () => void; onCreatePortal: () => void; setMsg: (m: string) => void; delay: number }) {
+const miniBtn: React.CSSProperties = { padding: '5px 11px', fontSize: 12, fontWeight: 700, borderRadius: 8, background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', color: 'var(--muted)', cursor: 'pointer' }
+const bf: React.CSSProperties = { width: '100%', padding: '10px 12px', background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)', borderRadius: 11, color: 'var(--text)', fontSize: 14, outline: 'none' }
+
+function BusinessForm({ b, onDone, onCancel }: { b: Biz; onDone: () => void; onCancel: () => void }) {
+  const r = b.record
+  const [contactName, setContactName] = useState(r?.contactName || '')
+  const [contactPhone, setContactPhone] = useState(r?.contactPhone || '')
+  const [contactEmail, setContactEmail] = useState(r?.contactEmail || '')
+  const [address, setAddress] = useState(r?.address || '')
+  const [notes, setNotes] = useState(r?.notes || '')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+  async function save() {
+    setSaving(true); setErr('')
+    try {
+      const res = await fetch('/api/admin/businesses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ name: b.name, contactName, contactPhone, contactEmail, address, notes }) })
+      const d = await res.json()
+      if (!res.ok) { setErr(d.error || 'Could not save.'); return }
+      onDone()
+    } catch { setErr('Network error.') } finally { setSaving(false) }
+  }
+  return (
+    <div>
+      <p style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 4 }}>Edit {b.name}</p>
+      <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>Saved contact details show here and can prefill future work.</p>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <input placeholder="Contact name" value={contactName} onChange={e => setContactName(e.target.value)} style={bf} />
+        <input placeholder="Contact phone" value={contactPhone} onChange={e => setContactPhone(e.target.value)} style={bf} />
+      </div>
+      <input placeholder="Contact email" value={contactEmail} onChange={e => setContactEmail(e.target.value)} style={{ ...bf, marginTop: 10 }} />
+      <input placeholder="Address" value={address} onChange={e => setAddress(e.target.value)} style={{ ...bf, marginTop: 10 }} />
+      <textarea placeholder="Notes" value={notes} onChange={e => setNotes(e.target.value)} rows={2} style={{ ...bf, marginTop: 10, resize: 'vertical' }} />
+      {err && <p style={{ color: '#f87171', fontSize: 13, marginTop: 8 }}>{err}</p>}
+      <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+        <button onClick={save} disabled={saving} className="btn os-tap" style={{ borderRadius: 11, height: 40, flex: 1, justifyContent: 'center' }}>{saving ? 'Saving…' : 'Save changes'}</button>
+        <button onClick={onCancel} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40 }}>Cancel</button>
+      </div>
+    </div>
+  )
+}
+
+function BizCard({ b, open, onToggle, onOpen, onCreatePortal, onReload, setMsg, delay }: { b: Biz; open: boolean; onToggle: () => void; onOpen: () => void; onCreatePortal: () => void; onReload: () => void; setMsg: (m: string) => void; delay: number }) {
+  const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState('')
+  const rec = b.record
+  const activeTmpl = b.templates.find(t => t.active)
   function copyPortal() { if (b.portal) { navigator.clipboard?.writeText(`${location.origin}/client/${b.portal.token}`); setMsg('Client portal link copied.') } }
+
+  async function tmpl(id: string, body: Record<string, unknown> | null) {
+    setBusy(id)
+    try {
+      if (body === null) await fetch(`/api/admin/route-templates/${id}`, { method: 'DELETE', credentials: 'same-origin' })
+      else { const d = await fetch(`/api/admin/route-templates/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(body) }).then(r => r.json()); if (body.action === 'generate') setMsg(d.created?.length ? `Generated ${d.created.length} route(s).` : 'Upcoming dates already generated.') }
+      onReload()
+    } finally { setBusy('') }
+  }
+
   return (
     <div className="os-card os-rise" style={{ overflow: 'hidden', animationDelay: `${Math.min(delay * 40, 200)}ms` }}>
-      <button onClick={onToggle} className="os-tap" style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 15, display: 'flex', alignItems: 'center', gap: 13 }}>
+      <div onClick={onToggle} className="os-tap" style={{ cursor: 'pointer', padding: 15, display: 'flex', alignItems: 'center', gap: 13 }}>
         <div style={{ width: 46, height: 46, borderRadius: 12, flexShrink: 0, display: 'grid', placeItems: 'center', background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)' }}><Building2 size={22} style={{ color: 'var(--red-glow)' }} /></div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 16 }}>{b.name}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4, fontSize: 12.5, color: 'var(--muted)', flexWrap: 'wrap' }}>
             <span>{b.routeCount} routes</span>
             {b.upcoming.length > 0 && <span style={{ color: '#93c5fd' }}>{b.upcoming.length} upcoming</span>}
+            {activeTmpl && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#c4b5fd' }}><Repeat size={11} /> {weekdaysLabel(activeTmpl.weekdays)}</span>}
             {b.outstandingCents > 0 && <span style={{ color: '#fcd34d' }}>{money(b.outstandingCents)} due</span>}
             {b.portal && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#86efac' }}><Check size={11} /> portal</span>}
           </div>
         </div>
+        <button onClick={e => { e.stopPropagation(); onOpen(); setEditing(true) }} aria-label={`Edit ${b.name}`} className="os-tap" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 10, background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', color: 'var(--muted)', cursor: 'pointer', flexShrink: 0 }}><Pencil size={15} /></button>
         <ChevronDown size={19} style={{ color: 'var(--muted)', flexShrink: 0, transition: 'transform .3s var(--os-ease)', transform: open ? 'rotate(180deg)' : 'none' }} />
-      </button>
+      </div>
 
       <div className={`os-expand${open ? ' open' : ''}`}>
         <div><div style={{ padding: '0 15px 16px' }}>
           <div style={{ height: 1, background: 'var(--line)', marginBottom: 14 }} />
+
+          {editing ? <BusinessForm b={b} onDone={() => { setEditing(false); setMsg('Business saved.'); onReload() }} onCancel={() => setEditing(false)} /> : <>
+
+          {rec && (rec.contactName || rec.contactPhone || rec.contactEmail || rec.address || rec.notes) && (
+            <div style={{ marginBottom: 14, fontSize: 13.5 }}>
+              {rec.contactName && <div style={{ fontWeight: 600 }}>{rec.contactName}{rec.contactPhone ? ` · ${rec.contactPhone}` : ''}</div>}
+              {rec.contactEmail && <div style={{ color: 'var(--muted)' }}>{rec.contactEmail}</div>}
+              {rec.address && <div style={{ color: 'var(--muted)' }}>{rec.address}</div>}
+              {rec.notes && <div style={{ color: 'var(--muted)', marginTop: 4 }}>{rec.notes}</div>}
+            </div>
+          )}
+
+          {b.templates.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>Recurring contracts</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {b.templates.map(t => (
+                  <div key={t.id} style={{ padding: 11, borderRadius: 10, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', opacity: busy === t.id ? .6 : 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <Repeat size={13} style={{ color: '#c4b5fd' }} />
+                      <span style={{ fontWeight: 700, fontSize: 13.5 }}>{weekdaysLabel(t.weekdays)}</span>
+                      <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>· {t.reportTime}</span>
+                      {!t.active && <span style={{ fontSize: 11, color: '#fca5a5', fontWeight: 700 }}>paused</span>}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                      <button onClick={() => tmpl(t.id, { action: 'generate', horizonDays: 14 })} disabled={busy === t.id} style={{ ...miniBtn, color: '#86efac' }}>Generate now</button>
+                      <button onClick={() => tmpl(t.id, { action: 'toggle' })} disabled={busy === t.id} style={miniBtn}>{t.active ? 'Pause' : 'Resume'}</button>
+                      <button onClick={() => { if (confirm('Delete this recurring contract? Routes already generated stay.')) tmpl(t.id, null) }} disabled={busy === t.id} style={{ ...miniBtn, color: '#f87171' }}>Delete</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {b.upcoming.length > 0 && (
             <div style={{ marginBottom: 14 }}>
@@ -172,9 +280,11 @@ function BizCard({ b, open, onToggle, onCreatePortal, setMsg, delay }: { b: Biz;
           </div>
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button onClick={() => setEditing(true)} className="btn-ghost os-tap" style={{ borderRadius: 10, height: 38, fontSize: 13 }}><Pencil size={14} /> Edit business</button>
             <Link href="/admin/operations/new" className="btn os-tap" style={{ borderRadius: 10, height: 38, fontSize: 13 }}><Plus size={15} /> New assignment</Link>
             <Link href="/admin/routes/invoices" className="btn-ghost os-tap" style={{ borderRadius: 10, height: 38, fontSize: 13 }}><FileText size={15} /> Invoices</Link>
           </div>
+          </>}
         </div></div>
       </div>
     </div>

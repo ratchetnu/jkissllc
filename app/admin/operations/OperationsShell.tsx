@@ -93,14 +93,14 @@ export default function OperationsShell({ children }: { children: React.ReactNod
         })}
       </nav>
 
-      {/* Mobile bottom nav */}
-      <nav className="os-glass" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'space-around', padding: '9px 6px calc(9px + env(safe-area-inset-bottom))', borderLeft: 'none', borderRight: 'none', borderBottom: 'none' }} data-dock="mobile">
+      {/* Mobile bottom nav — same dock look: icon-only inactive, red pill for the active tab */}
+      <nav className="os-glass" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'space-around', alignItems: 'center', padding: '10px 8px calc(10px + env(safe-area-inset-bottom))', borderLeft: 'none', borderRight: 'none', borderBottom: 'none' }} data-dock="mobile">
         {NAV.map(n => {
           const active = n.href === activeHref
           return (
-            <Link key={n.href} href={n.href} className="os-dock-item" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '4px 6px', borderRadius: 12, textDecoration: 'none', color: active ? 'var(--red)' : 'var(--muted)', minWidth: 52 }}>
-              <n.Icon size={21} />
-              <span style={{ fontSize: 10, fontWeight: 700 }}>{n.label}</span>
+            <Link key={n.href} href={n.href} aria-label={n.label} className="os-dock-item" style={{ display: 'inline-flex', alignItems: 'center', gap: active ? 7 : 0, padding: active ? '9px 15px' : '9px', borderRadius: 999, textDecoration: 'none', color: active ? '#fff' : 'var(--muted)', background: active ? 'var(--red)' : 'transparent' }}>
+              <n.Icon size={20} />
+              {active && <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>{n.label}</span>}
             </Link>
           )
         })}

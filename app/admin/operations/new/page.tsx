@@ -30,6 +30,18 @@ const scoreColor = (s: number | null | undefined) => s == null ? '#94a3b8' : s >
 const field: React.CSSProperties = { width: '100%', padding: '14px 15px', background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)', borderRadius: 14, color: 'var(--text)', fontSize: 16, outline: 'none' }
 const labelCss: React.CSSProperties = { fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', marginBottom: 6, display: 'block' }
 
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+function weekdaysLabel(w: number[]): string {
+  const s = [...w].sort((a, b) => a - b).join(',')
+  if (s === '1,2,3,4,5') return 'Mon–Fri'
+  if (s === '1,2,3,4,5,6') return 'Mon–Sat'
+  if (s === '0,1,2,3,4,5,6') return 'Every day'
+  return [...w].sort((a, b) => a - b).map(d => DOW[d]).join('/')
+}
+const pill = (on: boolean): React.CSSProperties => ({ flex: 1, padding: '11px', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'var(--red)' : 'transparent', color: on ? '#fff' : 'var(--muted)' })
+const dayChip = (on: boolean): React.CSSProperties => ({ width: 42, height: 42, borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'var(--red)' : 'transparent', color: on ? '#fff' : 'var(--muted)' })
+const presetBtn: React.CSSProperties = { padding: '7px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--line)', background: 'transparent', color: 'var(--muted)' }
+
 function Builder() {
   const router = useRouter()
   const [step, setStep] = useState(0)
@@ -37,9 +49,11 @@ function Builder() {
   const [stats, setStats] = useState<Stats>({})
   const [routes, setRoutes] = useState<RouteLite[]>([])
   const [form, setForm] = useState({ businessName: '', description: '', payRate: '', reportAddress: '', contactPerson: '', contactPhone: '', routeDate: '', reportTime: '', staffId: '', specialNotes: '' })
+  const [repeats, setRepeats] = useState(false)
+  const [weekdays, setWeekdays] = useState<number[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
-  const [done, setDone] = useState<null | { routeNumber: string; texted: boolean; warning?: string }>(null)
+  const [done, setDone] = useState<null | { recurring?: boolean; generated?: number; schedule?: string; routeNumber?: string; texted?: boolean; warning?: string }>(null)
 
   useEffect(() => {
     Promise.all([
@@ -81,13 +95,32 @@ function Builder() {
   const canContinue = (): boolean => {
     if (step === 0) return form.businessName.trim().length > 0
     if (step === 2) return form.reportAddress.trim().length > 0
-    if (step === 3) return /^\d{4}-\d{2}-\d{2}$/.test(form.routeDate) && form.reportTime.trim().length > 0
+    if (step === 3) return repeats ? (weekdays.length > 0 && form.reportTime.trim().length > 0) : (/^\d{4}-\d{2}-\d{2}$/.test(form.routeDate) && form.reportTime.trim().length > 0)
     return true
   }
 
   async function submit() {
     setSubmitting(true); setError('')
     try {
+      if (repeats) {
+        // Recurring contract → a template that auto-generates + assigns routes.
+        const res = await fetch('/api/admin/route-templates', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+          body: JSON.stringify({
+            label: `${form.businessName} — ${weekdaysLabel(weekdays)}`, businessName: form.businessName,
+            reportAddress: form.reportAddress, reportTime: form.reportTime, contactPerson: form.contactPerson,
+            contactPhone: form.contactPhone, vehicle: VEHICLE, payRate: form.payRate, description: form.description,
+            specialNotes: form.specialNotes, weekdays, defaultStaffId: form.staffId || undefined, autoNotify: Boolean(form.staffId),
+          }),
+        })
+        const d = await res.json()
+        if (!res.ok) { setError(d.error || 'Could not create the contract.'); return }
+        // Generate the next 2 weeks now so routes appear immediately.
+        let generated = 0
+        try { const g = await fetch(`/api/admin/route-templates/${d.template.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ action: 'generate', horizonDays: 14 }) }).then(r => r.json()); generated = g.created?.length || 0 } catch { /* cron will still generate */ }
+        setDone({ recurring: true, generated, schedule: weekdaysLabel(weekdays) })
+        return
+      }
       const res = await fetch('/api/admin/routes', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
         body: JSON.stringify({ ...form, vehicle: VEHICLE }),
@@ -104,12 +137,14 @@ function Builder() {
     <div className="os-rise" style={{ maxWidth: 460, margin: '6vh auto 0', textAlign: 'center' }}>
       <div className="os-card" style={{ padding: 34 }}>
         <div style={{ width: 60, height: 60, borderRadius: 999, background: 'rgba(34,197,94,.16)', display: 'grid', placeItems: 'center', margin: '0 auto' }}><CheckCircle2 size={32} color="#22c55e" /></div>
-        <h1 className="jkos-h" style={{ fontSize: 24, marginTop: 16 }}>Assignment created</h1>
+        <h1 className="jkos-h" style={{ fontSize: 24, marginTop: 16 }}>{done.recurring ? 'Recurring contract set' : 'Assignment created'}</h1>
         <p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14.5 }}>
-          {done.routeNumber && <b style={{ color: 'var(--text)' }}>{done.routeNumber}</b>} · {done.warning ? `saved, but the text didn’t send: ${done.warning}` : done.texted ? `texted to ${selectedStaff?.name?.split(' ')[0] || 'the crew'} for confirmation.` : 'saved as a draft — assign when you’re ready.'}
+          {done.recurring
+            ? `${done.schedule} · ${done.generated} route${done.generated === 1 ? '' : 's'} generated for the next 2 weeks${selectedStaff ? `, assigned to ${selectedStaff.name.split(' ')[0]}` : ''}. New routes keep generating automatically — no daily setup.`
+            : <>{done.routeNumber && <b style={{ color: 'var(--text)' }}>{done.routeNumber}</b>} · {done.warning ? `saved, but the text didn’t send: ${done.warning}` : done.texted ? `texted to ${selectedStaff?.name?.split(' ')[0] || 'the crew'} for confirmation.` : 'saved as a draft — assign when you’re ready.'}</>}
         </p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 22 }}>
-          <button onClick={() => { setDone(null); setStep(0); setForm({ businessName: form.businessName, description: '', payRate: '', reportAddress: '', contactPerson: '', contactPhone: '', routeDate: '', reportTime: '', staffId: '', specialNotes: '' }) }} className="btn os-tap" style={{ borderRadius: 12, justifyContent: 'center' }}>Create another</button>
+          <button onClick={() => { setDone(null); setStep(0); setRepeats(false); setWeekdays([]); setForm({ businessName: form.businessName, description: '', payRate: '', reportAddress: '', contactPerson: '', contactPhone: '', routeDate: '', reportTime: '', staffId: '', specialNotes: '' }) }} className="btn os-tap" style={{ borderRadius: 12, justifyContent: 'center' }}>Create another</button>
           <Link href="/admin/operations" className="btn-ghost os-tap" style={{ borderRadius: 12, justifyContent: 'center' }}>Back to Operations</Link>
         </div>
       </div>
@@ -173,9 +208,33 @@ function Builder() {
         )}
 
         {step === 3 && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div><span style={labelCss}>Date</span><input type="date" autoFocus min={today} value={form.routeDate} onChange={e => set('routeDate', e.target.value)} style={field} /></div>
-            <div><span style={labelCss}>Report time</span><input placeholder="e.g. 7:00 AM" value={form.reportTime} onChange={e => set('reportTime', e.target.value)} style={field} /></div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" onClick={() => setRepeats(false)} style={pill(!repeats)}>One-time</button>
+              <button type="button" onClick={() => setRepeats(true)} style={pill(repeats)}>Repeats weekly</button>
+            </div>
+            {!repeats ? (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div><span style={labelCss}>Date</span><input type="date" min={today} value={form.routeDate} onChange={e => set('routeDate', e.target.value)} style={field} /></div>
+                <div><span style={labelCss}>Report time</span><input placeholder="e.g. 7:00 AM" value={form.reportTime} onChange={e => set('reportTime', e.target.value)} style={field} /></div>
+              </div>
+            ) : (
+              <div>
+                <span style={labelCss}>Which days does this contract run?</span>
+                <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+                  {DOW.map((d, i) => (
+                    <button key={i} type="button" onClick={() => setWeekdays(w => w.includes(i) ? w.filter(x => x !== i) : [...w, i].sort((a, b) => a - b))} style={dayChip(weekdays.includes(i))}>{d}</button>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 10 }}>
+                  <button type="button" onClick={() => setWeekdays([1, 2, 3, 4, 5])} style={presetBtn}>Mon–Fri</button>
+                  <button type="button" onClick={() => setWeekdays([1, 2, 3, 4, 5, 6])} style={presetBtn}>Mon–Sat</button>
+                  <button type="button" onClick={() => setWeekdays([0, 1, 2, 3, 4, 5, 6])} style={presetBtn}>Every day</button>
+                </div>
+                <div style={{ marginTop: 16 }}><span style={labelCss}>Report time</span><input placeholder="e.g. 7:00 AM" value={form.reportTime} onChange={e => set('reportTime', e.target.value)} style={field} /></div>
+                <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 12 }}>Routes generate automatically for the next 2 weeks and keep rolling — you won’t re-add this business each day.</p>
+              </div>
+            )}
           </div>
         )}
 
@@ -216,10 +275,14 @@ function Builder() {
               <SummaryRow label="Business" val={form.businessName} />
               <SummaryRow label="Work" val={[form.description || 'Contract route', `· ${VEHICLE}`, form.payRate && `· ${form.payRate}`].filter(Boolean).join(' ')} />
               <SummaryRow label="Report to" val={form.reportAddress} />
-              <SummaryRow label="When" val={`${fmtDay(form.routeDate)} · ${form.reportTime}`} />
-              <SummaryRow label="Assigned" val={selectedStaff ? selectedStaff.name : 'Unassigned (draft)'} last />
+              <SummaryRow label="When" val={repeats ? `Repeats ${weekdaysLabel(weekdays)} · ${form.reportTime}` : `${fmtDay(form.routeDate)} · ${form.reportTime}`} />
+              <SummaryRow label={repeats ? 'Crew (each route)' : 'Assigned'} val={selectedStaff ? selectedStaff.name : repeats ? 'Unassigned (drafts)' : 'Unassigned (draft)'} last />
             </div>
-            {selectedStaff?.phone && (
+            {repeats ? (
+              <div style={{ padding: 14, borderRadius: 14, background: 'rgba(224,0,42,.08)', border: '1px solid rgba(224,0,42,.22)' }}>
+                <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'var(--text)' }}>Routes generate automatically for <b>{weekdaysLabel(weekdays)}</b>, 2 weeks out and rolling.{selectedStaff?.phone ? ` Each one texts ${selectedStaff.name.split(' ')[0]} to confirm.` : ''}</p>
+              </div>
+            ) : selectedStaff?.phone && (
               <div style={{ padding: 14, borderRadius: 14, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
                 <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>They’ll get this text</div>
                 <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'var(--text)' }}>J KISS LLC Route Assignment: You have been assigned a route for {fmtDay(form.routeDate).replace(/,.*/, '')} at {form.reportTime}. Location: {form.reportAddress}. Confirm here: <span style={{ color: 'var(--red)' }}>[secure link]</span>. Reply STOP to opt out.</p>
@@ -235,7 +298,7 @@ function Builder() {
         {step > 0 && <button onClick={() => setStep(s => s - 1)} className="btn-ghost os-tap" style={{ borderRadius: 12, paddingLeft: 16, paddingRight: 18 }}><ChevronLeft size={17} /> Back</button>}
         {step < 5
           ? <button onClick={() => canContinue() && setStep(s => s + 1)} disabled={!canContinue()} className="btn os-tap" style={{ borderRadius: 12, flex: 1, justifyContent: 'center', opacity: canContinue() ? 1 : .5 }}>Continue</button>
-          : <button onClick={submit} disabled={submitting} className="btn os-tap" style={{ borderRadius: 12, flex: 1, justifyContent: 'center' }}>{submitting ? 'Creating…' : form.staffId ? <> <Send size={17} /> Create &amp; send</> : 'Save as draft'}</button>}
+          : <button onClick={submit} disabled={submitting} className="btn os-tap" style={{ borderRadius: 12, flex: 1, justifyContent: 'center' }}>{submitting ? 'Creating…' : repeats ? 'Create recurring contract' : form.staffId ? <> <Send size={17} /> Create &amp; send</> : 'Save as draft'}</button>}
       </div>
     </div>
   )
