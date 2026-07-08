@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+// TODO(opspilot/tenancy): this route BYPASSES app/lib/redis.ts with its own inline
+// client, so prefixing keys in that shared wrapper will silently miss the pv:*/uv:*
+// analytics keys written below — pageview and visitor data would stay commingled
+// across tenants. Hand-migrate this file (and app/api/admin/analytics/route.ts,
+// which bypasses the wrapper the same way).
+// See docs/opspilot-multi-tenant-roadmap.md §2.2.
 async function redis(url: string, token: string, ...args: string[]) {
   const res = await fetch(`${url}/${args.map(encodeURIComponent).join('/')}`, {
     method: 'POST',

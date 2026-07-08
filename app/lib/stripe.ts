@@ -3,6 +3,14 @@ import Stripe from 'stripe'
 // Single Stripe account shared with ClaimGuard (same company). Uses the same
 // STRIPE_SECRET_KEY env var. Lazily constructed so the rest of the app still
 // builds/runs when Stripe isn't configured (manual payments always work).
+//
+// TODO(opspilot/tenancy + billing): every Stripe call in this app is CUSTOMER-facing
+// (three Checkout Sessions, all mode:'payment'). There is no SaaS-billing concept.
+// Adding platform subscriptions on this same key while tenants also collect
+// customer payments through it would commingle platform revenue with tenant
+// revenue. Stripe Connect (destination charges / the `stripeAccount` header) is
+// effectively mandatory before a second tenant transacts.
+// See docs/opspilot-multi-tenant-roadmap.md §7.
 export function getStripe(): Stripe {
   const key = process.env.STRIPE_SECRET_KEY
   if (!key) throw new Error('STRIPE_NOT_CONFIGURED')

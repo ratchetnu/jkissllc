@@ -506,3 +506,96 @@ h1, h2, h3, .display { font-family: var(--font-display); font-feature-settings: 
   outline: 2px solid var(--red-glow, #ff6680);
   outline-offset: 2px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   OPSPILOT — platform identity layer
+   The software brand that quietly powers J KISS. Its accent is a cool steel,
+   chosen so it never competes with J KISS red or the ClaimGuard blue: on the
+   page, OpsPilot reads as instrumentation, not as a second company shouting.
+   Namespaced .ops-* so it can't leak into the marketing or OS design layers.
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --ops-steel: #ccd4e0;              /* the platform accent */
+  --ops-steel-dim: rgba(204,212,224,.60);
+  --ops-ease: cubic-bezier(.16, 1, .3, 1);
+}
+
+/* Capability card — on dark surfaces */
+.ops-card {
+  background: rgba(255,255,255,.028);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 16px;
+  transition: transform .35s var(--ops-ease), border-color .35s ease, background .35s ease;
+}
+.ops-card:hover {
+  transform: translateY(-3px);
+  background: rgba(255,255,255,.05);
+  border-color: rgba(204,212,224,.22);
+}
+
+/* Capability card — on light surfaces */
+.ops-card-light {
+  background: var(--surface);
+  border: 1px solid var(--line-ink);
+  border-radius: 16px;
+  transition: transform .35s var(--ops-ease), box-shadow .35s ease, border-color .35s ease;
+}
+.ops-card-light:hover {
+  transform: translateY(-3px);
+  border-color: var(--line-ink-2);
+  box-shadow: 0 18px 44px -20px rgba(12,14,18,.20);
+}
+
+/* The icon well inside a capability card */
+.ops-icon {
+  width: 38px; height: 38px; border-radius: 10px;
+  display: grid; place-items: center; flex-shrink: 0;
+  background: rgba(204,212,224,.08);
+  border: 1px solid rgba(204,212,224,.16);
+  color: var(--ops-steel);
+}
+.ops-card-light .ops-icon {
+  background: rgba(12,14,18,.04);
+  border-color: var(--line-ink);
+  color: var(--ink);
+}
+
+/* "Built In-House" / "Coming Soon" pill — the quiet counterpart to .label */
+.ops-badge {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 10.5px; font-weight: 600;
+  letter-spacing: .14em; text-transform: uppercase;
+  padding: 6px 13px; border-radius: 100px;
+  color: var(--ops-steel);
+  background: rgba(204,212,224,.06);
+  border: 1px solid rgba(204,212,224,.18);
+  white-space: nowrap;
+}
+.section-light .ops-badge, .section-alt .ops-badge, .ops-card-light .ops-badge {
+  color: var(--ink-muted);
+  background: rgba(12,14,18,.03);
+  border-color: var(--line-ink);
+}
+
+/* Instrument grid — the faint backdrop behind OpsPilot bands. Decorative. */
+.ops-grid {
+  background-image:
+    linear-gradient(rgba(204,212,224,.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(204,212,224,.05) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000, transparent 78%);
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000, transparent 78%);
+}
+
+/* The needle settles into place, once. Reduced-motion users get it settled. */
+.ops-mark-in { animation: ops-mark-settle 1.1s var(--ops-ease) both; }
+@keyframes ops-mark-settle {
+  from { opacity: 0; transform: rotate(-14deg) scale(.94); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ops-card, .ops-card-light { transition: none; }
+  .ops-card:hover, .ops-card-light:hover { transform: none; }
+  .ops-mark-in { animation: none; }
+}

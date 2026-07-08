@@ -1,5 +1,15 @@
 // Thin wrapper around the Upstash Redis REST API.
 // Env: KV_REST_API_URL and KV_REST_API_TOKEN (auto-provisioned by the Vercel/Upstash integration).
+//
+// OPSPILOT MULTI-TENANT — THE LEVERAGE POINT.
+// TODO(opspilot/tenancy): `call()` below is a raw passthrough that never rewrites
+// the key. Prefixing keys HERE (`t:{tenantId}:{key}`) isolates all 21 lib modules
+// that import this client in a single change.
+// Two callers bypass this wrapper with their own inline fetch and will NOT be
+// covered: app/api/track/route.ts and app/api/admin/analytics/route.ts.
+// Also note: no SCAN/KEYS is exposed, so the backfill script cannot enumerate
+// existing keys through this client — it must go direct to Upstash.
+// See docs/opspilot-multi-tenant-roadmap.md §2.
 
 type RedisValue = string | number | null
 type RedisResult<T = RedisValue> = { result: T } | { error: string }

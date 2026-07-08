@@ -2,6 +2,11 @@
 
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
+import { Lock } from 'lucide-react'
+import CapabilityGrid from '../components/opspilot/CapabilityGrid'
+import EarlyAccessForm from '../components/opspilot/EarlyAccessForm'
+import PoweredByBand from '../components/opspilot/PoweredByBand'
+import { OpsPilotMark, OpsPilotWordmark } from '../components/opspilot/OpsPilotMark'
 
 function useFadeUp() {
   const ref = useRef<HTMLDivElement>(null)
@@ -480,7 +485,8 @@ export default function StartYourCarrierPage() {
             J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
           </Link>
           <nav className="hidden md:flex items-center gap-8">
-            {[['Services', '/#services'], ['About', '/#about'], ['Coverage', '/#coverage'], ['Contact', '/#contact']].map(([label, href]) => (
+            {/* "/#about" pointed at an anchor that never existed — /about is now a real page. */}
+            {[['Services', '/#services'], ['About', '/about'], ['Coverage', '/#coverage'], ['Contact', '/#contact']].map(([label, href]) => (
               <Link key={href} href={href} className="text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)', textDecoration: 'none' }}>{label}</Link>
             ))}
             <Link href="/start-your-carrier" className="text-sm font-bold" style={{ color: '#ff6680', textDecoration: 'none' }}>Start a Carrier</Link>
@@ -1409,6 +1415,58 @@ export default function StartYourCarrierPage() {
         </div>
       </section>
 
+      {/* ── OpsPilot — the platform behind the carrier network ──────────────────
+          Placed after the guide's substance and immediately before the "haul with
+          us" CTA: by this point the reader is an aspiring or active carrier, and
+          the most persuasive thing we can show them is the machinery. ────────── */}
+      <section id="opspilot" className="py-24 px-6" style={{ position: 'relative', overflow: 'hidden', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
+        <div className="ops-grid" aria-hidden style={{ position: 'absolute', inset: 0 }} />
+        <div className="max-w-6xl mx-auto" style={{ position: 'relative' }}>
+          <FadeUp>
+            <span style={{ color: 'var(--ops-steel)', display: 'inline-flex' }}>
+              <OpsPilotMark size={40} title="OpsPilot" />
+            </span>
+            <h2 className="text-3xl font-black text-white mt-6 mb-4" style={{ letterSpacing: '-0.04em' }}>
+              The Technology Behind Every Route
+            </h2>
+            <p className="text-base max-w-3xl leading-relaxed" style={{ color: 'var(--muted)' }}>
+              When you haul with J Kiss, you&apos;re not just joining another carrier network. Every assignment
+              is managed through <OpsPilotWordmark tm style={{ color: '#fff' }} /> — our proprietary operations
+              platform designed to simplify scheduling, confirmations, communication, claims, and contractor
+              management.
+            </p>
+            <div className="mt-7 flex flex-wrap gap-3">
+              <span className="ops-badge">Built In-House</span>
+              <span className="ops-badge">Running in Production</span>
+            </div>
+          </FadeUp>
+
+          <div className="mt-12">
+            <CapabilityGrid tone="dark" />
+          </div>
+
+          {/* ── Coming soon: early interest ── */}
+          <FadeUp delay={120}>
+            <div
+              className="glass-card mt-14"
+              style={{ padding: 'clamp(26px, 4vw, 44px)', borderRadius: 22, background: 'linear-gradient(135deg, rgba(204,212,224,.05), rgba(255,255,255,.015))' }}
+            >
+              <span className="ops-badge">
+                <Lock size={12} strokeWidth={2} /> Coming Soon
+              </span>
+              <h3 className="text-2xl font-black text-white mt-5 mb-3" style={{ letterSpacing: '-0.03em' }}>
+                OpsPilot is coming to other operators.
+              </h3>
+              <p className="text-sm leading-relaxed max-w-2xl mb-7" style={{ color: 'var(--muted)' }}>
+                We&apos;re opening OpsPilot up to other owner-operators and service businesses. If you want
+                first access when we do, join the early interest list.
+              </p>
+              <EarlyAccessForm source="/start-your-carrier" tone="dark" />
+            </div>
+          </FadeUp>
+        </div>
+      </section>
+
       {/* ── CTA ── */}
       <section className="py-24 px-6">
         <div className="max-w-4xl mx-auto">
@@ -1441,6 +1499,10 @@ export default function StartYourCarrierPage() {
             © {new Date().getFullYear()} J Kiss LLC · US DOT 3484556 · MC 01155352
           </p>
           <Link href="/" className="text-xs transition-colors hover:text-white" style={{ color: 'rgba(255,255,255,.35)', textDecoration: 'none' }}>← Back to Home</Link>
+        </div>
+        {/* This page has its own slim close, so the platform gets the compact mark. */}
+        <div className="max-w-4xl mx-auto mt-7 pt-6 flex justify-center" style={{ borderTop: '1px solid var(--line)' }}>
+          <PoweredByBand variant="compact" />
         </div>
       </footer>
     </main>

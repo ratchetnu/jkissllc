@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { useAdminSession } from '../useAdminSession'
 import { Home, ClipboardList, Users, Building2, MessageSquare, ShieldAlert, Settings, LogOut, Search } from 'lucide-react'
 import CommandPalette from './CommandPalette'
+import { OpsPilotMark, OpsPilotWordmark } from '../../components/opspilot/OpsPilotMark'
 
 const NAV = [
   { href: '/admin/operations', label: 'Home', Icon: Home },
@@ -41,16 +42,26 @@ export default function OperationsShell({ children }: { children: React.ReactNod
     </div>
   )
 
+  // Sign-in: the tenant is named first, the platform underneath it. This is the
+  // shape every future OpsPilot tenant's login will take — company on top,
+  // "Powered by OpsPilot" below the fold of the form.
   if (!authed) return (
     <div className="jkos" style={{ display: 'grid', placeItems: 'center', padding: 24 }}>
       <div className="os-card os-rise" style={{ width: '100%', maxWidth: 380, padding: 30 }}>
-        <p className="jkos-h" style={{ fontSize: 26 }}>J KISS <span style={{ color: 'var(--red)' }}>OS</span></p>
+        <p className="jkos-h" style={{ fontSize: 26 }}>J KISS <span style={{ color: 'var(--red)' }}>Freight</span></p>
         <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 4, marginBottom: 22 }}>Sign in to your operations.</p>
         <form onSubmit={submitLogin} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <input type="password" placeholder="Admin password" value={password} onChange={e => setPassword(e.target.value)} style={iStyle} required autoFocus />
           {error && <p style={{ color: '#f87171', fontSize: 14 }}>{error}</p>}
           <button type="submit" disabled={loading} className="btn os-tap" style={{ justifyContent: 'center', borderRadius: 12, height: 46 }}>{loading ? 'Checking…' : 'Sign In'}</button>
         </form>
+
+        <div style={{ marginTop: 26, paddingTop: 18, borderTop: '1px solid var(--line)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--muted)' }}>
+          <OpsPilotMark size={15} />
+          <span style={{ fontSize: 12.5 }}>
+            Powered by <OpsPilotWordmark tm style={{ color: 'var(--text)', fontWeight: 600 }} />
+          </span>
+        </div>
       </div>
     </div>
   )

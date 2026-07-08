@@ -6,6 +6,7 @@ import { MapPin, Clock, User, ChevronDown, Plus, CalendarDays, AlertTriangle, Ch
 import OperationsShell from './OperationsShell'
 import { useOps } from './useOps'
 import ClaimsCard from './claims/ClaimsCard'
+import { OpsPilotMark, OpsPilotWordmark } from '../../components/opspilot/OpsPilotMark'
 import { STATUS as CHIP, scoreColor, ymd, fmtDay, mapsUrl, type RouteStatus } from './ui'
 
 type Op = {
@@ -41,6 +42,12 @@ function Dashboard() {
       {/* Greeting */}
       <div className="os-rise" style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 22 }}>
         <div>
+          {/* The platform names itself once, at the top of its own home screen. */}
+          <p style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--muted)', marginBottom: 7 }}>
+            <OpsPilotMark size={15} />
+            <OpsPilotWordmark tm style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }} />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Operations</span>
+          </p>
           <p style={{ fontSize: 13, fontWeight: 700, letterSpacing: '.02em', color: 'var(--muted)' }}>{dateLabel}</p>
           <h1 className="jkos-h" style={{ fontSize: 'clamp(30px,6vw,44px)', marginTop: 2 }}>{greeting}.</h1>
         </div>

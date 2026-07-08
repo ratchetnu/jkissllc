@@ -38,6 +38,12 @@ export type Calibration = CalibrationBias & {
   updatedAt: string
 }
 
+// TODO(opspilot/tenancy): DATA-ISOLATION DEFECT, not just a key rename. This is
+// the pricing model's calibration state, and it is global. Under multi-tenancy,
+// one tenant's completed-job outcomes would train another tenant's price
+// estimator — a data leak and a pricing-integrity bug. Must be tenant-scoped
+// before a second company is onboarded.
+// See docs/opspilot-multi-tenant-roadmap.md §2.3.
 const OUTCOMES_KEY = 'learn:jobs'
 const CALIB_KEY = 'learn:calibration'
 const MAX_OUTCOMES = 250

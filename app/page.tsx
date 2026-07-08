@@ -10,6 +10,7 @@ import TrustBand from './components/home/TrustBand';
 import Projects from './components/home/Projects';
 import Reviews from './components/home/Reviews';
 import CoverageSection from './components/home/CoverageSection';
+import PoweredByOpsPilot from './components/home/PoweredByOpsPilot';
 import QuoteCTA from './components/home/QuoteCTA';
 import FAQ from './components/home/FAQ';
 import ContactSection from './components/home/ContactSection';
@@ -44,6 +45,9 @@ export default function Home() {
       <Projects />
       <Reviews />
       <CoverageSection />
+
+      {/* ── The platform, after the customer has had every chance to convert ── */}
+      <PoweredByOpsPilot />
 
       {/* ── Secondary resource: carrier startup guide (existing funnel, preserved) ── */}
       <section className="section section-light">
