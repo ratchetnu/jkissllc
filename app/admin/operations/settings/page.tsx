@@ -1,21 +1,33 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { MessageSquare, Mail, Star, Briefcase, CalendarCheck, Trash2, ScrollText, BarChart3, CalendarDays, LogOut, Check } from 'lucide-react'
+import { MessageSquare, Mail, Star, Briefcase, CalendarCheck, Trash2, ScrollText, BarChart3, CalendarDays, LogOut, Check, ClipboardList, DollarSign, FileText } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { osField as field } from '../ui'
 
 type Config = { sms: boolean; email: boolean; smsTo: string; emailTo: string }
 
-const MORE_TOOLS = [
-  { href: '/admin/bookings', label: 'Bookings', Icon: CalendarDays },
-  { href: '/admin/promos', label: 'Promos', Icon: Star },
-  { href: '/admin/reviews', label: 'Reviews', Icon: Star },
-  { href: '/admin/careers', label: 'Careers', Icon: Briefcase },
-  { href: '/admin/availability', label: 'Availability', Icon: CalendarCheck },
-  { href: '/admin/disposal', label: 'Disposal Pricing', Icon: Trash2 },
-  { href: '/admin/policy', label: 'Policy', Icon: ScrollText },
-  { href: '/admin/analytics', label: 'Analytics', Icon: BarChart3 },
+const TOOL_GROUPS: { label: string; items: { href: string; label: string; Icon: typeof Star }[] }[] = [
+  { label: 'Work', items: [
+    { href: '/admin/routes', label: 'Dispatch board', Icon: ClipboardList },
+    { href: '/admin/routes/pay', label: 'Contractor Pay', Icon: DollarSign },
+    { href: '/admin/routes/invoices', label: 'Client Invoices', Icon: FileText },
+  ] },
+  { label: 'Customers', items: [
+    { href: '/admin/bookings', label: 'Bookings', Icon: CalendarDays },
+    { href: '/admin/inbox', label: 'Inbox', Icon: MessageSquare },
+    { href: '/admin/promos', label: 'Promos', Icon: Star },
+    { href: '/admin/reviews', label: 'Reviews', Icon: Star },
+  ] },
+  { label: 'Team', items: [
+    { href: '/admin/careers', label: 'Careers', Icon: Briefcase },
+    { href: '/admin/availability', label: 'Availability', Icon: CalendarCheck },
+  ] },
+  { label: 'Business', items: [
+    { href: '/admin/disposal', label: 'Disposal Pricing', Icon: Trash2 },
+    { href: '/admin/policy', label: 'Policy', Icon: ScrollText },
+    { href: '/admin/analytics', label: 'Analytics', Icon: BarChart3 },
+  ] },
 ]
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
@@ -92,12 +104,20 @@ function Settings() {
 
       {/* More tools */}
       <div className="os-card os-rise" style={{ padding: 22, marginBottom: 16 }}>
-        <h2 className="jkos-h" style={{ fontSize: 18, marginBottom: 14 }}>More tools</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
-          {MORE_TOOLS.map(t => (
-            <a key={t.href} href={t.href} className="os-tap" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 14px', borderRadius: 13, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', textDecoration: 'none', color: 'var(--text)', fontWeight: 600, fontSize: 14 }}>
-              <t.Icon size={17} style={{ color: 'var(--muted)', flexShrink: 0 }} /> {t.label}
-            </a>
+        <h2 className="jkos-h" style={{ fontSize: 18, marginBottom: 4 }}>More tools</h2>
+        <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 14 }}>Everything else, a tap away.</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {TOOL_GROUPS.map(g => (
+            <div key={g.label}>
+              <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }}>{g.label}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+                {g.items.map(t => (
+                  <a key={t.href} href={t.href} className="os-tap" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 14px', borderRadius: 13, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', textDecoration: 'none', color: 'var(--text)', fontWeight: 600, fontSize: 14 }}>
+                    <t.Icon size={17} style={{ color: 'var(--muted)', flexShrink: 0 }} /> {t.label}
+                  </a>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       </div>
