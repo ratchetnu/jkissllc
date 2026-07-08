@@ -1,21 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { get } from '@vercel/blob'
 import { requireSession } from '../../_lib/session'
+import { openDoc } from '../../../../lib/doc-crypto'
 
 export const runtime = 'nodejs'
 
-// GET /api/admin/careers/doc?p=driver-docs/ss_card/<uuid>.jpg
+// GET /api/admin/careers/doc?p=driver-docs/ss_card/<uuid>.jpg.enc
 //
-// The ONLY way to read an applicant's identity documents. They live in a private
-// blob (see /api/careers/upload), so there is no URL to leak — this route streams
-// the bytes to a signed-in admin and nobody else.
+// The ONLY way to read an applicant's identity documents. The stored object is
+// AES-256-GCM ciphertext (see lib/doc-crypto.ts); this route holds the key and hands
+// the plaintext image to a signed-in admin, and to nobody else.
 //
-// Rendered by <img src="/api/admin/careers/doc?p=…"> on the admin careers page;
+// Rendered by <img src="/api/admin/careers/doc?p=…"> on the admin careers page —
 // the browser sends the admin session cookie with the image request.
 
 // Only ever serve from the applicant-document prefix, and never let a caller walk
-// out of it. `p` arrives from the client, so it is untrusted input.
-const SAFE_PATH = /^driver-docs\/[a-z_]+\/[a-zA-Z0-9-]+\.(jpg|png|webp|heic|heif)$/
+// out of it. `p` is untrusted input. Trailing `.enc` marks a sealed object.
+const SEALED_PATH = /^driver-docs\/[a-z_]+\/[a-zA-Z0-9-]+\.(jpg|png|webp|heic|heif)\.enc$/
+
+const MEDIA: Record<string, string> = {
+  jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', heif: 'image/heif',
+}
 
 export async function GET(req: NextRequest) {
   if (!(await requireSession(req))) {
@@ -23,17 +28,25 @@ export async function GET(req: NextRequest) {
   }
 
   const pathname = req.nextUrl.searchParams.get('p') ?? ''
-  if (pathname.includes('..') || !SAFE_PATH.test(pathname)) {
+  if (pathname.includes('..') || !SEALED_PATH.test(pathname)) {
     return NextResponse.json({ error: 'bad path' }, { status: 400 })
   }
 
+  // "…/<uuid>.jpg.enc" → "jpg"
+  const ext = pathname.slice(0, -4).split('.').pop() ?? ''
+  const contentType = MEDIA[ext] ?? 'application/octet-stream'
+
   try {
-    const res = await get(pathname, { access: 'private' })
+    const res = await get(pathname, { access: 'public' })   // the object; its BYTES are sealed
     if (!res) return NextResponse.json({ error: 'not found' }, { status: 404 })
 
-    return new NextResponse(res.stream as unknown as ReadableStream, {
+    const sealed = Buffer.from(await new Response(res.stream as unknown as ReadableStream).arrayBuffer())
+    // GCM authenticates as well as decrypts: a tampered object throws here.
+    const plaintext = openDoc(sealed)
+
+    return new NextResponse(new Uint8Array(plaintext), {
       headers: {
-        'Content-Type': res.blob.contentType || 'application/octet-stream',
+        'Content-Type': contentType,
         // Never let an identity document sit in a shared or on-disk cache.
         'Cache-Control': 'private, no-store, max-age=0',
         'Content-Disposition': 'inline',

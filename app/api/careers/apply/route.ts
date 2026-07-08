@@ -58,12 +58,12 @@ function cleanScenarios(raw: unknown): ScenarioResponse[] {
   return out
 }
 
-// A document reference is now one of two shapes:
-//   • a private blob PATHNAME  — "driver-docs/ss_card/<uuid>.jpg"  (identity docs)
-//   • a public https URL       — the headshot, and every doc uploaded before
-//                                identity documents were made private
+// A document reference is one of two shapes:
+//   • a sealed blob PATHNAME  — "driver-docs/ss_card/<uuid>.jpg.enc"  (identity docs)
+//   • a public https URL      — the headshot, and every doc uploaded before identity
+//                               documents were encrypted
 // Both must survive here: existing applicant records still carry https URLs.
-const PRIVATE_DOC_PATH = /^driver-docs\/[a-z_]+\/[a-zA-Z0-9-]+\.(jpg|png|webp|heic|heif)$/
+const SEALED_DOC_PATH = /^driver-docs\/[a-z_]+\/[a-zA-Z0-9-]+\.(jpg|png|webp|heic|heif)\.enc$/
 const PUBLIC_DOC_URL = /^https:\/\/\S+$/
 
 function cleanDocs(raw: unknown): ApplicantDoc[] {
@@ -75,7 +75,7 @@ function cleanDocs(raw: unknown): ApplicantDoc[] {
     const url = String((item as Record<string, unknown>).url || '')
     if (!DOC_KINDS.has(kind)) continue
     if (url.length > 1000 || url.includes('..')) continue
-    if (!PRIVATE_DOC_PATH.test(url) && !PUBLIC_DOC_URL.test(url)) continue
+    if (!SEALED_DOC_PATH.test(url) && !PUBLIC_DOC_URL.test(url)) continue
     byKind.set(kind, { kind, url, uploadedAt: Date.now() })
   }
   return Array.from(byKind.values())

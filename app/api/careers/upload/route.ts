@@ -3,6 +3,7 @@ import { put } from '@vercel/blob'
 import { rateLimit } from '../../../lib/rate-limit'
 import { isBlockedBot } from '../../../lib/botcheck'
 import { isSensitiveDoc } from '../../../lib/ats-config'
+import { sealDoc, docCryptoReady } from '../../../lib/doc-crypto'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -34,21 +35,39 @@ export async function POST(req: NextRequest) {
   if (!m || image.length > 12_000_000) {
     return NextResponse.json({ error: 'Please attach a clear photo (JPG/PNG, under ~9MB).' }, { status: 400 })
   }
+  const sensitive = isSensitiveDoc(kind)
+
+  // Fail closed. Storing an unencrypted Social Security card at a public URL because
+  // a key was missing is strictly worse than telling the applicant to try again.
+  if (sensitive && !docCryptoReady()) {
+    console.error('[careers-upload] refusing to store an identity document unsealed — no encryption key configured')
+    return NextResponse.json({ error: 'Uploads are temporarily unavailable. Please try again shortly.' }, { status: 503 })
+  }
+
   try {
     const buf = Buffer.from(m[3], 'base64')
     const ext = m[2] === 'jpeg' ? 'jpg' : m[2]
-    const pathname = `driver-docs/${kind}/${crypto.randomUUID()}.${ext}`
-    const sensitive = isSensitiveDoc(kind)
 
-    const blob = await put(pathname, buf, {
-      access: sensitive ? 'private' : 'public',
+    if (sensitive) {
+      // `.enc` marks the object as sealed, so the reader never has to guess. The
+      // real media type is recovered from the extension embedded before it.
+      const pathname = `driver-docs/${kind}/${crypto.randomUUID()}.${ext}.enc`
+      await put(pathname, sealDoc(buf), {
+        access: 'public',                          // the store is public; the BYTES are not
+        contentType: 'application/octet-stream',
+        addRandomSuffix: false,
+      })
+      // Hand back the pathname, never a URL — nothing in an applicant's browser or
+      // in the saved record should be a link to their Social Security card.
+      return NextResponse.json({ ok: true, url: pathname })
+    }
+
+    const blob = await put(`driver-docs/${kind}/${crypto.randomUUID()}.${ext}`, buf, {
+      access: 'public',
       contentType: m[1],
       addRandomSuffix: false,
     })
-
-    // Sensitive: hand back the pathname, which is only resolvable by an authed
-    // admin. Non-sensitive: the public URL, exactly as before.
-    return NextResponse.json({ ok: true, url: sensitive ? pathname : blob.url })
+    return NextResponse.json({ ok: true, url: blob.url })
   } catch (e) {
     console.error('[careers-upload]', e)
     return NextResponse.json({ error: 'Upload failed — please try again.' }, { status: 500 })
