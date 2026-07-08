@@ -10,7 +10,7 @@ import {
   claimWaivedCents, assignedCents, unassignedCents,
   type ClaimRecord, type ClaimAssignment,
 } from '../app/lib/claims'
-import { accrueClaim } from '../app/lib/claim-accrual'
+import { accrueClaim, seedSpendFromLedger } from '../app/lib/claim-accrual'
 import { deductionLinesFor, sumDeductions, applyDeductions } from '../app/lib/claim-payroll'
 import { computeClaimsReport, crewClaimSummary, businessClaimSummary, isOpen } from '../app/lib/claims-report'
 import { toPublicRouteFor } from '../app/lib/routes'
@@ -267,6 +267,29 @@ test('two claims cannot both consume the same paycheck', async () => {
   assert.equal(r2.posted[0].amountCents, 2000, 'second claim only gets what is left')
   const totalTaken = recoveredCents(find(c1, 'd')) + recoveredCents(find(c2, 'd'))
   assert.equal(totalTaken, 7000, 'never withhold more than the paycheck')
+})
+
+// The same invariant, but across cron RUNS rather than within one. `spend` used to
+// start empty on every run while gross stayed the full paycheck, so a deduction
+// posted yesterday was invisible to one posted today. Nothing over-withheld (the
+// statement caps at gross) but the ledger credited money never collected — silently
+// forgiving the balance. seedSpendFromLedger carries yesterday's take forward.
+test('two claims cannot both consume the same paycheck across separate cron runs', async () => {
+  const c1 = withCrew(claim({ id: 'c1', claimNumber: 'JK-C-1001' }), 'dollar', [{ id: 'd', value: 50000 }])
+  const c2 = withCrew(claim({ id: 'c2', claimNumber: 'JK-C-1002' }), 'dollar', [{ id: 'd', value: 50000 }])
+  startDeduction(c1, 'd', { weeklyCents: 5000, startDate: MON })
+  startDeduction(c2, 'd', { weeklyCents: 5000, startDate: MON })
+
+  const gross = grossOf({ d: 7000 })            // only $70 earned; two × $50 scheduled
+  const today = addDaysStr(MON, 8)
+
+  // Run 1 — only claim 1 is known to be due.
+  await accrueClaim(c1, today, gross, seedSpendFromLedger([c1, c2]))
+  // Run 2 — a later day, a fresh process. The seed must remember run 1's $50.
+  await accrueClaim(c2, today, gross, seedSpendFromLedger([c1, c2]))
+
+  const totalTaken = recoveredCents(find(c1, 'd')) + recoveredCents(find(c2, 'd'))
+  assert.equal(totalTaken, 7000, 'never withhold more than the paycheck, even across runs')
 })
 
 // ── Payments, waivers, adjustments ───────────────────────────────────────────

@@ -85,13 +85,9 @@ export function generateApplicantId(): string {
   return (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '')
 }
 
+// No Redis fallback on purpose — see the note in lib/bookings.ts.
 export async function nextApplicantNumber(): Promise<string> {
-  let n: number
-  try {
-    n = await redis.incr(KEY_COUNTER)
-  } catch {
-    n = Date.now() % 100000
-  }
+  const n = await redis.incr(KEY_COUNTER)
   return `JK-A-${1000 + n}`
 }
 

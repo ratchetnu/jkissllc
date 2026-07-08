@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { COOKIE_NAME, slideSessionToken, setSessionCookie } from './app/api/admin/_lib/session'
 
+// Renamed from `middleware.ts` — Next 16 deprecated that file convention in favour
+// of `proxy.ts` (same API, same matcher, just a clearer name). Behavior unchanged.
+//
 // Redirect apex domain (jkissllc.com) → www.jkissllc.com to match the canonical URL.
 // This also consolidates SEO signals on a single origin.
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const host = request.headers.get('host') ?? ''
 
   if (host === 'jkissllc.com') {

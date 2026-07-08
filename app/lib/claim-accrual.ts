@@ -99,12 +99,43 @@ export async function accrueClaim(
   return { posted, skipped, changed }
 }
 
+/**
+ * Seed `spend` with deductions ALREADY posted against each pay week, by any claim,
+ * on any previous run.
+ *
+ * Without this, `spend` starts empty every cron run while `grossFor` keeps
+ * returning the contractor's full gross — so a deduction posted on Monday is
+ * invisible to a deduction posted on Tuesday, and the two together can exceed what
+ * the contractor earned that week. Reachable whenever a second claim becomes due
+ * for an already-accrued week (`startDate` is admin-supplied and `dueDeductions`
+ * catches up missed weeks).
+ *
+ * The over-collection never reaches a paycheck — applyDeductions caps the statement
+ * at gross — but the claim ledger would be credited money that was never collected,
+ * silently forgiving the balance. That is exactly the invariant this file exists to
+ * protect (see rule 2 at the top).
+ */
+export function seedSpendFromLedger(claims: ClaimRecord[]): Map<string, number> {
+  const spend = new Map<string, number>()
+  for (const c of claims) {
+    for (const a of c.assignments) {
+      for (const e of a.ledger) {
+        if (e.kind !== 'scheduled' || e.direction !== 'credit') continue
+        const key = `${a.staffId}|${mondayOf(e.periodDate)}`
+        spend.set(key, (spend.get(key) ?? 0) + e.amountCents)
+      }
+    }
+  }
+  return spend
+}
+
 /** Run accrual across every claim. Safe to call daily. */
 export async function accrueAllClaims(now: number = Date.now()): Promise<AccrualResult> {
   const today = centralToday(now)
   const claims = await listClaims(1000)
   const grossFor = grossLoader()
-  const spend = new Map<string, number>()
+  // Carry forward what earlier runs already took out of each paycheck.
+  const spend = seedSpendFromLedger(claims)
 
   const out: AccrualResult = { today, claimsScanned: claims.length, posted: [], skipped: [] }
 

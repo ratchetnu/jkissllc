@@ -53,10 +53,18 @@ const TOKEN_RE = /^[a-f0-9]{16,}$/i
 export function generateToken(): string {
   return (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '')
 }
+// `JK-RI-`, not `JK-INV-`. Booking invoices (lib/bookings.nextInvoiceNumber) mint
+// `JK-INV-` off a DIFFERENT counter, so both used to hand out the same human-facing
+// number to two unrelated records — a booking invoice JK-INV-1005 and a route
+// invoice JK-INV-1005. Route invoices bill contract clients; they get their own
+// prefix. Invoices already issued keep the number stored on the record, and lookups
+// go through `rt:inv:num:{number}`, so historic JK-INV-#### route invoices still
+// resolve.
+//
+// No Redis fallback here on purpose — see the note in lib/bookings.ts.
 export async function nextInvoiceNumber(): Promise<string> {
-  let n: number
-  try { n = await redis.incr(KEY_COUNTER) } catch { n = Date.now() % 100000 }
-  return `JK-INV-${1000 + n}`
+  const n = await redis.incr(KEY_COUNTER)
+  return `JK-RI-${1000 + n}`
 }
 
 export async function getInvoiceByToken(token: string): Promise<RouteInvoice | null> {

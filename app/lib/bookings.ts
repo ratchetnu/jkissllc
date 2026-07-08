@@ -258,23 +258,20 @@ export function generateToken(): string {
   return (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '')
 }
 
+// NOTE ON THE MISSING FALLBACK.
+// These used to fall back to `Date.now() % 100000` when Redis was unreachable. That
+// number can collide with a real sequential id, and the caller then writes
+// `bk:num:{n}` over an existing booking's token mapping — quietly pointing a
+// customer-facing number at somebody else's booking. A failed INCR must be loud:
+// let it throw, the request 500s, and the customer retries. A duplicate id is worse
+// than a failed booking.
 export async function nextBookingNumber(): Promise<string> {
-  let n: number
-  try {
-    n = await redis.incr(KEY_COUNTER)
-  } catch {
-    n = Date.now() % 100000
-  }
+  const n = await redis.incr(KEY_COUNTER)
   return `JK-B-${1000 + n}`
 }
 
 export async function nextInvoiceNumber(): Promise<string> {
-  let n: number
-  try {
-    n = await redis.incr(KEY_INV_COUNTER)
-  } catch {
-    n = Date.now() % 100000
-  }
+  const n = await redis.incr(KEY_INV_COUNTER)
   return `JK-INV-${1000 + n}`
 }
 

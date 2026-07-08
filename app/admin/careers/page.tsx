@@ -138,6 +138,12 @@ function Review({ a, act, remove, busy, onBack }: {
   const has = (k: DocKind) => a.documents.some(d => d.kind === k)
   const docUrl = (k: DocKind) => a.documents.find(d => d.kind === k)?.url
   const headshot = a.documents.find(d => d.kind === 'headshot')
+
+  // Identity documents are stored as private blob pathnames and can only be read
+  // back through the authed streaming route. Records created before that change
+  // still hold absolute https URLs, so both shapes must resolve.
+  const docHref = (v: string) =>
+    v.startsWith('http') ? v : `/api/admin/careers/doc?p=${encodeURIComponent(v)}`
   const s = a.score
 
   const btn = (bg: string): React.CSSProperties => ({ padding: '9px 14px', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', border: 'none', background: bg, color: '#fff', opacity: busy ? 0.6 : 1 })
@@ -180,7 +186,9 @@ function Review({ a, act, remove, busy, onBack }: {
           {reqKinds.map(k => (
             <div key={k} className="flex items-center justify-between gap-2 text-sm">
               <span style={{ color: has(k) ? 'var(--text)' : '#f87171' }}>{has(k) ? '✓' : '✗'} {DOC_LABEL[k]}</span>
-              {docUrl(k) ? <a href={docUrl(k)} target="_blank" rel="noreferrer" className="text-xs underline" style={{ color: 'var(--red)' }}>View</a> : <span className="text-xs" style={{ color: '#f87171' }}>Missing</span>}
+              {(() => { const u = docUrl(k); return u
+                ? <a href={docHref(u)} target="_blank" rel="noreferrer" className="text-xs underline" style={{ color: 'var(--red)' }}>View</a>
+                : <span className="text-xs" style={{ color: '#f87171' }}>Missing</span> })()}
             </div>
           ))}
         </div>
