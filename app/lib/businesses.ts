@@ -38,6 +38,13 @@ export type Business = {
   updatedAt: number
 }
 
+// TODO(opspilot/tenancy): bizKey is derived from the business NAME, so two tenants
+// hauling for "Rooms To Go" would collide on `biz:rooms to go` and overwrite each
+// other's contract rates. Prefixing the Redis key is necessary but NOT sufficient:
+// bizKey is also used as a map key inside persisted staff records
+// (Staff.payByBusiness — app/lib/staff.ts:36), so the collision propagates into
+// payroll. Fixing this needs a data migration, not a prefix.
+// See docs/opspilot-multi-tenant-roadmap.md §2.3.
 export const bizKey = (name: string) => name.trim().toLowerCase().replace(/\s+/g, ' ')
 const KEY = (k: string) => `biz:${k}`
 const INDEX = 'biz:index'

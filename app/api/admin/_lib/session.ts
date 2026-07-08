@@ -4,6 +4,16 @@ export const COOKIE_NAME = 'jk_admin_session'
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000 // 2 hours — absolute cap, never slides
 const IDLE_TTL_MS = 10 * 60 * 1000 // 10 minutes of inactivity — slides forward on activity
 
+// OPSPILOT MULTI-TENANT — THE AUTHORIZATION CHOKEPOINT.
+// TODO(opspilot/tenancy): this payload carries no subject. It proves only that
+// *someone* knew the shared ADMIN_PASSWORD recently — not who, and not for which
+// company. Consequences: every audit entry is written with the literal actor
+// 'admin' (see app/lib/routes.ts:301), so no action is attributable to a human.
+// Target: { iat, exp, idleExp, sub: userId, tid: tenantId, role }, and
+// requireSession() below becomes requireTenantSession() returning that principal
+// instead of a bare boolean. 36 of 38 admin routes already funnel through it.
+// COOKIE_NAME is also tenant-agnostic and would collide across tenants sharing an
+// apex domain. See docs/opspilot-multi-tenant-roadmap.md §4.
 type SessionPayload = { iat: number; exp: number; idleExp?: number }
 
 function b64url(bytes: ArrayBuffer | Uint8Array): string {

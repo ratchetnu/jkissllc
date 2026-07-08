@@ -13,6 +13,7 @@ const PROTECTED_ROUTES = [
   { path: '/api/ai/photo-estimate', method: 'POST' },
   { path: '/api/book', method: 'POST' },
   { path: '/api/upload', method: 'POST' },
+  { path: '/api/opspilot/waitlist', method: 'POST' },
 ]
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-body', display: 'swap' })

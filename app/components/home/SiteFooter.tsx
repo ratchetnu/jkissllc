@@ -1,3 +1,7 @@
+import PoweredByBand from '../opspilot/PoweredByBand';
+
+// Root-relative, not bare hashes: this footer now renders on /about and /opspilot
+// too, where "#services" would scroll to nothing. "/#services" works from anywhere.
 const FOOTER_LINKS: [string, string][] = [
   ['Get My Quote', '/quote'],
   ['Track a Job', '/track'],
@@ -6,15 +10,25 @@ const FOOTER_LINKS: [string, string][] = [
   ['Reviews', '/reviews'],
   ['Careers', '/careers'],
   ['Carrier Guide', '/start-your-carrier'],
-  ['Services', '#services'],
-  ['Contact', '#contact'],
+  ['About', '/about'],
+  ['OpsPilot', '/opspilot'],
+  ['Services', '/#services'],
+  ['Contact', '/#contact'],
 ];
 
-/** Dark footer close. */
-export default function SiteFooter() {
+/**
+ * Dark footer close.
+ *
+ * `platformBand` is suppressed on /opspilot itself — a "Powered by OpsPilot →
+ * Learn more" band that links to the page you're already reading is noise.
+ */
+export default function SiteFooter({ platformBand = true }: { platformBand?: boolean }) {
   return (
     <footer className="py-12 px-6" style={{ background: 'var(--bg)', borderTop: '1px solid var(--line)' }}>
       <div className="max-w-6xl mx-auto">
+        {/* The platform, stated once, quietly — above the company close. */}
+        {platformBand && <PoweredByBand />}
+
         <div className="flex flex-col md:flex-row items-start justify-between gap-8 mb-10">
           <div>
             <p className="text-xl font-black text-white mb-2" style={{ letterSpacing: '-0.03em' }}>

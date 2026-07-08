@@ -4,6 +4,11 @@ import {
   SERVICE_LABELS, fmtUSD, balanceDueCents, BOOKING_STATUS_LABEL, PAYMENT_METHOD_LABEL,
 } from './bookings'
 
+// TODO(opspilot/tenancy): tenant identity frozen at module scope. FROM, OPS, the
+// email header/footer below, and every subject line in this file hardcode J KISS.
+// Extract to lib/company.ts (seeded from these literals), then resolve per-tenant.
+// Note Resend requires a verified sending domain per tenant.
+// See docs/opspilot-multi-tenant-roadmap.md §6.
 const FROM = 'J Kiss LLC <info@jkissllc.com>'
 const OPS = ['info@jkissllc.com', 'timmothy@jkissllc.com']
 const RED = '#E0002A'
