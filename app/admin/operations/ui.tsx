@@ -29,6 +29,57 @@ export function StatusChip({ status, size = 'md' }: { status: string; size?: 'sm
   return <span style={{ fontSize: size === 'sm' ? 10.5 : 11.5, fontWeight: 800, padding: size === 'sm' ? '2px 8px' : '3px 10px', borderRadius: 99, background: s.bg, color: s.fg }}>{s.label}</span>
 }
 
+// ── Canonical claim status ───────────────────────────────────────────────────
+// Same shape + colour vocabulary as routes: green = settled, amber = waiting on
+// someone, red = contested, grey = done/parked.
+export type ClaimStatus =
+  | 'new' | 'under_review' | 'waiting_customer' | 'disputed' | 'approved'
+  | 'deduction_active' | 'paid' | 'closed' | 'waived'
+
+export const CLAIM_STATUS: Record<ClaimStatus, { label: string; fg: string; bg: string }> = {
+  new: { label: 'New', fg: '#93c5fd', bg: 'rgba(59,130,246,.15)' },
+  under_review: { label: 'Under Review', fg: '#fcd34d', bg: 'rgba(245,158,11,.15)' },
+  waiting_customer: { label: 'Waiting on Customer', fg: '#fcd34d', bg: 'rgba(245,158,11,.15)' },
+  disputed: { label: 'Disputed', fg: '#fca5a5', bg: 'rgba(239,68,68,.16)' },
+  approved: { label: 'Approved', fg: '#c4b5fd', bg: 'rgba(139,92,246,.16)' },
+  deduction_active: { label: 'Deduction Active', fg: '#7dd3fc', bg: 'rgba(14,165,233,.16)' },
+  paid: { label: 'Paid', fg: '#86efac', bg: 'rgba(34,197,94,.16)' },
+  closed: { label: 'Closed', fg: '#94a3b8', bg: 'rgba(255,255,255,.06)' },
+  waived: { label: 'Waived', fg: '#94a3b8', bg: 'rgba(255,255,255,.06)' },
+}
+export const claimStatusOf = (s: string) => CLAIM_STATUS[s as ClaimStatus] || CLAIM_STATUS.new
+
+export function ClaimChip({ status, size = 'md' }: { status: string; size?: 'sm' | 'md' }) {
+  const s = claimStatusOf(status)
+  return <span style={{ fontSize: size === 'sm' ? 10.5 : 11.5, fontWeight: 800, padding: size === 'sm' ? '2px 8px' : '3px 10px', borderRadius: 99, background: s.bg, color: s.fg }}>{s.label}</span>
+}
+
+export const CLAIM_TYPE_LABEL: Record<string, string> = {
+  property_damage: 'Property Damage',
+  vehicle_damage: 'Vehicle Damage',
+  cargo_damage: 'Cargo Damage',
+  lost_item: 'Lost / Missing Item',
+  injury: 'Injury',
+  service_failure: 'Service Failure',
+  other: 'Other',
+}
+
+// A crew member's own responsibility status on one claim.
+export const RESP_COLOR: Record<string, string> = {
+  pending: '#fcd34d', active: '#7dd3fc', paused: '#94a3b8', completed: '#86efac', waived: '#94a3b8',
+}
+
+// ── Stat tile (the OS reporting card) ────────────────────────────────────────
+export function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
+  return (
+    <div className="os-card" style={{ padding: '14px 16px' }}>
+      <div style={{ ...osLabel, fontSize: 10.5 }}>{label}</div>
+      <div className="tabular-nums" style={{ fontSize: 23, fontWeight: 900, letterSpacing: '-.02em', marginTop: 4, color: tone || 'var(--text)' }}>{value}</div>
+      {sub && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{sub}</div>}
+    </div>
+  )
+}
+
 // ── Avatar (photo, else initials on a name-derived gradient) ─────────────────
 export const initials = (n: string) => n.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || '').join('')
 const hue = (n: string) => { let h = 0; for (const c of n) h = (h * 31 + c.charCodeAt(0)) % 360; return h }

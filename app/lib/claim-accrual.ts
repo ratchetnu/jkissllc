@@ -1,0 +1,122 @@
+// Weekly deduction accrual — the ONLY place scheduled deductions get posted.
+//
+// Two rules make this safe, and both matter:
+//
+//  1. A pay week must be OVER before we deduct against it. Deducting mid-week
+//     would withhold against pay the contractor hasn't finished earning.
+//  2. A deduction is capped at what the contractor actually earned that week,
+//     across all their claims combined. If they earned nothing, we skip the week
+//     (the plan takes one week longer) rather than crediting a balance with money
+//     that was never collected — that would silently forgive the claim.
+//
+// Called from the daily cron. Idempotent: posting is keyed on (staffId, periodDate),
+// so re-running the same day is a no-op.
+import { addDaysStr, centralToday, mondayOf } from './dates'
+import {
+  dueDeductions, postScheduledDeduction, skipScheduledDeduction, saveClaim, listClaims,
+  type ClaimRecord,
+} from './claims'
+import { computePay } from './route-pay'
+
+export type AccrualResult = {
+  today: string
+  claimsScanned: number
+  posted: { claimNumber: string; staffId: string; name: string; periodDate: string; amountCents: number }[]
+  skipped: { claimNumber: string; staffId: string; name: string; periodDate: string; reason: string }[]
+}
+
+/** A pay week is settled once its Sunday has passed. */
+const weekIsOver = (periodDate: string, today: string): boolean => addDaysStr(periodDate, 6) < today
+
+/**
+ * Gross (pre-deduction) earnings per contractor for the Mon–Sun week starting
+ * `weekStart`. Cached per week — several claims can share one contractor.
+ */
+function grossLoader() {
+  const cache = new Map<string, Map<string, number>>()
+  return async (weekStart: string): Promise<Map<string, number>> => {
+    const hit = cache.get(weekStart)
+    if (hit) return hit
+    const pay = await computePay(weekStart, addDaysStr(weekStart, 6))
+    const m = new Map(pay.contractors.map(c => [c.staffId, c.grossCents]))
+    cache.set(weekStart, m)
+    return m
+  }
+}
+
+/**
+ * Pure core: decide what to post/skip for one claim, given a way to look up a
+ * contractor's remaining un-deducted pay for a week. `spend` is mutated as we go
+ * so two claims can't both consume the same dollar of one paycheck.
+ */
+export async function accrueClaim(
+  claim: ClaimRecord,
+  today: string,
+  grossFor: (weekStart: string) => Promise<Map<string, number>>,
+  spend: Map<string, number>,          // `${staffId}|${weekStart}` → cents already committed
+): Promise<{ posted: AccrualResult['posted']; skipped: AccrualResult['skipped']; changed: boolean }> {
+  const posted: AccrualResult['posted'] = []
+  const skipped: AccrualResult['skipped'] = []
+  let changed = false
+
+  for (const due of dueDeductions(claim, today)) {
+    const period = mondayOf(due.periodDate)
+    if (!weekIsOver(period, today)) continue      // the week is still being earned
+
+    const name = claim.assignments.find(a => a.staffId === due.staffId)?.name ?? due.staffId
+    const gross = (await grossFor(period)).get(due.staffId) ?? 0
+    const key = `${due.staffId}|${period}`
+    const committed = spend.get(key) ?? 0
+    const available = Math.max(0, gross - committed)
+
+    if (available <= 0) {
+      const reason = gross <= 0 ? 'no pay that week' : 'their pay that week was fully committed to other claims'
+      if (skipScheduledDeduction(claim, due.staffId, due.periodDate, reason).ok) {
+        skipped.push({ claimNumber: claim.claimNumber, staffId: due.staffId, name, periodDate: due.periodDate, reason })
+        changed = true
+      }
+      continue
+    }
+
+    const amount = Math.min(due.amountCents, available)
+    const res = postScheduledDeduction(claim, due.staffId, due.periodDate, amount, 'cron')
+    if (!res.ok) continue
+
+    spend.set(key, committed + amount)
+    posted.push({ claimNumber: claim.claimNumber, staffId: due.staffId, name, periodDate: due.periodDate, amountCents: amount })
+    changed = true
+
+    // Deducted less than scheduled because the paycheck ran out — say so, don't
+    // let a short deduction look like a normal one.
+    if (amount < due.amountCents) {
+      skipped.push({
+        claimNumber: claim.claimNumber, staffId: due.staffId, name, periodDate: due.periodDate,
+        reason: `only ${(amount / 100).toFixed(2)} of ${(due.amountCents / 100).toFixed(2)} was available`,
+      })
+    }
+  }
+
+  return { posted, skipped, changed }
+}
+
+/** Run accrual across every claim. Safe to call daily. */
+export async function accrueAllClaims(now: number = Date.now()): Promise<AccrualResult> {
+  const today = centralToday(now)
+  const claims = await listClaims(1000)
+  const grossFor = grossLoader()
+  const spend = new Map<string, number>()
+
+  const out: AccrualResult = { today, claimsScanned: claims.length, posted: [], skipped: [] }
+
+  for (const claim of claims) {
+    try {
+      const r = await accrueClaim(claim, today, grossFor, spend)
+      out.posted.push(...r.posted)
+      out.skipped.push(...r.skipped)
+      if (r.changed) await saveClaim(claim)
+    } catch (e) {
+      console.error('[claims/accrual]', claim.claimNumber, e)
+    }
+  }
+  return out
+}

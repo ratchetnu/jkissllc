@@ -6,6 +6,7 @@ import { Building2, ChevronDown, Link2, FileText, Plus, Check, Repeat, Pencil, W
 import OperationsShell from '../OperationsShell'
 import { money, ymd, fmtDay, fmtTs, weekdaysLabel, onActivate, MoneyInput, Toggle, centsToInput, looksLikeMoney, osLabel } from '../ui'
 import ApplyScope from '../ApplyScope'
+import ClaimsHistory from '../claims/ClaimsHistory'
 
 type RouteLite = { routeNumber: string; businessName: string; status: string; routeDate: string; reportTime: string }
 type Portal = { token: string; businessName: string; label?: string }
@@ -409,6 +410,8 @@ function BizCard({ b, open, onToggle, onOpen, onCreatePortal, onReload, setMsg, 
               </div>
             </div>
           )}
+
+          <ClaimsHistory businessKey={b.key} businessName={b.name} />
 
           {/* Portal */}
           <div style={{ marginBottom: 14, padding: 12, borderRadius: 11, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>

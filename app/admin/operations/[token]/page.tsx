@@ -3,9 +3,11 @@
 import { use, useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { MapPin, Clock, CalendarDays, Truck, User, FileText, ChevronLeft, Send, CheckCircle2, XCircle, Link2, Plus, X, Lock } from 'lucide-react'
+import { MapPin, Clock, CalendarDays, Truck, User, FileText, ChevronLeft, Send, CheckCircle2, XCircle, Link2, Plus, X, Lock, ShieldAlert } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
-import { statusOf, Avatar, scoreColor, fmtLongDay, fmtTs, mapsUrl, money, moneyOrDash, profitColor, MoneyInput, centsToInput, looksLikeMoney, osLabel } from '../ui'
+import { statusOf, Avatar, scoreColor, fmtLongDay, fmtTs, mapsUrl, money, moneyOrDash, profitColor, MoneyInput, centsToInput, looksLikeMoney, osLabel, ClaimChip } from '../ui'
+import NewClaim from '../claims/NewClaim'
+import { useClaims } from '../claims/useClaims'
 
 type Audit = { at: number; actor: string; action: string }
 type Event = { at: number; type: string }
@@ -40,6 +42,9 @@ function Detail({ token }: { token: string }) {
   const [reassigning, setReassigning] = useState(false)
   const [addPay, setAddPay] = useState('')
   const [msg, setMsg] = useState('')
+  const [claiming, setClaiming] = useState(false)
+  const { claims } = useClaims()
+  const routeClaims = useMemo(() => claims.filter(c => c.routeToken === token), [claims, token])
 
   const load = useCallback(async () => {
     try {
@@ -204,6 +209,39 @@ function Detail({ token }: { token: string }) {
           </div>
         )}
       </div>
+
+      {/* Claims — only once the route has run. Opening one from here copies the
+          business, crew and financial snapshot across; nothing is re-typed. */}
+      {op.status === 'completed' && (
+        <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <div style={{ ...osLabel, display: 'flex', alignItems: 'center', gap: 7 }}><ShieldAlert size={14} /> Claims</div>
+            <button onClick={() => setClaiming(true)} className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>+ New claim</button>
+          </div>
+          {routeClaims.length === 0
+            ? <p style={{ marginTop: 10, fontSize: 13.5, color: 'var(--muted)' }}>No damage claims against this route.</p>
+            : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginTop: 11 }}>
+                {routeClaims.map(c => (
+                  <Link key={c.id} href={`/admin/operations/claims/${c.id}`} className="os-tap" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 10, borderRadius: 11, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)', textDecoration: 'none', color: 'inherit' }}>
+                    <ClaimChip status={c.status} size="sm" />
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--muted)' }}>{c.claimNumber}</span>
+                    <span style={{ flex: 1, fontSize: 13.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.description}</span>
+                    <span className="tabular-nums" style={{ fontWeight: 800, fontSize: 14 }}>{money(c.totalCents)}</span>
+                  </Link>
+                ))}
+              </div>
+            )}
+        </div>
+      )}
+
+      {claiming && (
+        <NewClaim
+          routeToken={op.token}
+          routeLabel={`${op.routeNumber} · ${op.businessName}`}
+          onClose={() => setClaiming(false)}
+        />
+      )}
 
       {/* Activity timeline */}
       <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14 }}>

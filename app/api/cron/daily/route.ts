@@ -5,6 +5,7 @@ import { isAbandonedOnlineHold } from '../../../lib/availability'
 import { listRoutes, saveRoute, syncLead, pushAudit } from '../../../lib/routes'
 import { reminderSms, morningOfSms, alertOwnerRouteEvent } from '../../../lib/route-notify'
 import { listTemplates, materializeTemplate } from '../../../lib/route-templates'
+import { accrueAllClaims } from '../../../lib/claim-accrual'
 import { sendSms } from '../../../lib/sms'
 
 export const dynamic = 'force-dynamic'
@@ -182,6 +183,19 @@ async function runTemplates(now: number): Promise<Record<string, number>> {
   return { templatesActive: templates.filter(t => t.active).length, routesGenerated: generated }
 }
 
+// Weekly claim deductions. accrueAllClaims only touches pay weeks that have ended
+// and never deducts more than the contractor earned, so a bad day here can't
+// over-collect — it just does nothing.
+async function runClaims(now: number): Promise<Record<string, unknown>> {
+  try {
+    const r = await accrueAllClaims(now)
+    return { claimsScanned: r.claimsScanned, deductionsPosted: r.posted.length, deductionsSkipped: r.skipped.length }
+  } catch (e) {
+    console.error('[cron/claims]', e)
+    return { error: 'claim accrual failed' }
+  }
+}
+
 function authorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET
   if (!secret) return true // not configured — allow (Vercel adds the bearer once set)
@@ -197,7 +211,10 @@ export async function GET(req: NextRequest) {
     const templates = dryRun ? { skipped: 'templates (dry-run)' } : await runTemplates(Date.now())
     const routes = dryRun ? { skipped: 'routes (dry-run)' } : await runRoutes(Date.now())
     const cleanup = await cleanupAbandonedHolds(Date.now(), dryRun)
-    return NextResponse.json({ ok: true, dryRun, ...counts, templates, routes, cleanup })
+    // Post any weekly claim deductions whose pay week has closed. Idempotent per
+    // (contractor, week), and capped at what they actually earned.
+    const claims = dryRun ? { skipped: 'claim deductions (dry-run)' } : await runClaims(Date.now())
+    return NextResponse.json({ ok: true, dryRun, ...counts, templates, routes, cleanup, claims })
   } catch (e) {
     console.error('[cron/daily] fatal', e)
     return NextResponse.json({ error: 'failed' }, { status: 500 })

@@ -5,6 +5,7 @@ import { UserPlus, Camera, ChevronDown, Sparkles, Phone, Pencil, Trash2, Wallet,
 import OperationsShell from '../OperationsShell'
 import { Avatar, scoreColor, ymd, fmtDay, fmtTs, money, onActivate, MoneyInput, Toggle, centsToInput, looksLikeMoney, osLabel } from '../ui'
 import ApplyScope from '../ApplyScope'
+import CrewClaims from '../claims/CrewClaims'
 
 type PayKind = 'driver' | 'helper' | 'contractor' | 'employee'
 type PayHistoryEntry = { at: number; defaultPayCents?: number; payByBusiness?: Record<string, number>; effectiveDate?: string; active: boolean; notes?: string }
@@ -160,6 +161,8 @@ function EmployeeCard({ s, st, businesses, upcoming, open, onToggle, onOpen, onC
                   </div>
                 </div>
               )}
+
+              <CrewClaims staffId={s.id} />
 
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button onClick={() => setEditing(true)} disabled={busy} style={btnSm}><Pencil size={13} /> Edit</button>

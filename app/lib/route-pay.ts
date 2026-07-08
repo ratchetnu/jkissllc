@@ -2,8 +2,16 @@
 // payout sheets over a pay period. Derived entirely from route history + the crew
 // roster; the completion proof lives on each route already. 1099 contractors, so
 // this is a payout statement, not payroll withholding.
+//
+// Claim deductions are subtracted here to produce NET pay. They are read from the
+// posted claim ledgers (lib/claim-payroll) — never derived — so nothing can
+// silently reduce a statement: every deduction line names its claim, business,
+// route, reason, amount and date.
+import { addDaysStr, centralToday, isDateStr, mondayOf } from './dates'
 import { listRoutes } from './routes'
 import { listStaff } from './staff'
+import { listClaims } from './claims'
+import { deductionLinesFor, sumDeductions, applyDeductions, type PayDeductionLine } from './claim-payroll'
 
 export type PayLineRoute = {
   routeNumber: string
@@ -20,15 +28,27 @@ export type ContractorPay = {
   name: string
   routes: PayLineRoute[]
   count: number
-  totalCents: number           // sum of priced routes only
+  grossCents: number           // sum of priced routes only, before deductions
   unpricedCount: number
+
+  // ── Claim recovery ──
+  deductions: PayDeductionLine[]
+  deductionCents: number       // what the claims ledger says is owed this period
+  appliedCents: number         // what we can actually withhold (never exceeds gross)
+  netCents: number             // grossCents - appliedCents
+  // Owed more than they earned this period. The remainder stays on the claim
+  // balance — it is NOT collected. Surfaced so the owner sees it rather than
+  // wondering why a deduction "didn't happen".
+  shortfallCents: number
 }
 
 export type PaySummary = {
   start: string
   end: string
   contractors: ContractorPay[]
-  grandTotalCents: number
+  grandGrossCents: number
+  grandDeductionCents: number  // applied, not merely scheduled
+  grandNetCents: number
   routeCount: number
   unpricedCount: number
 }
@@ -46,33 +66,25 @@ export function fmtMoney(cents: number): string {
   return (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 }
 
-// ── Date helpers + default period (current Mon–Sun week, Central) ─────────────
-const centralToday = () =>
-  new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
-function weekdayOf(s: string): number {
-  const [y, m, d] = s.split('-').map(Number)
-  return new Date(Date.UTC(y, m - 1, d)).getUTCDay()
-}
-export function addDaysStr(s: string, n: number): string {
-  const [y, m, d] = s.split('-').map(Number)
-  const t = new Date(Date.UTC(y, m - 1, d) + n * 86_400_000)
-  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(t.getUTCDate()).padStart(2, '0')}`
-}
+// ── Default period (current Mon–Sun week, Central) ────────────────────────────
+// addDaysStr is re-exported: lib/dates is the definition, but callers already
+// import it from here.
+export { addDaysStr } from './dates'
+
 export function defaultPayPeriod(): { start: string; end: string } {
-  const today = centralToday()
-  const start = addDaysStr(today, -((weekdayOf(today) + 6) % 7))  // Monday
+  const start = mondayOf(centralToday())
   return { start, end: addDaysStr(start, 6) }                     // Sunday
 }
-const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s)
+const isDate = isDateStr
 
 export async function computePay(startIn: string, endIn: string): Promise<PaySummary> {
   const start = isDate(startIn) ? startIn : defaultPayPeriod().start
   const end = isDate(endIn) ? endIn : defaultPayPeriod().end
 
-  const [routes, staff] = await Promise.all([listRoutes(2000), listStaff()])
+  const [routes, staff, claims] = await Promise.all([listRoutes(2000), listStaff(), listClaims(1000)])
   const nameOf = new Map(staff.map(s => [s.id, s.name]))
   const byStaff = new Map<string, ContractorPay>()
-  let grand = 0, unpriced = 0, routeCount = 0
+  let unpriced = 0, routeCount = 0
 
   for (const r of routes) {
     if (r.status !== 'completed') continue
@@ -87,16 +99,55 @@ export async function computePay(startIn: string, endIn: string): Promise<PaySum
     for (const l of lines) {
       const id = l.id || 'unassigned'
       let cp = byStaff.get(id)
-      if (!cp) { cp = { staffId: id, name: nameOf.get(id) || l.name || 'Unassigned', routes: [], count: 0, totalCents: 0, unpricedCount: 0 }; byStaff.set(id, cp) }
+      if (!cp) {
+        cp = {
+          staffId: id, name: nameOf.get(id) || l.name || 'Unassigned', routes: [], count: 0,
+          grossCents: 0, unpricedCount: 0,
+          deductions: [], deductionCents: 0, appliedCents: 0, netCents: 0, shortfallCents: 0,
+        }
+        byStaff.set(id, cp)
+      }
       const cents = parsePayCents(l.pay)
       cp.routes.push({ routeNumber: r.routeNumber, routeDate: r.routeDate, businessName: r.businessName, amountCents: cents, payRateRaw: l.pay, hasProof, completedBy: r.completedBy })
       cp.count++
       if (cents == null) { cp.unpricedCount++; unpriced++ }
-      else { cp.totalCents += cents; grand += cents }
+      else cp.grossCents += cents
     }
   }
 
-  const contractors = [...byStaff.values()].sort((a, b) => b.totalCents - a.totalCents || a.name.localeCompare(b.name))
+  // Attach posted claim deductions. A contractor with deductions but no routes this
+  // period still gets a statement — otherwise the deduction would vanish from view.
+  const deductions = deductionLinesFor(claims, start, end)
+  for (const [staffId, lines] of deductions) {
+    let cp = byStaff.get(staffId)
+    if (!cp) {
+      cp = {
+        staffId, name: nameOf.get(staffId) || 'Unassigned', routes: [], count: 0,
+        grossCents: 0, unpricedCount: 0,
+        deductions: [], deductionCents: 0, appliedCents: 0, netCents: 0, shortfallCents: 0,
+      }
+      byStaff.set(staffId, cp)
+    }
+    cp.deductions = lines
+    cp.deductionCents = sumDeductions(lines)
+  }
+
+  let grandGross = 0, grandDeduction = 0, grandNet = 0
+  for (const cp of byStaff.values()) {
+    const { appliedCents, netCents, shortfallCents } = applyDeductions(cp.grossCents, cp.deductionCents)
+    cp.appliedCents = appliedCents
+    cp.netCents = netCents
+    cp.shortfallCents = shortfallCents
+    grandGross += cp.grossCents
+    grandDeduction += appliedCents
+    grandNet += netCents
+  }
+
+  const contractors = [...byStaff.values()].sort((a, b) => b.netCents - a.netCents || a.name.localeCompare(b.name))
   contractors.forEach(c => c.routes.sort((a, b) => a.routeDate.localeCompare(b.routeDate) || a.routeNumber.localeCompare(b.routeNumber)))
-  return { start, end, contractors, grandTotalCents: grand, routeCount, unpricedCount: unpriced }
+  return {
+    start, end, contractors,
+    grandGrossCents: grandGross, grandDeductionCents: grandDeduction, grandNetCents: grandNet,
+    routeCount, unpricedCount: unpriced,
+  }
 }

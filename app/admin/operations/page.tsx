@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { MapPin, Clock, User, ChevronDown, Plus, CalendarDays, AlertTriangle, CheckCircle2, Wallet } from 'lucide-react'
 import OperationsShell from './OperationsShell'
 import { useOps } from './useOps'
+import ClaimsCard from './claims/ClaimsCard'
 import { STATUS as CHIP, scoreColor, ymd, fmtDay, mapsUrl, type RouteStatus } from './ui'
 
 type Op = {
@@ -58,7 +59,7 @@ function Dashboard() {
           </div>
 
           {/* Money — the ledger lives one tap away, never on a crew-facing screen. */}
-          <Link href="/admin/operations/finance" className="os-card os-tap os-rise" style={{ display: 'flex', alignItems: 'center', gap: 13, padding: 16, marginBottom: 26, textDecoration: 'none', color: 'var(--text)' }}>
+          <Link href="/admin/operations/finance" className="os-card os-tap os-rise" style={{ display: 'flex', alignItems: 'center', gap: 13, padding: 16, marginBottom: 12, textDecoration: 'none', color: 'var(--text)' }}>
             <div style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, display: 'grid', placeItems: 'center', background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)' }}>
               <Wallet size={18} style={{ color: 'var(--red-glow)' }} />
             </div>
@@ -68,6 +69,8 @@ function Dashboard() {
             </div>
             <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--red)' }}>Open →</span>
           </Link>
+
+          <ClaimsCard />
 
           {/* Focus */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>

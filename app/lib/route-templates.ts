@@ -3,6 +3,7 @@
 // materializeTemplate() creates the actual RouteRecords for an upcoming window,
 // skipping any date already generated (so it's safe to run repeatedly / from cron).
 import { redis } from './redis'
+import { addDaysStr, weekdayOf } from './dates'
 import {
   generateToken, nextRouteNumber, saveRoute, listRoutes, pushAudit, type RouteRecord,
 } from './routes'
@@ -112,16 +113,9 @@ export async function listTemplates(limit = 200): Promise<RouteTemplate[]> {
     .filter((t): t is RouteTemplate => t !== null)
 }
 
-// ── Date helpers (calendar dates, no timezone drift) ─────────────────────────
-export function addDaysStr(s: string, n: number): string {
-  const [y, m, d] = s.split('-').map(Number)
-  const t = new Date(Date.UTC(y, m - 1, d) + n * 86_400_000)
-  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(t.getUTCDate()).padStart(2, '0')}`
-}
-export function weekdayOf(s: string): number {
-  const [y, m, d] = s.split('-').map(Number)
-  return new Date(Date.UTC(y, m - 1, d)).getUTCDay()
-}
+// Calendar dates, no timezone drift. Defined in lib/dates; re-exported because
+// callers already import them from here.
+export { addDaysStr, weekdayOf }
 
 // Create routes for every matching weekday in [todayStr, todayStr+horizonDays]
 // that doesn't already have a route from this template. Returns the new route

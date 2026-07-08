@@ -4,8 +4,12 @@ import { useCallback, useEffect, useState } from 'react'
 import AdminGate from '../../AdminGate'
 
 type PayLineRoute = { routeNumber: string; routeDate: string; businessName: string; amountCents: number | null; payRateRaw?: string; hasProof: boolean; completedBy?: string }
-type ContractorPay = { staffId: string; name: string; routes: PayLineRoute[]; count: number; totalCents: number; unpricedCount: number }
-type PaySummary = { start: string; end: string; contractors: ContractorPay[]; grandTotalCents: number; routeCount: number; unpricedCount: number }
+type PayDeductionLine = { claimId: string; claimNumber: string; businessName: string; routeNumber?: string; reason: string; amountCents: number; date: string }
+type ContractorPay = {
+  staffId: string; name: string; routes: PayLineRoute[]; count: number; grossCents: number; unpricedCount: number
+  deductions: PayDeductionLine[]; deductionCents: number; appliedCents: number; netCents: number; shortfallCents: number
+}
+type PaySummary = { start: string; end: string; contractors: ContractorPay[]; grandGrossCents: number; grandDeductionCents: number; grandNetCents: number; routeCount: number; unpricedCount: number }
 
 const money = (cents: number) => (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 const fmtDate = (iso: string) => { const d = new Date(`${iso}T12:00:00Z`); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) }
@@ -81,8 +85,13 @@ function Pay() {
           {data && <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 3 }}>{data.routeCount} completed route{data.routeCount === 1 ? '' : 's'} · {data.contractors.length} contractor{data.contractors.length === 1 ? '' : 's'}</div>}
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Total owed</div>
-          <div style={{ fontSize: 30, fontWeight: 900, color: '#86efac', letterSpacing: '-0.02em' }}>{data ? money(data.grandTotalCents) : '—'}</div>
+          <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Net owed</div>
+          <div style={{ fontSize: 30, fontWeight: 900, color: '#86efac', letterSpacing: '-0.02em' }}>{data ? money(data.grandNetCents) : '—'}</div>
+          {data && data.grandDeductionCents > 0 && (
+            <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 3 }}>
+              {money(data.grandGrossCents)} gross − {money(data.grandDeductionCents)} claim deductions
+            </div>
+          )}
         </div>
       </div>
 
@@ -104,7 +113,10 @@ function Pay() {
                   <div style={{ fontSize: 17, fontWeight: 800, color: '#fff' }}>{c.name}</div>
                   <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{c.count} route{c.count === 1 ? '' : 's'}{c.unpricedCount > 0 ? ` · ${c.unpricedCount} unpriced` : ''}</div>
                 </div>
-                <div style={{ fontSize: 22, fontWeight: 900, color: '#86efac' }}>{money(c.totalCents)}</div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 22, fontWeight: 900, color: '#86efac' }}>{money(c.netCents)}</div>
+                  {c.appliedCents > 0 && <div style={{ fontSize: 12, color: 'var(--muted)' }}>{money(c.grossCents)} − {money(c.appliedCents)}</div>}
+                </div>
               </div>
               <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {c.routes.map(r => (
@@ -119,12 +131,41 @@ function Pay() {
                   </div>
                 ))}
               </div>
+
+              {/* Claim deductions. Every line names the claim it came from — pay is
+                  never reduced by an amount the statement can't explain. */}
+              {c.deductions.length > 0 && (
+                <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>Claim deductions</div>
+                  {c.deductions.map((d, i) => (
+                    <div key={`${d.claimId}-${i}`} className="flex items-center gap-3" style={{ fontSize: 13, padding: '5px 0' }}>
+                      <span style={{ minWidth: 52, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>{fmtDate(d.date)}</span>
+                      <span style={{ minWidth: 74, fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--muted)' }}>{d.claimNumber}</span>
+                      <span style={{ flex: 1, color: '#e5e7eb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {d.businessName}{d.routeNumber ? ` · ${d.routeNumber}` : ''}
+                      </span>
+                      <span style={{ minWidth: 74, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: d.amountCents < 0 ? '#86efac' : '#fca5a5' }}>
+                        {d.amountCents < 0 ? `+${money(-d.amountCents)}` : `−${money(d.amountCents)}`}
+                      </span>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between" style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--line)', fontSize: 13.5, fontWeight: 800 }}>
+                    <span style={{ color: 'var(--muted)' }}>Net pay</span>
+                    <span style={{ color: '#86efac', fontVariantNumeric: 'tabular-nums' }}>{money(c.netCents)}</span>
+                  </div>
+                  {c.shortfallCents > 0 && (
+                    <p style={{ marginTop: 8, fontSize: 12.5, color: '#fcd34d' }}>
+                      {money(c.shortfallCents)} could not be withheld — it exceeds what they earned this period. It stays on their claim balance and was not collected.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>
       )}
 
-      <p className="mt-8 text-xs" style={{ color: 'var(--muted)' }}>Independent-contractor payout statement. Amounts are read from each route's pay rate; verify before paying.</p>
+      <p className="mt-8 text-xs" style={{ color: 'var(--muted)' }}>Independent-contractor payout statement. Amounts are read from each route&apos;s pay rate; verify before paying. Claim deductions are taken from the posted claim ledger — see the claim for its full history.</p>
     </div>
   )
 }
