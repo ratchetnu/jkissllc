@@ -7,7 +7,7 @@ type Template = {
   id: string; label: string; businessName: string; reportAddress: string; reportTime: string
   contactPerson?: string; contactPhone?: string; vehicle?: string; payRate?: string
   description?: string; specialNotes?: string; weekdays: number[]
-  defaultStaffId?: string; autoNotify: boolean; active: boolean
+  defaultStaffId?: string; active: boolean
 }
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -19,7 +19,7 @@ export default function Templates({ staff, onGenerated }: { staff: Staff[]; onGe
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
-  const blank = { label: '', businessName: '', reportAddress: '', reportTime: '', contactPerson: '', contactPhone: '', vehicle: 'Box truck', payRate: '', description: '', specialNotes: '', defaultStaffId: '', autoNotify: false, weekdays: [] as number[] }
+  const blank = { label: '', businessName: '', reportAddress: '', reportTime: '', contactPerson: '', contactPhone: '', vehicle: 'Box truck', payRate: '', description: '', specialNotes: '', defaultStaffId: '', weekdays: [] as number[] }
   const [form, setForm] = useState(blank)
   const [creating, setCreating] = useState(false)
 
@@ -76,7 +76,7 @@ export default function Templates({ staff, onGenerated }: { staff: Staff[]; onGe
                     <div>
                       <div style={{ fontWeight: 700, color: '#e5e7eb' }}>{t.label}{!t.active && <span style={{ fontSize: 11, color: '#fca5a5', fontWeight: 600 }}> · paused</span>}</div>
                       <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{t.businessName} · {t.reportTime} · {t.weekdays.map(d => DOW[d]).join('/')}</div>
-                      {t.defaultStaffId && <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>Auto-assign: {staff.find(s => s.id === t.defaultStaffId)?.name || '—'}{t.autoNotify ? ' · texts on generate' : ''}</div>}
+                      {t.defaultStaffId && <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>Standing crew: {staff.find(s => s.id === t.defaultStaffId)?.name || '—'} · you text them</div>}
                     </div>
                     <div className="flex gap-1.5 flex-wrap">
                       <button onClick={() => act(t.id, { action: 'generate', horizonDays: 14 })} disabled={busy === t.id} style={{ ...tbtn, color: '#86efac' }}>Generate 14d</button>
@@ -115,16 +115,13 @@ export default function Templates({ staff, onGenerated }: { staff: Staff[]; onGe
 
             <div className="grid sm:grid-cols-2 gap-2.5 mt-3 items-end">
               <div>
-                <label className="text-xs font-semibold" style={{ color: 'var(--muted)' }}>Default contractor (optional)</label>
+                <label className="text-xs font-semibold" style={{ color: 'var(--muted)' }}>Standing crew (optional)</label>
                 <select value={form.defaultStaffId} onChange={set('defaultStaffId')} style={{ ...iStyle, cursor: 'pointer', marginTop: 4 }}>
                   <option value="">— None (generate as draft) —</option>
                   {staff.map(s => <option key={s.id} value={s.id}>{s.name}{s.phone ? '' : ' (no phone)'}</option>)}
                 </select>
+                <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 5 }}>Generated routes are assigned to them. Nobody is texted until you send it.</p>
               </div>
-              <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--muted)', paddingBottom: 8, cursor: 'pointer' }}>
-                <input type="checkbox" checked={form.autoNotify} onChange={e => setForm(f => ({ ...f, autoNotify: e.target.checked }))} style={{ width: 16, height: 16, accentColor: 'var(--red)' }} />
-                Text the contractor when a route is generated
-              </label>
             </div>
             <button type="submit" disabled={creating} className="btn mt-3" style={{ justifyContent: 'center' }}>{creating ? 'Saving…' : 'Save template'}</button>
           </form>

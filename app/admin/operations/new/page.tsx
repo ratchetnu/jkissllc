@@ -146,16 +146,24 @@ function Builder() {
     setSubmitting(true); setError('')
     try {
       if (repeats) {
-        // Recurring contract → a template that auto-generates + assigns routes.
+        // Recurring contract → a template that auto-generates + crews routes.
         // Generated routes snapshot the client's contract rate at generation time,
         // so the template itself carries no price.
+        //
+        // The crew picked here is the standing crew for EVERY day this runs. The
+        // template stores it per-weekday, so the owner can later vary a single day
+        // (or a single date's route) without rebuilding the contract.
+        const crewIds = crew.map(c => c.staffId).filter(Boolean)
+        const crewByWeekday = crewIds.length
+          ? Object.fromEntries(weekdays.map(d => [String(d), crewIds]))
+          : undefined
         const res = await fetch('/api/admin/route-templates', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
           body: JSON.stringify({
             label: `${form.businessName} — ${weekdaysLabel(weekdays)}`, businessName: form.businessName,
             reportAddress: form.reportAddress, reportTime: form.reportTime, contactPerson: form.contactPerson,
             contactPhone: form.contactPhone, vehicle: VEHICLE, description: form.description,
-            specialNotes: form.specialNotes, weekdays, defaultStaffId: crew[0]?.staffId || undefined, autoNotify: crew.length > 0,
+            specialNotes: form.specialNotes, weekdays, crewByWeekday,
           }),
         })
         const d = await res.json()
@@ -218,7 +226,7 @@ function Builder() {
         <h1 className="jkos-h" style={{ fontSize: 24, marginTop: 16 }}>{done.recurring ? 'Recurring contract set' : 'Assignment created'}</h1>
         <p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14.5 }}>
           {done.recurring
-            ? `${done.schedule} · ${done.generated} route${done.generated === 1 ? '' : 's'} generated for the next 2 weeks${primaryStaff ? `, assigned to ${crewLabel}` : ''}. New routes keep generating automatically — no daily setup.`
+            ? `${done.schedule} · ${done.generated} route${done.generated === 1 ? '' : 's'} generated for the next 2 weeks${primaryStaff ? `, assigned to ${crewLabel} — nothing was texted yet` : ''}. New routes keep generating automatically — no daily setup.`
             : <>{done.routeNumber && <b style={{ color: 'var(--text)' }}>{done.routeNumber}</b>} · {done.sent ? `confirmation text sent to ${crewLabel || 'the crew'}.` : done.assigned ? `assigned to ${crewLabel || 'the crew'} — nothing was texted yet.` : 'saved as a draft.'}</>}
         </p>
         {!done.recurring && done.assigned && !done.sent && (

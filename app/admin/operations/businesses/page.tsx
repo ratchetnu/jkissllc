@@ -10,7 +10,7 @@ import ApplyScope from '../ApplyScope'
 type RouteLite = { routeNumber: string; businessName: string; status: string; routeDate: string; reportTime: string }
 type Portal = { token: string; businessName: string; label?: string }
 type Invoice = { token: string; invoiceNumber: string; businessName: string; status: 'draft' | 'sent' | 'paid' | 'void'; subtotalCents: number; amountPaidCents: number }
-type Template = { id: string; label: string; businessName: string; reportTime: string; weekdays: number[]; defaultStaffId?: string; autoNotify: boolean; active: boolean }
+type Template = { id: string; label: string; businessName: string; reportTime: string; weekdays: number[]; defaultStaffId?: string; active: boolean }
 type RateHistoryEntry = { at: number; contractRateCents?: number; effectiveDate?: string; active: boolean; notes?: string }
 type BusinessRec = {
   key: string; name: string; contactName?: string; contactPhone?: string; contactEmail?: string; address?: string; notes?: string; requiresHelper?: boolean

@@ -13,6 +13,7 @@ type Assignee = {
   staffId: string; name: string; phone?: string; role?: string; pay?: string; token: string
   payCents?: number; paySource?: 'crew_business' | 'crew_default' | 'manual'
   smsStatus?: string; smsSentAt?: number; confirmedAt?: number; declinedAt?: number; declineReason?: string
+  confirmedVia?: 'link' | 'verbal'; verbalNote?: string
 }
 type Financials = { businessPriceCents?: number; priceSource: 'contract' | 'manual' | 'none'; snapshotAt: number }
 type Op = {
@@ -74,6 +75,14 @@ function Detail({ token }: { token: string }) {
       else if (d.smsWarning) setMsg(`Text not sent: ${d.smsWarning}`)
       setReassigning(false); await load()
     } catch { setMsg('Network error.') } finally { setBusy('') }
+  }
+
+  // They said yes in person or on the phone. The prompt doubles as a mis-tap guard;
+  // cancelling it records nothing.
+  async function confirmVerbally(a: Assignee) {
+    const note = prompt(`Mark ${a.name} as confirmed?\n\nUse this when they told you directly that they're taking this route. Optional note (e.g. "called at 6am"):`, '')
+    if (note === null) return
+    await patch({ action: 'confirm', staffId: a.staffId, note: note.trim() || undefined }, `ok-${a.staffId}`)
   }
 
   const timeline = useMemo(() => {
@@ -145,7 +154,11 @@ function Detail({ token }: { token: string }) {
         {(op.assignees ?? []).length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
             {(op.assignees ?? []).map(a => {
-              const st = a.confirmedAt ? { t: '✓ Confirmed', c: '#86efac' } : a.declinedAt ? { t: `✗ Not available${a.declineReason ? ` — ${a.declineReason}` : ''}`, c: '#fca5a5' } : a.smsStatus === 'failed' ? { t: 'text failed', c: '#f87171' } : a.smsSentAt ? 'texted · awaiting reply' : 'not texted yet'
+              // A verbal confirm is shown as such — it's the owner's word, not the
+              // contractor's signed acceptance, and the difference matters later.
+              const st = a.confirmedAt
+                ? { t: a.confirmedVia === 'verbal' ? `✓ Confirmed by phone${a.verbalNote ? ` — ${a.verbalNote}` : ''}` : '✓ Confirmed', c: '#86efac' }
+                : a.declinedAt ? { t: `✗ Not available${a.declineReason ? ` — ${a.declineReason}` : ''}`, c: '#fca5a5' } : a.smsStatus === 'failed' ? { t: 'text failed', c: '#f87171' } : a.smsSentAt ? 'texted · awaiting reply' : 'not texted yet'
               const stt = typeof st === 'string' ? { t: st, c: 'var(--muted)' } : st
               return (
                 <div key={a.staffId} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: 11, borderRadius: 12, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
@@ -156,6 +169,14 @@ function Detail({ token }: { token: string }) {
                   </div>
                   {live && (
                     <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      {/* Talked to them? Record it. Undo only what the owner recorded —
+                          a link confirmation is the contractor's own and stays put. */}
+                      {!a.confirmedAt && (
+                        <button onClick={() => confirmVerbally(a)} disabled={busy !== ''} title={`${a.name} told you they're taking it`} className="os-tap" style={{ ...iconBtn, color: '#86efac' }}><CheckCircle2 size={14} /></button>
+                      )}
+                      {a.confirmedAt && a.confirmedVia === 'verbal' && (
+                        <button onClick={() => patch({ action: 'unconfirm', staffId: a.staffId }, `nook-${a.staffId}`)} disabled={busy !== ''} title="Undo verbal confirmation" className="os-tap" style={{ ...iconBtn, color: '#fcd34d' }}><XCircle size={14} /></button>
+                      )}
                       <button onClick={() => { navigator.clipboard?.writeText(`${location.origin}/route/${a.token}`); setMsg(`${a.name}'s link copied.`) }} title="Copy link" className="os-tap" style={iconBtn}><Link2 size={14} /></button>
                       <button onClick={() => patch({ action: 'send', staffId: a.staffId }, `send-${a.staffId}`)} disabled={busy !== ''} title={a.smsSentAt ? 'Resend text' : 'Send text'} className="os-tap" style={iconBtn}><Send size={14} /></button>
                       <button onClick={() => patch({ action: 'unassign', staffId: a.staffId }, `rm-${a.staffId}`)} disabled={busy !== ''} title="Remove" className="os-tap" style={{ ...iconBtn, color: '#fca5a5' }}><X size={14} /></button>

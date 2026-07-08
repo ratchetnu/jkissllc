@@ -64,8 +64,14 @@ export type Assignee = {
 
   // Confirmation (per person)
   linkOpenedAt?: number
-  disclaimerAcceptedAt?: number
+  disclaimerAcceptedAt?: number    // set ONLY when they accepted CONFIRM_DISCLAIMER themselves
   confirmedAt?: number
+  // How the confirmation was captured. 'link' = they tapped confirm and accepted the
+  // disclaimer (disclaimerAcceptedAt + confirmIp are set). 'verbal' = the owner spoke
+  // to them and recorded it — NO disclaimer was accepted, so it is never back-dated
+  // into disclaimerAcceptedAt. Absent on pre-existing records: treat as 'link'.
+  confirmedVia?: 'link' | 'verbal'
+  verbalNote?: string              // optional context, e.g. "called at 6am, said he's good"
   declinedAt?: number
   declineReason?: string
   confirmIp?: string
@@ -295,6 +301,49 @@ export function addAssignee(r: RouteRecord, input: { staffId: string; name: stri
   pushAudit(r, 'admin', `Added ${input.name}${input.role ? ` (${input.role})` : ''} to the crew`)
   syncLead(r)
   return a
+}
+
+// The contractor told the owner directly that they're taking the route. This counts
+// for scheduling and reliability, but it is NOT an acceptance of CONFIRM_DISCLAIMER
+// — only the contractor tapping their own link produces that signature, so
+// disclaimerAcceptedAt and confirmIp are deliberately left untouched.
+// Someone who declined can still change their mind, so a decline is cleared.
+export function confirmVerbally(
+  r: RouteRecord, staffId: string, note?: string,
+): { ok: true; assignee: Assignee; already?: boolean } | { ok: false; error: string } {
+  const a = (r.assignees ?? []).find(x => x.staffId === staffId)
+  if (!a) return { ok: false, error: 'That person is not on this crew.' }
+  if (a.confirmedAt) return { ok: true, assignee: a, already: true }
+
+  a.confirmedAt = Date.now()
+  a.confirmedVia = 'verbal'
+  a.verbalNote = note
+
+  const wasDeclined = !!a.declinedAt
+  if (wasDeclined) { a.declinedAt = undefined; a.declineReason = undefined }
+
+  pushAudit(r, 'admin', `${a.name} confirmed verbally${wasDeclined ? ' (overrides their earlier decline)' : ''}${note ? ` — ${note}` : ''}`)
+  syncLead(r)
+  return { ok: true, assignee: a }
+}
+
+// Undo an owner-recorded verbal confirm. A confirmation the contractor signed through
+// their own link is theirs — it is never erased here.
+export function undoVerbalConfirm(
+  r: RouteRecord, staffId: string,
+): { ok: true; assignee: Assignee; already?: boolean } | { ok: false; error: string } {
+  const a = (r.assignees ?? []).find(x => x.staffId === staffId)
+  if (!a) return { ok: false, error: 'That person is not on this crew.' }
+  if (!a.confirmedAt) return { ok: true, assignee: a, already: true }
+  if (a.confirmedVia !== 'verbal')
+    return { ok: false, error: `${a.name} confirmed through their own link — that can't be undone here.` }
+
+  a.confirmedAt = undefined
+  a.confirmedVia = undefined
+  a.verbalNote = undefined
+  pushAudit(r, 'admin', `Undid ${a.name}'s verbal confirmation`)
+  syncLead(r)
+  return { ok: true, assignee: a }
 }
 
 // Remove a crew member. Returns the removed assignee's token (dead link) or null.

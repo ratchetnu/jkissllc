@@ -103,12 +103,9 @@ export async function sendAssignmentText(route: RouteRecord, assignee: Assignee)
   return res.ok ? { ok: true } : { ok: false, error: res.error }
 }
 
-// Assign a single default contractor + text them. Used by recurring-template
-// generation (an explicit automation the owner opted into), NOT manual assign.
-export async function assignAndNotify(route: RouteRecord, staff: Staff): Promise<{ ok: boolean; error?: string }> {
-  const a = addCrew(route, staff)
-  return sendAssignmentText(route, a)
-}
+// NOTE: there is deliberately no assign-and-text helper. Recurring templates used
+// to call one, which meant the daily cron texted contractors up to two weeks before
+// their route. Crew are assigned by addCrew(); texting is always an explicit act.
 
 const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')

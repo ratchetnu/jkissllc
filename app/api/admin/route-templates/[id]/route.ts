@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireSession } from '../../_lib/session'
-import { getTemplate, saveTemplate, deleteTemplate, materializeTemplate } from '../../../../lib/route-templates'
+import {
+  getTemplate, saveTemplate, deleteTemplate, materializeTemplate, parseWeekdays, parseCrewByWeekday,
+} from '../../../../lib/route-templates'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
-const WEEKDAYS = (v: unknown): number[] =>
-  Array.isArray(v) ? [...new Set(v.map(Number).filter(n => Number.isInteger(n) && n >= 0 && n <= 6))].sort() : []
 const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' })
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -35,11 +35,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     ]
     for (const [k, max] of str) if (b[k] !== undefined) (t as Record<string, unknown>)[k] = S(b[k], max) || undefined
     if (b.weekdays !== undefined) {
-      const w = WEEKDAYS(b.weekdays)
+      const w = parseWeekdays(b.weekdays)
       if (!w.length) return NextResponse.json({ error: 'Pick at least one day of the week.' }, { status: 400 })
       t.weekdays = w
+      // Dropping a weekday must drop its standing crew, or the rule quietly
+      // resurrects when that day is re-added.
+      if (t.crewByWeekday) t.crewByWeekday = parseCrewByWeekday(t.crewByWeekday, w)
     }
-    if (typeof b.autoNotify === 'boolean') t.autoNotify = b.autoNotify
+    // Validated against the POST-update weekdays, so crew can be set in the same
+    // call that adds the day they run on.
+    if (b.crewByWeekday !== undefined) t.crewByWeekday = parseCrewByWeekday(b.crewByWeekday, t.weekdays)
     if (typeof b.active === 'boolean') t.active = b.active
     await saveTemplate(t)
     return NextResponse.json({ ok: true, template: t })

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireSession } from '../../_lib/session'
 import {
   getRouteByToken, saveRoute, deleteRoute, setStatus, pushAudit,
+  confirmVerbally, undoVerbalConfirm,
   ROUTE_STATUS_LABEL, type RouteStatus,
 } from '../../../../lib/routes'
 import { addCrew, removeCrew, sendAssignmentText } from '../../../../lib/route-notify'
@@ -76,6 +77,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         revenueCents: m.revenueCents, payoutCents: m.payoutCents,
       }, { status: 409 })
     }
+  } else if (action === 'confirm') {
+    // "I talked to them and they said they're taking it." Recorded as a verbal
+    // confirmation — see confirmVerbally: it never forges the disclaimer signature.
+    const r = confirmVerbally(route, S(body.staffId, 80), S(body.note, 300) || undefined)
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 })
+    if (r.already) return NextResponse.json({ ok: true, already: true, route })
+  } else if (action === 'unconfirm') {
+    const r = undoVerbalConfirm(route, S(body.staffId, 80))
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: 409 })
+    if (r.already) return NextResponse.json({ ok: true, already: true, route })
   } else if (action === 'unassign') {
     // Remove one crew member (by staffId) or the lead if none specified.
     const sid = S(body.staffId, 80) || route.assignees?.[0]?.staffId

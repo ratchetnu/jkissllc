@@ -80,6 +80,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     const now = Date.now()
     assignee.disclaimerAcceptedAt = now
     assignee.confirmedAt = now
+    assignee.confirmedVia = 'link'
     assignee.confirmIp = ip
     pushEvent(route, 'disclaimer_viewed', ip, ua)
     pushEvent(route, 'confirmed', ip, ua)
