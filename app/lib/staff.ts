@@ -2,6 +2,23 @@ import { redis } from './redis'
 
 // Lightweight crew/staff roster. Names here populate the booking "Assigned To"
 // picker; assignment itself is stored on the booking (assignedTo).
+
+// How this person is engaged. driver/helper also decide which payout bucket their
+// pay lands in on the finance dashboard; contractor/employee fall back to the role
+// stamped on the route (see lib/finance.bucketOf).
+export type PayKind = 'driver' | 'helper' | 'contractor' | 'employee'
+
+// One entry per pay change, newest last. Old routes keep their snapshotted pay —
+// this is the audit trail of what the person's *rate* was over time.
+export type PayHistoryEntry = {
+  at: number
+  defaultPayCents?: number
+  payByBusiness?: Record<string, number>
+  effectiveDate?: string     // YYYY-MM-DD
+  active: boolean
+  notes?: string
+}
+
 export type Staff = {
   id: string
   name: string
@@ -9,6 +26,19 @@ export type Staff = {
   role?: string
   photoUrl?: string
   active: boolean
+
+  // ── Pay settings ──
+  // What this person earns per route. A per-business override (keyed by bizKey)
+  // beats defaultPayCents. Snapshotted onto the route when they're assigned —
+  // see lib/finance.snapshotCrewPay. Admin-only.
+  payKind?: PayKind
+  defaultPayCents?: number
+  payByBusiness?: Record<string, number>   // bizKey → cents
+  payNotes?: string
+  payEffectiveDate?: string                // YYYY-MM-DD
+  payActive?: boolean                      // false = don't auto-apply their rate
+  payHistory?: PayHistoryEntry[]
+
   createdAt: number
   updatedAt: number
 }

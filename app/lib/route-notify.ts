@@ -5,6 +5,7 @@ import { sendSmsDetailed } from './sms'
 import { pushAudit, addAssignee, removeAssignee, syncLead, type RouteRecord, type Assignee } from './routes'
 import { sendOwnerAlert } from './owner-alerts'
 import { recordMessage } from './messages'
+import { getFinanceSettings, snapshotCrewPay } from './finance'
 import type { Staff } from './staff'
 
 const BASE = (process.env.NEXT_PUBLIC_SITE_URL || 'https://jkissllc.com').replace(/\/$/, '')
@@ -20,9 +21,13 @@ export function fmtRouteDate(iso: string): string {
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
 }
 
-export function assignmentSms(route: RouteRecord, assignee: Assignee): string {
+// The assignment text. It carries the crew member's OWN pay and only when the
+// owner has enabled showPayInConfirm — never the client's contract price, never
+// the route's profit, never another crew member's pay.
+export function assignmentSms(route: RouteRecord, assignee: Assignee, opts: { showPay?: boolean } = {}): string {
+  const pay = opts.showPay && assignee.pay ? ` Your pay: ${assignee.pay}.` : ''
   return `J KISS LLC Route Assignment: You have been assigned a route for ${fmtRouteDate(route.routeDate)} at ${route.reportTime}. ` +
-    `Location: ${route.reportAddress}. Confirm here: ${confirmUrl(assignee.token)}. Reply STOP to opt out.`
+    `Location: ${route.reportAddress}.${pay} Confirm here: ${confirmUrl(assignee.token)}. Reply STOP to opt out.`
 }
 
 // Nudge an assigned-but-unconfirmed crew member as the route date nears.
@@ -38,8 +43,17 @@ export function morningOfSms(route: RouteRecord, assignee: Assignee): string {
 }
 
 // Add a crew member — NO text. The owner sends confirmations explicitly.
-export function addCrew(route: RouteRecord, staff: Staff, pay?: string): Assignee {
-  return addAssignee(route, { staffId: staff.id, name: staff.name, phone: staff.phone, role: staff.role, pay })
+//
+// Their pay is snapshotted now: `manualCents` (typed in for this route) wins,
+// otherwise their configured rate for this business, otherwise their default.
+// If none exists the route simply carries no pay for them, and the finance
+// dashboard flags it as unpriced crew rather than silently counting $0.
+export function addCrew(route: RouteRecord, staff: Staff, manualCents?: number | null): Assignee {
+  const a = addAssignee(route, { staffId: staff.id, name: staff.name, phone: staff.phone, role: staff.role })
+  // addAssignee returns the EXISTING assignee if this person is already on the
+  // route — don't silently re-price them on a duplicate add.
+  if (a.payCents == null) snapshotCrewPay(a, staff, route.businessName, manualCents)
+  return a
 }
 
 // Remove a crew member. Returns their (now dead) confirm token, or null.
@@ -58,18 +72,24 @@ export async function sendAssignmentText(route: RouteRecord, assignee: Assignee)
     syncLead(route)
     return { ok: false, error: `No phone number on file for ${assignee.name}.` }
   }
+  // Fail closed: if the setting can't be read, don't put money in the text.
+  let showPay = false
+  try { showPay = (await getFinanceSettings()).showPayInConfirm } catch { showPay = false }
+  const body = assignmentSms(route, assignee, { showPay })
+
   assignee.smsSentAt = Date.now()
-  const res = await sendSmsDetailed(assignee.phone, assignmentSms(route, assignee))
+  const res = await sendSmsDetailed(assignee.phone, body)
   if (res.ok) {
     assignee.smsSid = res.sid
     assignee.smsStatus = res.status || 'sent'
     assignee.smsError = undefined
     pushAudit(route, 'system', `Confirmation text sent to ${assignee.name}`)
-    // Log to the Messages hub under the "route" (employee) category.
+    // Log to the Messages hub under the "route" (employee) category. Log the
+    // exact body that was sent, not a re-rendered one.
     try {
       await recordMessage({
         direction: 'outbound', channel: 'sms', provider: 'twilio',
-        to: assignee.phone, body: assignmentSms(route, assignee),
+        to: assignee.phone, body,
         customerName: assignee.name, customerPhone: assignee.phone,
         providerMessageId: res.sid, tags: ['route'], unread: false,
       })

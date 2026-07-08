@@ -60,9 +60,59 @@ export function weekdaysLabel(w: number[]): string {
   return [...w].sort((a, b) => a - b).map(d => DOW[d]).join('/')
 }
 
+// ── Money ────────────────────────────────────────────────────────────────────
+// Cents → the string an admin edits ("35000" → "350.00", undefined → ""). The
+// server re-parses this with lib/finance.parseMoneyCents, which is the single
+// source of truth for what a valid amount is.
+export const centsToInput = (cents?: number): string => (typeof cents === 'number' ? (cents / 100).toFixed(2) : '')
+
+// Cents → display, tolerating "not set" without printing "$0.00" (which would be
+// a lie: an unset price is unknown, not free).
+export const moneyOrDash = (cents?: number | null): string => (typeof cents === 'number' ? money(cents) : '—')
+
+// Profit colour: black ink, red ink, grey when unknown.
+export const profitColor = (cents?: number | null): string =>
+  cents == null ? 'var(--muted)' : cents > 0 ? '#86efac' : cents < 0 ? '#fca5a5' : 'var(--text)'
+
+// Mirrors lib/finance.parseMoneyCents so the field can validate as you type. Kept
+// deliberately strict — the server rejects anything this accepts wrongly anyway.
+export const looksLikeMoney = (s: string): boolean => /^\d+(\.\d{1,2})?$/.test(s.trim().replace(/[$,\s]/g, ''))
+
+// A dollar field. Renders the "$" as an affix so the value stays a clean number.
+export function MoneyInput({ value, onChange, placeholder = '0.00', invalid, ...rest }: {
+  value: string; onChange: (v: string) => void; placeholder?: string; invalid?: boolean
+  'aria-label'?: string; disabled?: boolean
+}) {
+  return (
+    <div style={{ position: 'relative', width: '100%' }}>
+      <span aria-hidden style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: 15, fontWeight: 600, color: 'var(--muted)', pointerEvents: 'none' }}>$</span>
+      <input
+        {...rest}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        inputMode="decimal"
+        className="tabular-nums"
+        style={{ ...osField, paddingLeft: 27, borderColor: invalid ? '#f87171' : 'var(--line)' }}
+      />
+    </div>
+  )
+}
+
+// ── Toggle (the OS switch) ───────────────────────────────────────────────────
+export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label?: string }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} aria-label={label} onClick={() => onChange(!on)} className="os-tap"
+      style={{ width: 50, height: 30, borderRadius: 999, border: 'none', cursor: 'pointer', padding: 3, background: on ? 'var(--red)' : 'rgba(255,255,255,.14)', transition: 'background .2s var(--os-ease)', flexShrink: 0 }}>
+      <span style={{ display: 'block', width: 24, height: 24, borderRadius: 999, background: '#fff', transform: on ? 'translateX(20px)' : 'translateX(0)', transition: 'transform .2s var(--os-spring)' }} />
+    </button>
+  )
+}
+
 // ── Shared styles + a11y ─────────────────────────────────────────────────────
 export const osField: CSSProperties = { width: '100%', padding: '12px 14px', background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)', borderRadius: 12, color: 'var(--text)', fontSize: 15, outline: 'none' }
 export const osMiniBtn: CSSProperties = { padding: '5px 11px', fontSize: 12, fontWeight: 700, borderRadius: 8, background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', color: 'var(--muted)', cursor: 'pointer' }
+export const osLabel: CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)' }
 
 // Enter/Space activation for elements given a button role.
 export const onActivate = (fn: () => void) => (e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn() } }

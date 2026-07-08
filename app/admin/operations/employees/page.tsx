@@ -1,13 +1,25 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { UserPlus, Camera, ChevronDown, Sparkles, Phone, Pencil, Trash2 } from 'lucide-react'
+import { UserPlus, Camera, ChevronDown, Sparkles, Phone, Pencil, Trash2, Wallet, History, Plus, X } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
-import { Avatar, scoreColor, ymd, fmtDay, onActivate } from '../ui'
+import { Avatar, scoreColor, ymd, fmtDay, fmtTs, money, onActivate, MoneyInput, Toggle, centsToInput, looksLikeMoney, osLabel } from '../ui'
+import ApplyScope from '../ApplyScope'
 
-type Staff = { id: string; name: string; phone?: string; role?: string; photoUrl?: string; active: boolean }
+type PayKind = 'driver' | 'helper' | 'contractor' | 'employee'
+type PayHistoryEntry = { at: number; defaultPayCents?: number; payByBusiness?: Record<string, number>; effectiveDate?: string; active: boolean; notes?: string }
+type Staff = {
+  id: string; name: string; phone?: string; role?: string; photoUrl?: string; active: boolean
+  payKind?: PayKind; defaultPayCents?: number; payByBusiness?: Record<string, number>
+  payNotes?: string; payEffectiveDate?: string; payActive?: boolean; payHistory?: PayHistoryEntry[]
+}
 type CStats = { score: number | null; assignments: number; confirmed: number; completed: number; declined: number; noResponse: number; noShow: number }
 type RouteLite = { routeNumber: string; assignedStaffId?: string; businessName: string; status: string; routeDate: string; reportTime: string }
+
+const PAY_KINDS: { key: PayKind; label: string }[] = [
+  { key: 'driver', label: 'Driver' }, { key: 'helper', label: 'Helper' },
+  { key: 'contractor', label: 'Contractor' }, { key: 'employee', label: 'Employee' },
+]
 
 const field: React.CSSProperties = { width: '100%', padding: '11px 13px', background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)', borderRadius: 11, color: 'var(--text)', fontSize: 14.5, outline: 'none' }
 const btnSm: React.CSSProperties = { padding: '7px 13px', fontSize: 12.5, fontWeight: 700, borderRadius: 9, background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', color: 'var(--muted)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }
@@ -45,6 +57,8 @@ function Hub() {
 
   const active = staff.filter(s => s.active)
   const inactive = staff.filter(s => !s.active)
+  // Clients we've actually run routes for — the suggestions for a per-business rate.
+  const businesses = useMemo(() => [...new Set(routes.map(r => r.businessName).filter(Boolean))].sort(), [routes])
 
   return (
     <div>
@@ -68,16 +82,16 @@ function Hub() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {active.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} upcoming={workload[s.id] || []} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
+          {active.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} businesses={businesses} upcoming={workload[s.id] || []} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
           {inactive.length > 0 && <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)', margin: '14px 0 2px' }}>Inactive</div>}
-          {inactive.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} upcoming={workload[s.id] || []} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
+          {inactive.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} businesses={businesses} upcoming={workload[s.id] || []} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
         </div>
       )}
     </div>
   )
 }
 
-function EmployeeCard({ s, st, upcoming, open, onToggle, onOpen, onChanged, setMsg, delay }: { s: Staff; st?: CStats; upcoming: RouteLite[]; open: boolean; onToggle: () => void; onOpen: () => void; onChanged: () => void; setMsg: (m: string) => void; delay: number }) {
+function EmployeeCard({ s, st, businesses, upcoming, open, onToggle, onOpen, onChanged, setMsg, delay }: { s: Staff; st?: CStats; businesses: string[]; upcoming: RouteLite[]; open: boolean; onToggle: () => void; onOpen: () => void; onChanged: () => void; setMsg: (m: string) => void; delay: number }) {
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
   const score = st?.score
@@ -103,6 +117,7 @@ function EmployeeCard({ s, st, upcoming, open, onToggle, onOpen, onChanged, setM
           <div style={{ display: 'flex', alignItems: 'center', gap: 13, marginTop: 4, fontSize: 12.5, color: 'var(--muted)' }}>
             <span>Reliability <b style={{ color: scoreColor(score) }}>{score == null ? 'new' : score}</b></span>
             <span>{upcoming.length} upcoming</span>
+            {s.defaultPayCents != null && s.payActive !== false && <span className="tabular-nums" style={{ color: '#86efac', fontWeight: 700 }}>{money(s.defaultPayCents)}/route</span>}
             {!s.phone && <span style={{ color: '#fca5a5', display: 'inline-flex', alignItems: 'center', gap: 3 }}><Phone size={11} /> no phone</span>}
           </div>
         </div>
@@ -120,6 +135,8 @@ function EmployeeCard({ s, st, upcoming, open, onToggle, onOpen, onChanged, setM
             <EmployeeForm existing={s} onDone={(m) => { setEditing(false); if (m) setMsg(m); onChanged() }} onCancel={() => setEditing(false)} />
           ) : (
             <>
+              <PaySettings s={s} businesses={businesses} onChanged={onChanged} setMsg={setMsg} />
+
               {/* Record */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(72px, 1fr))', gap: 8, marginBottom: 14 }}>
                 <Stat n={st?.completed ?? 0} label="Completed" />
@@ -153,6 +170,209 @@ function EmployeeCard({ s, st, upcoming, open, onToggle, onOpen, onChanged, setM
           )}
         </div></div>
       </div>
+    </div>
+  )
+}
+
+// ── Pay Settings ─────────────────────────────────────────────────────────────
+// What this person earns per route. Snapshotted onto a route when they're
+// assigned, so editing here never changes routes they already ran.
+const bizKey = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ')
+
+function PaySettings({ s, businesses, onChanged, setMsg }: { s: Staff; businesses: string[]; onChanged: () => void; setMsg: (m: string) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [kind, setKind] = useState<PayKind | ''>(s.payKind || '')
+  const [defaultPay, setDefaultPay] = useState(centsToInput(s.defaultPayCents))
+  const [active, setActive] = useState(s.payActive ?? true)
+  const [effective, setEffective] = useState(s.payEffectiveDate || '')
+  const [notes, setNotes] = useState(s.payNotes || '')
+  // Overrides are edited as display-name → dollar string; the server re-keys them.
+  const [overrides, setOverrides] = useState<{ biz: string; pay: string }[]>(() =>
+    Object.entries(s.payByBusiness ?? {}).map(([k, cents]) => ({
+      biz: businesses.find(b => bizKey(b) === k) || k,
+      pay: centsToInput(cents),
+    })),
+  )
+  const [scope, setScope] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [showHistory, setShowHistory] = useState(false)
+
+  const defaultInvalid = defaultPay.trim() !== '' && !looksLikeMoney(defaultPay)
+  const badOverride = overrides.find(o => o.biz.trim() && o.pay.trim() && !looksLikeMoney(o.pay))
+  const invalid = defaultInvalid || !!badOverride
+
+  const origDefault = centsToInput(s.defaultPayCents)
+  const origOverrides = JSON.stringify(Object.entries(s.payByBusiness ?? {}).sort())
+  const nextOverrides = JSON.stringify(
+    overrides.filter(o => o.biz.trim() && o.pay.trim()).map(o => [bizKey(o.biz), Math.round(Number(o.pay.replace(/[$,\s]/g, '')) * 100)] as [string, number]).sort(),
+  )
+  const payChanged = defaultPay.trim() !== origDefault.trim() || active !== (s.payActive ?? true) || origOverrides !== nextOverrides
+
+  function reset() {
+    setKind(s.payKind || ''); setDefaultPay(centsToInput(s.defaultPayCents)); setActive(s.payActive ?? true)
+    setEffective(s.payEffectiveDate || ''); setNotes(s.payNotes || '')
+    setOverrides(Object.entries(s.payByBusiness ?? {}).map(([k, c]) => ({ biz: businesses.find(b => bizKey(b) === k) || k, pay: centsToInput(c) })))
+    setEditing(false); setScope(false); setErr('')
+  }
+
+  async function save(applyTo: 'none' | 'future' | 'selected' = 'none', routeTokens: string[] = []) {
+    if (invalid) { setErr('Pay must be a positive dollar amount, e.g. 175 or 175.00.'); return }
+    if (active && !defaultPay.trim() && !overrides.some(o => o.biz.trim() && o.pay.trim())) {
+      setErr('Set a default route pay, or switch this pay off.'); return
+    }
+    const payByBusiness: Record<string, string> = {}
+    for (const o of overrides) if (o.biz.trim() && o.pay.trim()) payByBusiness[o.biz.trim()] = o.pay.trim()
+
+    setBusy(true); setErr('')
+    try {
+      const res = await fetch('/api/admin/staff', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({
+          id: s.id, name: s.name, phone: s.phone, role: s.role, photoUrl: s.photoUrl, active: s.active,
+          payKind: kind || undefined, defaultPay: defaultPay.trim(), payByBusiness,
+          payActive: active, payEffectiveDate: effective || undefined, payNotes: notes,
+          applyTo, routeTokens,
+        }),
+      })
+      const d = await res.json()
+      if (!res.ok) { setErr(d.error || 'Could not save pay.'); return }
+      const n = d.reprice?.updated?.length ?? 0
+      setMsg(n > 0 ? `Pay saved — ${n} upcoming route${n === 1 ? '' : 's'} re-priced.` : 'Pay settings saved.')
+      setEditing(false); setScope(false); onChanged()
+    } catch { setErr('Network error.') } finally { setBusy(false) }
+  }
+
+  function onSave() {
+    if (invalid) { setErr('Pay must be a positive dollar amount, e.g. 175 or 175.00.'); return }
+    if (payChanged) setScope(true)
+    else save('none')
+  }
+
+  const history = [...(s.payHistory ?? [])].reverse()
+  const overrideCount = Object.keys(s.payByBusiness ?? {}).length
+
+  return (
+    <div style={{ marginBottom: 14, padding: 13, borderRadius: 12, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: editing ? 12 : 8 }}>
+        <Wallet size={14} style={{ color: 'var(--red-glow)' }} />
+        <div style={{ ...osLabel, flex: 1 }}>Pay settings</div>
+        {!editing && <button onClick={() => setEditing(true)} className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Edit</button>}
+      </div>
+
+      {!editing ? (
+        <>
+          {s.defaultPayCents == null && overrideCount === 0 ? (
+            <p style={{ fontSize: 13, color: 'var(--muted)' }}>No pay rate set. Routes they&rsquo;re assigned to will show as unpriced crew.</p>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, flexWrap: 'wrap' }}>
+                <span className="tabular-nums" style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-.02em', color: s.payActive === false ? 'var(--muted)' : 'var(--text)' }}>{s.defaultPayCents == null ? '—' : money(s.defaultPayCents)}</span>
+                <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>default per route</span>
+                {s.payKind && <span style={{ fontSize: 10.5, fontWeight: 800, padding: '2px 8px', borderRadius: 99, background: 'rgba(224,0,42,.16)', color: '#fff', textTransform: 'capitalize' }}>{s.payKind}</span>}
+                {s.payActive === false && <span style={{ fontSize: 10.5, fontWeight: 800, padding: '2px 8px', borderRadius: 99, background: 'rgba(255,255,255,.08)', color: 'var(--muted)' }}>Inactive</span>}
+              </div>
+              {overrideCount > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 9 }}>
+                  {Object.entries(s.payByBusiness ?? {}).map(([k, cents]) => (
+                    <div key={k} style={{ display: 'flex', gap: 10, fontSize: 13 }}>
+                      <span style={{ flex: 1, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{businesses.find(b => bizKey(b) === k) || k}</span>
+                      <span className="tabular-nums" style={{ fontWeight: 700, color: '#86efac' }}>{money(cents)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+          {s.payEffectiveDate && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>Effective {fmtDay(s.payEffectiveDate)}</div>}
+          {s.payNotes && <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 6 }}>{s.payNotes}</div>}
+
+          {history.length > 0 && (
+            <>
+              <button onClick={() => setShowHistory(h => !h)} className="os-tap" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 10, fontSize: 12, fontWeight: 700, color: 'var(--muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                <History size={12} /> {showHistory ? 'Hide' : 'Pay'} history ({history.length})
+              </button>
+              {showHistory && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 8 }}>
+                  {history.map((h, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 10, fontSize: 12.5, alignItems: 'center' }}>
+                      <span style={{ color: 'var(--muted)', minWidth: 100 }}>{fmtTs(h.at)}</span>
+                      <span className="tabular-nums" style={{ fontWeight: 700 }}>{h.defaultPayCents == null ? 'cleared' : money(h.defaultPayCents)}</span>
+                      {!h.active && <span style={{ color: 'var(--muted)' }}>· inactive</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </>
+      ) : (
+        <>
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', marginBottom: 7 }}>How they&rsquo;re engaged</div>
+            <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+              {PAY_KINDS.map(k => {
+                const on = kind === k.key
+                return (
+                  <button key={k.key} type="button" onClick={() => setKind(on ? '' : k.key)}
+                    style={{ padding: '8px 15px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'var(--red)' : 'transparent', color: on ? '#fff' : 'var(--muted)' }}>{k.label}</button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>Default route pay</div>
+              <MoneyInput value={defaultPay} onChange={setDefaultPay} invalid={defaultInvalid} aria-label="Default route pay" disabled={busy} />
+            </div>
+            <div>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>Effective date</div>
+              <input type="date" value={effective} onChange={e => setEffective(e.target.value)} style={field} />
+            </div>
+          </div>
+
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', marginBottom: 7 }}>Business-specific pay <span style={{ fontWeight: 500 }}>— overrides the default</span></div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {overrides.map((o, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input list={`biz-${s.id}`} placeholder="Business" value={o.biz} onChange={e => setOverrides(v => v.map((x, j) => j === i ? { ...x, biz: e.target.value } : x))} style={{ ...field, flex: 1 }} />
+                  <div style={{ width: 118 }}>
+                    <MoneyInput value={o.pay} onChange={p => setOverrides(v => v.map((x, j) => j === i ? { ...x, pay: p } : x))} invalid={!!o.pay.trim() && !looksLikeMoney(o.pay)} aria-label={`Pay for ${o.biz || 'business'}`} />
+                  </div>
+                  <button type="button" onClick={() => setOverrides(v => v.filter((_, j) => j !== i))} aria-label="Remove override" className="os-tap" style={{ ...btnSm, padding: 8, color: '#fca5a5' }}><X size={14} /></button>
+                </div>
+              ))}
+              <datalist id={`biz-${s.id}`}>{businesses.map(b => <option key={b} value={b} />)}</datalist>
+              <button type="button" onClick={() => setOverrides(v => [...v, { biz: '', pay: '' }])} style={{ ...btnSm, alignSelf: 'flex-start' }}><Plus size={13} /> Add a business rate</button>
+            </div>
+          </div>
+
+          <textarea placeholder="Pay notes (e.g. paid weekly by Zelle)" value={notes} onChange={e => setNotes(e.target.value)} rows={2} style={{ ...field, marginTop: 12, resize: 'vertical' }} />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 11, marginTop: 10, padding: '10px 12px', borderRadius: 11, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+            <Toggle on={active} onChange={setActive} label="Pay active" />
+            <div><div style={{ fontSize: 13.5, fontWeight: 700 }}>Pay active</div><div style={{ fontSize: 12, color: 'var(--muted)' }}>Off = rate kept on file but not auto-applied to new routes.</div></div>
+          </label>
+
+          {invalid && <p style={{ color: '#f87171', fontSize: 12.5, marginTop: 8 }}>Pay must be a positive dollar amount, e.g. 175 or 175.00.</p>}
+          {err && <p style={{ color: '#f87171', fontSize: 13, marginTop: 8 }}>{err}</p>}
+
+          {scope ? (
+            <ApplyScope
+              candidatesUrl={`/api/admin/staff?candidates=${encodeURIComponent(s.id)}`}
+              mode="pay" busy={busy}
+              onCancel={() => setScope(false)}
+              onConfirm={({ applyTo, routeTokens }) => save(applyTo, routeTokens)}
+            />
+          ) : (
+            <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+              <button onClick={onSave} disabled={busy || invalid} className="btn os-tap" style={{ borderRadius: 11, height: 40, flex: 1, justifyContent: 'center', opacity: busy || invalid ? .55 : 1 }}>{busy ? 'Saving…' : 'Save pay'}</button>
+              <button onClick={reset} disabled={busy} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40 }}>Cancel</button>
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }

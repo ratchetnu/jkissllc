@@ -6,6 +6,10 @@ import {
 } from '../../../../lib/routes'
 import { addCrew, removeCrew, sendAssignmentText } from '../../../../lib/route-notify'
 import { listStaff } from '../../../../lib/staff'
+import {
+  parseMoneyCents, snapshotManualPrice, snapshotCrewPay, computeRouteMoney,
+  payExceedsPrice, fmtCents, isFrozen,
+} from '../../../../lib/finance'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 
@@ -20,10 +24,58 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   let smsWarning: string | undefined
 
   if (action === 'assign') {
-    // Add a crew member (no text) with optional per-person pay.
+    // Add a crew member (no text). Their pay is snapshotted from `pay` if given,
+    // else from their configured rate for this business, else their default.
     const staff = (await listStaff()).find(s => s.id === S(body.staffId, 80))
     if (!staff) return NextResponse.json({ error: 'Contractor not found.' }, { status: 400 })
-    addCrew(route, staff, S(body.pay, 80) || undefined)
+    let manualCents: number | null | undefined
+    if (S(body.pay, 80)) {
+      manualCents = parseMoneyCents(body.pay)
+      if (manualCents == null) return NextResponse.json({ error: 'Pay must be a positive dollar amount.' }, { status: 400 })
+    }
+    addCrew(route, staff, manualCents)
+
+    // Warn (don't block) when the crew now costs more than the route earns.
+    const m = computeRouteMoney(route)
+    if (payExceedsPrice(m.revenueCents, m.payoutCents) && body.acknowledgeWarning !== true) {
+      return NextResponse.json({
+        warning: 'pay_exceeds_price',
+        message: `Crew pay (${fmtCents(m.payoutCents)}) is more than this route earns (${fmtCents(m.revenueCents ?? 0)}). Assign anyway?`,
+        revenueCents: m.revenueCents, payoutCents: m.payoutCents,
+      }, { status: 409 })
+    }
+  } else if (action === 'money') {
+    // Re-price a single live route by hand. Settled routes are never re-priced.
+    if (isFrozen(route)) return NextResponse.json({ error: `A ${route.status} route keeps the price it ran at.` }, { status: 409 })
+
+    if (body.businessPrice !== undefined) {
+      const cents = parseMoneyCents(body.businessPrice)
+      if (cents == null) return NextResponse.json({ error: 'Route price must be a positive dollar amount.' }, { status: 400 })
+      snapshotManualPrice(route, cents)
+      pushAudit(route, 'admin', `Route price set to ${fmtCents(cents)}`)
+    }
+
+    if (Array.isArray(body.crewPay)) {
+      for (const raw of body.crewPay as unknown[]) {
+        const o = raw as Record<string, unknown>
+        const sid = S(o.staffId, 80)
+        const a = (route.assignees ?? []).find(x => x.staffId === sid)
+        if (!a) continue
+        const cents = parseMoneyCents(o.pay)
+        if (cents == null) return NextResponse.json({ error: `Pay for ${a.name} must be a positive dollar amount.` }, { status: 400 })
+        snapshotCrewPay(a, undefined, route.businessName, cents)
+        pushAudit(route, 'admin', `${a.name}'s pay set to ${fmtCents(cents)}`)
+      }
+    }
+
+    const m = computeRouteMoney(route)
+    if (payExceedsPrice(m.revenueCents, m.payoutCents) && body.acknowledgeWarning !== true) {
+      return NextResponse.json({
+        warning: 'pay_exceeds_price',
+        message: `Crew pay (${fmtCents(m.payoutCents)}) is more than this route earns (${fmtCents(m.revenueCents ?? 0)}). Save anyway?`,
+        revenueCents: m.revenueCents, payoutCents: m.payoutCents,
+      }, { status: 409 })
+    }
   } else if (action === 'unassign') {
     // Remove one crew member (by staffId) or the lead if none specified.
     const sid = S(body.staffId, 80) || route.assignees?.[0]?.staffId

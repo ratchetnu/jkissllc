@@ -1,15 +1,17 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { MessageSquare, Mail, Star, Briefcase, CalendarCheck, Trash2, ScrollText, BarChart3, CalendarDays, LogOut, Check, ClipboardList, DollarSign, FileText } from 'lucide-react'
+import { MessageSquare, Mail, Star, Briefcase, CalendarCheck, Trash2, ScrollText, BarChart3, CalendarDays, LogOut, Check, ClipboardList, DollarSign, FileText, Wallet, EyeOff } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { osField as field } from '../ui'
 
 type Config = { sms: boolean; email: boolean; smsTo: string; emailTo: string }
+type FinanceCfg = { showPayInConfirm: boolean }
 
 const TOOL_GROUPS: { label: string; items: { href: string; label: string; Icon: typeof Star }[] }[] = [
   { label: 'Work', items: [
     { href: '/admin/routes', label: 'Dispatch board', Icon: ClipboardList },
+    { href: '/admin/operations/finance', label: 'Money', Icon: Wallet },
     { href: '/admin/routes/pay', label: 'Contractor Pay', Icon: DollarSign },
     { href: '/admin/routes/invoices', label: 'Client Invoices', Icon: FileText },
   ] },
@@ -41,14 +43,36 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 
 function Settings() {
   const [cfg, setCfg] = useState<Config | null>(null)
+  const [fin, setFin] = useState<FinanceCfg | null>(null)
+  const [finBusy, setFinBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
   const load = useCallback(async () => {
-    try { const d = await fetch('/api/admin/alerts', { credentials: 'same-origin' }).then(r => r.json()); if (d.config) setCfg(d.config) } catch { /* ignore */ } finally { setLoading(false) }
+    try {
+      const [a, f] = await Promise.all([
+        fetch('/api/admin/alerts', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
+        fetch('/api/admin/finance', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
+      ])
+      if (a.config) setCfg(a.config)
+      if (f.settings) setFin(f.settings)
+    } catch { /* ignore */ } finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
+
+  // Optimistic, with rollback — a failed write must not leave the switch lying
+  // about whether drivers can see their pay.
+  async function setShowPay(v: boolean) {
+    const prev = fin
+    setFin({ showPayInConfirm: v }); setFinBusy(true)
+    try {
+      const res = await fetch('/api/admin/finance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ showPayInConfirm: v }) })
+      const d = await res.json()
+      if (!res.ok || !d.settings) setFin(prev)
+      else setFin(d.settings)
+    } catch { setFin(prev) } finally { setFinBusy(false) }
+  }
 
   async function save() {
     if (!cfg) return
@@ -99,6 +123,33 @@ function Settings() {
               {saved ? <><Check size={17} /> Saved</> : saving ? 'Saving…' : 'Save preferences'}
             </button>
           </div>
+        )}
+      </div>
+
+      {/* Crew pay visibility */}
+      <div className="os-card os-rise" style={{ padding: 22, marginBottom: 16 }}>
+        <h2 className="jkos-h" style={{ fontSize: 18, marginBottom: 4 }}>Crew pay visibility</h2>
+        <p style={{ fontSize: 13.5, color: 'var(--muted)', marginBottom: 18 }}>Controls what a driver or helper sees in their assignment text and on their confirmation page.</p>
+
+        {loading || !fin ? (
+          <div className="skeleton" style={{ width: '100%', height: 52, borderRadius: 12 }} />
+        ) : (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <DollarSign size={18} style={{ color: 'var(--red-glow)' }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>Show their pay amount</div>
+                <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>Each person sees only their own pay for that route.</div>
+              </div>
+              <div style={{ opacity: finBusy ? .5 : 1 }}><Toggle on={fin.showPayInConfirm} onChange={setShowPay} /></div>
+            </div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 16, padding: '11px 13px', borderRadius: 11, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+              <EyeOff size={15} style={{ color: 'var(--muted)', flexShrink: 0, marginTop: 2 }} />
+              <div style={{ fontSize: 12.5, color: 'var(--muted)', lineHeight: 1.5 }}>
+                Crew <b style={{ color: 'var(--text)' }}>never</b> see what the business pays, this route&rsquo;s profit, or another crew member&rsquo;s pay — regardless of this setting.
+              </div>
+            </div>
+          </>
         )}
       </div>
 

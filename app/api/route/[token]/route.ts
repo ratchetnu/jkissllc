@@ -7,9 +7,18 @@ import {
   CONFIRM_DISCLAIMER,
 } from '../../../lib/routes'
 import { alertOwnerRouteEvent } from '../../../lib/route-notify'
+import { getFinanceSettings } from '../../../lib/finance'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 const clientIp = (req: NextRequest) => req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || undefined
+
+// The crew member sees their own pay only if the owner turned that on. If the
+// setting can't be read, fail CLOSED — showing money by accident is worse than
+// omitting it. What the client pays and the route's profit are never in scope
+// here: PublicRoute has no field for them.
+async function showPay(): Promise<boolean> {
+  try { return (await getFinanceSettings()).showPayInConfirm } catch { return false }
+}
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params
@@ -24,7 +33,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
     syncLead(route)
     try { await saveRoute(route) } catch { /* non-fatal — still show the page */ }
   }
-  return NextResponse.json({ route: toPublicRouteFor(route, assignee), disclaimer: CONFIRM_DISCLAIMER })
+  return NextResponse.json({ route: toPublicRouteFor(route, assignee, { showPay: await showPay() }), disclaimer: CONFIRM_DISCLAIMER })
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
@@ -33,7 +42,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   if (!found) return NextResponse.json({ error: 'not_found' }, { status: 404 })
   const { route, assignee } = found
 
-  const pub = () => toPublicRouteFor(route, assignee)
+  const canShowPay = await showPay()
+  const pub = () => toPublicRouteFor(route, assignee, { showPay: canShowPay })
   if (route.status === 'cancelled') return NextResponse.json({ error: 'cancelled', route: pub() }, { status: 409 })
   if (isExpired(route)) return NextResponse.json({ error: 'expired', route: pub() }, { status: 410 })
 

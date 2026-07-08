@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { MapPin, Clock, User, ChevronDown, Plus, CalendarDays, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { MapPin, Clock, User, ChevronDown, Plus, CalendarDays, AlertTriangle, CheckCircle2, Wallet } from 'lucide-react'
 import OperationsShell from './OperationsShell'
 import { useOps } from './useOps'
 import { STATUS as CHIP, scoreColor, ymd, fmtDay, mapsUrl, type RouteStatus } from './ui'
@@ -56,6 +56,18 @@ function Dashboard() {
             <StatCard label="Needs reassignment" value={needsReassign.length} tone={needsReassign.length ? 'alert' : 'calm'} Icon={AlertTriangle} />
             <StatCard label="Tomorrow" value={tomorrows.length} tone="calm" Icon={CalendarDays} />
           </div>
+
+          {/* Money — the ledger lives one tap away, never on a crew-facing screen. */}
+          <Link href="/admin/operations/finance" className="os-card os-tap os-rise" style={{ display: 'flex', alignItems: 'center', gap: 13, padding: 16, marginBottom: 26, textDecoration: 'none', color: 'var(--text)' }}>
+            <div style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, display: 'grid', placeItems: 'center', background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)' }}>
+              <Wallet size={18} style={{ color: 'var(--red-glow)' }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>Money</div>
+              <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>Revenue in, payouts out, profit between.</div>
+            </div>
+            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--red)' }}>Open →</span>
+          </Link>
 
           {/* Focus */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>

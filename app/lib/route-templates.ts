@@ -9,6 +9,7 @@ import {
 import { assignAndNotify } from './route-notify'
 import { getBusiness, bizKey } from './businesses'
 import { listStaff } from './staff'
+import { snapshotBusinessPrice } from './finance'
 
 export type RouteTemplate = {
   id: string
@@ -125,7 +126,12 @@ export async function materializeTemplate(
     }
     pushAudit(route, 'system', `Generated from template “${tpl.label}”`)
 
-    // Optionally assign + text the default contractor right away.
+    // Each generated route snapshots the client's contract rate as it stands at
+    // generation time — before crew are added, so the assign path sees the price.
+    snapshotBusinessPrice(route, biz)
+
+    // Optionally assign + text the default contractor right away. addCrew snapshots
+    // the contractor's configured pay for this business.
     if (staff) { try { await assignAndNotify(route, staff) } catch { /* leave as draft */ } }
 
     try { await saveRoute(route); created.push(route.routeNumber); existing.add(day) }

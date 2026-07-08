@@ -2,15 +2,20 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Building2, ChevronDown, Link2, FileText, Plus, Check, Repeat, Pencil } from 'lucide-react'
+import { Building2, ChevronDown, Link2, FileText, Plus, Check, Repeat, Pencil, Wallet, History } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
-import { money, ymd, fmtDay, weekdaysLabel, onActivate } from '../ui'
+import { money, ymd, fmtDay, fmtTs, weekdaysLabel, onActivate, MoneyInput, Toggle, centsToInput, looksLikeMoney, osLabel } from '../ui'
+import ApplyScope from '../ApplyScope'
 
 type RouteLite = { routeNumber: string; businessName: string; status: string; routeDate: string; reportTime: string }
 type Portal = { token: string; businessName: string; label?: string }
 type Invoice = { token: string; invoiceNumber: string; businessName: string; status: 'draft' | 'sent' | 'paid' | 'void'; subtotalCents: number; amountPaidCents: number }
 type Template = { id: string; label: string; businessName: string; reportTime: string; weekdays: number[]; defaultStaffId?: string; autoNotify: boolean; active: boolean }
-type BusinessRec = { key: string; name: string; contactName?: string; contactPhone?: string; contactEmail?: string; address?: string; notes?: string; requiresHelper?: boolean }
+type RateHistoryEntry = { at: number; contractRateCents?: number; effectiveDate?: string; active: boolean; notes?: string }
+type BusinessRec = {
+  key: string; name: string; contactName?: string; contactPhone?: string; contactEmail?: string; address?: string; notes?: string; requiresHelper?: boolean
+  contractRateCents?: number; billingNotes?: string; rateEffectiveDate?: string; pricingActive?: boolean; rateHistory?: RateHistoryEntry[]
+}
 
 type Biz = {
   key: string; name: string
@@ -160,6 +165,145 @@ function BusinessForm({ b, onDone, onCancel }: { b: Biz; onDone: () => void; onC
   )
 }
 
+// ── Route Pricing ────────────────────────────────────────────────────────────
+// What this business pays J KISS per route. Snapshotted onto each route when it's
+// created, so editing here never rewrites routes that already ran.
+function RoutePricing({ b, onReload, setMsg }: { b: Biz; onReload: () => void; setMsg: (m: string) => void }) {
+  const rec = b.record
+  const [editing, setEditing] = useState(false)
+  const [rate, setRate] = useState(centsToInput(rec?.contractRateCents))
+  const [active, setActive] = useState(rec?.pricingActive ?? true)
+  const [effective, setEffective] = useState(rec?.rateEffectiveDate || '')
+  const [notes, setNotes] = useState(rec?.billingNotes || '')
+  const [scope, setScope] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [showHistory, setShowHistory] = useState(false)
+
+  const original = centsToInput(rec?.contractRateCents)
+  const rateInvalid = rate.trim() !== '' && !looksLikeMoney(rate)
+  const rateChanged = rate.trim() !== original.trim() || active !== (rec?.pricingActive ?? true)
+
+  function reset() {
+    setRate(centsToInput(rec?.contractRateCents)); setActive(rec?.pricingActive ?? true)
+    setEffective(rec?.rateEffectiveDate || ''); setNotes(rec?.billingNotes || '')
+    setEditing(false); setScope(false); setErr('')
+  }
+
+  async function save(applyTo: 'none' | 'future' | 'selected' = 'none', routeTokens: string[] = []) {
+    if (rateInvalid) { setErr('Enter a positive dollar amount, e.g. 350 or 350.00.'); return }
+    if (active && !rate.trim()) { setErr('Set a route price, or switch this pricing off.'); return }
+    setBusy(true); setErr('')
+    try {
+      const res = await fetch('/api/admin/businesses', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({
+          name: b.name,
+          // Carry the other fields through — this endpoint upserts the whole record.
+          contactName: rec?.contactName, contactPhone: rec?.contactPhone, contactEmail: rec?.contactEmail,
+          address: rec?.address, notes: rec?.notes, requiresHelper: rec?.requiresHelper,
+          contractRate: rate.trim(), pricingActive: active, rateEffectiveDate: effective || undefined, billingNotes: notes,
+          applyTo, routeTokens,
+        }),
+      })
+      const d = await res.json()
+      if (!res.ok) { setErr(d.error || 'Could not save the price.'); return }
+      const n = d.reprice?.updated?.length ?? 0
+      setMsg(n > 0 ? `Price saved — ${n} upcoming route${n === 1 ? '' : 's'} re-priced.` : 'Route price saved.')
+      setEditing(false); setScope(false); onReload()
+    } catch { setErr('Network error.') } finally { setBusy(false) }
+  }
+
+  // A rate change forces the "what does this apply to?" question. A notes-only or
+  // effective-date-only edit saves straight through.
+  function onSave() {
+    if (rateInvalid) { setErr('Enter a positive dollar amount, e.g. 350 or 350.00.'); return }
+    if (rateChanged && (b.upcoming.length > 0)) setScope(true)
+    else save('none')
+  }
+
+  const history = [...(rec?.rateHistory ?? [])].reverse()
+
+  return (
+    <div style={{ marginBottom: 14, padding: 13, borderRadius: 12, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: editing ? 12 : 8 }}>
+        <Wallet size={14} style={{ color: 'var(--red-glow)' }} />
+        <div style={{ ...osLabel, flex: 1 }}>Route pricing</div>
+        {!editing && <button onClick={() => setEditing(true)} className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Edit</button>}
+      </div>
+
+      {!editing ? (
+        <>
+          {rec?.contractRateCents == null ? (
+            <p style={{ fontSize: 13, color: 'var(--muted)' }}>No contract rate set. Routes for this client won&rsquo;t show revenue or profit.</p>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, flexWrap: 'wrap' }}>
+              <span className="tabular-nums" style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-.02em', color: rec.pricingActive === false ? 'var(--muted)' : 'var(--text)' }}>{money(rec.contractRateCents)}</span>
+              <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>per route</span>
+              {rec.pricingActive === false && <span style={{ fontSize: 10.5, fontWeight: 800, padding: '2px 8px', borderRadius: 99, background: 'rgba(255,255,255,.08)', color: 'var(--muted)' }}>Inactive</span>}
+            </div>
+          )}
+          {rec?.rateEffectiveDate && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>Effective {fmtDay(rec.rateEffectiveDate)}</div>}
+          {rec?.billingNotes && <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 6 }}>{rec.billingNotes}</div>}
+
+          {history.length > 0 && (
+            <>
+              <button onClick={() => setShowHistory(h => !h)} className="os-tap" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 10, fontSize: 12, fontWeight: 700, color: 'var(--muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                <History size={12} /> {showHistory ? 'Hide' : 'Pricing'} history ({history.length})
+              </button>
+              {showHistory && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 8 }}>
+                  {history.map((h, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 10, fontSize: 12.5, alignItems: 'center' }}>
+                      <span style={{ color: 'var(--muted)', minWidth: 100 }}>{fmtTs(h.at)}</span>
+                      <span className="tabular-nums" style={{ fontWeight: 700 }}>{h.contractRateCents == null ? 'cleared' : money(h.contractRateCents)}</span>
+                      {!h.active && <span style={{ color: 'var(--muted)' }}>· inactive</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </>
+      ) : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>Charge per route</div>
+              <MoneyInput value={rate} onChange={setRate} invalid={rateInvalid} aria-label="Charge per route" disabled={busy} />
+            </div>
+            <div>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>Effective date</div>
+              <input type="date" value={effective} onChange={e => setEffective(e.target.value)} style={bf} />
+            </div>
+          </div>
+          <textarea placeholder="Billing notes (e.g. net-30, invoiced monthly)" value={notes} onChange={e => setNotes(e.target.value)} rows={2} style={{ ...bf, marginTop: 10, resize: 'vertical' }} />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 11, marginTop: 10, padding: '10px 12px', borderRadius: 11, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+            <Toggle on={active} onChange={setActive} label="Pricing active" />
+            <div><div style={{ fontSize: 13.5, fontWeight: 700 }}>Pricing active</div><div style={{ fontSize: 12, color: 'var(--muted)' }}>Off = rate kept on file but not applied to new routes.</div></div>
+          </label>
+          {rateInvalid && <p style={{ color: '#f87171', fontSize: 12.5, marginTop: 8 }}>Enter a positive dollar amount, e.g. 350 or 350.00.</p>}
+          {err && <p style={{ color: '#f87171', fontSize: 13, marginTop: 8 }}>{err}</p>}
+
+          {scope ? (
+            <ApplyScope
+              candidatesUrl={`/api/admin/businesses?candidates=${encodeURIComponent(b.name)}`}
+              mode="price" busy={busy}
+              onCancel={() => setScope(false)}
+              onConfirm={({ applyTo, routeTokens }) => save(applyTo, routeTokens)}
+            />
+          ) : (
+            <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+              <button onClick={onSave} disabled={busy || rateInvalid} className="btn os-tap" style={{ borderRadius: 11, height: 40, flex: 1, justifyContent: 'center', opacity: busy || rateInvalid ? .55 : 1 }}>{busy ? 'Saving…' : 'Save price'}</button>
+              <button onClick={reset} disabled={busy} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40 }}>Cancel</button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 function BizCard({ b, open, onToggle, onOpen, onCreatePortal, onReload, setMsg, delay }: { b: Biz; open: boolean; onToggle: () => void; onOpen: () => void; onCreatePortal: () => void; onReload: () => void; setMsg: (m: string) => void; delay: number }) {
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState('')
@@ -184,6 +328,7 @@ function BizCard({ b, open, onToggle, onOpen, onCreatePortal, onReload, setMsg, 
           <div style={{ fontWeight: 700, fontSize: 16 }}>{b.name}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4, fontSize: 12.5, color: 'var(--muted)', flexWrap: 'wrap' }}>
             <span>{b.routeCount} routes</span>
+            {b.record?.contractRateCents != null && b.record.pricingActive !== false && <span className="tabular-nums" style={{ color: '#86efac', fontWeight: 700 }}>{money(b.record.contractRateCents)}/route</span>}
             {b.upcoming.length > 0 && <span style={{ color: '#93c5fd' }}>{b.upcoming.length} upcoming</span>}
             {activeTmpl && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#c4b5fd' }}><Repeat size={11} /> {weekdaysLabel(activeTmpl.weekdays)}</span>}
             {b.outstandingCents > 0 && <span style={{ color: '#fcd34d' }}>{money(b.outstandingCents)} due</span>}
@@ -200,6 +345,8 @@ function BizCard({ b, open, onToggle, onOpen, onCreatePortal, onReload, setMsg, 
           <div style={{ height: 1, background: 'var(--line)', marginBottom: 14 }} />
 
           {editing ? <BusinessForm b={b} onDone={() => { setEditing(false); setMsg('Business saved.'); onReload() }} onCancel={() => setEditing(false)} /> : <>
+
+          <RoutePricing b={b} onReload={onReload} setMsg={setMsg} />
 
           {rec && (rec.contactName || rec.contactPhone || rec.contactEmail || rec.address || rec.notes) && (
             <div style={{ marginBottom: 14, fontSize: 13.5 }}>

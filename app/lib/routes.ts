@@ -39,6 +39,16 @@ export type ConfirmEvent = {
   ua?: string
 }
 
+// What J KISS is paid for this route, snapshotted when the route is created.
+// Editing a business's contract rate later does NOT rewrite this — completed
+// routes keep the price they actually ran at. Admin-only; never projected to the
+// public confirmation page.
+export type RouteFinancials = {
+  businessPriceCents?: number   // undefined = no contract rate was on file
+  priceSource: 'contract' | 'manual' | 'none'
+  snapshotAt: number
+}
+
 // One crew member on a route. Each confirms independently (own token/link) and
 // carries their own pay for THIS route (driver ≠ helper; the route's payRate is
 // not the crew's pay). Confirmation + SMS state is per person.
@@ -47,7 +57,9 @@ export type Assignee = {
   name: string
   phone?: string
   role?: string                 // e.g. Driver / Helper (from staff.role)
-  pay?: string                  // per-person pay for this route, free text ("$175")
+  pay?: string                  // per-person pay, free text ("$175") — display + legacy
+  payCents?: number             // per-person pay, canonical. Snapshotted at assign time.
+  paySource?: 'crew_business' | 'crew_default' | 'manual'
   token: string                 // this crew member's own confirmation-link token
 
   // Confirmation (per person)
@@ -90,6 +102,9 @@ export type RouteRecord = {
   // Crew (source of truth for multi-person assignment)
   assignees?: Assignee[]
   requiresHelper?: boolean       // stamped from the client's setting — needs a driver + helper
+
+  // What the client pays for this route. Snapshotted at create; see RouteFinancials.
+  financials?: RouteFinancials
 
   // Legacy single-assignee mirror (= assignees[0], the "lead"). Kept so existing
   // reads keep working; write via syncLead().
@@ -189,6 +204,17 @@ export function isExpired(r: Pick<RouteRecord, 'routeDate'>): boolean {
   return Date.now() > base + 48 * 3600 * 1000
 }
 
+// Pull cents out of the legacy free-text pay ("$175/route", "175", "$1,250.00").
+// Duplicated from route-pay.parsePayCents on purpose: route-pay imports this
+// module, so importing it back would be a cycle.
+function legacyPayCents(pay?: string): number | null {
+  if (!pay) return null
+  const m = pay.replace(/,/g, '').match(/(\d+(?:\.\d{1,2})?)/)
+  if (!m) return null
+  const n = Number(m[1])
+  return Number.isFinite(n) ? Math.round(n * 100) : null
+}
+
 // ── CRUD ─────────────────────────────────────────────────────────────────────
 function normalize(r: RouteRecord): RouteRecord {
   r.events = Array.isArray(r.events) ? r.events : []
@@ -205,6 +231,15 @@ function normalize(r: RouteRecord): RouteRecord {
           smsSid: r.smsSid, smsStatus: r.smsStatus, smsError: r.smsError, smsSentAt: r.smsSentAt,
         }]
       : []
+  }
+  // Back-fill payCents from the free-text pay on routes written before pay became
+  // numeric, so finance reporting sees historical payouts instead of zeros. Only
+  // fills what's missing — a real snapshot is never overwritten.
+  for (const a of r.assignees) {
+    if (typeof a.payCents !== 'number') {
+      const cents = legacyPayCents(a.pay)
+      if (cents != null) a.payCents = cents
+    }
   }
   return r
 }
@@ -373,14 +408,28 @@ export function toPublicRoute(r: RouteRecord): PublicRoute {
 // Public projection for ONE crew member — their name + their own confirmation
 // status (not the route rollup). The confirm page consumes the same PublicRoute
 // shape, so it needs no changes.
-export function toPublicRouteFor(r: RouteRecord, a: Assignee): PublicRoute {
+//
+// MONEY RULES (do not relax):
+//   • payRate carries THIS crew member's own pay, never the route-level rate and
+//     never another crew member's pay.
+//   • It is omitted entirely unless the admin has enabled showPayInConfirm.
+//   • RouteFinancials (what the client pays, and the profit) is not part of
+//     PublicRoute at all, so it cannot leak through this projection.
+export function toPublicRouteFor(r: RouteRecord, a: Assignee, opts: { showPay?: boolean } = {}): PublicRoute {
   const status: RouteStatus =
     r.status === 'cancelled' ? 'cancelled'
       : r.status === 'completed' ? 'completed'
         : a.confirmedAt ? 'confirmed'
           : a.declinedAt ? 'declined'
             : a.smsSentAt ? 'text_sent' : 'assigned'
-  return { ...toPublicRoute(r), status, assignedStaffName: a.name, confirmedAt: a.confirmedAt, declinedAt: a.declinedAt }
+  return {
+    ...toPublicRoute(r),
+    status,
+    assignedStaffName: a.name,
+    confirmedAt: a.confirmedAt,
+    declinedAt: a.declinedAt,
+    payRate: opts.showPay ? a.pay : undefined,
+  }
 }
 
 // The contractor disclaimer (1099 framing — eligibility/priority, no auto-fine).

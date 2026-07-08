@@ -3,22 +3,25 @@
 import { use, useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { MapPin, Clock, CalendarDays, Truck, DollarSign, User, FileText, ChevronLeft, Send, CheckCircle2, XCircle, Link2, Plus, X } from 'lucide-react'
+import { MapPin, Clock, CalendarDays, Truck, User, FileText, ChevronLeft, Send, CheckCircle2, XCircle, Link2, Plus, X, Lock } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
-import { statusOf, Avatar, scoreColor, fmtLongDay, fmtTs, mapsUrl } from '../ui'
+import { statusOf, Avatar, scoreColor, fmtLongDay, fmtTs, mapsUrl, money, moneyOrDash, profitColor, MoneyInput, centsToInput, looksLikeMoney, osLabel } from '../ui'
 
 type Audit = { at: number; actor: string; action: string }
 type Event = { at: number; type: string }
 type Assignee = {
   staffId: string; name: string; phone?: string; role?: string; pay?: string; token: string
+  payCents?: number; paySource?: 'crew_business' | 'crew_default' | 'manual'
   smsStatus?: string; smsSentAt?: number; confirmedAt?: number; declinedAt?: number; declineReason?: string
 }
+type Financials = { businessPriceCents?: number; priceSource: 'contract' | 'manual' | 'none'; snapshotAt: number }
 type Op = {
   token: string; routeNumber: string; status: string
   businessName: string; reportAddress: string; reportTime: string; routeDate: string
   vehicle?: string; payRate?: string; description?: string; specialNotes?: string; contactPerson?: string; contactPhone?: string
   requiresHelper?: boolean
   assignees?: Assignee[]
+  financials?: Financials
   completedAt?: number; completionNote?: string; completionPhotos?: string[]
   audit?: Audit[]; events?: Event[]
 }
@@ -50,11 +53,23 @@ function Detail({ token }: { token: string }) {
   }, [token])
   useEffect(() => { load() }, [load])
 
+  // A 409 with `warning` means the server refused to save silently — crew pay
+  // exceeds what the route earns. Ask, then retry with the acknowledgement.
   async function patch(body: Record<string, unknown>, tag: string) {
     setBusy(tag); setMsg('')
     try {
-      const res = await fetch(`/api/admin/routes/${token}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(body) })
-      const d = await res.json()
+      const send = (b: Record<string, unknown>) =>
+        fetch(`/api/admin/routes/${token}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(b) })
+
+      let res = await send(body)
+      let d = await res.json()
+
+      if (res.status === 409 && d.warning === 'pay_exceeds_price') {
+        if (!confirm(d.message)) { setBusy(''); return }
+        res = await send({ ...body, acknowledgeWarning: true })
+        d = await res.json()
+      }
+
       if (!res.ok) setMsg(d.error || 'Action failed.')
       else if (d.smsWarning) setMsg(`Text not sent: ${d.smsWarning}`)
       setReassigning(false); await load()
@@ -104,10 +119,12 @@ function Detail({ token }: { token: string }) {
       <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
         <Row Icon={MapPin} label="Report to" val={op.reportAddress} href={mapsUrl(op.reportAddress)} />
         <Row Icon={Truck} label="Equipment" val={op.vehicle || 'Box truck'} />
-        {op.payRate && <Row Icon={DollarSign} label="Pay" val={op.payRate} />}
         {op.contactPerson && <Row Icon={User} label="On-site contact" val={`${op.contactPerson}${op.contactPhone ? ` · ${op.contactPhone}` : ''}`} />}
         {(op.description || op.specialNotes) && <Row Icon={FileText} label="Instructions" val={[op.description, op.specialNotes].filter(Boolean).join(' · ')} />}
       </div>
+
+      {/* Money — admin only */}
+      <RouteMoney op={op} onPatch={patch} busy={busy} />
 
       {/* Crew */}
       <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14 }}>
@@ -134,7 +151,7 @@ function Detail({ token }: { token: string }) {
                 <div key={a.staffId} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: 11, borderRadius: 12, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
                   <Avatar name={a.name} size={40} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: 14.5 }}>{a.name}{a.role ? <span style={{ fontWeight: 500, color: 'var(--muted)', fontSize: 12 }}> · {a.role}</span> : null}{a.pay ? <span style={{ color: '#86efac', fontSize: 12, fontWeight: 700 }}> · {a.pay}</span> : null}</div>
+                    <div style={{ fontWeight: 700, fontSize: 14.5 }}>{a.name}{a.role ? <span style={{ fontWeight: 500, color: 'var(--muted)', fontSize: 12 }}> · {a.role}</span> : null}{a.payCents != null ? <span className="tabular-nums" style={{ color: '#86efac', fontSize: 12, fontWeight: 700 }}> · {money(a.payCents)}</span> : null}</div>
                     <div style={{ fontSize: 12, color: stt.c }}>{stt.t}</div>
                   </div>
                   {live && (
@@ -191,6 +208,127 @@ function Detail({ token }: { token: string }) {
           <button onClick={() => { if (confirm('Cancel this operation?')) patch({ action: 'status', status: 'cancelled' }, 'cancel') }} disabled={busy !== ''} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40, color: '#f87171', marginLeft: 'auto' }}><XCircle size={15} /> Cancel</button>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Route money (ADMIN ONLY) ─────────────────────────────────────────────────
+// Business charge, each crew member's pay, total labour payout, estimated profit.
+// None of this is on the public confirmation page — the crew see only their own
+// pay, and only if the owner enabled it in Settings.
+function RouteMoney({ op, onPatch, busy }: { op: Op; onPatch: (b: Record<string, unknown>, tag: string) => Promise<void>; busy: string }) {
+  const [editing, setEditing] = useState(false)
+  const [price, setPrice] = useState(centsToInput(op.financials?.businessPriceCents))
+  const [pays, setPays] = useState<Record<string, string>>(() =>
+    Object.fromEntries((op.assignees ?? []).map(a => [a.staffId, centsToInput(a.payCents)])))
+  const [err, setErr] = useState('')
+
+  const frozen = op.status === 'completed' || op.status === 'cancelled'
+  const crew = (op.assignees ?? []).filter(a => !a.declinedAt)
+  const revenue = op.financials?.businessPriceCents ?? null
+  const payout = crew.reduce((s, a) => s + (a.payCents ?? 0), 0)
+  const unpriced = crew.filter(a => a.payCents == null).length
+  const profit = revenue == null ? null : revenue - payout
+
+  const priceInvalid = price.trim() !== '' && !looksLikeMoney(price)
+  const payInvalid = Object.values(pays).some(v => v.trim() !== '' && !looksLikeMoney(v))
+  const invalid = priceInvalid || payInvalid
+
+  async function save() {
+    if (invalid) { setErr('Amounts must be positive dollar values.'); return }
+    if (!price.trim()) { setErr('Enter what this route charges the client.'); return }
+    setErr('')
+    const crewPay = Object.entries(pays).filter(([, v]) => v.trim()).map(([staffId, pay]) => ({ staffId, pay }))
+    await onPatch({ action: 'money', businessPrice: price.trim(), crewPay }, 'money')
+    setEditing(false)
+  }
+
+  return (
+    <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 14 }}>
+        <div style={{ ...osLabel, display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          <Lock size={11} /> Money · admin only
+        </div>
+        {!editing && !frozen && <button onClick={() => setEditing(true)} className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Edit</button>}
+      </div>
+
+      {frozen && (
+        <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', marginBottom: 13, padding: '10px 12px', borderRadius: 10, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+          <Lock size={13} style={{ color: 'var(--muted)', flexShrink: 0, marginTop: 2 }} />
+          <div style={{ fontSize: 12.5, color: 'var(--muted)', lineHeight: 1.5 }}>This route is {op.status}. It keeps the price and pay it ran at — changing a rate elsewhere won&rsquo;t touch it.</div>
+        </div>
+      )}
+
+      {!editing ? (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(120px, 100%), 1fr))', gap: 8, marginBottom: crew.length ? 14 : 0 }}>
+            <Tile label="Business charge" val={moneyOrDash(revenue)} />
+            <Tile label="Labour payout" val={money(payout)} tone={payout > 0 ? '#fca5a5' : undefined} />
+            <Tile label="Est. profit" val={moneyOrDash(profit)} tone={profitColor(profit)} />
+          </div>
+
+          {revenue == null && (
+            <p style={{ fontSize: 12.5, color: '#fcd34d', marginBottom: crew.length ? 12 : 0 }}>
+              No contract rate for {op.businessName}. Set one on the business, or price this route by hand.
+            </p>
+          )}
+          {unpriced > 0 && (
+            <p style={{ fontSize: 12.5, color: '#fcd34d', marginBottom: crew.length ? 12 : 0 }}>
+              {unpriced} crew member{unpriced === 1 ? ' has' : 's have'} no pay set — profit above is optimistic.
+            </p>
+          )}
+
+          {crew.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {crew.map(a => (
+                <div key={a.staffId} style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 13.5 }}>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {a.name}{a.role ? <span style={{ color: 'var(--muted)', fontSize: 12 }}> · {a.role}</span> : null}
+                  </span>
+                  {a.paySource === 'manual' && <span style={{ fontSize: 10, fontWeight: 800, padding: '1px 7px', borderRadius: 99, background: 'rgba(255,255,255,.08)', color: 'var(--muted)' }}>custom</span>}
+                  <span className="tabular-nums" style={{ fontWeight: 700, color: a.payCents == null ? '#fcd34d' : 'var(--text)' }}>{a.payCents == null ? 'not set' : money(a.payCents)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>What {op.businessName} pays for this route</div>
+            <MoneyInput value={price} onChange={setPrice} invalid={priceInvalid} aria-label="Business charge" disabled={busy !== ''} />
+          </div>
+          {crew.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', marginBottom: 7 }}>Crew pay for this route</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {crew.map(a => (
+                  <div key={a.staffId} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <span style={{ flex: 1, fontSize: 13.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
+                    <div style={{ width: 130 }}>
+                      <MoneyInput value={pays[a.staffId] ?? ''} onChange={v => setPays(p => ({ ...p, [a.staffId]: v }))} invalid={!!(pays[a.staffId] ?? '').trim() && !looksLikeMoney(pays[a.staffId] ?? '')} aria-label={`Pay for ${a.name}`} disabled={busy !== ''} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {err && <p style={{ color: '#f87171', fontSize: 13, marginTop: 10 }}>{err}</p>}
+          <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+            <button onClick={save} disabled={busy !== '' || invalid} className="btn os-tap" style={{ borderRadius: 11, height: 40, flex: 1, justifyContent: 'center', opacity: busy !== '' || invalid ? .55 : 1 }}>{busy === 'money' ? 'Saving…' : 'Save money'}</button>
+            <button onClick={() => { setEditing(false); setErr(''); setPrice(centsToInput(op.financials?.businessPriceCents)); setPays(Object.fromEntries((op.assignees ?? []).map(a => [a.staffId, centsToInput(a.payCents)]))) }} disabled={busy !== ''} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40 }}>Cancel</button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function Tile({ label, val, tone }: { label: string; val: string; tone?: string }) {
+  return (
+    <div style={{ padding: '11px 12px', borderRadius: 11, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+      <div className="tabular-nums" style={{ fontSize: 19, fontWeight: 800, letterSpacing: '-.02em', color: tone || 'var(--text)' }}>{val}</div>
+      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{label}</div>
     </div>
   )
 }

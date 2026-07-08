@@ -14,7 +14,7 @@ type PublicRoute = {
   reportTime: string
   routeDate: string
   description?: string
-  payRate?: string
+  payRate?: string   // THIS crew member's own pay, and only if the owner enabled it
   vehicle?: string
   specialNotes?: string
   assignedStaffName?: string
@@ -138,7 +138,7 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
         { Icon: Clock, label: 'Report time', val: route.reportTime },
         { Icon: Building2, label: 'Client', val: route.businessName },
         { Icon: Truck, label: 'Vehicle / equipment', val: route.vehicle },
-        { Icon: DollarSign, label: 'Pay / rate', val: route.payRate },
+        { Icon: DollarSign, label: 'Your pay', val: route.payRate },   // this crew member's own pay; omitted entirely when the owner disables it
         { Icon: User, label: 'On-site contact', val: route.contactPerson },
         { Icon: Phone, label: 'Contact phone', val: route.contactPhone },
       ] as { Icon: typeof CalendarDays; label: string; val?: string }[])

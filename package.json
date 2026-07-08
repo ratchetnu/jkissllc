@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:finance": "npx --yes tsx@4 --test scripts/finance.test.ts"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",

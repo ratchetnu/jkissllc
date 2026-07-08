@@ -3,15 +3,29 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Building2, ClipboardList, MapPin, CalendarClock, Users, CheckCircle2, ChevronLeft, Send, Sparkles, Truck, Phone } from 'lucide-react'
+import { Building2, ClipboardList, MapPin, CalendarClock, Users, CheckCircle2, ChevronLeft, Send, Sparkles, Truck, Phone, Lock } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
-import { ymd, fmtLongDay, scoreColor, DOW, weekdaysLabel, Avatar } from '../ui'
+import { ymd, fmtLongDay, scoreColor, DOW, weekdaysLabel, Avatar, MoneyInput, money, moneyOrDash, profitColor, centsToInput, looksLikeMoney } from '../ui'
 
 const VEHICLE = 'Box truck' // J KISS is box-truck only — never asked, always this.
 
-type Staff = { id: string; name: string; phone?: string; role?: string; active: boolean }
+type Staff = { id: string; name: string; phone?: string; role?: string; active: boolean; defaultPayCents?: number; payByBusiness?: Record<string, number>; payActive?: boolean }
 type Stats = Record<string, { score: number | null }>
 type RouteLite = { assignedStaffId?: string; businessName: string; status: string; routeDate: string }
+type BusinessRec = { key: string; name: string; contractRateCents?: number; pricingActive?: boolean }
+
+const bizKey = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ')
+
+// Mirrors lib/finance.resolveCrewPay so the builder can preview the same number
+// the server will snapshot. The server remains the source of truth.
+function previewCrewPay(s: Staff | undefined, businessName: string): number | undefined {
+  if (!s || s.payActive === false) return undefined
+  const o = s.payByBusiness?.[bizKey(businessName)]
+  if (typeof o === 'number') return o
+  return typeof s.defaultPayCents === 'number' ? s.defaultPayCents : undefined
+}
+const dollarsToCents = (v: string): number | undefined =>
+  looksLikeMoney(v) ? Math.round(Number(v.replace(/[$,\s]/g, '')) * 100) : undefined
 
 const STEP_META = [
   { key: 'business', title: 'Which business is this for?', Icon: Building2 },
@@ -35,7 +49,9 @@ function Builder() {
   const [staff, setStaff] = useState<Staff[]>([])
   const [stats, setStats] = useState<Stats>({})
   const [routes, setRoutes] = useState<RouteLite[]>([])
-  const [form, setForm] = useState({ businessName: '', description: '', payRate: '', reportAddress: '', contactPerson: '', contactPhone: '', routeDate: '', reportTime: '', staffId: '', specialNotes: '' })
+  const [bizRecords, setBizRecords] = useState<BusinessRec[]>([])
+  const [form, setForm] = useState({ businessName: '', description: '', businessPrice: '', reportAddress: '', contactPerson: '', contactPhone: '', routeDate: '', reportTime: '', staffId: '', specialNotes: '' })
+  const [priceTouched, setPriceTouched] = useState(false)
   const [repeats, setRepeats] = useState(false)
   const [weekdays, setWeekdays] = useState<number[]>([])
   const [crew, setCrew] = useState<{ staffId: string; pay: string }[]>([])
@@ -48,15 +64,47 @@ function Builder() {
     Promise.all([
       fetch('/api/admin/routes', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
       fetch('/api/admin/staff', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
-    ]).then(([r, s]) => {
+      fetch('/api/admin/businesses', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
+    ]).then(([r, s, b]) => {
       setRoutes(r.items || []); setStats(r.stats || {})
       setStaff((s.items || []).filter((x: Staff) => x.active))
+      setBizRecords(b.items || [])
     })
   }, [])
 
   const set = (k: keyof typeof form, v: string) => setForm(f => ({ ...f, [k]: v }))
   const businesses = useMemo(() => [...new Set(routes.map(r => r.businessName).filter(Boolean))].sort(), [routes])
   const today = ymd(new Date())
+
+  // The client's contract rate, if one is on file and active.
+  const contractCents = useMemo(() => {
+    const rec = bizRecords.find(b => b.key === bizKey(form.businessName))
+    return rec && rec.pricingActive !== false ? rec.contractRateCents : undefined
+  }, [bizRecords, form.businessName])
+
+  // The price shown is DERIVED: the contract rate until the owner types over it.
+  // (An effect that wrote the rate into form state would fight the user's typing
+  // and cascade a render every time the business changed.)
+  const businessPrice = priceTouched ? form.businessPrice : centsToInput(contractCents)
+
+  // Each selected crew member's pay: what the owner typed, else their configured
+  // rate for this client.
+  const crewWithPay = useMemo(() =>
+    crew.map(c => {
+      const s = staff.find(x => x.id === c.staffId)
+      const resolved = previewCrewPay(s, form.businessName)
+      const cents = c.pay.trim() ? dollarsToCents(c.pay) : resolved
+      return { ...c, staff: s, resolvedCents: resolved, cents }
+    }).filter((x): x is typeof x & { staff: Staff } => !!x.staff),
+  [crew, staff, form.businessName])
+
+  // Live preview of the same math the server will do.
+  const priceCents = businessPrice.trim() ? dollarsToCents(businessPrice) : undefined
+  const payoutCents = crewWithPay.reduce((sum, c) => sum + (c.cents ?? 0), 0)
+  const unpricedCrew = crewWithPay.filter(c => c.cents == null).length
+  const profitCents = priceCents == null ? null : priceCents - payoutCents
+  const priceInvalid = businessPrice.trim() !== '' && !looksLikeMoney(businessPrice)
+  const payInvalid = crew.some(c => c.pay.trim() !== '' && !looksLikeMoney(c.pay))
 
   // Upcoming, still-live workload per employee.
   const workload = useMemo(() => {
@@ -87,6 +135,8 @@ function Builder() {
 
   const canContinue = (): boolean => {
     if (step === 0) return form.businessName.trim().length > 0
+    if (step === 1) return !priceInvalid
+    if (step === 4) return !payInvalid
     if (step === 2) return form.reportAddress.trim().length > 0
     if (step === 3) return repeats ? (weekdays.length > 0 && form.reportTime.trim().length > 0) : (/^\d{4}-\d{2}-\d{2}$/.test(form.routeDate) && form.reportTime.trim().length > 0)
     return true
@@ -97,12 +147,14 @@ function Builder() {
     try {
       if (repeats) {
         // Recurring contract → a template that auto-generates + assigns routes.
+        // Generated routes snapshot the client's contract rate at generation time,
+        // so the template itself carries no price.
         const res = await fetch('/api/admin/route-templates', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
           body: JSON.stringify({
             label: `${form.businessName} — ${weekdaysLabel(weekdays)}`, businessName: form.businessName,
             reportAddress: form.reportAddress, reportTime: form.reportTime, contactPerson: form.contactPerson,
-            contactPhone: form.contactPhone, vehicle: VEHICLE, payRate: form.payRate, description: form.description,
+            contactPhone: form.contactPhone, vehicle: VEHICLE, description: form.description,
             specialNotes: form.specialNotes, weekdays, defaultStaffId: crew[0]?.staffId || undefined, autoNotify: crew.length > 0,
           }),
         })
@@ -114,11 +166,28 @@ function Builder() {
         setDone({ recurring: true, generated, schedule: weekdaysLabel(weekdays) })
         return
       }
-      const res = await fetch('/api/admin/routes', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-        body: JSON.stringify({ ...form, vehicle: VEHICLE, crew: crew.filter(c => c.staffId) }),
+
+      const payload = {
+        ...form, businessPrice, vehicle: VEHICLE,
+        // Only send crew pay the owner actually typed — a blank lets the server
+        // resolve the person's configured rate.
+        crew: crew.filter(c => c.staffId).map(c => ({ staffId: c.staffId, pay: c.pay.trim() || undefined })),
+      }
+      const post = (b: Record<string, unknown>) => fetch('/api/admin/routes', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(b),
       })
-      const d = await res.json()
+
+      let res = await post(payload)
+      let d = await res.json()
+
+      // The server refuses to silently save a route that pays out more than it
+      // earns. Confirm, then retry with the acknowledgement.
+      if (res.status === 409 && d.warning === 'pay_exceeds_price') {
+        if (!confirm(d.message)) return
+        res = await post({ ...payload, acknowledgeWarning: true })
+        d = await res.json()
+      }
+
       if (!res.ok) { setError(d.error || 'Could not create the assignment.'); return }
       setDone({ routeNumber: d.route?.routeNumber || '', token: d.route?.token, assigned: crew.length > 0 })
     } catch { setError('Network error — please try again.') } finally { setSubmitting(false) }
@@ -159,7 +228,7 @@ function Builder() {
         )}
         {error && <p style={{ color: '#f87171', fontSize: 13.5, marginTop: 12 }}>{error}</p>}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
-          <button onClick={() => { setDone(null); setStep(0); setRepeats(false); setWeekdays([]); setCrew([]); setForm({ businessName: form.businessName, description: '', payRate: '', reportAddress: '', contactPerson: '', contactPhone: '', routeDate: '', reportTime: '', staffId: '', specialNotes: '' }) }} className="btn os-tap" style={{ borderRadius: 12, justifyContent: 'center' }}>Create another</button>
+          <button onClick={() => { setDone(null); setStep(0); setRepeats(false); setWeekdays([]); setCrew([]); setPriceTouched(false); setForm({ businessName: form.businessName, description: '', businessPrice: '', reportAddress: '', contactPerson: '', contactPhone: '', routeDate: '', reportTime: '', staffId: '', specialNotes: '' }) }} className="btn os-tap" style={{ borderRadius: 12, justifyContent: 'center' }}>Create another</button>
           <Link href="/admin/operations" className="btn-ghost os-tap" style={{ borderRadius: 12, justifyContent: 'center' }}>Back to Operations</Link>
         </div>
       </div>
@@ -208,7 +277,17 @@ function Builder() {
               <span style={{ fontSize: 12, color: 'var(--muted)' }}>· standard equipment</span>
             </div>
             <div><span style={labelCss}>What’s the job?</span><textarea autoFocus placeholder="e.g. Palletized delivery run, 12 stops…" value={form.description} onChange={e => set('description', e.target.value)} rows={3} style={{ ...field, resize: 'vertical' }} /></div>
-            <div><span style={labelCss}>Pay for this route (optional)</span><input placeholder="e.g. $175/route" value={form.payRate} onChange={e => set('payRate', e.target.value)} style={field} /></div>
+            <div>
+              <span style={labelCss}>What {form.businessName || 'the business'} pays for this route</span>
+              <MoneyInput value={businessPrice} onChange={v => { setPriceTouched(true); set('businessPrice', v) }} invalid={priceInvalid} aria-label="Business charge" />
+              {priceInvalid ? (
+                <p style={{ fontSize: 12.5, color: '#f87171', marginTop: 6 }}>Enter a positive dollar amount, e.g. 350 or 350.00.</p>
+              ) : contractCents != null && !priceTouched ? (
+                <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 6 }}>From their contract rate ({money(contractCents)}). Type over it to price this route differently.</p>
+              ) : contractCents == null ? (
+                <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 6 }}>No contract rate on file for this client. Leave blank and this route won’t show revenue or profit.</p>
+              ) : null}
+            </div>
           </div>
         )}
 
@@ -280,11 +359,21 @@ function Builder() {
                     </div>
                     <div style={{ width: 22, height: 22, borderRadius: 999, flexShrink: 0, border: `2px solid ${sel ? 'var(--red)' : 'var(--line)'}`, background: sel ? 'var(--red)' : 'transparent', display: 'grid', placeItems: 'center' }}>{sel && <CheckCircle2 size={16} color="#fff" />}</div>
                   </button>
-                  {sel && (
-                    <div style={{ padding: '0 14px 12px 73px' }}>
-                      <input value={payVal} onChange={e => setCrewPay(s.id, e.target.value)} placeholder="Their pay for this route (e.g. $175)" style={{ ...field, padding: '9px 12px', fontSize: 14 }} />
-                    </div>
-                  )}
+                  {sel && (() => {
+                    const resolved = previewCrewPay(s, form.businessName)
+                    const bad = payVal.trim() !== '' && !looksLikeMoney(payVal)
+                    return (
+                      <div style={{ padding: '0 14px 12px 73px' }}>
+                        <MoneyInput value={payVal} onChange={v => setCrewPay(s.id, v)} invalid={bad} placeholder={resolved != null ? (resolved / 100).toFixed(2) : '0.00'} aria-label={`Pay for ${s.name}`} />
+                        <p style={{ fontSize: 12, color: bad ? '#f87171' : 'var(--muted)', marginTop: 5 }}>
+                          {bad ? 'Enter a positive dollar amount.'
+                            : payVal.trim() ? 'Custom pay for this route only.'
+                              : resolved != null ? `Their rate: ${money(resolved)}. Leave blank to use it.`
+                                : 'No pay rate set for them — add one in Employees, or type one here.'}
+                        </p>
+                      </div>
+                    )
+                  })()}
                 </div>
               )
             })}
@@ -295,11 +384,38 @@ function Builder() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div className="os-card" style={{ padding: 18 }}>
               <SummaryRow label="Business" val={form.businessName} />
-              <SummaryRow label="Work" val={[form.description || 'Contract route', `· ${VEHICLE}`, form.payRate && `· ${form.payRate}`].filter(Boolean).join(' ')} />
+              <SummaryRow label="Work" val={[form.description || 'Contract route', `· ${VEHICLE}`].join(' ')} />
               <SummaryRow label="Report to" val={form.reportAddress} />
               <SummaryRow label="When" val={repeats ? `Repeats ${weekdaysLabel(weekdays)} · ${form.reportTime}` : `${fmtLongDay(form.routeDate)} · ${form.reportTime}`} />
-              <SummaryRow label={repeats ? 'Crew (each route)' : 'Crew'} val={crewStaff.length ? crewStaff.map(c => `${c.staff.name.split(' ')[0]}${c.pay ? ` (${c.pay})` : ''}`).join(', ') : repeats ? 'Unassigned (drafts)' : 'Unassigned (draft)'} last />
+              <SummaryRow label={repeats ? 'Crew (each route)' : 'Crew'} val={crewStaff.length ? crewStaff.map(c => c.staff.name.split(' ')[0]).join(', ') : repeats ? 'Unassigned (drafts)' : 'Unassigned (draft)'} last />
             </div>
+
+            {/* Money — admin only. Never shown to the crew. */}
+            {!repeats && (
+              <div className="os-card" style={{ padding: 18 }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 12 }}>
+                  <Lock size={11} /> Money · admin only
+                </div>
+                <SummaryRow label="Business charge" val={moneyOrDash(priceCents ?? null)} />
+                {crewWithPay.map(c => (
+                  <SummaryRow key={c.staffId} label={`${c.staff.name.split(' ')[0]}${c.staff.role ? ` (${c.staff.role})` : ''}`} val={c.cents == null ? 'no pay set' : `−${money(c.cents)}`} />
+                ))}
+                <SummaryRow label="Total labour payout" val={`−${money(payoutCents)}`} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, paddingTop: 11, marginTop: 4, borderTop: '1px solid var(--line)' }}>
+                  <span style={{ fontSize: 13, fontWeight: 800 }}>Estimated profit</span>
+                  <span className="tabular-nums" style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-.02em', color: profitColor(profitCents) }}>{moneyOrDash(profitCents)}</span>
+                </div>
+                {profitCents != null && profitCents < 0 && (
+                  <p style={{ fontSize: 12.5, color: '#fca5a5', marginTop: 9 }}>This route pays out more than it earns. You&rsquo;ll be asked to confirm before it saves.</p>
+                )}
+                {unpricedCrew > 0 && (
+                  <p style={{ fontSize: 12.5, color: '#fcd34d', marginTop: 9 }}>{unpricedCrew} crew member{unpricedCrew === 1 ? ' has' : 's have'} no pay set — profit shown is optimistic.</p>
+                )}
+                {priceCents == null && (
+                  <p style={{ fontSize: 12.5, color: '#fcd34d', marginTop: 9 }}>No price on this route, so it won&rsquo;t count toward revenue or profit.</p>
+                )}
+              </div>
+            )}
             {repeats ? (
               <div style={{ padding: 14, borderRadius: 14, background: 'rgba(224,0,42,.08)', border: '1px solid rgba(224,0,42,.22)' }}>
                 <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'var(--text)' }}>Routes generate automatically for <b>{weekdaysLabel(weekdays)}</b>, 2 weeks out and rolling.{primaryStaff?.phone ? ` Each one texts ${primaryStaff.name.split(' ')[0]} to confirm.` : ''}</p>
@@ -320,7 +436,7 @@ function Builder() {
         {step > 0 && <button onClick={() => setStep(s => s - 1)} className="btn-ghost os-tap" style={{ borderRadius: 12, paddingLeft: 16, paddingRight: 18 }}><ChevronLeft size={17} /> Back</button>}
         {step < 5
           ? <button onClick={() => canContinue() && setStep(s => s + 1)} disabled={!canContinue()} className="btn os-tap" style={{ borderRadius: 12, flex: 1, justifyContent: 'center', opacity: canContinue() ? 1 : .5 }}>Continue</button>
-          : <button onClick={submit} disabled={submitting} className="btn os-tap" style={{ borderRadius: 12, flex: 1, justifyContent: 'center' }}>{submitting ? 'Creating…' : repeats ? 'Create recurring contract' : crew.length ? 'Create assignment' : 'Save as draft'}</button>}
+          : <button onClick={submit} disabled={submitting || priceInvalid || payInvalid} className="btn os-tap" style={{ borderRadius: 12, flex: 1, justifyContent: 'center', opacity: submitting || priceInvalid || payInvalid ? .5 : 1 }}>{submitting ? 'Creating…' : repeats ? 'Create recurring contract' : crew.length ? 'Create assignment' : 'Save as draft'}</button>}
       </div>
     </div>
   )
