@@ -20,6 +20,14 @@ type MarkProps = {
 };
 
 export function OpsPilotMark({ size = 24, className, style, title }: MarkProps) {
+  // At the sizes the mark appears inline (login footer, dashboard header, ~15px),
+  // a 1.5-unit stroke at 30% opacity renders under a physical pixel and the ring
+  // disappears — the mark reads as a dot. Thicken and darken it as it shrinks so
+  // the aperture survives, rather than dropping it and losing the identity.
+  const small = size < 18;
+  const ringStroke = small ? 2.4 : 1.5;
+  const ringOpacity = small ? 0.5 : 0.3;
+
   return (
     <svg
       viewBox="0 0 32 32"
@@ -34,11 +42,11 @@ export function OpsPilotMark({ size = 24, className, style, title }: MarkProps) 
       focusable="false"
     >
       {/* Aperture ring — the control center */}
-      <circle cx="16" cy="16" r="12.25" stroke="currentColor" strokeWidth="1.5" opacity="0.3" />
+      <circle cx="16" cy="16" r="12.25" stroke="currentColor" strokeWidth={ringStroke} opacity={ringOpacity} />
       {/* Needle, north — the bearing */}
       <path d="M16 5.6 L18.7 16 L13.3 16 Z" fill="currentColor" />
       {/* Needle, south — the counterweight */}
-      <path d="M16 26.4 L18.7 16 L13.3 16 Z" fill="currentColor" opacity="0.32" />
+      <path d="M16 26.4 L18.7 16 L13.3 16 Z" fill="currentColor" opacity={small ? 0.42 : 0.32} />
     </svg>
   );
 }
@@ -69,7 +77,10 @@ export function OpsPilotWordmark({
     >
       OpsPilot
       {tm && (
-        <sup style={{ fontSize: '0.5em', fontWeight: 600, marginLeft: '0.12em', top: '-0.55em', position: 'relative' }}>
+        // 0.5em read as a design element rather than a legal mark once the wordmark
+        // hit display sizes (~37px of ™ on the /opspilot h1). A trademark should be
+        // noticed only if you look for it.
+        <sup style={{ fontSize: '0.34em', fontWeight: 600, marginLeft: '0.14em', top: '-0.9em', position: 'relative' }}>
           ™
         </sup>
       )}
