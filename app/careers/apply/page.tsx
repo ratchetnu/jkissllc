@@ -74,7 +74,12 @@ export default function ApplyPage() {
   // assessment + scenarios + docs
   const [skills, setSkills] = useState<Skills>({})
   const [scenarios, setScenarios] = useState<Record<string, string>>({})
+  // `docs` holds the stored reference we submit: a public URL for the headshot, a
+  // private blob pathname for identity documents. A pathname is not loadable in an
+  // <img>, so previews come from `previews` — the local data URL we already read
+  // off the file. The applicant sees their photo; the bytes never round-trip.
   const [docs, setDocs] = useState<Partial<Record<DocKind, string>>>({})
+  const [previews, setPreviews] = useState<Partial<Record<DocKind, string>>>({})
   const [docBusy, setDocBusy] = useState<DocKind | null>(null)
   const [headshotWarn, setHeadshotWarn] = useState(false)
   // submit
@@ -109,7 +114,10 @@ export default function ApplyPage() {
       if (kind === 'headshot') setHeadshotWarn(!(await looksWhiteBg(dataUrl)))
       const res = await fetch('/api/careers/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl, kind }) })
       const j = await res.json()
-      if (res.ok && j.url) setDocs(prev => ({ ...prev, [kind]: j.url }))
+      if (res.ok && j.url) {
+        setDocs(prev => ({ ...prev, [kind]: j.url }))
+        setPreviews(prev => ({ ...prev, [kind]: dataUrl }))
+      }
       else setErr(j.error ?? 'Upload failed — please try again.')
     } catch { setErr('That file could not be uploaded. Try a different photo.') }
     finally { setDocBusy(null) }
@@ -288,9 +296,9 @@ export default function ApplyPage() {
                           <input type="file" accept="image/*" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) uploadDoc(d.kind, f) }} disabled={docBusy === d.kind} style={{ display: 'none' }} />
                         </label>
                       </div>
-                      {docs[d.kind] && (
+                      {previews[d.kind] && (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={docs[d.kind]} alt="" style={{ marginTop: 10, maxHeight: 120, borderRadius: 8, border: '1px solid rgba(255,255,255,.1)' }} />
+                        <img src={previews[d.kind]} alt="" style={{ marginTop: 10, maxHeight: 120, borderRadius: 8, border: '1px solid rgba(255,255,255,.1)' }} />
                       )}
                       {d.kind === 'headshot' && headshotWarn && (
                         <p className="text-xs mt-2" style={{ color: '#fbbf24' }}>⚠️ This doesn&apos;t look like a plain white background. It may be rejected for your badge — see the rules below.</p>

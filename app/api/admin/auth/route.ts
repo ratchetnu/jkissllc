@@ -48,6 +48,31 @@ async function clearFailures(ip: string): Promise<void> {
   }
 }
 
+/**
+ * Compare two secrets without leaking anything through timing.
+ *
+ * A plain `!==` bails at the first differing byte, so response time tracks how many
+ * leading characters an attacker guessed correctly. We hash both sides first: the
+ * digests are always 32 bytes, so the comparison below is fixed-length and the
+ * loop never short-circuits — which also means the PASSWORD'S LENGTH doesn't leak
+ * (a plain length check would be its own oracle).
+ *
+ * The `timingSafeEqual` in _lib/session.ts compares HMAC signatures, which are
+ * already fixed-length, so its early length return is fine there and wrong here.
+ */
+async function secretsMatch(a: string, b: string): Promise<boolean> {
+  const enc = new TextEncoder()
+  const [x, y] = await Promise.all([
+    crypto.subtle.digest('SHA-256', enc.encode(a)),
+    crypto.subtle.digest('SHA-256', enc.encode(b)),
+  ])
+  const ax = new Uint8Array(x)
+  const by = new Uint8Array(y)
+  let diff = 0
+  for (let i = 0; i < ax.length; i++) diff |= ax[i] ^ by[i]
+  return diff === 0
+}
+
 export async function POST(req: NextRequest) {
   if (!process.env.ADMIN_PASSWORD) {
     return NextResponse.json({ valid: false, error: 'Admin auth not configured' }, { status: 500 })
@@ -67,7 +92,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ valid: false }, { status: 400 })
   }
 
-  if (password !== process.env.ADMIN_PASSWORD) {
+  if (!(await secretsMatch(password, process.env.ADMIN_PASSWORD))) {
     await recordFailure(ip)
     return NextResponse.json({ valid: false }, { status: 401 })
   }

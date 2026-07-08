@@ -208,7 +208,15 @@ export async function GET(req: NextRequest) {
   const dryRun = new URL(req.url).searchParams.get('dryRun') === '1'
   try {
     const counts = dryRun ? { skipped: 'reminders (dry-run)' } : await run()
-    const templates = dryRun ? { skipped: 'templates (dry-run)' } : await runTemplates(Date.now())
+    // Template generation is isolated: nextRouteNumber() now throws rather than
+    // minting a possibly-duplicate number when Redis is unreachable, and a throw
+    // here would otherwise skip runRoutes() below — silencing the crew's route
+    // texts for the whole day. Generating no routes is recoverable; not texting
+    // the drivers is not.
+    const templates = dryRun ? { skipped: 'templates (dry-run)' } : await runTemplates(Date.now()).catch(e => {
+      console.error('[cron/templates]', e)
+      return { error: 'template generation failed' }
+    })
     const routes = dryRun ? { skipped: 'routes (dry-run)' } : await runRoutes(Date.now())
     const cleanup = await cleanupAbandonedHolds(Date.now(), dryRun)
     // Post any weekly claim deductions whose pay week has closed. Idempotent per

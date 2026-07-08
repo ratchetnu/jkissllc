@@ -620,9 +620,9 @@ const ID_RE = /^[a-f0-9]{16,}$/i
 
 export const generateClaimId = generateToken
 
+// No Redis fallback on purpose — see the note in lib/bookings.ts.
 export async function nextClaimNumber(): Promise<string> {
-  let n: number
-  try { n = await redis.incr(KEY_COUNTER) } catch { n = Date.now() % 100000 }
+  const n = await redis.incr(KEY_COUNTER)
   return `JK-C-${1000 + n}`
 }
 

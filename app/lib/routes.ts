@@ -194,9 +194,10 @@ export function generateToken(): string {
 }
 const TOKEN_RE = /^[a-f0-9]{16,}$/i
 
+// No Redis fallback on purpose — a duplicate route number is worse than a failed
+// create. See the note in lib/bookings.ts.
 export async function nextRouteNumber(): Promise<string> {
-  let n: number
-  try { n = await redis.incr(KEY_COUNTER) } catch { n = Date.now() % 100000 }
+  const n = await redis.incr(KEY_COUNTER)
   return `JK-R-${1000 + n}`
 }
 

@@ -63,6 +63,23 @@ export type DocKind = 'drivers_license' | 'id' | 'ss_card' | 'headshot'
 
 export type RequiredDoc = { kind: DocKind; label: string; help: string }
 
+/**
+ * Identity documents. These are government-issued PII (a Social Security card, a
+ * driver's license, a state ID) and are stored in a PRIVATE blob — never at a URL
+ * anyone can open. They are readable only by a signed-in admin, streamed through
+ * /api/admin/careers/doc.
+ *
+ * `headshot` is deliberately NOT in this set: it is a badge photo that flows into
+ * staff avatars and crew-facing screens, and it carries no identity data. Making
+ * it private would break those surfaces for no security gain.
+ *
+ * If you add a DocKind that photographs a government document, add it here too.
+ */
+export const SENSITIVE_DOC_KINDS: readonly DocKind[] = ['drivers_license', 'id', 'ss_card']
+
+export const isSensitiveDoc = (kind: string): kind is DocKind =>
+  (SENSITIVE_DOC_KINDS as readonly string[]).includes(kind)
+
 export const REQUIRED_DOCS: Record<Position, RequiredDoc[]> = {
   driver: [
     { kind: 'drivers_license', label: "Driver's License", help: 'Clear photo of the front. Must be valid and unexpired.' },
