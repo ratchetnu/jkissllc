@@ -15,7 +15,7 @@ const MORE_TOOLS = [
   { href: '/admin/availability', label: 'Availability', Icon: CalendarCheck },
   { href: '/admin/disposal', label: 'Disposal Pricing', Icon: Trash2 },
   { href: '/admin/policy', label: 'Policy', Icon: ScrollText },
-  { href: '/admin', label: 'Analytics', Icon: BarChart3 },
+  { href: '/admin/analytics', label: 'Analytics', Icon: BarChart3 },
 ]
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {

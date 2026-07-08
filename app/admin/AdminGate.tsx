@@ -32,7 +32,7 @@ const NAV_GROUPS: { label: string; items: { href: string; label: string; badge?:
   { label: 'Business', items: [
     { href: '/admin/disposal', label: 'Disposal Pricing' },
     { href: '/admin/policy', label: 'Policy' },
-    { href: '/admin', label: 'Analytics' },
+    { href: '/admin/analytics', label: 'Analytics' },
   ] },
 ]
 
