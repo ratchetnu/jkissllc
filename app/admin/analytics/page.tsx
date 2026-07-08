@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import AdminGate from '../AdminGate'
 import { useState, useEffect, useCallback } from 'react'
 import { useIdleLogout } from '../useIdleLogout'
 import { SkeletonStats, SkeletonList } from '../../components/Skeleton'
@@ -150,9 +151,9 @@ function PaymentStatusBar({ status }: { status: BookingAnalytics['paymentStatus'
   )
 }
 
-export default function AdminPage() {
+function AnalyticsInner() {
   const [password, setPassword] = useState('')
-  const [authed, setAuthed] = useState(false)
+  const [authed, setAuthed] = useState(true)  // OS shell gates auth; content only renders when signed in
   const [authError, setAuthError] = useState('')
   const [authLoading, setAuthLoading] = useState(false)
 
@@ -369,40 +370,11 @@ export default function AdminPage() {
     </header>
   )
 
-  // ── Login ─────────────────────────────────────────────────────────────────
-  if (!authed) {
-    return (
-      <>
-        <PortalHeader />
-        <main className="flex min-h-screen items-center justify-center px-6 pt-20"
-          style={{ background: 'var(--bg)', color: 'var(--text)' }}>
-          <div className="glass-card w-full max-w-sm p-8" style={{ borderRadius: '20px' }}>
-            <p className="text-xl font-black text-white mb-1" style={{ letterSpacing: '-0.03em' }}>
-              J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
-            </p>
-            <p className="text-sm mb-6" style={{ color: 'var(--muted)' }}>Admin — enter password to continue</p>
-            <form onSubmit={handleLogin} className="flex flex-col gap-4">
-              <input type="password" placeholder="Admin password" value={password}
-                onChange={e => setPassword(e.target.value)} style={iStyle} required autoFocus />
-              {authError && <p className="text-sm" style={{ color: '#f87171' }}>{authError}</p>}
-              <button type="submit" disabled={authLoading} className="btn w-full" style={{ justifyContent: 'center' }}>
-                {authLoading ? 'Checking…' : 'Sign In →'}
-              </button>
-            </form>
-          </div>
-        </main>
-      </>
-    )
-  }
-
-  // ── Dashboard ─────────────────────────────────────────────────────────────
+  // ── Dashboard (chrome is provided by the OS shell) ──────────────────────────
   const noUpstash = error.includes('UPSTASH')
 
   return (
-    <>
-      <PortalHeader />
-      <main className="min-h-screen px-6 pt-20 pb-10" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
-        <div className="max-w-6xl mx-auto">
+    <div className="max-w-6xl mx-auto">
 
         {/* Tab switcher */}
         <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
@@ -718,8 +690,6 @@ export default function AdminPage() {
           />
         )}
         </div>
-      </main>
-    </>
   )
 }
 
@@ -905,4 +875,8 @@ function relative(ts: number) {
   if (hr < 24) return `${hr}h ago`
   const d = Math.round(hr / 24)
   return `${d}d ago`
+}
+
+export default function AnalyticsPage() {
+  return <AdminGate title="Analytics"><AnalyticsInner /></AdminGate>
 }
