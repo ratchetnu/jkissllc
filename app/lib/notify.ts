@@ -1,4 +1,5 @@
 import type { Booking } from './bookings'
+import { COMPANY } from './company'
 import { SERVICE_LABELS, fmtUSD, balanceDueCents } from './bookings'
 import {
   bookingLink, receiptLink,
@@ -29,7 +30,7 @@ export async function sendConfirmationLink(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
   if (hasEmail(b)) { await emailConfirmationLink(b); out.email = true }
   if (hasSms(b)) {
-    const msg = `J KISS LLC: Hi ${b.customerName}, you're almost booked (${b.bookingNumber}). Verify your service date & arrival window and view your invoice here: ${bookingLink(b.token)} Reply STOP to opt out, HELP for help.`
+    const msg = `${COMPANY.legalNameUpper}: Hi ${b.customerName}, you're almost booked (${b.bookingNumber}). Verify your service date & arrival window and view your invoice here: ${bookingLink(b.token)} Reply STOP to opt out, HELP for help.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
   return out
@@ -39,7 +40,7 @@ export async function notifyTimeVerified(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
   if (hasEmail(b)) { await emailTimeVerifiedCustomer(b); out.email = true }
   if (hasSms(b)) {
-    const msg = `J Kiss LLC: Your service time is verified — ${b.selectedDate}, ${b.selectedWindow}. We'll contact you if any adjustment is needed. ${bookingLink(b.token)}`
+    const msg = `${COMPANY.legalName}: Your service time is verified — ${b.selectedDate}, ${b.selectedWindow}. We'll contact you if any adjustment is needed. ${bookingLink(b.token)}`
     out.sms = await sendSms(b.customerPhone, msg)
   }
   return out
@@ -49,7 +50,7 @@ export async function notifyBookingConfirmed(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
   if (hasEmail(b)) { await emailBookingConfirmedCustomer(b); out.email = true }
   if (hasSms(b)) {
-    const msg = `J Kiss LLC: You're officially booked (${b.bookingNumber})! ${SERVICE_LABELS[b.serviceType]} on ${b.selectedDate}, ${b.selectedWindow}. Balance due: ${fmtUSD(balanceDueCents(b))}. ${bookingLink(b.token)}`
+    const msg = `${COMPANY.legalName}: You're officially booked (${b.bookingNumber})! ${SERVICE_LABELS[b.serviceType]} on ${b.selectedDate}, ${b.selectedWindow}. Balance due: ${fmtUSD(balanceDueCents(b))}. ${bookingLink(b.token)}`
     out.sms = await sendSms(b.customerPhone, msg)
   }
   return out
@@ -61,7 +62,7 @@ export async function notifyPaidInFull(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
   if (hasEmail(b)) { await emailPaidInFullCustomer(b); out.email = true }
   if (hasSms(b)) {
-    const msg = `J Kiss LLC: Paid in full — thank you, ${b.customerName}! Your receipt (${b.bookingNumber}) is here: ${receiptLink(b.token)}`
+    const msg = `${COMPANY.legalName}: Paid in full — thank you, ${b.customerName}! Your receipt (${b.bookingNumber}) is here: ${receiptLink(b.token)}`
     out.sms = await sendSms(b.customerPhone, msg)
   }
   return out
@@ -71,7 +72,7 @@ export async function notifyJobCompleted(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
   if (hasEmail(b)) { await emailJobCompletedCustomer(b); out.email = true }
   if (hasSms(b)) {
-    const msg = `J Kiss LLC: Your ${SERVICE_LABELS[b.serviceType]} (${b.bookingNumber}) is complete — thank you for your business! Balance due: ${fmtUSD(balanceDueCents(b))}.`
+    const msg = `${COMPANY.legalName}: Your ${SERVICE_LABELS[b.serviceType]} (${b.bookingNumber}) is complete — thank you for your business! Balance due: ${fmtUSD(balanceDueCents(b))}.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
   return out
@@ -83,7 +84,7 @@ export async function notifyBookingReminder(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
   if (hasEmail(b)) { await emailBookingReminderCustomer(b); out.email = true }
   if (hasSms(b)) {
-    const msg = `J Kiss LLC: Hi ${b.customerName}, don't forget to confirm your booking (${b.bookingNumber}) — verify your date & window here: ${bookingLink(b.token)} Reply STOP to opt out.`
+    const msg = `${COMPANY.legalName}: Hi ${b.customerName}, don't forget to confirm your booking (${b.bookingNumber}) — verify your date & window here: ${bookingLink(b.token)} Reply STOP to opt out.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
   return out
@@ -93,7 +94,7 @@ export async function notifyPaymentReminder(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
   if (hasEmail(b)) { await emailPaymentReminderCustomer(b); out.email = true }
   if (hasSms(b)) {
-    const msg = `J Kiss LLC: Reminder — a balance of ${fmtUSD(balanceDueCents(b))} is due on ${b.bookingNumber}. Pay or pay fee-free by Zelle (jkissbiz@gmail.com): ${bookingLink(b.token)} Reply STOP to opt out.`
+    const msg = `${COMPANY.legalName}: Reminder — a balance of ${fmtUSD(balanceDueCents(b))} is due on ${b.bookingNumber}. Pay or pay fee-free by Zelle (${COMPANY.zelle}): ${bookingLink(b.token)} Reply STOP to opt out.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
   return out
@@ -103,7 +104,7 @@ export async function notifyJobTomorrow(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
   if (hasEmail(b)) { await emailJobTomorrowCustomer(b); out.email = true }
   if (hasSms(b)) {
-    const msg = `J Kiss LLC: Reminder — your ${SERVICE_LABELS[b.serviceType]} (${b.bookingNumber}) is tomorrow${b.selectedWindow ? `, ${b.selectedWindow}` : ''}. Please ensure clear access. Questions? (817) 909-4312.`
+    const msg = `${COMPANY.legalName}: Reminder — your ${SERVICE_LABELS[b.serviceType]} (${b.bookingNumber}) is tomorrow${b.selectedWindow ? `, ${b.selectedWindow}` : ''}. Please ensure clear access. Questions? ${COMPANY.phoneDisplay}.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
   return out
@@ -113,7 +114,7 @@ export async function notifyReviewRequest(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
   if (hasEmail(b)) { await emailReviewRequestCustomer(b); out.email = true }
   if (hasSms(b)) {
-    const msg = `J Kiss LLC: Thanks again, ${b.customerName}! How did we do? Leave a quick review here: ${receiptLink(b.token)}#review Reply STOP to opt out.`
+    const msg = `${COMPANY.legalName}: Thanks again, ${b.customerName}! How did we do? Leave a quick review here: ${receiptLink(b.token)}#review Reply STOP to opt out.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
   return out
@@ -124,7 +125,7 @@ export async function notifyRescheduled(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
   if (hasEmail(b)) { await emailRescheduledCustomer(b); out.email = true }
   if (hasSms(b)) {
-    const msg = `J Kiss LLC: Your service (${b.bookingNumber}) is rescheduled to ${b.selectedDate}${b.selectedWindow ? `, ${b.selectedWindow}` : ''}. ${bookingLink(b.token)}`
+    const msg = `${COMPANY.legalName}: Your service (${b.bookingNumber}) is rescheduled to ${b.selectedDate}${b.selectedWindow ? `, ${b.selectedWindow}` : ''}. ${bookingLink(b.token)}`
     out.sms = await sendSms(b.customerPhone, msg)
   }
   await emailOpsRescheduled(b)
@@ -152,7 +153,7 @@ export async function notifyReturnConfirmed(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
   const c = b.continuation
   if (hasSms(b)) {
-    const msg = `J Kiss LLC: Thanks ${b.customerName}! Your return visit is confirmed${c?.returnDate ? ` for ${c.returnDate}${c.returnWindow ? `, ${c.returnWindow}` : ''}` : ''}. See you then. ${bookingLink(b.token)}`
+    const msg = `${COMPANY.legalName}: Thanks ${b.customerName}! Your return visit is confirmed${c?.returnDate ? ` for ${c.returnDate}${c.returnWindow ? `, ${c.returnWindow}` : ''}` : ''}. See you then. ${bookingLink(b.token)}`
     out.sms = await sendSms(b.customerPhone, msg)
   }
   await emailOpsReturnConfirmed(b)
@@ -193,7 +194,7 @@ export async function notifyCancelledByCustomer(b: Booking, tierLabel: string): 
   const out: Channels = { email: false, sms: false }
   if (hasEmail(b)) { await emailCancelledCustomer(b, tierLabel); out.email = true }
   if (hasSms(b)) {
-    const msg = `J Kiss LLC: Your booking ${b.bookingNumber} is cancelled. ${tierLabel} Questions? (817) 909-4312.`
+    const msg = `${COMPANY.legalName}: Your booking ${b.bookingNumber} is cancelled. ${tierLabel} Questions? ${COMPANY.phoneDisplay}.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
   await emailOpsCancelledByCustomer(b, tierLabel)

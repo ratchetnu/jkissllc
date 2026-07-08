@@ -1,6 +1,7 @@
 'use client'
 
 import { use, useEffect, useState } from 'react'
+import { COMPANY } from '../../lib/company';
 import { AlertTriangle, CheckCircle2 } from 'lucide-react'
 
 type Line = { routeNumber?: string; routeDate?: string; description: string; amountCents: number }

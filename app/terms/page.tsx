@@ -1,10 +1,11 @@
 import Link from 'next/link'
+import { COMPANY, CREDENTIALS_DOT } from '../lib/company';
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Terms of Service — J Kiss LLC',
-  description: 'J Kiss LLC terms of service.',
-  alternates: { canonical: 'https://www.jkissllc.com/terms' },
+  title: `Terms of Service — ${COMPANY.legalName}`,
+  description: `${COMPANY.legalName} terms of service.`,
+  alternates: { canonical: `${COMPANY.siteUrl}/terms` },
 }
 
 const EFFECTIVE = 'June 19, 2026'
@@ -15,7 +16,7 @@ export default function TermsPage() {
       <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4"
         style={{ background: 'rgba(11,11,12,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--line)' }}>
         <Link href="/" className="text-xl font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
-          J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+          {COMPANY.nameLead} <span style={{ color: 'var(--red)' }}>{COMPANY.nameAccent}</span>
         </Link>
         <Link href="/" className="text-sm font-semibold" style={{ color: 'var(--muted)' }}>← Home</Link>
       </header>
@@ -24,11 +25,11 @@ export default function TermsPage() {
         <div className="max-w-3xl mx-auto">
           <div className="label mb-6">Terms</div>
           <h1 className="text-4xl font-black text-white mb-3" style={{ letterSpacing: '-0.04em', fontFamily: 'var(--font-display)' }}>Terms of Service</h1>
-          <p className="text-sm mb-10" style={{ color: 'var(--muted)' }}>Effective {EFFECTIVE} · J Kiss LLC · US DOT 3484556 · MC 01155352</p>
+          <p className="text-sm mb-10" style={{ color: 'var(--muted)' }}>Effective {EFFECTIVE} · {COMPANY.legalName} · {CREDENTIALS_DOT}</p>
 
           <div className="space-y-8" style={{ color: 'var(--muted)', lineHeight: 1.7 }}>
             <Block title="Services">
-              <p>J Kiss LLC provides moving, delivery, junk removal, eviction/property cleanout, and related services in the Dallas–Fort Worth area. Quotes are estimates; final pricing may depend on actual job conditions, access, volume, and scheduling.</p>
+              <p>{COMPANY.legalName} provides moving, delivery, junk removal, eviction/property cleanout, and related services in the Dallas–Fort Worth area. Quotes are estimates; final pricing may depend on actual job conditions, access, volume, and scheduling.</p>
             </Block>
 
             <Block title="Bookings, Deposits &amp; Payment">
@@ -44,15 +45,15 @@ export default function TermsPage() {
             </Block>
 
             <Block title="Right to Refuse Service">
-              <p>J Kiss LLC reserves the right to refuse or discontinue service due to unsafe conditions, hazardous materials, illegal activity, threats or violence, dangerous access conditions, or any situation that places workers, equipment, or property at risk.</p>
+              <p>{COMPANY.legalName} reserves the right to refuse or discontinue service due to unsafe conditions, hazardous materials, illegal activity, threats or violence, dangerous access conditions, or any situation that places workers, equipment, or property at risk.</p>
             </Block>
 
             <Block title="Limitation of Liability">
-              <p>To the maximum extent permitted by law, J Kiss LLC&apos;s liability arising from services is limited to the amount paid for the service in question. We are not liable for indirect or consequential damages.</p>
+              <p>To the maximum extent permitted by law, {COMPANY.legalName}&apos;s liability arising from services is limited to the amount paid for the service in question. We are not liable for indirect or consequential damages.</p>
             </Block>
 
             <Block title="Contact">
-              <p>J Kiss LLC · 2901 East Mayfield Road #2103, Grand Prairie, TX 75052 · (817) 909‑4312 · info@jkissllc.com</p>
+              <p>{COMPANY.legalName} · 2901 East Mayfield Road #2103, Grand Prairie, TX 75052 · (817) 909‑4312 · info@jkissllc.com</p>
             </Block>
           </div>
         </div>

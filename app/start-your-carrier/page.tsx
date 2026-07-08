@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { COMPANY, CREDENTIALS_DOT } from '../lib/company';
 import Link from 'next/link'
 import { Lock } from 'lucide-react'
 import CapabilityGrid from '../components/opspilot/CapabilityGrid'
@@ -482,7 +483,7 @@ export default function StartYourCarrierPage() {
       <div className="fixed top-0 left-0 right-0 z-50" style={{ background: 'rgba(11,11,12,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/" className="text-xl font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em', textDecoration: 'none' }}>
-            J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+            {COMPANY.nameLead} <span style={{ color: 'var(--red)' }}>{COMPANY.nameAccent}</span>
           </Link>
           <nav className="hidden md:flex items-center gap-8">
             {/* "/#about" pointed at an anchor that never existed — /about is now a real page. */}
@@ -1478,7 +1479,7 @@ export default function StartYourCarrierPage() {
                 <span style={{ color: 'var(--red)' }}>Move Your Freight.</span>
               </h2>
               <p className="text-base mb-8 max-w-lg mx-auto leading-relaxed" style={{ color: 'var(--muted)' }}>
-                J Kiss LLC has operated in the DFW freight market for over 5 years (since September 2020). We partner with warehouses, retailers, and logistics companies that need a reliable carrier they can count on.
+                {COMPANY.legalName} has operated in the DFW freight market for over 5 years (since September 2020). We partner with warehouses, retailers, and logistics companies that need a reliable carrier they can count on.
               </p>
               <div className="flex flex-wrap justify-center gap-4">
                 <Link href="/#contact" className="btn">Request a Quote →</Link>
@@ -1493,10 +1494,10 @@ export default function StartYourCarrierPage() {
       <footer className="py-10 px-6" style={{ borderTop: '1px solid var(--line)' }}>
         <div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="text-sm font-black text-white" style={{ letterSpacing: '-0.02em' }}>
-            J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+            {COMPANY.nameLead} <span style={{ color: 'var(--red)' }}>{COMPANY.nameAccent}</span>
           </p>
           <p className="text-xs text-center" style={{ color: 'rgba(255,255,255,.25)' }}>
-            © {new Date().getFullYear()} J Kiss LLC · US DOT 3484556 · MC 01155352
+            © {new Date().getFullYear()} {COMPANY.legalName} · {CREDENTIALS_DOT}
           </p>
           <Link href="/" className="text-xs transition-colors hover:text-white" style={{ color: 'rgba(255,255,255,.35)', textDecoration: 'none' }}>← Back to Home</Link>
         </div>

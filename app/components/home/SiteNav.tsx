@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { COMPANY } from '../../lib/company';
 
 const LINKS: [string, string][] = [
   ['Services', '#services'],
@@ -32,7 +33,7 @@ export default function SiteNav() {
     >
       <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
         <a href="#top" className="text-xl font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
-          J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+          {COMPANY.nameLead} <span style={{ color: 'var(--red)' }}>{COMPANY.nameAccent}</span>
         </a>
 
         <nav className="hidden md:flex items-center gap-7">

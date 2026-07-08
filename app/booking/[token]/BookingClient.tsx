@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { COMPANY } from '../../lib/company';
 import Link from 'next/link'
 
 // ── Local types (mirror the customer-safe projection from the API) ───────────
@@ -176,7 +177,7 @@ export default function BookingClient({
         <Link href="/" className="text-xl font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
           J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
         </Link>
-        <a href="tel:+18179094312" className="text-sm font-semibold" style={{ color: 'var(--muted)' }}>(817) 909-4312</a>
+        <a href={"tel:" + COMPANY.phoneE164} className="text-sm font-semibold" style={{ color: 'var(--muted)' }}>(817) 909-4312</a>
       </header>
 
       <section className="pt-28 px-5">
@@ -800,7 +801,7 @@ function VerifyCard({ b, token, policy, onUpdated, verified }: {
 
       {!hasOptions ? (
         <p className="text-sm" style={{ color: 'var(--muted)' }}>
-          We&apos;re finalizing available time slots — we&apos;ll be in touch shortly, or call <a href="tel:+18179094312" style={{ color: 'var(--red)' }}>(817) 909-4312</a>.
+          We&apos;re finalizing available time slots — we&apos;ll be in touch shortly, or call <a href={"tel:" + COMPANY.phoneE164} style={{ color: 'var(--red)' }}>(817) 909-4312</a>.
         </p>
       ) : (
         <>

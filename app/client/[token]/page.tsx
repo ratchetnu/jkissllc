@@ -1,6 +1,7 @@
 'use client'
 
 import { use, useEffect, useState } from 'react'
+import { COMPANY } from '../../lib/company';
 import { CalendarDays, Clock, MapPin, User, AlertTriangle } from 'lucide-react'
 
 type ClientRoute = {

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { COMPANY } from '../../lib/company';
 import { ArrowRight, Phone } from 'lucide-react';
 import Reveal from '../Reveal';
 
@@ -21,8 +22,8 @@ export default function QuoteCTA() {
           <Link href="/quote" className="btn" style={{ padding: '16px 34px', fontSize: 15 }}>
             Get My Quote <ArrowRight size={17} aria-hidden />
           </Link>
-          <a href="tel:+18179094312" className="btn-ghost" style={{ padding: '16px 34px', fontSize: 15 }}>
-            <Phone size={16} aria-hidden /> (817) 909-4312
+          <a href={`tel:${COMPANY.phoneE164}`} className="btn-ghost" style={{ padding: '16px 34px', fontSize: 15 }}>
+            <Phone size={16} aria-hidden /> {COMPANY.phoneDisplay}
           </a>
         </Reveal>
       </div>

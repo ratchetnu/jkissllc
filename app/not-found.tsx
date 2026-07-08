@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { COMPANY } from './lib/company';
 
 export default function NotFound() {
   return (
@@ -14,7 +15,7 @@ export default function NotFound() {
           <Link href="/quote" className="btn-ghost" style={{ padding: '12px 22px', fontSize: '14px' }}>Get a Quote</Link>
         </div>
         <p className="text-xs mt-6" style={{ color: 'rgba(255,255,255,.3)' }}>
-          Need help? Call or text <a href="tel:+18179094312" style={{ color: 'var(--muted)' }}>(817) 909-4312</a>
+          Need help? Call or text <a href={"tel:" + COMPANY.phoneE164} style={{ color: 'var(--muted)' }}>(817) 909-4312</a>
         </p>
       </div>
     </main>

@@ -12,6 +12,7 @@ import {
 } from '../../../lib/applicants'
 import { emailRaw } from '../../../lib/booking-emails'
 import { notifyOwnerOfReply } from '../../../lib/owner-alerts'
+import { COMPANY } from '../../../lib/company'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -20,7 +21,7 @@ const LEVELS = new Set(EXPERIENCE_LEVELS.map(l => l.value))
 const DOC_KINDS = new Set<DocKind>(['drivers_license', 'id', 'ss_card', 'headshot'])
 
 function baseUrl(): string {
-  return (process.env.NEXT_PUBLIC_SITE_URL || process.env.PUBLIC_BASE_URL || 'https://www.jkissllc.com').replace(/\/$/, '')
+  return (process.env.NEXT_PUBLIC_SITE_URL || process.env.PUBLIC_BASE_URL || COMPANY.siteUrl).replace(/\/$/, '')
 }
 
 // Rebuild the skills map from untrusted input using only known categories/questions.
@@ -149,8 +150,8 @@ export async function POST(req: NextRequest) {
   const admin = `${baseUrl()}/admin/careers`
   void emailRaw({
     to: [email],
-    subject: `We received your J Kiss LLC application (${applicant.applicantNumber})`,
-    html: `<p>Hi ${escapeHtml(name)},</p><p>Thanks for applying for the <strong>${title}</strong> position at J Kiss LLC. We received your application (<strong>${applicant.applicantNumber}</strong>) and our team will review it shortly.</p><p>If we&#39;d like to move forward, we&#39;ll reach out by phone or email to set up an interview.</p><p>— J Kiss LLC Hiring</p>`,
+    subject: `We received your ${COMPANY.legalName} application (${applicant.applicantNumber})`,
+    html: `<p>Hi ${escapeHtml(name)},</p><p>Thanks for applying for the <strong>${title}</strong> position at ${COMPANY.legalName}. We received your application (<strong>${applicant.applicantNumber}</strong>) and our team will review it shortly.</p><p>If we&#39;d like to move forward, we&#39;ll reach out by phone or email to set up an interview.</p><p>— ${COMPANY.legalName} Hiring</p>`,
   }).catch(() => {})
   void notifyOwnerOfReply({
     via: 'email',

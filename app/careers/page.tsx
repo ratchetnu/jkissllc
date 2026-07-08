@@ -1,11 +1,12 @@
 import Link from 'next/link'
+import { COMPANY, CREDENTIALS_DOT } from '../lib/company';
 import type { Metadata } from 'next'
 import { POSITIONS, REQUIREMENTS, REQUIRED_DOCS, HEADSHOT_GUIDELINES, PAY_NOTICE, type Position } from '../lib/ats-config'
 
 export const metadata: Metadata = {
-  title: 'Careers — Drivers & Helpers | J Kiss LLC',
-  description: "J Kiss LLC is hiring Drivers ($175/day starting) and Driver Helpers ($150/day starting) for box-truck delivery, moving, appliance installation, and junk removal across DFW. Apply online in minutes.",
-  alternates: { canonical: 'https://www.jkissllc.com/careers' },
+  title: `Careers — Drivers & Helpers | ${COMPANY.legalName}`,
+  description: `${COMPANY.legalName} is hiring Drivers ($175/day starting) and Driver Helpers ($150/day starting) for box-truck delivery, moving, appliance installation, and junk removal across DFW. Apply online in minutes.`,
+  alternates: { canonical: `${COMPANY.siteUrl}/careers` },
 }
 
 const ORDER: Position[] = ['driver', 'helper']
@@ -17,7 +18,7 @@ export default function CareersPage() {
       <header className="fixed top-0 left-0 right-0 z-50" style={{ background: 'rgba(11,11,12,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--line)' }}>
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/" className="text-xl font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
-            J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+            {COMPANY.nameLead} <span style={{ color: 'var(--red)' }}>{COMPANY.nameAccent}</span>
           </Link>
           <div className="flex items-center gap-4">
             <Link href="/" className="text-sm font-semibold transition hover:text-white" style={{ color: 'var(--muted)' }}>← Home</Link>
@@ -34,7 +35,7 @@ export default function CareersPage() {
             Get Paid to Move,<br /><span style={{ color: 'var(--red)' }}>Deliver &amp; Install.</span>
           </h1>
           <p className="text-lg md:text-xl mb-8 max-w-2xl mx-auto" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>
-            J Kiss LLC runs box-truck delivery, moving, appliance installations, and junk-removal crews across Dallas–Fort Worth. If you work hard, show up, and take care of the customer, there&apos;s a spot and a paycheck for you.
+            {COMPANY.legalName}{' '}runs box-truck delivery, moving, appliance installations, and junk-removal crews across Dallas–Fort Worth. If you work hard, show up, and take care of the customer, there&apos;s a spot and a paycheck for you.
           </p>
           <Link href="/careers/apply" className="btn" style={{ padding: '16px 40px', fontSize: 16 }}>Start Your Application →</Link>
           <p className="text-xs mt-4" style={{ color: 'rgba(255,255,255,.4)' }}>Takes about 10–15 minutes · You&apos;ll need a photo ID, Social Security card, and a headshot ready</p>
@@ -158,7 +159,7 @@ export default function CareersPage() {
       </section>
 
       <footer className="py-10 px-6 text-center text-xs" style={{ borderTop: '1px solid var(--line)', color: 'rgba(255,255,255,.3)' }}>
-        © {new Date().getFullYear()} J Kiss LLC · US DOT 3484556 · MC 01155352 · Equal-opportunity employer
+        © {new Date().getFullYear()} {COMPANY.legalName} · {CREDENTIALS_DOT} · Equal-opportunity employer
       </footer>
     </main>
   )

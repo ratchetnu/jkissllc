@@ -1,9 +1,10 @@
 import type { Metadata } from 'next'
+import { COMPANY, CREDENTIALS_DOT } from '../../lib/company';
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { CITIES, findCity } from '../../lib/cities'
 
-const SITE_URL = 'https://www.jkissllc.com'
+const SITE_URL = COMPANY.siteUrl
 
 export function generateStaticParams() {
   return CITIES.map(c => ({ city: c.slug }))
@@ -13,8 +14,8 @@ export async function generateMetadata({ params }: { params: Promise<{ city: str
   const { city: slug } = await params
   const city = findCity(slug)
   if (!city) return {}
-  const title = `Box-Truck Delivery in ${city.name}, TX | J Kiss LLC`
-  const description = `Box-truck freight, white-glove last-mile, and same-day delivery throughout ${city.name}. Furniture, appliances, building materials. Trusted by major retailers across DFW. USDOT 3484556.`
+  const title = `Box-Truck Delivery in ${city.name}, TX | ${COMPANY.legalName}`
+  const description = `Box-truck freight, white-glove last-mile, and same-day delivery throughout ${city.name}. Furniture, appliances, building materials. Trusted by major retailers across DFW. USDOT ${COMPANY.usdot}.`
   return {
     title,
     description,
@@ -32,7 +33,7 @@ export async function generateMetadata({ params }: { params: Promise<{ city: str
       url: `${SITE_URL}/box-truck-delivery/${city.slug}`,
       title,
       description,
-      siteName: 'J Kiss LLC',
+      siteName: COMPANY.legalName,
       images: [{ url: '/og-image.jpg', width: 1200, height: 630, alt: title }],
     },
     twitter: { card: 'summary_large_image', title, description, images: ['/og-image.jpg'] },
@@ -60,13 +61,13 @@ export default async function CityPage({ params }: { params: Promise<{ city: str
           __html: JSON.stringify({
             '@context': 'https://schema.org',
             '@type': 'MovingCompany',
-            name: `J Kiss LLC — ${city.name} Box-Truck Delivery`,
+            name: `${COMPANY.legalName} — ${city.name} Box-Truck Delivery`,
             description: `Box-truck delivery and white-glove last-mile service throughout ${city.name}, Texas.`,
             url: `${SITE_URL}/box-truck-delivery/${city.slug}`,
-            email: 'info@jkissllc.com',
+            email: COMPANY.email,
             identifier: [
-              { '@type': 'PropertyValue', propertyID: 'USDOT', value: '3484556' },
-              { '@type': 'PropertyValue', propertyID: 'MC', value: '01155352' },
+              { '@type': 'PropertyValue', propertyID: 'USDOT', value: COMPANY.usdot },
+              { '@type': 'PropertyValue', propertyID: 'MC', value: COMPANY.mc },
             ],
             areaServed: { '@type': 'City', name: `${city.name}, TX` },
             address: { '@type': 'PostalAddress', addressLocality: city.name, addressRegion: 'TX', addressCountry: 'US' },
@@ -87,7 +88,7 @@ export default async function CityPage({ params }: { params: Promise<{ city: str
       <header className="fixed top-0 left-0 right-0 z-50" style={{ background: 'rgba(11,11,12,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--line)' }}>
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/" className="text-xl font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
-            J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+            {COMPANY.nameLead} <span style={{ color: 'var(--red)' }}>{COMPANY.nameAccent}</span>
           </Link>
           <Link href="/#contact" className="btn" style={{ padding: '10px 20px', fontSize: '13px' }}>Get a Quote</Link>
         </div>
@@ -114,8 +115,8 @@ export default async function CityPage({ params }: { params: Promise<{ city: str
             <Link href="/#services" className="btn-ghost">All Services</Link>
           </div>
           <div className="mt-10 flex flex-wrap gap-x-6 gap-y-2 text-xs font-mono" style={{ color: 'rgba(255,255,255,.4)' }}>
-            <span>US DOT 3484556</span>
-            <span>MC 01155352</span>
+            <span>US DOT {COMPANY.usdot}</span>
+            <span>MC {COMPANY.mc}</span>
             <span>Licensed &amp; Insured · TX</span>
           </div>
         </div>
@@ -191,7 +192,7 @@ export default async function CityPage({ params }: { params: Promise<{ city: str
       </section>
 
       <footer className="py-10 px-6 text-center text-xs" style={{ borderTop: '1px solid var(--line)', color: 'rgba(255,255,255,.3)' }}>
-        © {new Date().getFullYear()} J Kiss LLC · US DOT 3484556 · MC 01155352 ·{' '}
+        © {new Date().getFullYear()} {COMPANY.legalName} · {CREDENTIALS_DOT} ·{' '}
         <Link href="/" className="hover:text-white">jkissllc.com</Link>
       </footer>
     </main>

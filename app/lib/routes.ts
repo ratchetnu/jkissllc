@@ -3,6 +3,7 @@
 // public confirmation-link key. Everything is one JSON blob + a sorted-set index.
 // Workers are 1099 contractors, drawn from the existing crew roster (lib/staff).
 import { redis } from './redis'
+import { COMPANY } from './company'
 
 // ── Status ───────────────────────────────────────────────────────────────────
 export type RouteStatus =
@@ -486,6 +487,6 @@ export function toPublicRouteFor(r: RouteRecord, a: Assignee, opts: { showPay?: 
 export const CONFIRM_DISCLAIMER =
   'I understand that by confirming this route I am agreeing, as an independent contractor, ' +
   'to report on time at the location above and complete the assigned work. If I confirm and ' +
-  'then fail to report, J KISS LLC may, after review, reduce my route priority, remove me from ' +
+  `then fail to report, ${COMPANY.legalNameUpper} may, after review, reduce my route priority, remove me from ` +
   'future route assignments, or take other action available under my independent contractor ' +
   'agreement. Confirming does not guarantee the route if the client cancels it.'

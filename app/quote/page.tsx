@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { COMPANY, CREDENTIALS_DOT } from '../lib/company';
 import Link from 'next/link'
 import {
   Trash2, Truck, Refrigerator, Sofa, Boxes, Trees, HardHat, Building2, KeyRound, HelpCircle,
@@ -10,7 +11,7 @@ import {
 } from 'lucide-react'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// A guided, concierge-style quote experience for J Kiss LLC. Same premium
+// A guided, concierge-style quote experience for the company. Same premium
 // multi-step FLOW as our best work — rendered entirely in the J Kiss brand
 // (red #E0002A on near-black, Space Grotesk display). All existing business
 // logic is preserved: the primary CTA files a lead via /api/quote, and eligible
@@ -432,7 +433,7 @@ export default function QuotePage() {
       )}
 
       <footer className="relative z-10 py-10 px-6 text-center text-xs" style={{ borderTop: '1px solid var(--line)', color: 'rgba(255,255,255,.3)' }}>
-        © {new Date().getFullYear()} J Kiss LLC · US DOT 3484556 · MC 01155352
+        © {new Date().getFullYear()} {COMPANY.legalName} · {CREDENTIALS_DOT}
       </footer>
     </main>
   )
@@ -712,7 +713,7 @@ function StepContact(props: {
         <div className="sm:col-span-2"><label style={lbl}>Promo code <span style={{ textTransform: 'none', fontWeight: 400 }}>(optional)</span></label><input value={props.promo} onChange={e => props.setPromo(e.target.value.toUpperCase())} placeholder="Have a code?" style={{ ...inp, textTransform: 'uppercase' }} /></div>
       </div>
       <p className="text-xs mt-4" style={{ color: 'rgba(255,255,255,.4)', lineHeight: 1.5 }}>
-        By providing your phone number, you agree to receive booking and service-related text messages from J Kiss LLC at the number provided, including messages sent by autodialer. Consent is not a condition of purchase. Message &amp; data rates may apply. Reply STOP to opt out, HELP for help.
+        By providing your phone number, you agree to receive booking and service-related text messages from {COMPANY.legalName} at the number provided, including messages sent by autodialer. Consent is not a condition of purchase. Message &amp; data rates may apply. Reply STOP to opt out, HELP for help.
       </p>
     </>
   )
@@ -891,7 +892,7 @@ function SuccessView({ sent, deposit, onReset }: { sent: { estimate?: Estimate }
         ) : (
           <p className="text-base mb-4" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>Because every job is a little different, our team will review your details and send a custom quote — most come back within one business hour during operating hours.</p>
         )}
-        <p className="text-sm" style={{ color: 'rgba(255,255,255,.5)', lineHeight: 1.6 }}>Need it handled fast? Call or email us at <a href="mailto:info@jkissllc.com" className="underline" style={{ color: '#fff' }}>info@jkissllc.com</a>.</p>
+        <p className="text-sm" style={{ color: 'rgba(255,255,255,.5)', lineHeight: 1.6 }}>Need it handled fast? Call or email us at <a href={"mailto:" + COMPANY.email} className="underline" style={{ color: '#fff' }}>info@jkissllc.com</a>.</p>
         <div className="mt-8 flex justify-center gap-3 flex-wrap">
           <button onClick={onReset} className="btn wiz-ease">Request Another Quote</button>
           <Link href="/" className="btn-ghost wiz-ease">Back to Home</Link>

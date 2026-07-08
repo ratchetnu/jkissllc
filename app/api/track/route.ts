@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { COMPANY } from '../../lib/company'
 
 // TODO(opspilot/tenancy): this route BYPASSES app/lib/redis.ts with its own inline
 // client, so prefixing keys in that shared wrapper will silently miss the pv:*/uv:*
@@ -40,7 +41,7 @@ export async function POST(req: NextRequest) {
       redis(url, token, 'PFADD', `uv:day:${today}`, fingerprint),
       redis(url, token, 'PFADD', 'uv:total', fingerprint),
       // Referrer counts (skip self and empty)
-      ...(referrer && !referrer.includes('jkissllc.com')
+      ...(referrer && !referrer.includes(COMPANY.domain)
         ? [redis(url, token, 'HINCRBY', 'pv:referrers', new URL(referrer).hostname, '1')]
         : []),
       // Set 90-day expiry on daily keys

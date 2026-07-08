@@ -1,16 +1,17 @@
 import type { Metadata } from 'next'
+import { COMPANY, CREDENTIALS_DOT } from '../lib/company';
 import Link from 'next/link'
 
-const SITE_URL = 'https://www.jkissllc.com'
-const USDOT = '3484556'
-const MC = '01155352'
+const SITE_URL = COMPANY.siteUrl
+const USDOT = COMPANY.usdot
+const MC = COMPANY.mc
 
 const SAFER_SNAPSHOT_URL = `https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=${USDOT}`
 const SMS_URL = `https://ai.fmcsa.dot.gov/SMS/Carrier/${USDOT}/Overview.aspx`
 
 export const metadata: Metadata = {
-  title: 'Safety & Authority | J Kiss LLC — USDOT 3484556',
-  description: 'J Kiss LLC safety credentials, operating authority, and FMCSA compliance data. USDOT 3484556 · MC 01155352. Verify on SAFER directly.',
+  title: `Safety & Authority | ${COMPANY.legalName} — USDOT ${COMPANY.usdot}`,
+  description: `${COMPANY.legalName} safety credentials, operating authority, and FMCSA compliance data. USDOT ${COMPANY.usdot} · MC ${COMPANY.mc}. Verify on SAFER directly.`,
   alternates: { canonical: `${SITE_URL}/safety` },
 }
 
@@ -29,7 +30,7 @@ const BASICS = [
   { code: 'Driver Fitness',         desc: 'Driver qualification — license, medical card, training records.' },
   { code: 'Controlled Substances',  desc: 'DOT drug & alcohol testing program compliance.' },
   { code: 'Vehicle Maintenance',    desc: 'Truck condition — inspection, maintenance, repair records.' },
-  { code: 'Hazardous Materials',    desc: 'Not applicable — J Kiss LLC does not haul hazmat.' },
+  { code: 'Hazardous Materials',    desc: `Not applicable — ${COMPANY.legalName} does not haul hazmat.` },
   { code: 'Crash Indicator',        desc: 'Frequency and severity of crashes attributable to the carrier.' },
 ]
 
@@ -39,7 +40,7 @@ export default function SafetyPage() {
       <header className="fixed top-0 left-0 right-0 z-50" style={{ background: 'rgba(11,11,12,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--line)' }}>
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/" className="text-xl font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
-            J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+            {COMPANY.nameLead} <span style={{ color: 'var(--red)' }}>{COMPANY.nameAccent}</span>
           </Link>
           <Link href="/" className="text-sm font-semibold transition hover:text-white" style={{ color: 'var(--muted)' }}>← Back to Home</Link>
         </div>
@@ -105,7 +106,7 @@ export default function SafetyPage() {
             ))}
           </div>
           <p className="mt-8 text-sm" style={{ color: 'var(--muted)' }}>
-            View live BASIC measures for J Kiss LLC →{' '}
+            View live BASIC measures for {COMPANY.legalName} →{' '}
             <a href={SMS_URL} target="_blank" rel="noopener noreferrer" className="font-semibold transition hover:text-white" style={{ color: 'var(--red)' }}>
               FMCSA Safety Measurement System ↗
             </a>
@@ -124,7 +125,7 @@ export default function SafetyPage() {
               Most small carriers hide their FMCSA numbers because it&apos;s easier to win business when the customer doesn&apos;t check. We do the opposite — link directly to our SAFER snapshot from this page — because customers who run COI compliance and vendor onboarding need to verify carriers before they cut a contract.
             </p>
             <p>
-              If you&apos;re building a vendor file for J Kiss LLC, this page plus our{' '}
+              If you&apos;re building a vendor file for {COMPANY.legalName}, this page plus our{' '}
               <Link href="/coi" className="font-semibold transition hover:text-white" style={{ color: 'var(--red)' }}>COI request form</Link>{' '}
               should cover everything your compliance team needs in one shot.
             </p>
@@ -133,7 +134,7 @@ export default function SafetyPage() {
       </section>
 
       <footer className="py-10 px-6 text-center text-xs" style={{ borderTop: '1px solid var(--line)', color: 'rgba(255,255,255,.3)' }}>
-        © {new Date().getFullYear()} J Kiss LLC · US DOT {USDOT} · MC {MC}
+        © {new Date().getFullYear()} {COMPANY.legalName} · US DOT {USDOT} · MC {MC}
       </footer>
     </main>
   )

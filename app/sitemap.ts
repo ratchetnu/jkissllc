@@ -1,7 +1,8 @@
 import type { MetadataRoute } from 'next'
 import { CITIES } from './lib/cities'
+import { COMPANY } from './lib/company'
 
-const SITE = 'https://www.jkissllc.com'
+const SITE = COMPANY.siteUrl
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const now = new Date()

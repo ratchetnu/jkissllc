@@ -1,4 +1,5 @@
 import { redis } from './redis'
+import { COMPANY } from './company'
 
 // Versioned Cancellation & Refund Policy. Each booking stores the version the
 // customer accepted, so historical bookings always reflect the exact terms in
@@ -13,10 +14,10 @@ export type Policy = {
 const KEY_CURRENT = 'policy:current'      // -> current version number
 const KEY_VERSION = 'policy:v:'           // policy:v:{n} -> JSON Policy
 
-export const POLICY_TITLE = 'J KISS LLC Cancellation & Refund Policy'
+export const POLICY_TITLE = `${COMPANY.legalNameUpper} Cancellation & Refund Policy`
 
 // Version 1 — built-in default. Editing the policy in the admin creates v2+.
-export const DEFAULT_POLICY_TEXT = `J KISS LLC — CANCELLATION & REFUND POLICY
+export const DEFAULT_POLICY_TEXT = `${COMPANY.legalNameUpper} — CANCELLATION & REFUND POLICY
 
 BOOKING DEPOSITS
 Deposits are used to reserve labor, equipment, vehicles, scheduling time, and routing. Deposits are generally non-refundable unless otherwise required by law.
@@ -48,7 +49,7 @@ WEATHER DELAYS
 • Free reschedule or future service credit.
 
 COMPANY CANCELLATION
-• Full refund of deposit if J KISS LLC cancels and cannot reasonably reschedule.
+• Full refund of deposit if ${COMPANY.legalNameUpper} cancels and cannot reasonably reschedule.
 
 STRIPE / CARD PROCESSING FEES
 • Stripe / card processing fees are non-refundable once processed.
@@ -57,7 +58,7 @@ CUSTOMER RESPONSIBILITY
 • Customer must provide accurate addresses, inventory, access instructions, and service details. Additional charges may apply if actual job conditions differ materially from what was originally provided.
 
 RIGHT TO REFUSE SERVICE
-J KISS LLC reserves the right to refuse or discontinue service due to:
+${COMPANY.legalNameUpper} reserves the right to refuse or discontinue service due to:
 • Unsafe conditions
 • Hazardous materials
 • Illegal activity
@@ -66,7 +67,7 @@ J KISS LLC reserves the right to refuse or discontinue service due to:
 • Situations placing workers, equipment, or property at risk
 Deposits may be forfeited in such situations.
 
-By accepting, you confirm you have read and agree to this Cancellation & Refund Policy and the J KISS LLC Terms of Service.`
+By accepting, you confirm you have read and agree to this Cancellation & Refund Policy and the ${COMPANY.legalNameUpper} Terms of Service.`
 
 const DEFAULT_POLICY: Policy = { version: 1, text: DEFAULT_POLICY_TEXT, updatedAt: 0 }
 

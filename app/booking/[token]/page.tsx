@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { COMPANY } from '../../lib/company';
 import type { Metadata } from 'next'
 import { getBookingByToken, customerView } from '../../lib/bookings'
 import { getCurrentPolicy, getPolicyVersion } from '../../lib/policy'
@@ -30,7 +31,7 @@ export default async function BookingPage({ params }: { params: Promise<{ token:
             This booking link is invalid or has expired. Please double-check the link, or contact us and we&apos;ll resend it.
           </p>
           <div className="flex justify-center gap-3 flex-wrap">
-            <a href="tel:+18179094312" className="btn">Call (817) 909-4312</a>
+            <a href={"tel:" + COMPANY.phoneE164} className="btn">Call (817) 909-4312</a>
             <Link href="/" className="btn-ghost">← Home</Link>
           </div>
         </div>

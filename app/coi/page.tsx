@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { COMPANY, CREDENTIALS_DOT } from '../lib/company';
 import Link from 'next/link'
 
 export default function CoiPage() {
@@ -39,7 +40,7 @@ export default function CoiPage() {
       <header className="fixed top-0 left-0 right-0 z-50" style={{ background: 'rgba(11,11,12,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--line)' }}>
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/" className="text-xl font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
-            J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+            {COMPANY.nameLead} <span style={{ color: 'var(--red)' }}>{COMPANY.nameAccent}</span>
           </Link>
           <Link href="/" className="text-sm font-semibold transition hover:text-white" style={{ color: 'var(--muted)' }}>← Back to Home</Link>
         </div>
@@ -140,7 +141,7 @@ export default function CoiPage() {
       </section>
 
       <footer className="py-10 px-6 text-center text-xs" style={{ borderTop: '1px solid var(--line)', color: 'rgba(255,255,255,.3)' }}>
-        © {new Date().getFullYear()} J Kiss LLC · US DOT 3484556 · MC 01155352
+        © {new Date().getFullYear()} {COMPANY.legalName} · {CREDENTIALS_DOT}
       </footer>
     </main>
   )

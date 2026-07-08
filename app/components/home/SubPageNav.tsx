@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { COMPANY } from '../../lib/company';
 
 /**
  * Fixed nav for standalone pages (/about, /opspilot). The homepage's SiteNav is
@@ -26,7 +27,7 @@ export default function SubPageNav() {
           className="text-xl font-black tracking-tight"
           style={{ color: '#fff', letterSpacing: '-0.03em', textDecoration: 'none' }}
         >
-          J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+          {COMPANY.nameLead} <span style={{ color: 'var(--red)' }}>{COMPANY.nameAccent}</span>
         </Link>
 
         <nav className="hidden md:flex items-center gap-8">
