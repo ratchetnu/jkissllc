@@ -67,17 +67,37 @@ with `timingSafeEqual` (`app/api/admin/_lib/session.ts:48`). This disappears
 entirely once auth becomes per-user hashed credentials (§4), but it should not
 wait for that.
 
-### 1.4 Applicant PII in a public blob store
-Uploads go to Vercel Blob with `access: 'public'` and **no path prefixing** — the
-bare filename is used (`app/admin/bookings/page.tsx:1045`). The ATS requires a
-`ss_card` document (`app/lib/ats-config.ts:69`, *"Used for onboarding and payroll
-if hired"*), alongside `drivers_license` and `id`.
+### 1.4 Applicant PII in a public blob store — FIXED on `hardening`
+The ATS requires a `ss_card` document (`app/lib/ats-config.ts:69`, *"Used for
+onboarding and payroll if hired"*), alongside `drivers_license` and `id`. These were
+written to Vercel Blob with `access: 'public'`.
 
-Social security cards, in a public bucket, at guessable paths. This is a
-compliance problem with one tenant. After migration it is also a cross-tenant PII
-exposure. **Treat as the highest-priority item in this document.**
-Consumers: `app/api/upload/route.ts`, `app/api/careers/upload/route.ts`,
-`app/api/admin/blob-upload/route.ts`.
+Two corrections to an earlier draft of this section, both worth recording because
+they changed the severity:
+- The paths were **not** guessable. `app/api/careers/upload/route.ts` uses
+  `driver-docs/${kind}/${crypto.randomUUID()}.${ext}`.
+- The `upload(file.name, …)` at `app/admin/bookings/page.tsx:1045` is **admin invoice
+  photos**, not applicant documents, and its token broker sets `addRandomSuffix: true`
+  behind `requireSession`. That path was never the problem.
+
+The real exposure was narrower but real: a Social Security card image, permanently
+readable by anyone who ever obtained the URL — a forwarded email, a browser history,
+a log line. No auth, no expiry.
+
+**Fixed** by sealing identity documents with AES-256-GCM before upload
+(`app/lib/doc-crypto.ts`); the object at its public URL is ciphertext, and only
+`/api/admin/careers/doc` decrypts, for a signed-in admin. Note `put(..., { access:
+'private' })` is *rejected* on this store ("Cannot use private access on a public
+store"), which is why encryption rather than a private blob.
+
+Still outstanding:
+- Documents uploaded **before** that change are plaintext at public URLs and need a
+  one-time re-seal.
+- The store should still be reconfigured for private access, as a second layer.
+- `app/api/upload/route.ts` (customer quote photos) remains public and unsealed —
+  intentional, but revisit if quote photos ever capture documents.
+- Blob paths are not tenant-prefixed, so this is a cross-tenant surface after
+  migration as well as a per-tenant one.
 
 ---
 
