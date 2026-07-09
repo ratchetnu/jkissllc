@@ -90,6 +90,31 @@ function Detail({ token }: { token: string }) {
     await patch({ action: 'confirm', staffId: a.staffId, note: note.trim() || undefined }, `ok-${a.staffId}`)
   }
 
+  // Mark the whole route confirmed in one tap — confirms every assigned crew member
+  // who hasn't already confirmed or declined. Recorded as a verbal confirmation
+  // (owner's word), never a forged disclaimer signature. One prompt, one note, one
+  // reload — not a per-person hunt.
+  async function confirmRoute() {
+    const pending = (op?.assignees ?? []).filter(a => !a.confirmedAt && !a.declinedAt)
+    if (!pending.length) return
+    const who = pending.length === 1 ? pending[0].name : `all ${pending.length} crew`
+    const note = prompt(`Mark ${who} confirmed for this route?\n\nUse this when they told you directly they're taking it. Optional note (e.g. "confirmed by phone"):`, '')
+    if (note === null) return
+    setBusy('confirmroute'); setMsg('')
+    // Sequential so the server rolls up route status cleanly after each. One crew
+    // failing must NOT skip the rest — confirm everyone we can, then report.
+    let failed = 0
+    for (const a of pending) {
+      try {
+        const res = await fetch(`/api/admin/routes/${token}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ action: 'confirm', staffId: a.staffId, note: note.trim() || undefined }) })
+        if (!res.ok) failed++
+      } catch { failed++ }
+    }
+    await load()
+    if (failed) setMsg(`Confirmed ${pending.length - failed} of ${pending.length}. Try the rest from each crew member's ✓.`)
+    setBusy('')
+  }
+
   const timeline = useMemo(() => {
     if (!op) return []
     const items: { at: number; text: string }[] = [
@@ -261,6 +286,7 @@ function Detail({ token }: { token: string }) {
       {/* Route-level actions (send/remove are per-person on the crew card above) */}
       {live && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {(op.assignees ?? []).some(a => !a.confirmedAt && !a.declinedAt) && <button onClick={confirmRoute} disabled={busy !== ''} title="They told you they're taking it — mark the route confirmed" className="btn os-tap" style={{ borderRadius: 11, height: 40, background: '#16a34a' }}><CheckCircle2 size={16} /> Mark confirmed</button>}
           {(op.assignees ?? []).some(a => a.phone && !a.smsSentAt) && <button onClick={() => patch({ action: 'send' }, 'sendall')} disabled={busy !== ''} className="btn os-tap" style={{ borderRadius: 11, height: 40 }}><Send size={15} /> Text all crew</button>}
           {canComplete && <button onClick={() => patch({ action: 'status', status: 'completed' }, 'complete')} disabled={busy !== ''} className="btn os-tap" style={{ borderRadius: 11, height: 40, background: '#16a34a' }}><CheckCircle2 size={16} /> Mark complete</button>}
           {op.status === 'confirmed' && <button onClick={() => patch({ action: 'status', status: 'no_show' }, 'noshow')} disabled={busy !== ''} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40, color: '#fca5a5' }}>No-show</button>}
