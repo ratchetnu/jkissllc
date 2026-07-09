@@ -97,6 +97,47 @@ export default function OpsPilotPage() {
         </div>
       </section>
 
+      {/* ── Who runs on OpsPilot — social proof, two live businesses ── */}
+      <section className="py-24 px-6" style={{ borderBottom: '1px solid var(--line)' }}>
+        <div className="max-w-6xl mx-auto">
+          <Reveal>
+            <span className="eyebrow">In production</span>
+          </Reveal>
+          <Reveal as="h2" delay={70} className="display-2" style={{ color: '#fff', marginTop: 16, maxWidth: '22ch' }}>
+            Not just us anymore.
+          </Reveal>
+          <Reveal as="p" delay={130} className="lede" style={{ marginTop: 16, maxWidth: '58ch' }}>
+            OpsPilot now runs two Dallas–Fort Worth service businesses. Every route, crew
+            assignment, confirmation, and payout on both goes through the same platform.
+          </Reveal>
+
+          <div style={{ marginTop: 44, display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
+            <div className="ops-card" style={{ padding: 26 }}>
+              <span className="ops-badge">Where it was built</span>
+              <p style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '1.35rem', letterSpacing: '-0.02em', color: '#fff', marginTop: 16 }}>
+                J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+              </p>
+              <p style={{ color: 'var(--muted)', fontSize: 14, lineHeight: 1.55, marginTop: 8 }}>
+                Box-truck delivery, junk removal &amp; cleanouts · Dallas–Fort Worth
+              </p>
+            </div>
+
+            <a href="https://superchargedenterprise.com" target="_blank" rel="noopener noreferrer" className="ops-card" style={{ padding: 26, textDecoration: 'none', display: 'block' }}>
+              <span className="ops-badge">Now running on OpsPilot</span>
+              <p style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '1.35rem', letterSpacing: '-0.02em', color: '#fff', marginTop: 16 }}>
+                Supercharged Enterprise
+              </p>
+              <p style={{ color: 'var(--muted)', fontSize: 14, lineHeight: 1.55, marginTop: 8 }}>
+                Evictions, trash-outs &amp; junk removal · Dallas–Fort Worth
+              </p>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 16, fontSize: 13.5, fontWeight: 600, color: 'var(--ops-steel)' }}>
+                superchargedenterprise.com <ArrowRight size={14} />
+              </span>
+            </a>
+          </div>
+        </div>
+      </section>
+
       {/* ── Coming soon / early access ── */}
       <section className="py-24 px-6">
         <div className="max-w-4xl mx-auto">
@@ -114,13 +155,14 @@ export default function OpsPilotPage() {
               </span>
 
               <h2 className="display-2" style={{ color: '#fff', marginTop: 20, maxWidth: '20ch' }}>
-                Built for us. Soon, for you.
+                Two down. Room for more.
               </h2>
 
               <p style={{ marginTop: 16, maxWidth: '56ch', fontSize: 15.5, lineHeight: 1.7, color: 'var(--muted)' }}>
-                OpsPilot will become available for other owner-operators and service businesses.
-                If you run crews, routes, or contracts and you&apos;re tired of stitching together
-                spreadsheets and group texts — tell us where to reach you.
+                Two businesses already dispatch on OpsPilot every morning. It&apos;s opening up
+                to more owner-operators and service businesses — if you run crews, routes, or
+                contracts and you&apos;re tired of stitching together spreadsheets and group
+                texts, tell us where to reach you.
               </p>
 
               <div style={{ marginTop: 30 }}>
