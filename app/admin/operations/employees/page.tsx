@@ -418,7 +418,7 @@ function EmployeeForm({ existing, onDone, onCancel }: { existing?: Staff; onDone
     setUploading(true); setErr('')
     try {
       const dataUrl = await new Promise<string>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.onerror = rej; fr.readAsDataURL(f) })
-      const up = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }) })
+      const up = await fetch('/api/admin/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ image: dataUrl }) })
       const j = await up.json().catch(() => ({}))
       if (up.ok && j.url) setPhotoUrl(j.url); else setErr(j.error || 'Photo upload failed.')
     } catch { setErr('Photo upload failed.') } finally { setUploading(false) }

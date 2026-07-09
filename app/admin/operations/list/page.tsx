@@ -13,9 +13,17 @@ const crewGap = (o: Op) => !!o.requiresHelper && !['cancelled', 'completed'].inc
 type Filter = 'attention' | 'upcoming' | 'completed' | 'all'
 const FILTERS: { key: Filter; label: string }[] = [{ key: 'attention', label: 'Attention' }, { key: 'upcoming', label: 'Upcoming' }, { key: 'completed', label: 'Completed' }, { key: 'all', label: 'All' }]
 
+// Home's triage cards deep-link here with ?filter= so tapping a count lands on a
+// tab that actually contains those routes (client-only read — no Suspense needed).
+function initialFilter(): Filter {
+  if (typeof window === 'undefined') return 'attention'
+  const f = new URLSearchParams(window.location.search).get('filter')
+  return FILTERS.some(x => x.key === f) ? (f as Filter) : 'attention'
+}
+
 function List() {
   const { routes: ops, loading } = useOps<Op>()
-  const [filter, setFilter] = useState<Filter>('attention')
+  const [filter, setFilter] = useState<Filter>(initialFilter)
   const [q, setQ] = useState('')
 
   const today = ymd(new Date())

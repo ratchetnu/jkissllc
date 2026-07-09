@@ -60,9 +60,9 @@ function Dashboard() {
         <>
           {/* Attention strip */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 26 }}>
-            <StatCard label="Needs confirmation" value={needsConfirm.length} tone={needsConfirm.length ? 'warn' : 'calm'} Icon={Clock} />
-            <StatCard label="Needs reassignment" value={needsReassign.length} tone={needsReassign.length ? 'alert' : 'calm'} Icon={AlertTriangle} />
-            <StatCard label="Tomorrow" value={tomorrows.length} tone="calm" Icon={CalendarDays} />
+            <StatCard label="Needs confirmation" value={needsConfirm.length} tone={needsConfirm.length ? 'warn' : 'calm'} Icon={Clock} href="/admin/operations/list?filter=upcoming" />
+            <StatCard label="Needs reassignment" value={needsReassign.length} tone={needsReassign.length ? 'alert' : 'calm'} Icon={AlertTriangle} href="/admin/operations/list?filter=attention" />
+            <StatCard label="Tomorrow" value={tomorrows.length} tone="calm" Icon={CalendarDays} href="/admin/operations/list?filter=upcoming" />
           </div>
 
           {/* Money — the ledger lives one tap away, never on a crew-facing screen. */}
@@ -110,10 +110,10 @@ function Dashboard() {
   )
 }
 
-function StatCard({ label, value, tone, Icon }: { label: string; value: number; tone: 'calm' | 'warn' | 'alert'; Icon: typeof Clock }) {
+function StatCard({ label, value, tone, Icon, href }: { label: string; value: number; tone: 'calm' | 'warn' | 'alert'; Icon: typeof Clock; href: string }) {
   const color = tone === 'alert' ? '#fca5a5' : tone === 'warn' ? '#fcd34d' : 'var(--muted)'
   return (
-    <Link href="/admin/routes" className="os-card os-tap os-rise" style={{ padding: 16, textDecoration: 'none', display: 'block' }}>
+    <Link href={href} className="os-card os-tap os-rise" style={{ padding: 16, textDecoration: 'none', display: 'block' }}>
       <Icon size={18} style={{ color }} />
       <div className="jkos-h tabular-nums" style={{ fontSize: 30, marginTop: 8, color: value ? 'var(--text)' : 'var(--muted)' }}>{value}</div>
       <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--muted)', marginTop: 1 }}>{label}</div>
