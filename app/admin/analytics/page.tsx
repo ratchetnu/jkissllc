@@ -1,10 +1,9 @@
 'use client'
 
-import Link from 'next/link'
 import AdminGate from '../AdminGate'
 import { useState, useEffect, useCallback } from 'react'
 import { useIdleLogout } from '../useIdleLogout'
-import { SkeletonStats, SkeletonList } from '../../components/Skeleton'
+import { SkeletonStats } from '../../components/Skeleton'
 import type { BookingAnalytics, NamedTotal, DayPoint } from '../../lib/analytics'
 
 type Range = '7d' | '30d' | '90d'
@@ -152,10 +151,10 @@ function PaymentStatusBar({ status }: { status: BookingAnalytics['paymentStatus'
 }
 
 function AnalyticsInner() {
-  const [password, setPassword] = useState('')
-  const [authed, setAuthed] = useState(true)  // OS shell gates auth; content only renders when signed in
-  const [authError, setAuthError] = useState('')
-  const [authLoading, setAuthLoading] = useState(false)
+  // The OS shell (AdminGate → OperationsShell) owns sign-in and chrome. This flag
+  // only gates data fetches; it starts true because content renders only when the
+  // shell has already authenticated, and flips false if any API returns 401.
+  const [authed, setAuthed] = useState(true)
 
   const [tab, setTab] = useState<Tab>('overview')
   const [range, setRange] = useState<Range>('30d')
@@ -247,18 +246,6 @@ function AnalyticsInner() {
       .catch(() => {})
   }, [])
 
-  // Unread customer-reply count for the Inbox nav badge.
-  const [unreadMsgs, setUnreadMsgs] = useState(0)
-  useEffect(() => {
-    if (!authed) return
-    let alive = true
-    const tick = () => fetch('/api/admin/messages/count', { credentials: 'same-origin' })
-      .then(r => r.json()).then(j => { if (alive) setUnreadMsgs(j.unread ?? 0) }).catch(() => {})
-    tick()
-    const t = setInterval(tick, 45000)
-    return () => { alive = false; clearInterval(t) }
-  }, [authed])
-
   const fetchAnalytics = useCallback(async (r: Range) => {
     setLoading(true)
     setError('')
@@ -282,31 +269,6 @@ function AnalyticsInner() {
     if (tab === 'shipments') fetchShipments()
   }, [authed, tab, range, fetchOverview, fetchAnalytics, fetchShipments])
 
-  async function handleLogin(e: React.FormEvent) {
-    e.preventDefault()
-    setAuthLoading(true)
-    setAuthError('')
-    try {
-      const res = await fetch('/api/admin/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
-        credentials: 'same-origin',
-      })
-      const data = await res.json()
-      if (res.ok && data.valid) {
-        setPassword('')
-        setAuthed(true)
-      } else {
-        setAuthError(data.error ?? 'Incorrect password')
-      }
-    } catch {
-      setAuthError('Connection error — try again')
-    } finally {
-      setAuthLoading(false)
-    }
-  }
-
   async function handleSignOut() {
     try {
       await fetch('/api/admin/logout', { method: 'POST', credentials: 'same-origin' })
@@ -314,63 +276,13 @@ function AnalyticsInner() {
       // best-effort — clear locally regardless
     }
     setAuthed(false)
-    setPassword('')
     setAnalytics(null)
   }
 
   // Auto sign-out after 10 minutes of inactivity.
   useIdleLogout(authed, handleSignOut)
 
-  // ── Persistent top header (shown on both login and dashboard) ─────────────
-  const PortalHeader = () => (
-    <header className="fixed top-0 left-0 right-0 z-50 flex items-center gap-3 px-3 sm:px-5 py-3.5"
-      style={{ background: 'rgba(11,11,12,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
-      <style>{`.adminnav::-webkit-scrollbar{display:none}`}</style>
-      <Link href="/" className="text-lg font-black tracking-tight shrink-0" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
-        J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
-      </Link>
-      {authed ? (
-        <div className="adminnav flex items-center gap-1.5 text-xs font-semibold overflow-x-auto whitespace-nowrap"
-          style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch', marginLeft: 'auto' }}>
-          <Link href="/" className="px-3 py-2 rounded-xl transition hover:text-white"
-            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Home</Link>
-          <a href="/admin/bookings" className="px-3 py-2 rounded-xl transition hover:text-white"
-            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Bookings</a>
-          <a href="/admin/routes" className="px-3 py-2 rounded-xl transition hover:text-white"
-            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Routes</a>
-          <a href="/admin/inbox" className="relative px-3 py-2 rounded-xl transition hover:text-white"
-            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: unreadMsgs ? '#fff' : 'var(--muted)' }}>Inbox
-            {unreadMsgs > 0 && <span style={{ position: 'absolute', top: -5, right: -5, minWidth: 18, height: 18, padding: '0 4px', borderRadius: 99, background: 'var(--red)', color: '#fff', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{unreadMsgs > 99 ? '99+' : unreadMsgs}</span>}
-          </a>
-          <a href="/admin/promos" className="px-3 py-2 rounded-xl transition hover:text-white"
-            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Promos</a>
-          <a href="/admin/staff" className="px-3 py-2 rounded-xl transition hover:text-white"
-            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Crew</a>
-          <a href="/admin/availability" className="px-3 py-2 rounded-xl transition hover:text-white"
-            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Availability</a>
-          <a href="/admin/disposal" className="px-3 py-2 rounded-xl transition hover:text-white"
-            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Disposal</a>
-          <a href="/admin/policy" className="px-3 py-2 rounded-xl transition hover:text-white"
-            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Policy</a>
-          <a href="/admin/reviews" className="px-3 py-2 rounded-xl transition hover:text-white"
-            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>Reviews</a>
-          <button onClick={handleSignOut}
-            className="px-4 py-2 rounded-xl transition hover:text-white"
-            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>
-            Sign Out
-          </button>
-        </div>
-      ) : (
-        <Link href="/"
-          className="text-sm font-semibold px-4 py-2 rounded-xl transition hover:text-white"
-          style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--muted)' }}>
-          ← Back to Home
-        </Link>
-      )}
-    </header>
-  )
-
-  // ── Dashboard (chrome is provided by the OS shell) ──────────────────────────
+  // ── Dashboard (chrome — the floating dock / bottom nav — is provided by the OS shell) ──
   const noUpstash = error.includes('UPSTASH')
 
   return (
