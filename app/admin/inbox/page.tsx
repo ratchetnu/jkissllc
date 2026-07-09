@@ -363,7 +363,7 @@ function ThreadDetail({
   const canEmail = !!t.email
 
   return (
-    <div className="glass-card" style={{ borderRadius: 16, padding: 0, display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 200px)' }}>
+    <div className="glass-card" style={{ borderRadius: 16, padding: 0, display: 'flex', flexDirection: 'column', maxHeight: 'calc(100dvh - 150px)' }}>
       {/* header */}
       <div style={{ padding: '14px 16px', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
         <div className="flex items-center gap-2 mb-2">

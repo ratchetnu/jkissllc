@@ -304,8 +304,8 @@ function Builder() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div><span style={labelCss}>Report / pickup address</span><input autoFocus placeholder="Street, city" value={form.reportAddress} onChange={e => set('reportAddress', e.target.value)} style={field} /></div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <div><span style={labelCss}>On-site contact (optional)</span><input placeholder="Name" value={form.contactPerson} onChange={e => set('contactPerson', e.target.value)} style={field} /></div>
-              <div><span style={labelCss}>Contact phone</span><input placeholder="Phone" value={form.contactPhone} onChange={e => set('contactPhone', e.target.value)} style={field} /></div>
+              <div style={{ minWidth: 0 }}><span style={labelCss}>On-site contact (optional)</span><input placeholder="Name" value={form.contactPerson} onChange={e => set('contactPerson', e.target.value)} style={{ ...field, minWidth: 0 }} /></div>
+              <div style={{ minWidth: 0 }}><span style={labelCss}>Contact phone</span><input placeholder="Phone" value={form.contactPhone} onChange={e => set('contactPhone', e.target.value)} style={{ ...field, minWidth: 0 }} /></div>
             </div>
           </div>
         )}
@@ -317,9 +317,11 @@ function Builder() {
               <button type="button" onClick={() => setRepeats(true)} style={pill(repeats)}>Repeats weekly</button>
             </div>
             {!repeats ? (
+              // minWidth:0 so the iOS date input's intrinsic width can't overflow its
+              // 1fr column and overlap the Report time field.
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div><span style={labelCss}>Date</span><input type="date" min={today} value={form.routeDate} onChange={e => set('routeDate', e.target.value)} style={field} /></div>
-                <div><span style={labelCss}>Report time</span><input placeholder="e.g. 7:00 AM" value={form.reportTime} onChange={e => set('reportTime', e.target.value)} style={field} /></div>
+                <div style={{ minWidth: 0 }}><span style={labelCss}>Date</span><input type="date" min={today} value={form.routeDate} onChange={e => set('routeDate', e.target.value)} style={{ ...field, minWidth: 0 }} /></div>
+                <div style={{ minWidth: 0 }}><span style={labelCss}>Report time</span><input placeholder="e.g. 7:00 AM" value={form.reportTime} onChange={e => set('reportTime', e.target.value)} style={{ ...field, minWidth: 0 }} /></div>
               </div>
             ) : (
               <div>
