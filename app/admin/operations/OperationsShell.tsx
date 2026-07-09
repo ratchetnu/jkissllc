@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import { useAdminSession } from '../useAdminSession'
-import { Home, ClipboardList, Users, Building2, MessageSquare, ShieldAlert, Settings, LogOut, Search, Plus } from 'lucide-react'
+import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, Settings, LogOut, Search, Plus } from 'lucide-react'
 import CommandPalette from './CommandPalette'
 import { OpsPilotMark, OpsPilotWordmark } from '../../components/opspilot/OpsPilotMark'
 
@@ -13,6 +13,7 @@ const NAV = [
   { href: '/admin/operations/list', label: 'Operations', Icon: ClipboardList },
   { href: '/admin/operations/employees', label: 'Employees', Icon: Users },
   { href: '/admin/operations/businesses', label: 'Businesses', Icon: Building2 },
+  { href: '/admin/operations/equipment', label: 'Equipment', Icon: Truck },
   { href: '/admin/operations/claims', label: 'Claims', Icon: ShieldAlert },
   { href: '/admin/operations/messages', label: 'Messages', Icon: MessageSquare },
   { href: '/admin/operations/settings', label: 'Settings', Icon: Settings },
