@@ -52,7 +52,7 @@ export default function PrivacyPage() {
             <Block title="SMS / Text Messaging Program">
               <p>If you provide your mobile number, you may receive transactional text messages from {COMPANY.legalName} related to a service you requested or booked — including booking confirmation links, service-date and arrival-window verification, payment receipts, and job-completion notices.</p>
               <ul className="list-disc pl-5 space-y-1 mt-3">
-                <li><strong className="text-white">How you opt in:</strong> by providing your mobile number to us when you request a quote or book a service — through our online form at <Link href="/quote" style={{ color: 'var(--red)' }}>jkissllc.com/quote</Link>, by phone, or in person — and agreeing to receive service-related texts.</li>
+                <li><strong className="text-white">How you opt in:</strong> by providing your mobile number to us when you request a quote or book a service — through our online form at <Link href="/quote" style={{ color: 'var(--red)' }}>{COMPANY.domain}/quote</Link>, by phone, or in person — and agreeing to receive service-related texts.</li>
                 <li><strong className="text-white">Message types &amp; frequency:</strong> transactional messages tied to your specific job. Frequency varies by your booking activity. We do not send marketing texts.</li>
                 <li><strong className="text-white">Opt out:</strong> reply <strong className="text-white">STOP</strong> to any message to stop receiving texts. Reply <strong className="text-white">HELP</strong> for help, or contact us at (817) 909‑4312.</li>
                 <li><strong className="text-white">Cost:</strong> message and data rates may apply. Carriers are not liable for delayed or undelivered messages.</li>
@@ -69,7 +69,7 @@ export default function PrivacyPage() {
             </Block>
 
             <Block title="Your Choices">
-              <p>You may request access to or correction of your information, or opt out of texts (reply STOP) or emails at any time, by contacting info@jkissllc.com or (817) 909‑4312.</p>
+              <p>You may request access to or correction of your information, or opt out of texts (reply STOP) or emails at any time, by contacting {COMPANY.email} or (817) 909‑4312.</p>
             </Block>
 
             <Block title="Contact Us">

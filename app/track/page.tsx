@@ -47,7 +47,7 @@ export default function TrackPage() {
       if (res.ok) { setResult(j as LookupResult); setStatus('done') }
       else { setStatus('error'); setErrorMsg(j.error ?? 'Lookup failed.') }
     } catch {
-      setStatus('error'); setErrorMsg('Connection error. Please email info@jkissllc.com.')
+      setStatus('error'); setErrorMsg(`Connection error. Please email ${COMPANY.email}.`)
     }
   }
 

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { COMPANY } from '../../../../lib/company'
 import { requireSession } from '../../_lib/session'
 import { getBookingByToken, balanceDueCents, fmtUSD, SERVICE_LABELS } from '../../../../lib/bookings'
 import { aiText } from '../../../../lib/ai'
@@ -10,7 +11,7 @@ const INTENTS: Record<string, string> = {
   reminder: 'a polite reminder about their upcoming service and any balance due',
   thanks: 'a warm thank-you after the job, inviting a review',
   reschedule: 'a helpful note offering to reschedule and asking for a better date',
-  cancellation: 'a sincere apology that, due to unforeseen scheduling issues and the driver being unavailable, the job must be cancelled for now, expressing regret and an eagerness to reschedule as soon as possible, and inviting them to email info@jkissllc.com if they need any further help (do NOT include a phone number)',
+  cancellation: 'a sincere apology that, due to unforeseen scheduling issues and the driver being unavailable, the job must be cancelled for now, expressing regret and an eagerness to reschedule as soon as possible, and inviting them to email ' + COMPANY.email + ' if they need any further help (do NOT include a phone number)',
   custom: 'a helpful, professional message',
 }
 
@@ -33,7 +34,7 @@ export async function POST(req: NextRequest) {
     bookingNumber: b.bookingNumber,
   }
   const r = await aiText({
-    system: 'You write short, warm, professional customer messages for J Kiss LLC (a DFW box-truck delivery, junk-removal, and property-cleanout company), ready to send as a text or email. First-name basis, no greeting-card fluff, no placeholders/brackets. Sign off as "— J Kiss LLC". Keep under 65 words. Use only the facts provided. Output only the message.',
+    system: 'You write short, warm, professional customer messages for ' + COMPANY.legalName + ' (a DFW box-truck delivery, junk-removal, and property-cleanout company), ready to send as a text or email. First-name basis, no greeting-card fluff, no placeholders/brackets. Sign off as "— J Kiss LLC". Keep under 65 words. Use only the facts provided. Output only the message.',
     prompt: `Write ${INTENTS[intent]}.\n\nBooking facts (JSON): ${JSON.stringify(ctx)}\n${extra ? `Owner's extra instruction: ${extra}` : ''}`,
     maxOutputTokens: 250,
     temperature: 0.6,

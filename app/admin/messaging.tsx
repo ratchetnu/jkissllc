@@ -5,6 +5,7 @@
 // data helpers; no network calls live here.
 
 import type { CSSProperties } from 'react'
+import { COMPANY } from '../lib/company'
 
 // A superset message shape covering everything the inbox + booking thread render.
 export type ThreadMessage = {
@@ -141,7 +142,7 @@ export function ConversationThread({
             }}>
               <div className="flex items-center gap-1.5 flex-wrap" style={{ marginBottom: 3 }}>
                 <span className="text-xs font-bold" style={{ color: inbound ? '#e5e7eb' : '#fff' }}>
-                  {inbound ? (customerName || m.customerName || 'Customer') : 'J KISS'}
+                  {inbound ? (customerName || m.customerName || 'Customer') : COMPANY.shortNameUpper}
                 </span>
                 <ChannelPill channel={m.channel} />
                 {m.tags?.includes('opt-out') && <span style={{ ...pillBase, background: 'rgba(251,191,36,.16)', color: '#fcd34d' }}>OPT-OUT</span>}
@@ -176,23 +177,23 @@ function ref(c: TemplateCtx) { return c.bookingNumber ? ` (${c.bookingNumber})` 
 
 export const MESSAGE_TEMPLATES: { key: string; label: string; build: (c: TemplateCtx) => string }[] = [
   { key: 'booking_confirmation', label: 'Booking confirmation', build: c =>
-    `Hi ${name(c)}, this is J KISS LLC confirming your booking${ref(c)}. We've got you scheduled and will follow up with any details. Reply here with questions anytime — thank you!` },
+    `Hi ${name(c)}, this is ${COMPANY.legalNameUpper} confirming your booking${ref(c)}. We've got you scheduled and will follow up with any details. Reply here with questions anytime — thank you!` },
   { key: 'running_late', label: 'Running late', build: c =>
-    `Hi ${name(c)}, this is J KISS LLC. We're running a little behind schedule and wanted to keep you posted — we'll be there as soon as we can. Thank you for your patience!` },
+    `Hi ${name(c)}, this is ${COMPANY.legalNameUpper}. We're running a little behind schedule and wanted to keep you posted — we'll be there as soon as we can. Thank you for your patience!` },
   { key: 'need_photos', label: 'Need more photos', build: c =>
-    `Hi ${name(c)}, this is J KISS LLC. To finalize your quote${ref(c)}, could you text a couple of photos of the items/area? That helps us price it accurately. Thank you!` },
+    `Hi ${name(c)}, this is ${COMPANY.legalNameUpper}. To finalize your quote${ref(c)}, could you text a couple of photos of the items/area? That helps us price it accurately. Thank you!` },
   { key: 'updated_quote', label: 'Updated quote', build: c =>
-    `Hi ${name(c)}, this is J KISS LLC. We've updated your quote${ref(c)} based on the details. Let us know if you'd like to move forward and we'll lock in a time. Thanks!` },
+    `Hi ${name(c)}, this is ${COMPANY.legalNameUpper}. We've updated your quote${ref(c)} based on the details. Let us know if you'd like to move forward and we'll lock in a time. Thanks!` },
   { key: 'payment_reminder', label: 'Payment reminder', build: c =>
-    `Hi ${name(c)}, this is J KISS LLC — a friendly reminder that there's a balance due on your job${ref(c)}. You can pay securely from your booking page, or reply here if you have any questions. Thank you!` },
+    `Hi ${name(c)}, this is ${COMPANY.legalNameUpper} — a friendly reminder that there's a balance due on your job${ref(c)}. You can pay securely from your booking page, or reply here if you have any questions. Thank you!` },
   { key: 'zelle_verify', label: 'Manual/Zelle payment verification', build: c =>
-    `Hi ${name(c)}, this is J KISS LLC confirming we received your payment${ref(c)}. Thank you so much — you're all set! Let us know if you need a receipt.` },
+    `Hi ${name(c)}, this is ${COMPANY.legalNameUpper} confirming we received your payment${ref(c)}. Thank you so much — you're all set! Let us know if you need a receipt.` },
   { key: 'partially_completed', label: 'Partially completed job', build: c =>
-    `Hi ${name(c)}, this is J KISS LLC. We completed part of your job${ref(c)} today and will return to finish the remaining work. We'll confirm the return date with you shortly. Thank you for your patience!` },
+    `Hi ${name(c)}, this is ${COMPANY.legalNameUpper}. We completed part of your job${ref(c)} today and will return to finish the remaining work. We'll confirm the return date with you shortly. Thank you for your patience!` },
   { key: 'could_not_complete', label: 'Could not complete job', build: c =>
-    `Hi ${name(c)}, this is J KISS LLC. I apologize, but due to unforeseen scheduling issues we won't be able to return this week to complete the remaining work. Because the job won't be completed, there will be no remaining balance due — your deposit is applied toward the work already done and disposal costs. I'm sorry for the inconvenience and appreciate your understanding.` },
+    `Hi ${name(c)}, this is ${COMPANY.legalNameUpper}. I apologize, but due to unforeseen scheduling issues we won't be able to return this week to complete the remaining work. Because the job won't be completed, there will be no remaining balance due — your deposit is applied toward the work already done and disposal costs. I'm sorry for the inconvenience and appreciate your understanding.` },
   { key: 'reschedule', label: 'Reschedule request', build: c =>
-    `Hi ${name(c)}, this is J KISS LLC. We need to reschedule your job${ref(c)}. What day works best for you this week? Reply here and we'll get you back on the calendar. Thank you!` },
+    `Hi ${name(c)}, this is ${COMPANY.legalNameUpper}. We need to reschedule your job${ref(c)}. What day works best for you this week? Reply here and we'll get you back on the calendar. Thank you!` },
   { key: 'review_request', label: 'Review request', build: c =>
-    `Hi ${name(c)}, thank you for choosing J KISS LLC! If you have a moment, we'd really appreciate a quick review — it helps our small business a lot. Thank you!` },
+    `Hi ${name(c)}, thank you for choosing ${COMPANY.legalNameUpper}! If you have a moment, we'd really appreciate a quick review — it helps our small business a lot. Thank you!` },
 ]

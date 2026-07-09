@@ -53,7 +53,7 @@ export default function InvoicePage({ params }: { params: Promise<{ token: strin
     <main style={{ minHeight: '100svh', background: 'var(--bg)', color: 'var(--text)', padding: '28px 18px 48px', display: 'flex', justifyContent: 'center' }}>
       <style>{`@media print { .no-print { display: none !important; } }`}</style>
       <div style={{ width: '100%', maxWidth: 560 }}>
-        <p style={{ fontWeight: 900, letterSpacing: '-0.03em', fontSize: 22, marginBottom: 18 }}>J Kiss <span style={{ color: 'var(--red)' }}>LLC</span></p>
+        <p style={{ fontWeight: 900, letterSpacing: '-0.03em', fontSize: 22, marginBottom: 18 }}>{COMPANY.nameLead} <span style={{ color: 'var(--red)' }}>{COMPANY.nameAccent}</span></p>
         {children}
       </div>
     </main>
@@ -65,7 +65,7 @@ export default function InvoicePage({ params }: { params: Promise<{ token: strin
     <div style={card('rgba(255,255,255,.04)', 'var(--line)')}>
       <AlertTriangle size={26} color="#f59e0b" />
       <h1 style={{ fontSize: 18, fontWeight: 800, marginTop: 10 }}>Invoice not found</h1>
-      <p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>This invoice link isn’t valid. Contact J Kiss LLC at (817) 909-4312.</p>
+      <p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>{`This invoice link isn’t valid. Contact ${COMPANY.legalName} at ${COMPANY.phoneDisplay}.`}</p>
     </div>
   )
 
@@ -119,7 +119,7 @@ export default function InvoicePage({ params }: { params: Promise<{ token: strin
               {paying ? 'Starting checkout…' : `Pay ${money(inv.balanceCents)}`}
             </button>
           ) : (
-            <p style={{ fontSize: 13.5, color: 'var(--muted)' }}>To pay this invoice, contact J Kiss LLC at (817) 909-4312.</p>
+            <p style={{ fontSize: 13.5, color: 'var(--muted)' }}>{`To pay this invoice, contact ${COMPANY.legalName} at ${COMPANY.phoneDisplay}.`}</p>
           )}
           <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 10, textAlign: 'center' }}>A card processing fee is added at checkout.</p>
         </div>

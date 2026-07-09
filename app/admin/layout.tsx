@@ -1,7 +1,8 @@
 import type { Metadata } from 'next'
+import { COMPANY } from '../lib/company';
 
 export const metadata: Metadata = {
-  title: 'OpsPilot | J Kiss LLC',
+  title: `OpsPilot | ${COMPANY.legalName}`,
   robots: {
     index: false,
     follow: false,

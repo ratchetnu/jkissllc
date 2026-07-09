@@ -8,7 +8,7 @@ import BookingClient from './BookingClient'
 export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
-  title: 'Your Booking — J Kiss LLC',
+  title: `Your Booking — ${COMPANY.legalName}`,
   robots: { index: false, follow: false },
 }
 

@@ -25,7 +25,7 @@ export default function CoiPage() {
       else { setStatus('error'); setErrorMsg(j.error ?? 'Failed to submit.') }
     } catch {
       setStatus('error')
-      setErrorMsg('Connection error. Please email info@jkissllc.com directly.')
+      setErrorMsg(`Connection error. Please email ${COMPANY.email} directly.`)
     }
   }
 

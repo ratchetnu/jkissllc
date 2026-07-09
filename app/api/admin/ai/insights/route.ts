@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { COMPANY } from '../../../../lib/company'
 import { requireSession } from '../../_lib/session'
 import { listBookings } from '../../../../lib/bookings'
 import { computeBookingAnalytics } from '../../../../lib/analytics'
@@ -28,7 +29,7 @@ export async function GET(req: NextRequest) {
       reviews: a.reviews,
     }
     const r = await aiText({
-      system: 'You are a sharp small-business analyst for J Kiss LLC, a Dallas–Fort Worth box-truck delivery, junk-removal, and property-cleanout company. Be concise, specific, and practical. Use the numbers given. No fluff, no disclaimers.',
+      system: 'You are a sharp small-business analyst for ' + COMPANY.legalName + ', a Dallas–Fort Worth box-truck delivery, junk-removal, and property-cleanout company. Be concise, specific, and practical. Use the numbers given. No fluff, no disclaimers.',
       prompt: `Here is the current business data (JSON):\n\n${JSON.stringify(summary, null, 2)}\n\nWrite a short briefing with:\n1. Three to four bullet insights about what's happening (revenue pace vs forecast, where money is coming from, outstanding A/R, job mix).\n2. Two concrete, high-ROI actions the owner should take this week.\nKeep it under 180 words. Use plain text with simple "- " bullets and short section headers.`,
       maxOutputTokens: 600,
       temperature: 0.4,

@@ -23,7 +23,7 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
           <Link href="/" className="btn-ghost" style={{ padding: '12px 22px', fontSize: '14px' }}>← Back to Home</Link>
         </div>
         <p className="text-xs mt-6" style={{ color: 'rgba(255,255,255,.3)' }}>
-          Still stuck? Call or text <a href={"tel:" + COMPANY.phoneE164} style={{ color: 'var(--muted)' }}>(817) 909-4312</a>
+          Still stuck? Call or text <a href={"tel:" + COMPANY.phoneE164} style={{ color: 'var(--muted)' }}>{COMPANY.phoneDisplay}</a>
         </p>
       </div>
     </main>

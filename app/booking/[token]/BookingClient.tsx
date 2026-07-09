@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { COMPANY } from '../../lib/company';
+import { COMPANY, CREDENTIALS_SLASH } from '../../lib/company';
 import Link from 'next/link'
 
 // ── Local types (mirror the customer-safe projection from the API) ───────────
@@ -165,17 +165,17 @@ export default function BookingClient({
     : isReturn
       ? 'Your return visit is scheduled'
       : confirmed
-        ? "You're officially booked with J KISS LLC"
+        ? "You're officially booked with " + COMPANY.legalNameUpper
         : verified
           ? 'Your service time is verified'
-          : "You're almost booked with J KISS LLC"
+          : "You're almost booked with " + COMPANY.legalNameUpper
 
   return (
     <main className="min-h-screen pb-20" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
       <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4"
         style={{ background: 'rgba(11,11,12,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
         <Link href="/" className="text-xl font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
-          J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+          {COMPANY.nameLead} <span style={{ color: 'var(--red)' }}>{COMPANY.nameAccent}</span>
         </Link>
         <a href={"tel:" + COMPANY.phoneE164} className="text-sm font-semibold" style={{ color: 'var(--muted)' }}>(817) 909-4312</a>
       </header>
@@ -190,13 +190,13 @@ export default function BookingClient({
             {cancelled
               ? 'This booking has been cancelled. Please contact us if you have questions.'
               : completed
-                ? 'Thank you for choosing J Kiss LLC. We hope to work with you again.'
+                ? 'Thank you for choosing ' + COMPANY.legalName + '. We hope to work with you again.'
                 : isReturn
                   ? `We're coming back to finish your job on ${fmtDate(serviceDate)}${serviceWindow ? `, ${serviceWindow}` : ''}.${b.continuation?.customerConfirmedReturn ? ' Thanks for confirming!' : ' Please confirm this works below.'}`
                   : confirmed
-                    ? `You're all set${serviceDate ? ` for ${fmtDate(serviceDate)}${serviceWindow ? `, ${serviceWindow}` : ''}` : ''}. J Kiss LLC will contact you if any adjustment is needed.`
+                    ? `You're all set${serviceDate ? ` for ${fmtDate(serviceDate)}${serviceWindow ? `, ${serviceWindow}` : ''}` : ''}. ${COMPANY.legalName} will contact you if any adjustment is needed.`
                     : verified
-                      ? 'Your service time has been verified. J Kiss LLC will contact you if any adjustment is needed.'
+                      ? 'Your service time has been verified. ' + COMPANY.legalName + ' will contact you if any adjustment is needed.'
                       : serviceDate
                         ? `Your service is scheduled for ${fmtDate(serviceDate)}. Please choose the arrival time that works best for you and confirm below.`
                         : 'Your booking is almost confirmed. Please verify the service date and arrival window below.'}
@@ -280,7 +280,7 @@ export default function BookingClient({
           )}
 
           <p className="text-xs text-center mt-8" style={{ color: 'rgba(255,255,255,.3)' }}>
-            J Kiss LLC · (817) 909-4312 · info@jkissllc.com · US DOT 3484556 / MC 01155352
+            {`${COMPANY.legalName} · ${COMPANY.phoneDisplay} · ${COMPANY.email} · ${CREDENTIALS_SLASH}`}
           </p>
         </div>
       </section>
@@ -390,8 +390,8 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
           <div className="mt-5 pt-5" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
             <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Prefer no card fee? Send the deposit by Zelle</p>
             <p className="text-xs mt-1 mb-3" style={{ color: 'rgba(255,255,255,.45)' }}>Send <strong className="text-white">{usd(depositDue)}</strong> · memo <strong className="text-white">{memo}</strong>, then tap “I Sent Payment”.</p>
-            <button type="button" onClick={() => copy('Zelle', 'jkissbiz@gmail.com')} className="flex items-center justify-between gap-3 rounded-xl px-4 py-3 text-left w-full" style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.1)' }}>
-              <span className="text-sm" style={{ color: 'var(--muted)' }}>Zelle: <span className="font-mono text-white">jkissbiz@gmail.com</span></span>
+            <button type="button" onClick={() => copy('Zelle', COMPANY.zelle)} className="flex items-center justify-between gap-3 rounded-xl px-4 py-3 text-left w-full" style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.1)' }}>
+              <span className="text-sm" style={{ color: 'var(--muted)' }}>Zelle: <span className="font-mono text-white">{COMPANY.zelle}</span></span>
               <span className="text-xs font-bold shrink-0" style={{ color: copied === 'Zelle' ? '#34d399' : 'var(--red)' }}>{copied === 'Zelle' ? '✓ Copied' : 'Copy'}</span>
             </button>
             {!showManual ? (
@@ -442,8 +442,8 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
 
             <div className="flex flex-col gap-2">
               {[
-                { label: 'Zelle', value: 'jkissbiz@gmail.com' },
-                { label: 'Apple Cash', value: '817-909-4312' },
+                { label: 'Zelle', value: COMPANY.zelle },
+                { label: 'Apple Cash', value: COMPANY.appleCash },
                 { label: 'Memo', value: memo },
               ].map(item => (
                 <button key={item.label} type="button" onClick={() => copy(item.label, item.value)}
@@ -552,7 +552,7 @@ function ReturnConfirmCard({ b, token, onChange }: { b: CustomerBooking; token: 
     try {
       const res = await fetch(`/api/booking/${token}/confirm-return`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       const j = await res.json()
-      if (!res.ok) { setErr(j.error ?? 'Something went wrong — please call us at (817) 909-4312.'); setBusy(false); return }
+      if (!res.ok) { setErr(j.error ?? 'Something went wrong — please call us at ' + COMPANY.phoneDisplay + '.'); setBusy(false); return }
       await onChange()
     } catch { setErr('Connection error — please try again.') }
     setBusy(false)
@@ -568,7 +568,7 @@ function ReturnConfirmCard({ b, token, onChange }: { b: CustomerBooking; token: 
 
       {confirmed ? (
         <p className="text-sm" style={{ color: 'var(--text)', lineHeight: 1.6 }}>
-          Thanks! You confirmed our return{c.returnDate ? <> on <strong className="text-white">{fmtDate(c.returnDate)}</strong>{c.returnWindow ? <> ({c.returnWindow})</> : null}</> : ''}. We&apos;ll see you then to finish the job. Need to change it? Call or text (817) 909-4312.
+          Thanks! You confirmed our return{c.returnDate ? <> on <strong className="text-white">{fmtDate(c.returnDate)}</strong>{c.returnWindow ? <> ({c.returnWindow})</> : null}</> : ''}. We&apos;ll see you then to finish the job. Need to change it? Call or text {COMPANY.phoneDisplay}.
         </p>
       ) : (
         <>
@@ -859,7 +859,7 @@ function VerifyCard({ b, token, policy, onUpdated, verified }: {
               <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)}
                 style={{ width: 22, height: 22, marginTop: 1, accentColor: '#E0002A', flexShrink: 0 }} />
               <span className="text-sm" style={{ color: 'var(--text)', lineHeight: 1.5 }}>
-                I have read and agree to the J KISS LLC{' '}
+                I have read and agree to the {COMPANY.legalNameUpper}{' '}
                 <button type="button" onClick={() => setShowPolicy(s => !s)} className="font-semibold underline" style={{ color: 'var(--red)' }}>
                   Cancellation &amp; Refund Policy
                 </button>{' '}and Terms of Service.

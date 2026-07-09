@@ -264,7 +264,7 @@ export default function QuotePage() {
       const j = await res.json()
       if (res.ok && j.estimate) { setSent({ estimate: j.estimate }); window.scrollTo({ top: 0, behavior: 'smooth' }) }
       else setErr(j.error ?? 'Could not submit your request. Please try again.')
-    } catch { setErr('Connection error — please try again or email info@jkissllc.com.') }
+    } catch { setErr(`Connection error — please try again or email ${COMPANY.email}.`) }
     setBusy(false)
   }
 

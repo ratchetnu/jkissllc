@@ -115,7 +115,7 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
     <main style={{ minHeight: '100svh', background: 'var(--bg)', color: 'var(--text)', padding: '28px 18px 48px', display: 'flex', justifyContent: 'center' }}>
       <div style={{ width: '100%', maxWidth: 460 }}>
         <p style={{ fontWeight: 900, letterSpacing: '-0.03em', fontSize: 22, marginBottom: 18 }}>
-          J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+          {COMPANY.nameLead} <span style={{ color: 'var(--red)' }}>{COMPANY.nameAccent}</span>
         </p>
         {children}
       </div>
@@ -128,7 +128,7 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
     <div style={card('rgba(255,255,255,.04)', 'var(--line)')}>
       <AlertTriangle size={26} color="#f59e0b" />
       <h1 style={{ fontSize: 18, fontWeight: 800, marginTop: 10 }}>Link not found</h1>
-      <p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>This confirmation link isn’t valid. It may have been mistyped. Contact dispatch at (817) 909-4312.</p>
+      <p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>This confirmation link isn’t valid. It may have been mistyped. Contact dispatch at {COMPANY.phoneDisplay}.</p>
     </div>
   )
 
@@ -174,7 +174,7 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
   )
 
   // ── Terminal states ──
-  if (route.expired) return wrap(<div style={card('rgba(245,158,11,.08)', 'rgba(245,158,11,.3)')}><AlertTriangle size={26} color="#f59e0b" /><h1 style={{ fontSize: 18, fontWeight: 800, marginTop: 10 }}>This route link has expired</h1><p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>The route date has passed. If you have questions, contact dispatch at (817) 909-4312.</p></div>)
+  if (route.expired) return wrap(<div style={card('rgba(245,158,11,.08)', 'rgba(245,158,11,.3)')}><AlertTriangle size={26} color="#f59e0b" /><h1 style={{ fontSize: 18, fontWeight: 800, marginTop: 10 }}>This route link has expired</h1><p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>The route date has passed. If you have questions, contact dispatch at {COMPANY.phoneDisplay}.</p></div>)
   if (route.status === 'cancelled') return wrap(<div style={card('rgba(255,255,255,.04)', 'var(--line)')}><XCircle size={26} color="var(--muted)" /><h1 style={{ fontSize: 18, fontWeight: 800, marginTop: 10 }}>Route cancelled</h1><p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>This route has been cancelled by dispatch. No action is needed.</p></div>)
   if (route.status === 'completed') return wrap(
     <div style={card('rgba(34,197,94,.08)', 'rgba(34,197,94,.3)')}>
@@ -299,7 +299,7 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
           </div>
         )}
       </div>
-      <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 14, textAlign: 'center' }}>Questions? Text or call dispatch at (817) 909-4312.</p>
+      <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 14, textAlign: 'center' }}>Questions? Text or call dispatch at {COMPANY.phoneDisplay}.</p>
     </div>
   )
 }

@@ -193,7 +193,7 @@ export default async function CityPage({ params }: { params: Promise<{ city: str
 
       <footer className="py-10 px-6 text-center text-xs" style={{ borderTop: '1px solid var(--line)', color: 'rgba(255,255,255,.3)' }}>
         © {new Date().getFullYear()} {COMPANY.legalName} · {CREDENTIALS_DOT} ·{' '}
-        <Link href="/" className="hover:text-white">jkissllc.com</Link>
+        <Link href="/" className="hover:text-white">{COMPANY.domain}</Link>
       </footer>
     </main>
   )

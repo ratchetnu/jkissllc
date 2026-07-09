@@ -46,7 +46,7 @@ export default function ClientPortalPage({ params }: { params: Promise<{ token: 
     <main style={{ minHeight: '100svh', background: 'var(--bg)', color: 'var(--text)', padding: '28px 18px 48px', display: 'flex', justifyContent: 'center' }}>
       <div style={{ width: '100%', maxWidth: 520 }}>
         <p style={{ fontWeight: 900, letterSpacing: '-0.03em', fontSize: 22, marginBottom: 18 }}>
-          J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+          {COMPANY.nameLead} <span style={{ color: 'var(--red)' }}>{COMPANY.nameAccent}</span>
         </p>
         {children}
       </div>
@@ -59,7 +59,7 @@ export default function ClientPortalPage({ params }: { params: Promise<{ token: 
     <div style={card('rgba(255,255,255,.04)', 'var(--line)')}>
       <AlertTriangle size={26} color="#f59e0b" />
       <h1 style={{ fontSize: 18, fontWeight: 800, marginTop: 10 }}>Link not found</h1>
-      <p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>This schedule link isn’t valid. Contact J Kiss LLC at (817) 909-4312 for a new one.</p>
+      <p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>{`This schedule link isn’t valid. Contact ${COMPANY.legalName} at ${COMPANY.phoneDisplay} for a new one.`}</p>
     </div>
   )
 
@@ -71,7 +71,7 @@ export default function ClientPortalPage({ params }: { params: Promise<{ token: 
       <div style={{ marginBottom: 18 }}>
         <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--red)' }}>Route Schedule</div>
         <h1 style={{ fontSize: 24, fontWeight: 800, marginTop: 4, letterSpacing: '-0.02em' }}>{businessName}</h1>
-        <p style={{ color: 'var(--muted)', fontSize: 13.5, marginTop: 4 }}>Your upcoming routes and crew confirmations with J Kiss LLC.</p>
+        <p style={{ color: 'var(--muted)', fontSize: 13.5, marginTop: 4 }}>Your upcoming routes and crew confirmations with {COMPANY.legalName}.</p>
       </div>
 
       {routes.length === 0 && (
@@ -95,7 +95,7 @@ export default function ClientPortalPage({ params }: { params: Promise<{ token: 
         </>
       )}
 
-      <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 26, textAlign: 'center' }}>Questions about your schedule? Call J Kiss LLC at (817) 909-4312.</p>
+      <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 26, textAlign: 'center' }}>{`Questions about your schedule? Call ${COMPANY.legalName} at ${COMPANY.phoneDisplay}.`}</p>
     </div>
   )
 }
