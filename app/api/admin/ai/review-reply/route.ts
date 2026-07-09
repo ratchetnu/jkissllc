@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { COMPANY } from '../../../../lib/company'
 import { requireSession } from '../../_lib/session'
 import { aiText } from '../../../../lib/ai'
 
@@ -13,7 +14,7 @@ export async function POST(req: NextRequest) {
   const text = typeof body.text === 'string' ? body.text.slice(0, 1000) : ''
 
   const r = await aiText({
-    system: 'You write warm, professional, concise public replies to customer reviews on behalf of J Kiss LLC (a DFW box-truck delivery, junk-removal, and property-cleanout company). Sound like a grateful small-business owner, never robotic. 2–4 sentences. For low ratings, be gracious, take responsibility, and invite them to reach out at (817) 909-4312 to make it right. Do not invent specifics. Output only the reply text.',
+    system: 'You write warm, professional, concise public replies to customer reviews on behalf of ' + COMPANY.legalName + ' (a DFW box-truck delivery, junk-removal, and property-cleanout company). Sound like a grateful small-business owner, never robotic. 2–4 sentences. For low ratings, be gracious, take responsibility, and invite them to reach out at ' + COMPANY.phoneDisplay + ' to make it right. Do not invent specifics. Output only the reply text.',
     prompt: `Review from ${author} — ${rating} out of 5 stars.\nReview text: ${text || '(no written comment)'}\n\nWrite the reply.`,
     maxOutputTokens: 300,
     temperature: 0.6,

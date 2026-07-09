@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { COMPANY } from '../lib/company';
 import Link from 'next/link';
 import { Lock, ArrowRight } from 'lucide-react';
 import Reveal from '../components/Reveal';
@@ -12,7 +13,7 @@ import { CAPABILITIES } from '../lib/opspilot';
 export const metadata: Metadata = {
   title: 'OpsPilot — The operating system behind J KISS Freight',
   description:
-    'OpsPilot is the proprietary operations platform built and run by J KISS LLC. Route assignment, recurring contracts, crew management, claims, payroll, and financial tracking in one system. Coming soon for other owner-operators.',
+    `OpsPilot is the proprietary operations platform built and run by ${COMPANY.legalNameUpper}. Route assignment, recurring contracts, crew management, claims, payroll, and financial tracking in one system. Coming soon for other owner-operators.`,
   alternates: { canonical: 'https://www.jkissllc.com/opspilot' },
   openGraph: {
     title: 'OpsPilot — The operating system behind J KISS Freight',

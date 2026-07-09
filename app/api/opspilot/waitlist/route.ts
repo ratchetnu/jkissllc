@@ -4,8 +4,9 @@ import { escapeHtml, isValidEmail, str } from '../../../lib/validators'
 import { isBlockedBot } from '../../../lib/botcheck'
 import { addToWaitlist } from '../../../lib/opspilot-waitlist'
 import { emailRaw } from '../../../lib/booking-emails'
+import { COMPANY } from '../../../lib/company'
 
-const OWNER = process.env.OWNER_EMAIL ?? 'timmothy@jkissllc.com'
+const OWNER = process.env.OWNER_EMAIL ?? COMPANY.ownerEmail
 
 export async function POST(request: NextRequest) {
   // Public form — same baseline defenses as /api/contact.

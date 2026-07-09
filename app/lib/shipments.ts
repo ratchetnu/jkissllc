@@ -1,4 +1,5 @@
 import { redis } from './redis'
+import { COMPANY } from './company'
 
 export type ShipmentStatus = 'created' | 'dispatched' | 'out-for-delivery' | 'delivered'
 
@@ -60,5 +61,5 @@ export const STATUS_DESC: Record<ShipmentStatus, string> = {
   'created': 'Your pickup is booked and on the schedule. We\'ll confirm your arrival window before the crew heads out.',
   'dispatched': 'Crew is loaded up and on the way to your location.',
   'out-for-delivery': 'Crew is on site loading and hauling your items away.',
-  'delivered': 'All done — everything\'s hauled off and disposed of responsibly. Thanks for choosing J Kiss.',
+  'delivered': `All done — everything's hauled off and disposed of responsibly. Thanks for choosing ${COMPANY.shortName}.`,
 }

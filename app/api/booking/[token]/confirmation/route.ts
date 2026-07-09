@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { COMPANY, CREDENTIALS_SLASH } from '../../../../lib/company'
 import {
   getBookingByToken, balanceDueCents, fmtUSD,
   SERVICE_LABELS, BOOKING_STATUS_LABEL, paymentSummaryStatus, PAYMENT_SUMMARY_LABEL,
@@ -40,10 +41,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
   .doc { max-width: 720px; margin: 0 auto; background: #fff; border: 1px solid #e5e5e5; border-radius: 14px; overflow: hidden; }
   .hd { background: #0b0b0c; color: #fff; padding: 22px 28px; display: flex; justify-content: space-between; align-items: center; }
   .hd h1 { font-size: 20px; margin: 0; font-weight: 800; }
-  .hd .red { color: #E0002A; }
+  .hd .red { color: ${COMPANY.brand.red}; }
   .hd .meta { text-align: right; font-size: 12px; color: #bbb; }
   .body { padding: 28px; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #E0002A; margin: 26px 0 8px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: ${COMPANY.brand.red}; margin: 26px 0 8px; }
   h2:first-child { margin-top: 0; }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   td.k { color: #777; width: 200px; padding: 5px 0; vertical-align: top; }
@@ -51,10 +52,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
   .items { margin: 6px 0 0; padding-left: 20px; font-size: 14px; }
   .items li { margin: 2px 0; }
   .totals td.v { text-align: right; }
-  .balance { font-size: 18px; font-weight: 800; color: #E0002A; }
+  .balance { font-size: 18px; font-weight: 800; color: ${COMPANY.brand.red}; }
   .policy { white-space: pre-wrap; font-size: 11px; color: #444; background: #fafafa; border: 1px solid #eee; border-radius: 8px; padding: 14px; margin-top: 8px; max-height: 320px; overflow: auto; }
   .ft { padding: 16px 28px; border-top: 1px solid #eee; font-size: 11px; color: #999; text-align: center; }
-  .btn { display:inline-block; background:#E0002A; color:#fff; text-decoration:none; padding:10px 18px; border-radius:8px; font-weight:700; font-size:13px; border:none; cursor:pointer; }
+  .btn { display:inline-block; background:${COMPANY.brand.red}; color:#fff; text-decoration:none; padding:10px 18px; border-radius:8px; font-weight:700; font-size:13px; border:none; cursor:pointer; }
   .toolbar { max-width:720px; margin:0 auto 14px; text-align:right; }
   @media print { body { background:#fff; padding:0; } .doc { border:none; } .toolbar { display:none; } .policy { max-height:none; overflow:visible; } }
 </style></head>
@@ -62,7 +63,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
   <div class="toolbar"><button class="btn" onclick="window.print()">Print / Save PDF</button></div>
   <div class="doc">
     <div class="hd">
-      <h1>J KISS <span class="red">LLC</span></h1>
+      <h1>${COMPANY.nameLeadUpper} <span class="red">${COMPANY.nameAccent}</span></h1>
       <div class="meta">BOOKING CONFIRMATION<br>${esc(b.bookingNumber)}${b.invoiceNumber ? `<br>Invoice ${esc(b.invoiceNumber)}` : ''}</div>
     </div>
     <div class="body">
@@ -106,7 +107,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
       </table>
       <div class="policy">${esc(policy.text)}</div>
     </div>
-    <div class="ft">J Kiss LLC · (817) 909-4312 · info@jkissllc.com · US DOT 3484556 / MC 01155352 · Generated ${fmtTs(Date.now())}</div>
+    <div class="ft">${COMPANY.legalName} · ${COMPANY.phoneDisplay} · ${COMPANY.email} · ${CREDENTIALS_SLASH} · Generated ${fmtTs(Date.now())}</div>
   </div>
 </body></html>`
 

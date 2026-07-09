@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireSession } from '../../_lib/session'
 import { sendSmsDetailed, toE164 } from '../../../../lib/sms'
+import { COMPANY } from '../../../../lib/company'
 import { emailRaw } from '../../../../lib/booking-emails'
 import { recordMessage } from '../../../../lib/messages'
 import { getBookingByToken, saveBooking } from '../../../../lib/bookings'
@@ -88,8 +89,8 @@ export async function POST(req: NextRequest) {
       try {
         await emailRaw({
           to: [emailIn],
-          subject: 'Message from J KISS LLC',
-          html: `<div style="font-family:system-ui,Arial,sans-serif;font-size:15px;line-height:1.6;color:#111">${esc(text).replace(/\n/g, '<br/>')}<br/><br/><span style="color:#666">— J KISS LLC · (817) 909-4312 · info@jkissllc.com</span></div>`,
+          subject: `Message from ${COMPANY.legalNameUpper}`,
+          html: `<div style="font-family:system-ui,Arial,sans-serif;font-size:15px;line-height:1.6;color:#111">${esc(text).replace(/\n/g, '<br/>')}<br/><br/><span style="color:#666">— ${COMPANY.legalNameUpper} · ${COMPANY.phoneDisplay} · ${COMPANY.email}</span></div>`,
         })
         out.email = true
       } catch (e) { console.error('[messages/reply] email failed', e) }

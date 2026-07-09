@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { COMPANY, CREDENTIALS_DOT } from '../lib/company';
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 import Reveal from '../components/Reveal';
@@ -7,14 +8,14 @@ import SiteFooter from '../components/home/SiteFooter';
 import { OpsPilotMark, OpsPilotWordmark } from '../components/opspilot/OpsPilotMark';
 
 export const metadata: Metadata = {
-  title: 'About J Kiss LLC — DFW Box-Truck Delivery, Junk Removal & Cleanouts',
+  title: `About ${COMPANY.legalName} — DFW Box-Truck Delivery, Junk Removal & Cleanouts`,
   description:
-    'J Kiss LLC has run box-truck delivery across the Dallas–Fort Worth metroplex since September 2020. Our story, our equipment, and the operations platform we built in-house to run it all.',
-  alternates: { canonical: 'https://www.jkissllc.com/about' },
+    `${COMPANY.legalName} has run box-truck delivery across the Dallas–Fort Worth metroplex since September 2020. Our story, our equipment, and the operations platform we built in-house to run it all.`,
+  alternates: { canonical: `${COMPANY.siteUrl}/about` },
   openGraph: {
-    title: 'About J Kiss LLC',
+    title: `About ${COMPANY.legalName}`,
     description: 'Box-truck delivery, junk removal, and cleanouts across DFW since September 2020.',
-    url: 'https://www.jkissllc.com/about',
+    url: `${COMPANY.siteUrl}/about`,
   },
 };
 
@@ -47,7 +48,7 @@ export default function AboutPage() {
           </Reveal>
           <Reveal delay={130}>
             <p className="lede" style={{ marginTop: 20, maxWidth: '54ch', color: 'var(--muted)' }}>
-              J Kiss LLC has run box-truck delivery across the Dallas–Fort Worth metroplex since
+              {COMPANY.legalName} has run box-truck delivery across the Dallas–Fort Worth metroplex since
               September 2020. Furniture, appliances, building materials, junk removal, and full
               property cleanouts.
             </p>
@@ -92,8 +93,8 @@ export default function AboutPage() {
               {[
                 ['2020', 'In business since September'],
                 ['DFW', 'Dallas–Fort Worth metroplex'],
-                ['3484556', 'US DOT number'],
-                ['01155352', 'MC number'],
+                [COMPANY.usdot, 'US DOT number'],
+                [COMPANY.mc, 'MC number'],
               ].map(([value, label]) => (
                 <div key={label}>
                   <p className="kpi tabular-nums" style={{ fontSize: 'clamp(1.4rem, 2.4vw, 1.9rem)' }}>{value}</p>

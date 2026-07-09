@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { COMPANY } from '../../lib/company'
 import { upload } from '@vercel/blob/client'
 import AdminGate from '../AdminGate'
 import { SkeletonList } from '../../components/Skeleton'
@@ -459,7 +460,7 @@ function continuationMsg(b: Booking): string {
   const because = c.reason ? ` because ${c.reason}` : ' in one trip'
   const when = c.returnDate ? ` on ${fmtISO(c.returnDate)}${c.returnWindow ? ` (${c.returnWindow})` : ''}` : ' soon'
   const remaining = c.remainingWork ? ` to finish ${c.remainingWork}` : ' to finish the remaining work'
-  return `Hi ${b.customerName}, we started your ${svc} but couldn't complete everything${because}. We'd like to return${when}${remaining}. Please confirm this works (or pick another date) here: ${bookingLinkFor(b.token)} — J Kiss LLC`
+  return `Hi ${b.customerName}, we started your ${svc} but couldn't complete everything${because}. We'd like to return${when}${remaining}. Please confirm this works (or pick another date) here: ${bookingLinkFor(b.token)} — ${COMPANY.legalName}`
 }
 
 // ── Multi-day / job continuation ─────────────────────────────────────────────
@@ -618,17 +619,17 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
   const svcLabel = SERVICE_LABELS[b.serviceType] ?? 'service'
   const MSG_TEMPLATES: [string, string, string][] = [
     ['could_not_complete', 'Could Not Complete — won’t return this week',
-      `Hi ${firstName}, this is J KISS LLC. I apologize, but due to unforeseen scheduling issues, we will not be able to return this week to complete the remaining work. Because the job will not be completed, there will be no remaining balance due. The deposit has been applied toward the work already completed and disposal costs. I apologize for the inconvenience and appreciate your understanding.`],
+      `Hi ${firstName}, this is ${COMPANY.legalNameUpper}. I apologize, but due to unforeseen scheduling issues, we will not be able to return this week to complete the remaining work. Because the job will not be completed, there will be no remaining balance due. The deposit has been applied toward the work already completed and disposal costs. I apologize for the inconvenience and appreciate your understanding.`],
     ['cancel_driver', 'Cancellation — driver unavailable',
-      `Hi ${firstName}, this is J KISS LLC. I'm very sorry, but due to unforeseen scheduling issues our driver won't be able to make it as scheduled, so we have to cancel for now. I sincerely apologize for the inconvenience and would love to reschedule as soon as we're able. If you need any further help, please email us at info@jkissllc.com. Thank you for your understanding.`],
+      `Hi ${firstName}, this is ${COMPANY.legalNameUpper}. I'm very sorry, but due to unforeseen scheduling issues our driver won't be able to make it as scheduled, so we have to cancel for now. I sincerely apologize for the inconvenience and would love to reschedule as soon as we're able. If you need any further help, please email us at info@jkissllc.com. Thank you for your understanding.`],
     ['running_late', 'Running late',
-      `Hi ${firstName}, this is J KISS LLC. We're running a little behind schedule today and wanted to keep you posted — we'll be there as soon as we can. Thank you for your patience.`],
+      `Hi ${firstName}, this is ${COMPANY.legalNameUpper}. We're running a little behind schedule today and wanted to keep you posted — we'll be there as soon as we can. Thank you for your patience.`],
     ['on_the_way', 'On the way',
-      `Hi ${firstName}, this is J KISS LLC — our crew is on the way for your ${svcLabel}. See you soon!`],
+      `Hi ${firstName}, this is ${COMPANY.legalNameUpper} — our crew is on the way for your ${svcLabel}. See you soon!`],
     ['followup', 'Follow-up',
-      `Hi ${firstName}, this is J KISS LLC following up on your ${svcLabel} (${b.bookingNumber}). Do you have any questions, or anything we can help with?`],
+      `Hi ${firstName}, this is ${COMPANY.legalNameUpper} following up on your ${svcLabel} (${b.bookingNumber}). Do you have any questions, or anything we can help with?`],
     ['thanks', 'Thank you',
-      `Hi ${firstName}, thank you for choosing J KISS LLC — we appreciate your business! If you have a moment, we'd love a quick review.`],
+      `Hi ${firstName}, thank you for choosing ${COMPANY.legalNameUpper} — we appreciate your business! If you have a moment, we'd love a quick review.`],
   ]
 
   function applyTemplate(key: string) {

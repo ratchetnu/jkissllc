@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { COMPANY } from '../../lib/company';
 import Link from 'next/link'
 import {
   POSITIONS, REQUIRED_DOCS, HEADSHOT_GUIDELINES, EXPERIENCE_LEVELS,
@@ -327,7 +328,7 @@ export default function ApplyPage() {
                   ))}
                 </div>
                 {missingDocs.length > 0 && <p className="text-sm mb-3" style={{ color: '#fbbf24' }}>⚠️ You still need to upload {missingDocs.length} required document(s). <button onClick={() => setStep(5)} className="underline" style={{ color: '#fbbf24' }}>Go back</button>.</p>}
-                <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,.4)', lineHeight: 1.5 }}>By submitting, you confirm the information is accurate. J Kiss LLC is an equal-opportunity employer.</p>
+                <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,.4)', lineHeight: 1.5 }}>By submitting, you confirm the information is accurate. {COMPANY.legalName} is an equal-opportunity employer.</p>
                 {err && <p className="text-sm mb-3" role="alert" style={{ color: '#f87171' }}>{err}</p>}
                 <Nav onBack={() => setStep(5)} onNext={submit} nextLabel={busy ? 'Submitting…' : 'Submit Application →'} nextDisabled={busy || missingDocs.length > 0 || !contactOk} />
               </>

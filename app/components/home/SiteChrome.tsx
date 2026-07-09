@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { COMPANY } from '../../lib/company';
 import { Phone } from 'lucide-react';
 
 /** Scroll-progress bar + a sticky mobile Quote/Call bar. */
@@ -31,9 +32,9 @@ export default function SiteChrome() {
       <div className="sticky-cta md:hidden">
         <a href="/quote" className="btn" style={{ flex: 1, justifyContent: 'center', padding: '14px' }}>Get My Quote</a>
         <a
-          href="tel:+18179094312"
+          href={`tel:${COMPANY.phoneE164}`}
           className="btn-ghost"
-          aria-label="Call J Kiss LLC"
+          aria-label={`Call ${COMPANY.legalName}`}
           style={{ padding: '14px 18px', justifyContent: 'center' }}
         >
           <Phone size={18} aria-hidden />

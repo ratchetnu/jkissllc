@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { COMPANY } from '../../../../lib/company'
 import {
   getBookingByToken, balanceDueCents, fmtUSD,
   SERVICE_LABELS, type PaymentType,
@@ -56,7 +57,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
           currency: 'usd',
           unit_amount: totalCents,
           product_data: {
-            name: `J Kiss LLC — ${SERVICE_LABELS[b.serviceType]} (${b.bookingNumber})`,
+            name: `${COMPANY.legalName} — ${SERVICE_LABELS[b.serviceType]} (${b.bookingNumber})`,
             description: `${kind === 'deposit' ? 'Deposit' : kind === 'full' ? 'Full balance' : 'Balance'} ${fmtUSD(net)} + ${fmtUSD(feeCents)} card processing fee`,
           },
         },

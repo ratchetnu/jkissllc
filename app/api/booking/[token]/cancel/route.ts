@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { COMPANY } from '../../../../lib/company'
 import { getBookingByToken, saveBooking, customerView, hoursUntilService, cancellationTier } from '../../../../lib/bookings'
 import { rateLimit } from '../../../../lib/rate-limit'
 import { notifyCancelledByCustomer } from '../../../../lib/notify'
@@ -14,7 +15,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   const b = await getBookingByToken(token)
   if (!b) return NextResponse.json({ error: 'not_found' }, { status: 404 })
   if (b.status === 'cancelled') return NextResponse.json({ error: 'This booking is already cancelled.' }, { status: 409 })
-  if (b.status === 'completed') return NextResponse.json({ error: 'This service is complete — please call us at (817) 909-4312.' }, { status: 409 })
+  if (b.status === 'completed') return NextResponse.json({ error: 'This service is complete — please call us at ' + COMPANY.phoneDisplay + '.' }, { status: 409 })
 
   const body = await req.json().catch(() => ({}))
   const now = Date.now()

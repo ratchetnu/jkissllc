@@ -3,6 +3,7 @@ import { Resend } from 'resend'
 import { rateLimit } from '../../lib/rate-limit'
 import { escapeHtml, isValidEmail } from '../../lib/validators'
 import { isBlockedBot } from '../../lib/botcheck'
+import { COMPANY } from '../../lib/company'
 
 export async function POST(request: NextRequest) {
   // Public form — rate-limit per IP so it can't be used as an email-spam relay.
@@ -37,14 +38,14 @@ export async function POST(request: NextRequest) {
 
   try {
     await resend.emails.send({
-      from: 'J Kiss LLC <info@jkissllc.com>',
-      to: ['info@jkissllc.com', 'timmothy@jkissllc.com'],
+      from: COMPANY.emailFrom,
+      to: [COMPANY.email, COMPANY.ownerEmail],
       replyTo: email as string,
       subject: `New Quote Request — ${safe.service === '—' ? 'General Inquiry' : safe.service}`,
       html: `
         <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
-          <h2 style="color:#E0002A;margin-bottom:4px">New Quote Request</h2>
-          <p style="color:#666;margin-top:0">Submitted via jkissllc.com</p>
+          <h2 style="color:${COMPANY.brand.red};margin-bottom:4px">New Quote Request</h2>
+          <p style="color:#666;margin-top:0">Submitted via ${COMPANY.domain}</p>
           <hr style="border:1px solid #eee;margin:20px 0"/>
           <table style="width:100%;border-collapse:collapse">
             <tr><td style="padding:8px 0;color:#999;width:120px">Name</td><td style="padding:8px 0;font-weight:600">${safe.name}</td></tr>

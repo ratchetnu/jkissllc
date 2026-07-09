@@ -9,6 +9,7 @@
 //   OWNER_ALERT_EMAIL  "false" to disable email alerts by default
 
 import { redis } from './redis'
+import { COMPANY } from './company'
 import { sendSms } from './sms'
 import { emailRaw } from './booking-emails'
 
@@ -26,7 +27,7 @@ function envDefaults(): OwnerAlertConfig {
     sms: (process.env.OWNER_ALERT_SMS ?? 'true') !== 'false',
     email: (process.env.OWNER_ALERT_EMAIL ?? 'true') !== 'false',
     smsTo: process.env.OWNER_SMS ?? '',
-    emailTo: process.env.OWNER_EMAIL ?? 'timmothy@jkissllc.com',
+    emailTo: process.env.OWNER_EMAIL ?? COMPANY.ownerEmail,
   }
 }
 
@@ -93,7 +94,7 @@ export async function notifyOwnerOfReply(opts: {
   const previewSms = opts.preview.length > 200 ? opts.preview.slice(0, 197) + '…' : opts.preview
 
   if (cfg.sms && cfg.smsTo) {
-    const body = `J KISS: ${who}${ref} replied by ${opts.via}: "${previewSms}" — open: ${opts.adminUrl}`
+    const body = `${COMPANY.shortNameUpper}: ${who}${ref} replied by ${opts.via}: "${previewSms}" — open: ${opts.adminUrl}`
     try { await sendSms(cfg.smsTo, body) } catch (e) { console.error('[owner-alert sms]', e) }
   }
   if (cfg.email && cfg.emailTo) {

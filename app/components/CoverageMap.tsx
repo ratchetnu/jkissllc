@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { COMPANY } from '../lib/company';
 import { CITIES } from '../lib/cities'
 
 /**
@@ -58,7 +59,7 @@ export default function CoverageMap() {
         {/* Not role="img" — the SVG holds real per-city links that must stay
             individually reachable/announced by assistive tech. */}
         <title id="jk-coverage-title">
-          J Kiss LLC box-truck delivery coverage across the Dallas–Fort Worth metroplex — select a city for local details.
+          {COMPANY.legalName} box-truck delivery coverage across the Dallas–Fort Worth metroplex — select a city for local details.
         </title>
         <defs>
           <radialGradient id="jk-glow" cx="50%" cy="46%" r="62%">

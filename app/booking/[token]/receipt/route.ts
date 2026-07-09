@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { COMPANY, CREDENTIALS_SLASH } from '../../../lib/company'
 import {
   getBookingByToken, balanceDueCents, fmtUSD,
   SERVICE_LABELS, PAYMENT_METHOD_LABEL, paymentSummaryStatus,
@@ -29,10 +30,10 @@ const HEAD = `<style>
   .doc { max-width: 720px; margin: 0 auto; background: #fff; border: 1px solid #e5e5e5; border-radius: 14px; overflow: hidden; }
   .hd { background: #0b0b0c; color: #fff; padding: 22px 28px; display: flex; justify-content: space-between; align-items: center; }
   .hd h1 { font-size: 20px; margin: 0; font-weight: 800; }
-  .hd .red { color: #E0002A; }
+  .hd .red { color: ${COMPANY.brand.red}; }
   .hd .meta { text-align: right; font-size: 12px; color: #bbb; }
   .body { padding: 28px; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #E0002A; margin: 26px 0 8px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: ${COMPANY.brand.red}; margin: 26px 0 8px; }
   h2:first-child { margin-top: 0; }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   td.k { color: #777; width: 200px; padding: 5px 0; vertical-align: top; }
@@ -50,7 +51,7 @@ const HEAD = `<style>
   .review h3 { margin:0 0 6px; font-size:18px; font-weight:800; }
   .review p { margin:0 0 16px; font-size:14px; color:#cfcfcf; line-height:1.55; }
   .review .stars { font-size:22px; letter-spacing:3px; color:#FFC93C; margin-bottom:10px; }
-  .review a.cta { display:inline-block; background:#E0002A; color:#fff; text-decoration:none; padding:13px 26px; border-radius:10px; font-weight:800; font-size:15px; cursor:pointer; }
+  .review a.cta { display:inline-block; background:${COMPANY.brand.red}; color:#fff; text-decoration:none; padding:13px 26px; border-radius:10px; font-weight:800; font-size:15px; cursor:pointer; }
   .review .opt { display:block; margin-top:12px; font-size:12px; color:#888; }
   .rstars { font-size:32px; letter-spacing:8px; cursor:pointer; user-select:none; margin:4px 0 2px; }
   .rstars span { color:#555; transition:color .1s; }
@@ -61,7 +62,7 @@ const HEAD = `<style>
   .review .stars2 { font-size:26px; letter-spacing:4px; color:#FFC93C; margin-bottom:8px; }
   .review blockquote { margin:0 0 12px; font-size:14px; color:#ddd; font-style:italic; }
   .ft { padding: 16px 28px; border-top: 1px solid #eee; font-size: 11px; color: #999; text-align: center; }
-  .btn { display:inline-block; background:#E0002A; color:#fff; text-decoration:none; padding:10px 18px; border-radius:8px; font-weight:700; font-size:13px; border:none; cursor:pointer; }
+  .btn { display:inline-block; background:${COMPANY.brand.red}; color:#fff; text-decoration:none; padding:10px 18px; border-radius:8px; font-weight:700; font-size:13px; border:none; cursor:pointer; }
   .toolbar { max-width:720px; margin:0 auto 14px; text-align:right; }
   @media print { body { background:#fff; padding:0; } .doc { border:none; } .toolbar, .review a.cta { display:none; } }
 </style>`
@@ -81,11 +82,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
     const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Receipt — ${esc(b.bookingNumber)}</title>${HEAD}</head>
-<body><div class="doc"><div class="hd"><h1>J KISS <span class="red">LLC</span></h1><div class="meta">RECEIPT<br>${esc(b.bookingNumber)}</div></div>
+<body><div class="doc"><div class="hd"><h1>${COMPANY.nameLeadUpper} <span class="red">${COMPANY.nameAccent}</span></h1><div class="meta">RECEIPT<br>${esc(b.bookingNumber)}</div></div>
 <div class="body"><h2>Not yet paid in full</h2>
 <p style="font-size:15px;line-height:1.6">Your paid receipt will be available here once the invoice is fully paid. Current balance due: <strong>${fmtUSD(balance)}</strong>.</p>
 <p style="margin-top:18px"><a class="btn" href="${esc(siteUrl())}/booking/${esc(b.token)}">Go to your booking →</a></p></div>
-<div class="ft">J Kiss LLC · (817) 909-4312 · info@jkissllc.com · US DOT 3484556 / MC 01155352</div></div></body></html>`
+<div class="ft">${COMPANY.legalName} · ${COMPANY.phoneDisplay} · ${COMPANY.email} · ${CREDENTIALS_SLASH}</div></div></body></html>`
     return new NextResponse(html, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
   }
 
@@ -96,7 +97,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
         <div class="stars2">${'★'.repeat(existing.rating)}${'☆'.repeat(5 - existing.rating)}</div>
         <h3>Thanks for the review!</h3>
         ${existing.text ? `<blockquote>“${esc(existing.text)}”</blockquote>` : ''}
-        <span class="opt">Your feedback helps J Kiss LLC grow.</span>
+        <span class="opt">Your feedback helps ${COMPANY.legalName} grow.</span>
       </div>`
     : `<div class="review" id="review">
         <h3>How did we do, ${firstName}?</h3>
@@ -133,7 +134,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
         if(!o.ok) throw new Error(o.j.error||'Could not submit your review.');
         var box=document.getElementById('review');
         var filled='★★★★★'.slice(0,rating)+'☆☆☆☆☆'.slice(0,5-rating);
-        box.innerHTML='<div class="stars2">'+filled+'</div><h3>Thanks for the review!</h3><span class="opt">Your feedback helps J Kiss LLC grow.</span>';
+        box.innerHTML='<div class="stars2">'+filled+'</div><h3>Thanks for the review!</h3><span class="opt">Your feedback helps ${COMPANY.legalName} grow.</span>';
       })
       .catch(function(e){ err.textContent=e.message; btn.textContent='Submit Review →'; btn.style.pointerEvents='auto'; });
   });
@@ -157,7 +158,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
   <div class="toolbar"><button class="btn" onclick="window.print()">Print / Save PDF</button></div>
   <div class="doc">
     <div class="hd">
-      <h1>J KISS <span class="red">LLC</span></h1>
+      <h1>${COMPANY.nameLeadUpper} <span class="red">${COMPANY.nameAccent}</span></h1>
       <div class="meta">PAID INVOICE / RECEIPT<br>${esc(b.bookingNumber)}${b.invoiceNumber ? `<br>Invoice ${esc(b.invoiceNumber)}` : ''}</div>
     </div>
     <div class="body">
@@ -200,12 +201,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
         <p style="margin:0 0 6px;font-size:16px;font-weight:800">Thanks — here&apos;s 10% off your next job</p>
         ${b.loyaltyCode
           ? `<p style="margin:0 0 12px;font-size:13px;color:#b5b7bd;line-height:1.55">Use this code for <strong style="color:#fff">10% off</strong> your next booking — or share it with a friend for their first job.</p>
-             <p style="margin:0;display:inline-block;background:#E0002A;color:#fff;font-weight:800;letter-spacing:2px;font-size:18px;padding:10px 20px;border-radius:8px">${esc(b.loyaltyCode)}</p>
-             <p style="margin:10px 0 0;font-size:12px;color:#888">Enter it on your booking page, or mention it when you call (817) 909-4312.</p>`
-          : `<p style="margin:0;font-size:13px;color:#b5b7bd;line-height:1.55">Refer a friend and ask us about 10% off your next service. Text us at (817) 909-4312.</p>`}
+             <p style="margin:0;display:inline-block;background:${COMPANY.brand.red};color:#fff;font-weight:800;letter-spacing:2px;font-size:18px;padding:10px 20px;border-radius:8px">${esc(b.loyaltyCode)}</p>
+             <p style="margin:10px 0 0;font-size:12px;color:#888">Enter it on your booking page, or mention it when you call ${COMPANY.phoneDisplay}.</p>`
+          : `<p style="margin:0;font-size:13px;color:#b5b7bd;line-height:1.55">Refer a friend and ask us about 10% off your next service. Text us at ${COMPANY.phoneDisplay}.</p>`}
       </div>
     </div>
-    <div class="ft">J Kiss LLC · (817) 909-4312 · info@jkissllc.com · US DOT 3484556 / MC 01155352 · Generated ${fmtTs(Date.now())}</div>
+    <div class="ft">${COMPANY.legalName} · ${COMPANY.phoneDisplay} · ${COMPANY.email} · ${CREDENTIALS_SLASH} · Generated ${fmtTs(Date.now())}</div>
   </div>
   ${reviewScript}
 </body></html>`

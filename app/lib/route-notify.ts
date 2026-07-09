@@ -7,8 +7,11 @@ import { sendOwnerAlert } from './owner-alerts'
 import { recordMessage } from './messages'
 import { getFinanceSettings, snapshotCrewPay } from './finance'
 import type { Staff } from './staff'
+import { COMPANY } from './company'
 
-const BASE = (process.env.NEXT_PUBLIC_SITE_URL || 'https://jkissllc.com').replace(/\/$/, '')
+// Apex (no www) on purpose — see COMPANY.siteUrlApex. Preserves the SMS link
+// customers/crew already receive.
+const BASE = (process.env.NEXT_PUBLIC_SITE_URL || COMPANY.siteUrlApex).replace(/\/$/, '')
 
 export function confirmUrl(token: string): string {
   return `${BASE}/route/${token}`
@@ -26,19 +29,19 @@ export function fmtRouteDate(iso: string): string {
 // the route's profit, never another crew member's pay.
 export function assignmentSms(route: RouteRecord, assignee: Assignee, opts: { showPay?: boolean } = {}): string {
   const pay = opts.showPay && assignee.pay ? ` Your pay: ${assignee.pay}.` : ''
-  return `J KISS LLC Route Assignment: You have been assigned a route for ${fmtRouteDate(route.routeDate)} at ${route.reportTime}. ` +
+  return `${COMPANY.legalNameUpper} Route Assignment: You have been assigned a route for ${fmtRouteDate(route.routeDate)} at ${route.reportTime}. ` +
     `Location: ${route.reportAddress}.${pay} Confirm here: ${confirmUrl(assignee.token)}. Reply STOP to opt out.`
 }
 
 // Nudge an assigned-but-unconfirmed crew member as the route date nears.
 export function reminderSms(route: RouteRecord, assignee: Assignee): string {
-  return `J KISS LLC reminder: Please confirm your route for ${fmtRouteDate(route.routeDate)} at ${route.reportTime}. ` +
+  return `${COMPANY.legalNameUpper} reminder: Please confirm your route for ${fmtRouteDate(route.routeDate)} at ${route.reportTime}. ` +
     `Tap to confirm: ${confirmUrl(assignee.token)} — Reply STOP to opt out.`
 }
 
 // Morning-of reminder for a crew member who already confirmed.
 export function morningOfSms(route: RouteRecord, assignee: Assignee): string {
-  return `J KISS LLC — today's route: report at ${route.reportTime}, ${route.reportAddress}. ` +
+  return `${COMPANY.legalNameUpper} — today's route: report at ${route.reportTime}, ${route.reportAddress}. ` +
     `Details: ${confirmUrl(assignee.token)}. Reply STOP to opt out.`
 }
 
@@ -130,11 +133,11 @@ export async function alertOwnerRouteEvent(
   let headline: string
   if (event === 'declined') {
     const reason = declineReason ? ` — “${declineReason}”` : ''
-    smsBody = `J KISS: ${who} DECLINED ${ref} (${biz}, ${when})${reason}. Reassign: ${adminUrl}`
+    smsBody = `${COMPANY.shortNameUpper}: ${who} DECLINED ${ref} (${biz}, ${when})${reason}. Reassign: ${adminUrl}`
     subject = `⚠ Route declined — ${ref} · ${who}`
     headline = `${esc(who)} declined ${esc(ref)}`
   } else {
-    smsBody = `J KISS: No response on ${ref} — ${who}, ${biz}, ${when}. Reassign now: ${adminUrl}`
+    smsBody = `${COMPANY.shortNameUpper}: No response on ${ref} — ${who}, ${biz}, ${when}. Reassign now: ${adminUrl}`
     subject = `⚠ No response — ${ref} · ${who}`
     headline = `No response on ${esc(ref)} from ${esc(who)}`
   }

@@ -1,9 +1,10 @@
 import type { Metadata } from 'next'
+import { COMPANY, CREDENTIALS_DOT } from '../lib/company';
 import Link from 'next/link'
 import { getReviews } from '../lib/reviews'
 import { listReviews, displayName, aggregate } from '../lib/site-reviews'
 
-const SITE_URL = 'https://www.jkissllc.com'
+const SITE_URL = COMPANY.siteUrl
 
 export const dynamic = 'force-dynamic'
 
@@ -20,8 +21,8 @@ function relativeTime(ts: number): string {
 }
 
 export const metadata: Metadata = {
-  title: 'Customer Reviews | J Kiss LLC — DFW Box-Truck Delivery',
-  description: 'Real reviews from J Kiss LLC customers. Box-truck and white-glove delivery feedback from DFW.',
+  title: `Customer Reviews | ${COMPANY.legalName} — DFW Box-Truck Delivery`,
+  description: `Real reviews from ${COMPANY.legalName} customers. Box-truck and white-glove delivery feedback from DFW.`,
   alternates: { canonical: `${SITE_URL}/reviews` },
 }
 
@@ -59,7 +60,7 @@ export default async function ReviewsPage() {
   const jsonLd = data && data.reviews.length > 0 ? {
     '@context': 'https://schema.org',
     '@type': 'MovingCompany',
-    name: 'J Kiss LLC',
+    name: COMPANY.legalName,
     url: SITE_URL,
     aggregateRating: {
       '@type': 'AggregateRating',
@@ -91,7 +92,7 @@ export default async function ReviewsPage() {
       <header className="fixed top-0 left-0 right-0 z-50" style={{ background: 'rgba(11,11,12,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--line)' }}>
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/" className="text-xl font-black tracking-tight" style={{ color: '#fff', letterSpacing: '-0.03em' }}>
-            J Kiss <span style={{ color: 'var(--red)' }}>LLC</span>
+            {COMPANY.nameLead} <span style={{ color: 'var(--red)' }}>{COMPANY.nameAccent}</span>
           </Link>
           <Link href="/" className="text-sm font-semibold transition hover:text-white" style={{ color: 'var(--muted)' }}>← Back to Home</Link>
         </div>
@@ -117,7 +118,7 @@ export default async function ReviewsPage() {
                 <div className="flex-1 min-w-[200px]">
                   <p className="text-sm font-semibold text-white">{data.totalRatings.toLocaleString()} {data.source === 'google' ? 'Google reviews' : `customer review${data.totalRatings === 1 ? '' : 's'}`}</p>
                   <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>
-                    {data.source === 'google' ? 'Pulled live from our Google Business Profile · refreshed every 24 hours' : 'From verified J Kiss LLC customers after a completed, paid job'}
+                    {data.source === 'google' ? 'Pulled live from our Google Business Profile · refreshed every 24 hours' : `From verified ${COMPANY.legalName} customers after a completed, paid job`}
                   </p>
                 </div>
               </div>
@@ -146,7 +147,7 @@ export default async function ReviewsPage() {
             <div className="glass-card p-10 text-center" style={{ borderRadius: '20px' }}>
               <p className="text-xl font-black text-white mb-3" style={{ fontFamily: 'var(--font-display)' }}>Reviews coming soon</p>
               <p className="text-sm leading-relaxed max-w-lg mx-auto" style={{ color: 'var(--muted)' }}>
-                We just launched on-site reviews. After your next completed J Kiss LLC job, you&apos;ll be able to leave a star rating right from your receipt — and it&apos;ll show up here.
+                We just launched on-site reviews. After your next completed {COMPANY.legalName}{' '}job, you&apos;ll be able to leave a star rating right from your receipt — and it&apos;ll show up here.
               </p>
             </div>
           )}
@@ -154,7 +155,7 @@ export default async function ReviewsPage() {
       </section>
 
       <footer className="py-10 px-6 text-center text-xs" style={{ borderTop: '1px solid var(--line)', color: 'rgba(255,255,255,.3)' }}>
-        © {new Date().getFullYear()} J Kiss LLC · US DOT 3484556 · MC 01155352
+        © {new Date().getFullYear()} {COMPANY.legalName} · {CREDENTIALS_DOT}
       </footer>
     </main>
   )

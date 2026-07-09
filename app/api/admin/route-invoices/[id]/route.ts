@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { COMPANY } from '../../../../lib/company'
 import { requireSession } from '../../_lib/session'
 import {
   getInvoiceByToken, saveInvoice, deleteInvoice, voidInvoice, subtotalCents,
@@ -55,7 +56,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       `<td style="padding:6px 10px;border-bottom:1px solid #eee">${esc(l.description)}</td>` +
       `<td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap">${money(l.amountCents)}</td></tr>`).join('')
     const html =
-      `<p style="font-size:15px;margin:0 0 4px">Invoice <strong>${esc(inv.invoiceNumber)}</strong> from J Kiss LLC</p>` +
+      `<p style="font-size:15px;margin:0 0 4px">Invoice <strong>${esc(inv.invoiceNumber)}</strong> from ${COMPANY.legalName}</p>` +
       `<p style="margin:0 0 14px;color:#555">${esc(inv.clientName || inv.businessName)}</p>` +
       `<table style="width:100%;border-collapse:collapse;font-size:14px"><thead><tr>` +
       `<th style="text-align:left;padding:6px 10px;border-bottom:2px solid #ddd;color:#777">Date</th>` +
@@ -65,7 +66,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       `<p style="text-align:right;font-size:18px;font-weight:800;margin:14px 0 0">Total: ${money(total)}</p>` +
       (inv.notes ? `<p style="color:#555;margin:12px 0 0">${esc(inv.notes)}</p>` : '') +
       `<p style="margin:20px 0 0"><a href="${url}" style="background:#e5233a;color:#fff;padding:11px 20px;border-radius:8px;text-decoration:none;font-weight:700">View &amp; pay invoice →</a></p>`
-    try { await emailRaw({ to: [inv.clientEmail], subject: `Invoice ${inv.invoiceNumber} from J Kiss LLC — ${money(total)}`, html }) }
+    try { await emailRaw({ to: [inv.clientEmail], subject: `Invoice ${inv.invoiceNumber} from ${COMPANY.legalName} — ${money(total)}`, html }) }
     catch (e) { console.error('[invoice send]', e); return NextResponse.json({ error: 'Could not send the email — try again.' }, { status: 502 }) }
     if (inv.status === 'draft') inv.status = 'sent'
     inv.sentAt = Date.now()

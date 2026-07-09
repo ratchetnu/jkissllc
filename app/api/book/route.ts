@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { COMPANY } from '../../lib/company'
 import {
   generateToken, nextBookingNumber, nextInvoiceNumber, saveBooking, sanitizePhotos,
   SERVICE_TYPES, type Booking, type ServiceType,
@@ -94,7 +95,7 @@ export async function POST(req: NextRequest) {
             currency: 'usd',
             unit_amount: totalCents,
             product_data: {
-              name: `J Kiss LLC — Booking deposit (${booking.bookingNumber})`,
+              name: `${COMPANY.legalName} — Booking deposit (${booking.bookingNumber})`,
               description: `Reserves ${date}. $${(depositCents / 100).toFixed(2)} deposit + $${(feeCents / 100).toFixed(2)} card fee. Fully refunded if we can't make your date.`,
             },
           },

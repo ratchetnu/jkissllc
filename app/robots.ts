@@ -1,4 +1,5 @@
 import type { MetadataRoute } from 'next'
+import { COMPANY } from './lib/company'
 
 export default function robots(): MetadataRoute.Robots {
   return {
@@ -9,7 +10,7 @@ export default function robots(): MetadataRoute.Robots {
         disallow: ['/admin', '/api/'],
       },
     ],
-    sitemap: 'https://www.jkissllc.com/sitemap.xml',
-    host: 'https://www.jkissllc.com',
+    sitemap: `${COMPANY.siteUrl}/sitemap.xml`,
+    host: COMPANY.siteUrl,
   }
 }

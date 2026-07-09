@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, type CSSProperties } from 'react';
+import { COMPANY } from '../../lib/company';
 import { Phone, Mail, User, CheckCircle2 } from 'lucide-react';
 import Reveal from '../Reveal';
 
@@ -91,7 +92,7 @@ function ContactForm() {
           <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--muted)' }}>Message</label>
           <textarea name="message" rows={4} placeholder="Tell us about your job — what, where, and when…" style={{ ...iStyle, resize: 'vertical' }} />
         </div>
-        {status === 'error' && <p className="text-sm text-red-400">Something went wrong. Please email us directly at info@jkissllc.com</p>}
+        {status === 'error' && <p className="text-sm text-red-400">Something went wrong. Please email us directly at {COMPANY.email}</p>}
         <button type="submit" disabled={status === 'sending'} className="btn w-full" style={{ justifyContent: 'center' }}>
           {status === 'sending' ? 'Sending…' : 'Send Message'}
         </button>
@@ -119,17 +120,17 @@ export default function ContactSection() {
               get back to you within one business day. For insurance certificates, choose &quot;COI Request.&quot;
             </p>
             <div className="space-y-4" style={{ marginTop: 28 }}>
-              <a href="tel:+18179094312" className="flex items-center gap-3 text-base font-bold text-white transition hover:opacity-80">
+              <a href={`tel:${COMPANY.phoneE164}`} className="flex items-center gap-3 text-base font-bold text-white transition hover:opacity-80">
                 <span className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'var(--red)' }}><Phone size={17} strokeWidth={2} color="#fff" /></span>
-                Call or text (817) 909-4312
+                Call or text {COMPANY.phoneDisplay}
               </a>
-              <a href="mailto:info@jkissllc.com" className="flex items-center gap-3 text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)' }}>
+              <a href={`mailto:${COMPANY.email}`} className="flex items-center gap-3 text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)' }}>
                 <span className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(224,0,42,.12)', border: '1px solid rgba(224,0,42,.25)' }}><Mail size={17} strokeWidth={1.75} color="#ff6680" /></span>
-                info@jkissllc.com
+                {COMPANY.email}
               </a>
-              <a href="mailto:timmothy@jkissllc.com" className="flex items-center gap-3 text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)' }}>
+              <a href={`mailto:${COMPANY.ownerEmail}`} className="flex items-center gap-3 text-sm font-medium transition hover:text-white" style={{ color: 'var(--muted)' }}>
                 <span className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(224,0,42,.12)', border: '1px solid rgba(224,0,42,.25)' }}><User size={17} strokeWidth={1.75} color="#ff6680" /></span>
-                timmothy@jkissllc.com
+                {COMPANY.ownerEmail}
               </a>
             </div>
           </Reveal>

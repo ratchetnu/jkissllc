@@ -2,6 +2,7 @@
 // (no route tokens / internal ids) and starts a Stripe Checkout for the balance.
 import { NextRequest, NextResponse } from 'next/server'
 import { getInvoiceByToken, subtotalCents, balanceCents } from '../../../lib/route-invoices'
+import { COMPANY } from '../../../lib/company'
 import { getStripe, stripeConfigured, grossUp } from '../../../lib/stripe'
 import { siteUrl } from '../../../lib/booking-emails'
 import { rateLimit } from '../../../lib/rate-limit'
@@ -41,7 +42,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   const inv = await getInvoiceByToken(token)
   if (!inv || inv.status === 'void') return NextResponse.json({ error: 'not_found' }, { status: 404 })
   if (inv.status === 'paid' || balanceCents(inv) <= 0) return NextResponse.json({ error: 'This invoice is already paid.' }, { status: 409 })
-  if (!stripeConfigured()) return NextResponse.json({ error: 'Card payment isn’t available right now — contact J Kiss LLC to pay.' }, { status: 503 })
+  if (!stripeConfigured()) return NextResponse.json({ error: `Card payment isn’t available right now — contact ${COMPANY.legalName} to pay.` }, { status: 503 })
 
   const net = balanceCents(inv)
   const { feeCents, totalCents } = grossUp(net)
@@ -56,7 +57,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
           currency: 'usd',
           unit_amount: totalCents,
           product_data: {
-            name: `J Kiss LLC — Invoice ${inv.invoiceNumber}`,
+            name: `${COMPANY.legalName} — Invoice ${inv.invoiceNumber}`,
             description: `${inv.businessName} · balance ${(net / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} + ${(feeCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} card processing fee`,
           },
         },

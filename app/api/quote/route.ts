@@ -6,6 +6,7 @@ import { isBlockedBot } from '../../lib/botcheck'
 import { getPromo, validatePromo, normalizeCode } from '../../lib/promo'
 import { getDisposalSettings, priceJob, categoryFor, type DisposalQuote } from '../../lib/disposal'
 import { getCalibration } from '../../lib/job-learning'
+import { COMPANY } from '../../lib/company'
 
 // Look up a US ZIP via zippopotam.us (free, no key required).
 async function lookupZip(zip: string): Promise<{ lat: number; lon: number; city: string; state: string } | null> {
@@ -254,21 +255,21 @@ export async function POST(request: NextRequest) {
     if (disposal) bookingParams.set('disposalEst', String(Math.round(disposal.disposalCents / 100)))
     const desc = [notes, isJobBased ? `Est. load: ${LOAD_LABELS[loadSize] ?? loadSize}` : '', timing ? `Timing: ${timing}` : '', addOnLabels.length ? `Add-ons: ${addOnLabels.join(', ')}` : '', promoCode ? `Promo: ${promoCode}` : '', disposal ? `Disposal est $${Math.round(disposal.disposalCents / 100)} · ${disposal.confidence} confidence` : ''].filter(Boolean).join(' · ')
     if (desc) bookingParams.set('desc', desc)
-    const bookingUrl = `https://www.jkissllc.com/admin/bookings?${bookingParams.toString()}`
+    const bookingUrl = `${COMPANY.siteUrl}/admin/bookings?${bookingParams.toString()}`
 
     // Notify ops
     await resend.emails.send({
-      from: 'J Kiss LLC <info@jkissllc.com>',
-      to: ['info@jkissllc.com', 'timmothy@jkissllc.com'],
+      from: COMPANY.emailFrom,
+      to: [COMPANY.email, COMPANY.ownerEmail],
       replyTo: email as string,
       subject: isJobBased
         ? `${jobLabel} Request — ${safe.pickupLabel} (${safe.loadSize})`
         : `Quote Request — ${safe.pickupLabel} → ${safe.deliveryLabel} (${distanceLabel})`,
       html: `
         <div style="font-family:sans-serif;max-width:640px;margin:0 auto">
-          <h2 style="color:#E0002A;margin-bottom:4px">${isJobBased ? `${jobLabel} Request` : 'Instant Quote Request'}</h2>
-          <p style="color:#666;margin-top:0">Submitted via jkissllc.com/quote · Customer was shown $${low.toLocaleString()}–$${high.toLocaleString()}</p>
-          ${disposal ? `<table style="width:100%;border-collapse:collapse;background:#fafafa;border-radius:8px;margin:8px 0"><tr><td colspan="2" style="padding:8px 10px;font-weight:700;color:#E0002A">Pricing intelligence (internal)</td></tr>
+          <h2 style="color:${COMPANY.brand.red};margin-bottom:4px">${isJobBased ? `${jobLabel} Request` : 'Instant Quote Request'}</h2>
+          <p style="color:#666;margin-top:0">Submitted via ${COMPANY.domain}/quote · Customer was shown $${low.toLocaleString()}–$${high.toLocaleString()}</p>
+          ${disposal ? `<table style="width:100%;border-collapse:collapse;background:#fafafa;border-radius:8px;margin:8px 0"><tr><td colspan="2" style="padding:8px 10px;font-weight:700;color:${COMPANY.brand.red}">Pricing intelligence (internal)</td></tr>
             <tr><td style="padding:4px 10px;color:#999;width:200px">Truck fill / loads / trips</td><td style="padding:4px 10px;font-weight:600">${disposal.fillPct}% · ${disposal.truckLoads} load${disposal.truckLoads > 1 ? 's' : ''} · ${disposal.landfillTrips} trip${disposal.landfillTrips > 1 ? 's' : ''}</td></tr>
             <tr><td style="padding:4px 10px;color:#999">Disposal estimate</td><td style="padding:4px 10px;font-weight:600">$${Math.round(disposal.disposalCents / 100)} ${disposal.requiresReview ? '⚠ review' : ''}</td></tr>
             <tr><td style="padding:4px 10px;color:#999">Labor estimate</td><td style="padding:4px 10px">$${Math.round(disposal.laborCents / 100)}</td></tr>
@@ -279,7 +280,7 @@ export async function POST(request: NextRequest) {
             </table>` : ''}
 
           <div style="margin:18px 0">
-            <a href="${bookingUrl}" style="display:inline-block;background:#E0002A;color:#fff;text-decoration:none;font-weight:700;font-size:15px;padding:13px 24px;border-radius:8px">Create Booking →</a>
+            <a href="${bookingUrl}" style="display:inline-block;background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;font-size:15px;padding:13px 24px;border-radius:8px">Create Booking →</a>
             <p style="color:#999;font-size:12px;margin:8px 0 0">Opens your admin with a new booking pre-filled from this request. (Sign in if prompted.)</p>
           </div>
 
@@ -328,6 +329,6 @@ export async function POST(request: NextRequest) {
     })
   } catch (err) {
     console.error('[quote]', err)
-    return NextResponse.json({ error: 'Failed to submit. Please email info@jkissllc.com directly.' }, { status: 500 })
+    return NextResponse.json({ error: `Failed to submit. Please email ${COMPANY.email} directly.` }, { status: 500 })
   }
 }

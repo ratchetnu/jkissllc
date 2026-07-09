@@ -3,6 +3,7 @@ import { Resend } from 'resend'
 import { rateLimit } from '../../lib/rate-limit'
 import { escapeHtml, isValidEmail } from '../../lib/validators'
 import { isBlockedBot } from '../../lib/botcheck'
+import { COMPANY, CREDENTIALS_DOT } from '../../lib/company'
 
 export async function POST(request: NextRequest) {
   // Public form that sends two emails (one to a requester-supplied address) —
@@ -43,22 +44,22 @@ export async function POST(request: NextRequest) {
   }
 
   const resend = new Resend(process.env.RESEND_API_KEY)
-  const brokerEmail = process.env.COI_BROKER_EMAIL || 'info@jkissllc.com'
+  const brokerEmail = process.env.COI_BROKER_EMAIL || COMPANY.email
 
   // Dedupe: if broker = info@, don't double-send.
-  const opsRecipients = Array.from(new Set([brokerEmail, 'info@jkissllc.com', 'timmothy@jkissllc.com']))
+  const opsRecipients = Array.from(new Set([brokerEmail, COMPANY.email, COMPANY.ownerEmail]))
 
   try {
     // Email to broker + JKISS ops
     await resend.emails.send({
-      from: 'J Kiss LLC <info@jkissllc.com>',
+      from: COMPANY.emailFrom,
       to: opsRecipients,
       replyTo: requesterEmail as string,
       subject: `COI Request — ${safe.holderName}`,
       html: `
         <div style="font-family:sans-serif;max-width:640px;margin:0 auto">
-          <h2 style="color:#E0002A;margin-bottom:4px">Certificate of Insurance Request</h2>
-          <p style="color:#666;margin-top:0">Submitted via jkissllc.com — please issue ACORD 25 to the requester below</p>
+          <h2 style="color:${COMPANY.brand.red};margin-bottom:4px">Certificate of Insurance Request</h2>
+          <p style="color:#666;margin-top:0">Submitted via ${COMPANY.domain} — please issue ACORD 25 to the requester below</p>
           <hr style="border:1px solid #eee;margin:20px 0"/>
 
           <h3 style="margin-bottom:8px">Certificate Holder Details</h3>
@@ -86,18 +87,18 @@ export async function POST(request: NextRequest) {
 
     // Confirmation to requester
     await resend.emails.send({
-      from: 'J Kiss LLC <info@jkissllc.com>',
+      from: COMPANY.emailFrom,
       to: [requesterEmail as string],
-      replyTo: 'info@jkissllc.com',
-      subject: 'J Kiss LLC — COI request received',
+      replyTo: COMPANY.email,
+      subject: ` — COI request received`,
       html: `
         <div style="font-family:sans-serif;max-width:540px;margin:0 auto">
-          <h2 style="color:#E0002A;margin-bottom:4px">COI Request Received</h2>
+          <h2 style="color:${COMPANY.brand.red};margin-bottom:4px">COI Request Received</h2>
           <p>Thank you, ${safe.requesterName}.</p>
           <p>We've forwarded your Certificate of Insurance request to our insurance broker. You should receive the ACORD 25 directly from them at <strong>${safe.deliveryEmail}</strong> within 1 business day.</p>
           <p style="color:#666;font-size:13px;margin-top:24px">Certificate holder: <strong>${safe.holderName}</strong><br/>${safe.additionalInsured}</p>
-          <p style="color:#666;font-size:13px">Questions? Reply to this email or contact info@jkissllc.com</p>
-          <p style="color:#999;font-size:11px;margin-top:24px">J Kiss LLC · US DOT 3484556 · MC 01155352</p>
+          <p style="color:#666;font-size:13px">Questions? Reply to this email or contact ${COMPANY.email}</p>
+          <p style="color:#999;font-size:11px;margin-top:24px">${COMPANY.legalName} · ${CREDENTIALS_DOT}</p>
         </div>
       `,
     })
@@ -105,6 +106,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true })
   } catch (err) {
     console.error('[coi]', err)
-    return NextResponse.json({ error: 'Failed to submit. Please email info@jkissllc.com directly.' }, { status: 500 })
+    return NextResponse.json({ error: `Failed to submit. Please email ${COMPANY.email} directly.` }, { status: 500 })
   }
 }

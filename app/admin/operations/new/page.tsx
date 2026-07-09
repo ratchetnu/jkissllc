@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { COMPANY } from '../../../lib/company'
 import Link from 'next/link'
 import { Building2, ClipboardList, MapPin, CalendarClock, Users, CheckCircle2, ChevronLeft, Send, Sparkles, Truck, Phone, Lock } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
@@ -431,7 +432,7 @@ function Builder() {
             ) : crewStaff.some(c => c.staff.phone) && (
               <div style={{ padding: 14, borderRadius: 14, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
                 <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>Each crew member gets their own link (you send it — not automatic)</div>
-                <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'var(--text)' }}>J KISS LLC Route Assignment: You have been assigned a route for {fmtLongDay(form.routeDate).replace(/,.*/, '')} at {form.reportTime}. Location: {form.reportAddress}. Confirm here: <span style={{ color: 'var(--red)' }}>[secure link]</span>. Reply STOP to opt out.</p>
+                <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'var(--text)' }}>{COMPANY.legalNameUpper} Route Assignment: You have been assigned a route for {fmtLongDay(form.routeDate).replace(/,.*/, '')} at {form.reportTime}. Location: {form.reportAddress}. Confirm here: <span style={{ color: 'var(--red)' }}>[secure link]</span>. Reply STOP to opt out.</p>
               </div>
             )}
             {error && <p style={{ color: '#f87171', fontSize: 14 }}>{error}</p>}
