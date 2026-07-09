@@ -120,7 +120,8 @@ export type RouteRecord = {
   routeDate: string             // YYYY-MM-DD
   description?: string
   payRate?: string              // legacy route-level rate; crew pay lives per-assignee
-  vehicle?: string
+  vehicle?: string              // snapshot display name of the equipment (or "Crew's own equipment")
+  equipmentId?: string          // links to the Equipment roster when a specific asset was picked; absent for own-equipment
   specialNotes?: string
 
   // Crew (source of truth for multi-person assignment)

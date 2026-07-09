@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { COMPANY } from '../../../lib/company'
 import Link from 'next/link'
-import { Building2, ClipboardList, MapPin, CalendarClock, Users, CheckCircle2, ChevronLeft, Send, Sparkles, Truck, Phone, Lock } from 'lucide-react'
+import { Building2, ClipboardList, MapPin, CalendarClock, Users, CheckCircle2, ChevronLeft, Send, Sparkles, Truck, Phone, Lock, User } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { ymd, fmtLongDay, scoreColor, DOW, weekdaysLabel, Avatar, MoneyInput, money, moneyOrDash, profitColor, centsToInput, looksLikeMoney } from '../ui'
 
@@ -14,6 +14,8 @@ type Staff = { id: string; name: string; phone?: string; role?: string; active: 
 type Stats = Record<string, { score: number | null }>
 type RouteLite = { assignedStaffId?: string; businessName: string; status: string; routeDate: string }
 type BusinessRec = { key: string; name: string; contractRateCents?: number; pricingActive?: boolean }
+type Equip = { id: string; name: string; truckType?: string; ownership: 'company' | 'contractor'; contractorName?: string; active: boolean }
+type EquipSel = { id: string; name: string; own: boolean }
 
 const bizKey = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ')
 
@@ -43,11 +45,14 @@ const labelCss: React.CSSProperties = { fontSize: 12.5, fontWeight: 700, color: 
 const pill = (on: boolean): React.CSSProperties => ({ flex: 1, padding: '11px', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'var(--red)' : 'transparent', color: on ? '#fff' : 'var(--muted)' })
 const dayChip = (on: boolean): React.CSSProperties => ({ width: 42, height: 42, borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'var(--red)' : 'transparent', color: on ? '#fff' : 'var(--muted)' })
 const presetBtn: React.CSSProperties = { padding: '7px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--line)', background: 'transparent', color: 'var(--muted)' }
+const equipChip = (on: boolean): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 14px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'var(--red)' : 'transparent', color: on ? '#fff' : 'var(--muted)' })
 
 function Builder() {
   const router = useRouter()
   const [step, setStep] = useState(0)
   const [staff, setStaff] = useState<Staff[]>([])
+  const [equipment, setEquipment] = useState<Equip[]>([])
+  const [equipSel, setEquipSel] = useState<EquipSel | null>(null)
   const [stats, setStats] = useState<Stats>({})
   const [routes, setRoutes] = useState<RouteLite[]>([])
   const [bizRecords, setBizRecords] = useState<BusinessRec[]>([])
@@ -66,10 +71,12 @@ function Builder() {
       fetch('/api/admin/routes', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
       fetch('/api/admin/staff', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
       fetch('/api/admin/businesses', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
-    ]).then(([r, s, b]) => {
+      fetch('/api/admin/equipment', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
+    ]).then(([r, s, b, eq]) => {
       setRoutes(r.items || []); setStats(r.stats || {})
       setStaff((s.items || []).filter((x: Staff) => x.active))
       setBizRecords(b.items || [])
+      setEquipment((eq.items || []).filter((x: Equip) => x.active))
     })
   }, [])
 
@@ -136,7 +143,7 @@ function Builder() {
 
   const canContinue = (): boolean => {
     if (step === 0) return form.businessName.trim().length > 0
-    if (step === 1) return !priceInvalid
+    if (step === 1) return !priceInvalid && equipSel !== null
     if (step === 4) return !payInvalid
     if (step === 2) return form.reportAddress.trim().length > 0
     if (step === 3) return repeats ? (weekdays.length > 0 && form.reportTime.trim().length > 0) : (/^\d{4}-\d{2}-\d{2}$/.test(form.routeDate) && form.reportTime.trim().length > 0)
@@ -163,7 +170,7 @@ function Builder() {
           body: JSON.stringify({
             label: `${form.businessName} — ${weekdaysLabel(weekdays)}`, businessName: form.businessName,
             reportAddress: form.reportAddress, reportTime: form.reportTime, contactPerson: form.contactPerson,
-            contactPhone: form.contactPhone, vehicle: VEHICLE, description: form.description,
+            contactPhone: form.contactPhone, vehicle: equipSel?.name ?? VEHICLE, description: form.description,
             specialNotes: form.specialNotes, weekdays, crewByWeekday,
           }),
         })
@@ -177,7 +184,8 @@ function Builder() {
       }
 
       const payload = {
-        ...form, businessPrice, vehicle: VEHICLE,
+        ...form, businessPrice, vehicle: equipSel?.name ?? VEHICLE,
+        equipmentId: equipSel && !equipSel.own ? equipSel.id : undefined,
         // Only send crew pay the owner actually typed — a blank lets the server
         // resolve the person's configured rate.
         crew: crew.filter(c => c.staffId).map(c => ({ staffId: c.staffId, pay: c.pay.trim() || undefined })),
@@ -237,7 +245,7 @@ function Builder() {
         )}
         {error && <p style={{ color: '#f87171', fontSize: 13.5, marginTop: 12 }}>{error}</p>}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
-          <button onClick={() => { setDone(null); setStep(0); setRepeats(false); setWeekdays([]); setCrew([]); setPriceTouched(false); setForm({ businessName: form.businessName, description: '', businessPrice: '', reportAddress: '', contactPerson: '', contactPhone: '', routeDate: '', reportTime: '', staffId: '', specialNotes: '' }) }} className="btn os-tap" style={{ borderRadius: 12, justifyContent: 'center' }}>Create another</button>
+          <button onClick={() => { setDone(null); setStep(0); setRepeats(false); setWeekdays([]); setCrew([]); setEquipSel(null); setPriceTouched(false); setForm({ businessName: form.businessName, description: '', businessPrice: '', reportAddress: '', contactPerson: '', contactPhone: '', routeDate: '', reportTime: '', staffId: '', specialNotes: '' }) }} className="btn os-tap" style={{ borderRadius: 12, justifyContent: 'center' }}>Create another</button>
           <Link href="/admin/operations" className="btn-ghost os-tap" style={{ borderRadius: 12, justifyContent: 'center' }}>Back to Operations</Link>
         </div>
       </div>
@@ -281,9 +289,24 @@ function Builder() {
 
         {step === 1 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 9, padding: '11px 15px', borderRadius: 12, background: 'rgba(224,0,42,.10)', border: '1px solid rgba(224,0,42,.25)', alignSelf: 'flex-start' }}>
-              <Truck size={17} style={{ color: 'var(--red-glow)' }} /><span style={{ fontWeight: 700, fontSize: 14 }}>Box truck</span>
-              <span style={{ fontSize: 12, color: 'var(--muted)' }}>· standard equipment</span>
+            <div>
+              <span style={labelCss}>Equipment for this route</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {equipment.map(e => {
+                  const on = !!equipSel && !equipSel.own && equipSel.id === e.id
+                  return (
+                    <button key={e.id} type="button" onClick={() => setEquipSel({ id: e.id, name: e.name, own: false })} className="os-tap" style={equipChip(on)}>
+                      <Truck size={14} /> {e.name}
+                      <span style={{ fontSize: 11, opacity: .7, fontWeight: 600 }}>· {e.ownership === 'contractor' ? (e.contractorName || 'contractor') : 'company'}</span>
+                    </button>
+                  )
+                })}
+                <button type="button" onClick={() => setEquipSel({ id: '', name: 'Crew’s own equipment', own: true })} className="os-tap" style={equipChip(!!equipSel?.own)}>
+                  <User size={14} /> Crew brings their own
+                </button>
+              </div>
+              {equipment.length === 0 && <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 8 }}>No equipment added yet — add trucks in <b>Equipment</b>, or choose “Crew brings their own.”</p>}
+              {!equipSel && <p style={{ fontSize: 12.5, color: '#fcd34d', marginTop: 8 }}>Pick the truck or asset for this route to continue.</p>}
             </div>
             <div><span style={labelCss}>What’s the job?</span><textarea autoFocus placeholder="e.g. Palletized delivery run, 12 stops…" value={form.description} onChange={e => set('description', e.target.value)} rows={3} style={{ ...field, resize: 'vertical' }} /></div>
             <div>
@@ -395,7 +418,7 @@ function Builder() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div className="os-card" style={{ padding: 18 }}>
               <SummaryRow label="Business" val={form.businessName} />
-              <SummaryRow label="Work" val={[form.description || 'Contract route', `· ${VEHICLE}`].join(' ')} />
+              <SummaryRow label="Work" val={[form.description || 'Contract route', `· ${equipSel?.name ?? VEHICLE}`].join(' ')} />
               <SummaryRow label="Report to" val={form.reportAddress} />
               <SummaryRow label="When" val={repeats ? `Repeats ${weekdaysLabel(weekdays)} · ${form.reportTime}` : `${fmtLongDay(form.routeDate)} · ${form.reportTime}`} />
               <SummaryRow label={repeats ? 'Crew (each route)' : 'Crew'} val={crewStaff.length ? crewStaff.map(c => c.staff.name.split(' ')[0]).join(', ') : repeats ? 'Unassigned (drafts)' : 'Unassigned (draft)'} last />
