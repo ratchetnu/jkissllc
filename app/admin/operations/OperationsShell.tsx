@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { useAdminSession } from '../useAdminSession'
 import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, Settings, LogOut, Search, Plus } from 'lucide-react'
@@ -28,10 +28,16 @@ export default function OperationsShell({ children }: { children: React.ReactNod
   const { authed, checked, error, loading, login, signOut } = useAdminSession()
   const [password, setPassword] = useState('')
   const pathname = usePathname()
+  const router = useRouter()
 
   async function submitLogin(e: React.FormEvent) {
     e.preventDefault()
-    if (await login(password)) setPassword('')
+    if (await login(password)) {
+      setPassword('')
+      // Land on the operations home after signing in, regardless of which admin
+      // URL the session started on (a bookmarked /admin/bookings, etc.).
+      if (pathname !== '/admin/operations') router.push('/admin/operations')
+    }
   }
 
   // Longest-prefix match so /admin/routes/invoices highlights Businesses, not Operations.
