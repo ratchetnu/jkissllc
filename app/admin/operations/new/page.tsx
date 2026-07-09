@@ -30,6 +30,25 @@ function previewCrewPay(s: Staff | undefined, businessName: string): number | un
 const dollarsToCents = (v: string): number | undefined =>
   looksLikeMoney(v) ? Math.round(Number(v.replace(/[$,\s]/g, '')) * 100) : undefined
 
+// Report time is stored/texted as canonical "h:mm AM/PM". A native time picker
+// works in 24h "HH:MM", so convert at the input boundary — this kills the old
+// free-text problem where "700"/"7"/"0700" reached the crew verbatim.
+const timeTo24h = (canonical: string): string => {
+  const m = canonical.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i)
+  if (!m) return ''
+  let h = Number(m[1]) % 12
+  if (/pm/i.test(m[3])) h += 12
+  return `${String(h).padStart(2, '0')}:${m[2]}`
+}
+const timeTo12h = (hhmm: string): string => {
+  const m = hhmm.match(/^(\d{2}):(\d{2})$/)
+  if (!m) return ''
+  const h = Number(m[1])
+  const period = h >= 12 ? 'PM' : 'AM'
+  const h12 = h % 12 || 12
+  return `${h12}:${m[2]} ${period}`
+}
+
 const STEP_META = [
   { key: 'business', title: 'Which business is this for?', Icon: Building2 },
   { key: 'work', title: 'What’s the work?', Icon: ClipboardList },
@@ -81,7 +100,26 @@ function Builder() {
   }, [])
 
   const set = (k: keyof typeof form, v: string) => setForm(f => ({ ...f, [k]: v }))
-  const businesses = useMemo(() => [...new Set(routes.map(r => r.businessName).filter(Boolean))].sort(), [routes])
+  // Every known client — business records (which carry the contract rate) unioned
+  // with names seen on past routes. Sourcing the picker from records is what stops
+  // a typo from missing the rate and silently pricing the route at $0.
+  const knownBusinesses = useMemo(() => {
+    const seen = new Map<string, string>()   // lowercased → display name
+    for (const b of bizRecords) if (b.name) seen.set(b.name.trim().toLowerCase(), b.name.trim())
+    for (const r of routes) if (r.businessName) { const k = r.businessName.trim().toLowerCase(); if (!seen.has(k)) seen.set(k, r.businessName.trim()) }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b))
+  }, [bizRecords, routes])
+
+  // Chips matching what's typed (or the first several when the field is empty).
+  const bizMatches = useMemo(() => {
+    const q = form.businessName.trim().toLowerCase()
+    const pool = q ? knownBusinesses.filter(n => n.toLowerCase().includes(q)) : knownBusinesses
+    return pool.slice(0, 8)
+  }, [knownBusinesses, form.businessName])
+
+  // A typed name that isn't an existing client → a NEW client with no contract rate.
+  const isNewClient = form.businessName.trim().length > 0
+    && !knownBusinesses.some(n => n.toLowerCase() === form.businessName.trim().toLowerCase())
   const today = ymd(new Date())
 
   // The client's contract rate, if one is on file and active.
@@ -273,15 +311,20 @@ function Builder() {
         {step === 0 && (
           <div>
             <input autoFocus placeholder="Business / client name" value={form.businessName} onChange={e => set('businessName', e.target.value)} style={field} onKeyDown={e => { if (e.key === 'Enter' && canContinue()) setStep(1) }} />
-            {businesses.length > 0 && (
+            {bizMatches.length > 0 && (
               <div style={{ marginTop: 14 }}>
-                <span style={labelCss}>Recent clients</span>
+                <span style={labelCss}>{form.businessName.trim() ? 'Matching clients' : 'Your clients'}</span>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {businesses.slice(0, 8).map(b => (
+                  {bizMatches.map(b => (
                     <button key={b} onClick={() => set('businessName', b)} className="os-tap"
                       style={{ padding: '8px 14px', borderRadius: 999, fontSize: 13.5, fontWeight: 600, cursor: 'pointer', border: `1px solid ${form.businessName === b ? 'var(--red)' : 'var(--line)'}`, background: form.businessName === b ? 'var(--red)' : 'transparent', color: form.businessName === b ? '#fff' : 'var(--muted)' }}>{b}</button>
                   ))}
                 </div>
+              </div>
+            )}
+            {isNewClient && (
+              <div style={{ marginTop: 14, padding: '10px 13px', borderRadius: 10, background: 'rgba(245,158,11,.1)', border: '1px solid rgba(245,158,11,.3)', color: '#fcd34d', fontSize: 13, lineHeight: 1.45 }}>
+                New client — no contract rate on file, so this route won&apos;t auto-price. Set the price on the “What’s the work?” step, or pick an existing client above if you meant one of them.
               </div>
             )}
           </div>
@@ -344,7 +387,7 @@ function Builder() {
               // 1fr column and overlap the Report time field.
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div style={{ minWidth: 0 }}><span style={labelCss}>Date</span><input type="date" min={today} value={form.routeDate} onChange={e => set('routeDate', e.target.value)} style={{ ...field, minWidth: 0 }} /></div>
-                <div style={{ minWidth: 0 }}><span style={labelCss}>Report time</span><input placeholder="e.g. 7:00 AM" value={form.reportTime} onChange={e => set('reportTime', e.target.value)} style={{ ...field, minWidth: 0 }} /></div>
+                <div style={{ minWidth: 0 }}><span style={labelCss}>Report time</span><input type="time" value={timeTo24h(form.reportTime)} onChange={e => set('reportTime', timeTo12h(e.target.value))} style={{ ...field, minWidth: 0 }} /></div>
               </div>
             ) : (
               <div>
@@ -359,7 +402,7 @@ function Builder() {
                   <button type="button" onClick={() => setWeekdays([1, 2, 3, 4, 5, 6])} style={presetBtn}>Mon–Sat</button>
                   <button type="button" onClick={() => setWeekdays([0, 1, 2, 3, 4, 5, 6])} style={presetBtn}>Every day</button>
                 </div>
-                <div style={{ marginTop: 16 }}><span style={labelCss}>Report time</span><input placeholder="e.g. 7:00 AM" value={form.reportTime} onChange={e => set('reportTime', e.target.value)} style={field} /></div>
+                <div style={{ marginTop: 16 }}><span style={labelCss}>Report time</span><input type="time" value={timeTo24h(form.reportTime)} onChange={e => set('reportTime', timeTo12h(e.target.value))} style={field} /></div>
                 <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 12 }}>Routes generate automatically for the next 2 weeks and keep rolling — you won’t re-add this business each day.</p>
               </div>
             )}

@@ -44,6 +44,15 @@ function Detail({ token }: { token: string }) {
   const [reassigning, setReassigning] = useState(false)
   const [addPay, setAddPay] = useState('')
   const [msg, setMsg] = useState('')
+  const [okMsg, setOkMsg] = useState('')
+
+  // Confirm the action actually happened — the high-frequency buttons (send, assign,
+  // complete…) used to give zero feedback on success, so the owner couldn't tell a
+  // tap landed and would re-send. Green banner, auto-clears.
+  function flashOk(text: string) {
+    setOkMsg(text)
+    window.setTimeout(() => setOkMsg(m => (m === text ? '' : m)), 2600)
+  }
   const [claiming, setClaiming] = useState(false)
   const { claims } = useClaims()
   const routeClaims = useMemo(() => claims.filter(c => c.routeToken === token), [claims, token])
@@ -64,7 +73,7 @@ function Detail({ token }: { token: string }) {
   // A 409 with `warning` means the server refused to save silently — crew pay
   // exceeds what the route earns. Ask, then retry with the acknowledgement.
   async function patch(body: Record<string, unknown>, tag: string) {
-    setBusy(tag); setMsg('')
+    setBusy(tag); setMsg(''); setOkMsg('')
     try {
       const send = (b: Record<string, unknown>) =>
         fetch(`/api/admin/routes/${token}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(b) })
@@ -80,8 +89,24 @@ function Detail({ token }: { token: string }) {
 
       if (!res.ok) setMsg(d.error || 'Action failed.')
       else if (d.smsWarning) setMsg(`Text not sent: ${d.smsWarning}`)
+      else flashOk(okFor(String(body.action ?? '')))
       setReassigning(false); await load()
     } catch { setMsg('Network error.') } finally { setBusy('') }
+  }
+
+  // Friendly success line per action, so the green flash names what happened.
+  function okFor(action: string): string {
+    switch (action) {
+      case 'send': return 'Text sent to the crew.'
+      case 'resend': return 'Text re-sent.'
+      case 'assign': return 'Crew member added.'
+      case 'unassign': return 'Crew member removed.'
+      case 'confirm': return 'Marked confirmed.'
+      case 'unconfirm': return 'Confirmation undone.'
+      case 'money': return 'Saved.'
+      case 'status': return 'Status updated.'
+      default: return 'Done.'
+    }
   }
 
   // They said yes in person or on the phone. The prompt doubles as a mis-tap guard;
@@ -142,6 +167,7 @@ function Detail({ token }: { token: string }) {
       <button onClick={() => router.back()} className="os-tap" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', color: 'var(--muted)', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', marginBottom: 14 }}><ChevronLeft size={16} /> Operations</button>
 
       {msg && <div className="os-card" style={{ padding: '10px 14px', marginBottom: 14, fontSize: 13.5, color: '#fcd34d' }}>{msg}</div>}
+      {okMsg && <div className="os-card os-rise" style={{ padding: '10px 14px', marginBottom: 14, fontSize: 13.5, color: '#86efac', border: '1px solid rgba(34,197,94,.3)' }}>✓ {okMsg}</div>}
 
       {/* Header */}
       <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14 }}>
