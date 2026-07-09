@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import { useAdminSession } from '../useAdminSession'
-import { Home, ClipboardList, Users, Building2, MessageSquare, ShieldAlert, Settings, LogOut, Search } from 'lucide-react'
+import { Home, ClipboardList, Users, Building2, MessageSquare, ShieldAlert, Settings, LogOut, Search, Plus } from 'lucide-react'
 import CommandPalette from './CommandPalette'
 import { OpsPilotMark, OpsPilotWordmark } from '../../components/opspilot/OpsPilotMark'
 
@@ -35,6 +35,10 @@ export default function OperationsShell({ children }: { children: React.ReactNod
 
   // Longest-prefix match so /admin/routes/invoices highlights Businesses, not Operations.
   const activeHref = [...NAV].filter(n => pathname === n.href || pathname.startsWith(n.href + '/')).sort((a, b) => b.href.length - a.href.length)[0]?.href
+
+  // The create action is reachable from every tab, not just Home — one persistent
+  // "+" that follows you. Hidden only on the builder itself (you're already there).
+  const onBuilder = pathname === '/admin/operations/new' || pathname.startsWith('/admin/operations/new/')
 
   if (!checked) return (
     <div className="jkos" style={{ display: 'grid', placeItems: 'center' }}>
@@ -80,6 +84,16 @@ export default function OperationsShell({ children }: { children: React.ReactNod
 
       <main style={{ maxWidth: 940, margin: '0 auto', padding: '64px 18px 132px' }}>{children}</main>
 
+      {/* Persistent create action — a "+" that follows you across every tab, sitting
+          clear of both docks. Same destination as every "New assignment" button. */}
+      {!onBuilder && (
+        <Link href="/admin/operations/new" aria-label="New assignment" title="New assignment" data-fab
+          style={{ position: 'fixed', right: 18, bottom: 'calc(84px + env(safe-area-inset-bottom))', zIndex: 55, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 58, height: 58, borderRadius: 999, background: 'var(--red)', color: '#fff', boxShadow: 'var(--os-shadow)', textDecoration: 'none' }}
+          className="os-tap">
+          <Plus size={26} strokeWidth={2.4} />
+        </Link>
+      )}
+
       {/* Desktop floating dock */}
       <nav className="os-glass" style={{ position: 'fixed', bottom: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 50, display: 'none', gap: 2, padding: 7, borderRadius: 999, boxShadow: 'var(--os-shadow)' }} data-dock="desktop">
         {NAV.map(n => {
@@ -106,7 +120,7 @@ export default function OperationsShell({ children }: { children: React.ReactNod
       </nav>
 
       <style>{`
-        @media (min-width: 768px) { nav[data-dock="desktop"] { display: flex !important; } nav[data-dock="mobile"] { display: none !important; } }
+        @media (min-width: 768px) { nav[data-dock="desktop"] { display: flex !important; } nav[data-dock="mobile"] { display: none !important; } [data-fab] { right: 26px !important; bottom: 26px !important; } }
       `}</style>
     </div>
   )
