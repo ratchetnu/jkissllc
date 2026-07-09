@@ -194,8 +194,10 @@ function Detail({ token }: { token: string }) {
                 <div key={a.staffId} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: 11, borderRadius: 12, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
                   <Avatar name={a.name} size={40} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: 14.5 }}>{a.name}{a.role ? <span style={{ fontWeight: 500, color: 'var(--muted)', fontSize: 12 }}> · {a.role}</span> : null}{a.payCents != null ? <span className="tabular-nums" style={{ color: '#86efac', fontSize: 12, fontWeight: 700 }}> · {money(a.payCents)}</span> : null}</div>
-                    <div style={{ fontSize: 12, color: stt.c }}>{stt.t}</div>
+                    {/* Truncate rather than wrap, so a long name + role + pay can't push
+                        into the action icons or grow the card on a narrow phone. */}
+                    <div style={{ fontWeight: 700, fontSize: 14.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.name}{a.role ? <span style={{ fontWeight: 500, color: 'var(--muted)', fontSize: 12 }}> · {a.role}</span> : null}{a.payCents != null ? <span className="tabular-nums" style={{ color: '#86efac', fontSize: 12, fontWeight: 700 }}> · {money(a.payCents)}</span> : null}</div>
+                    <div style={{ fontSize: 12, color: stt.c, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{stt.t}</div>
                   </div>
                   {live && (
                     <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
