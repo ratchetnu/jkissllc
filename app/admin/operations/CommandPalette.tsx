@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Search, Plus, Home, ClipboardList, Users, Building2, Settings, ArrowRight, User, Briefcase } from 'lucide-react'
+import { Search, Plus, Home, ClipboardList, Users, Building2, Settings, ArrowRight, User, Briefcase, Rocket } from 'lucide-react'
 import { fmtDay } from './ui'
 
 type Op = { token: string; routeNumber: string; businessName: string; status: string; routeDate: string; reportTime: string; assignedStaffName?: string }
@@ -17,6 +17,7 @@ const ACTIONS: Item[] = [
   { id: 'a-emp', label: 'Employees', Icon: Users, href: '/admin/operations/employees', group: 'Go to' },
   { id: 'a-biz', label: 'Businesses', Icon: Building2, href: '/admin/operations/businesses', group: 'Go to' },
   { id: 'a-set', label: 'Settings', Icon: Settings, href: '/admin/operations/settings', group: 'Go to' },
+  { id: 'a-ops-wl', label: 'OpsPilot Waitlist', sub: 'Early-access requests', Icon: Rocket, href: '/admin/opspilot', group: 'Go to' },
 ]
 
 export default function CommandPalette() {

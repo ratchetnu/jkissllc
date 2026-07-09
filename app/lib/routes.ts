@@ -32,7 +32,7 @@ export type AuditEntry = {
   note?: string
 }
 
-export type ConfirmEventType = 'link_opened' | 'disclaimer_viewed' | 'confirmed' | 'declined' | 'completed'
+export type ConfirmEventType = 'link_opened' | 'disclaimer_viewed' | 'confirmed' | 'declined' | 'completed' | 'clock_in' | 'clock_out'
 export type ConfirmEvent = {
   at: number
   type: ConfirmEventType
@@ -87,6 +87,23 @@ export type Assignee = {
   reminderSentAt?: number
   morningOfSentAt?: number
   noResponseAlertedAt?: number
+
+  // ── Timeclock (per person) ──
+  // Captured when the crew member taps Clock In / Clock Out on their route link.
+  // lat/lng/accuracy come from the browser Geolocation API and are the owner's
+  // proof of where they were. Coordinates are best-effort: a crew member can deny
+  // location permission and still clock in (we record locationDenied instead of
+  // blocking their shift), so absence of coords is a fact to surface, not an error.
+  clockInAt?: number
+  clockInLat?: number
+  clockInLng?: number
+  clockInAccuracy?: number         // meters, as reported by the device
+  clockInLocationDenied?: boolean  // they clocked in but withheld/failed location
+  clockOutAt?: number
+  clockOutLat?: number
+  clockOutLng?: number
+  clockOutAccuracy?: number
+  clockOutLocationDenied?: boolean
 }
 
 export type RouteRecord = {
@@ -179,6 +196,14 @@ export type PublicRoute = {
   completedAt?: number
   completionNote?: string
   completionPhotos?: string[]
+  // This crew member's own clock state — drives the Clock In / Clock Out button.
+  // Coordinates are never sent back to the crew; only the timestamps they need to
+  // see their own status.
+  clockInAt?: number
+  clockOutAt?: number
+  // Whether THIS crew member uses the timeclock at all. False hides the whole
+  // clock section on their route link. Resolved live from their staff record.
+  timeclock?: boolean
   expired: boolean
 }
 
@@ -466,7 +491,7 @@ export function toPublicRoute(r: RouteRecord): PublicRoute {
 //   • It is omitted entirely unless the admin has enabled showPayInConfirm.
 //   • RouteFinancials (what the client pays, and the profit) is not part of
 //     PublicRoute at all, so it cannot leak through this projection.
-export function toPublicRouteFor(r: RouteRecord, a: Assignee, opts: { showPay?: boolean } = {}): PublicRoute {
+export function toPublicRouteFor(r: RouteRecord, a: Assignee, opts: { showPay?: boolean; timeclock?: boolean } = {}): PublicRoute {
   const status: RouteStatus =
     r.status === 'cancelled' ? 'cancelled'
       : r.status === 'completed' ? 'completed'
@@ -479,6 +504,9 @@ export function toPublicRouteFor(r: RouteRecord, a: Assignee, opts: { showPay?: 
     assignedStaffName: a.name,
     confirmedAt: a.confirmedAt,
     declinedAt: a.declinedAt,
+    clockInAt: a.clockInAt,
+    clockOutAt: a.clockOutAt,
+    timeclock: opts.timeclock ?? true,
     payRate: opts.showPay ? a.pay : undefined,
   }
 }

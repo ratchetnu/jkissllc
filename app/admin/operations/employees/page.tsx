@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { UserPlus, Camera, ChevronDown, Sparkles, Phone, Pencil, Trash2, Wallet, History, Plus, X } from 'lucide-react'
+import { UserPlus, Camera, ChevronDown, Sparkles, Phone, Pencil, Trash2, Wallet, History, Plus, X, Clock } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { Avatar, scoreColor, ymd, fmtDay, fmtTs, money, onActivate, MoneyInput, Toggle, centsToInput, looksLikeMoney, osLabel } from '../ui'
 import ApplyScope from '../ApplyScope'
@@ -13,6 +13,7 @@ type Staff = {
   id: string; name: string; phone?: string; role?: string; photoUrl?: string; active: boolean
   payKind?: PayKind; defaultPayCents?: number; payByBusiness?: Record<string, number>
   payNotes?: string; payEffectiveDate?: string; payActive?: boolean; payHistory?: PayHistoryEntry[]
+  usesTimeclock?: boolean
 }
 type CStats = { score: number | null; assignments: number; confirmed: number; completed: number; declined: number; noResponse: number; noShow: number }
 type RouteLite = { routeNumber: string; assignedStaffId?: string; businessName: string; status: string; routeDate: string; reportTime: string }
@@ -163,6 +164,19 @@ function EmployeeCard({ s, st, businesses, upcoming, open, onToggle, onOpen, onC
               )}
 
               <CrewClaims staffId={s.id} />
+
+              {/* Timeclock — whether this person punches in/out (with GPS) on their
+                  route link. Off = no clock section shows for them at all. */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '11px 13px', marginBottom: 14, borderRadius: 12, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
+                  <Clock size={16} style={{ color: 'var(--red-glow)', flexShrink: 0 }} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700 }}>Timeclock</div>
+                    <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>{s.usesTimeclock !== false ? 'Clocks in/out with GPS on their route link' : 'No clock — this person doesn’t punch in'}</div>
+                  </div>
+                </div>
+                <Toggle on={s.usesTimeclock !== false} onChange={v => post({ usesTimeclock: v })} />
+              </div>
 
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button onClick={() => setEditing(true)} disabled={busy} style={btnSm}><Pencil size={13} /> Edit</button>

@@ -156,3 +156,31 @@ export async function alertOwnerRouteEvent(
 
   await sendOwnerAlert({ smsBody, emailSubject: subject, emailHtml: html })
 }
+
+// A crew member clocked in/out with their location OFF — the punch is recorded but
+// unverifiable, so the carrier is told in real time. Fire-and-forget (never throws).
+export async function alertOwnerClockLocationOff(
+  route: RouteRecord,
+  person: { name: string },
+  action: 'clock_in' | 'clock_out',
+): Promise<void> {
+  const adminUrl = `${BASE}/admin/operations/${route.token}`
+  const verb = action === 'clock_in' ? 'clocked IN' : 'clocked OUT'
+  const ref = route.routeNumber
+  const biz = route.businessName
+  const when = fmtRouteDate(route.routeDate)
+
+  const smsBody = `${COMPANY.shortNameUpper}: ${person.name} ${verb} with LOCATION OFF on ${ref} (${biz}, ${when}) — no GPS to verify. ${adminUrl}`
+  const subject = `⚠ Location off — ${person.name} ${verb} · ${ref}`
+  const html =
+    `<p style="font-size:16px;font-weight:700;margin:0 0 10px;color:#b45309">${esc(person.name)} ${verb} with location off</p>` +
+    `<p style="font-size:14px;color:#333;margin:0 0 12px">Their phone didn’t share GPS, so this punch can’t be verified against the job site.</p>` +
+    `<table style="font-size:14px;color:#333;border-collapse:collapse">` +
+    `<tr><td style="padding:2px 12px 2px 0;color:#777">Route</td><td><strong>${esc(ref)}</strong></td></tr>` +
+    `<tr><td style="padding:2px 12px 2px 0;color:#777">Client</td><td>${esc(biz)}</td></tr>` +
+    `<tr><td style="padding:2px 12px 2px 0;color:#777">Date</td><td>${esc(when)} at ${esc(route.reportTime)}</td></tr>` +
+    `</table>` +
+    `<p style="margin:16px 0 0"><a href="${adminUrl}" style="background:#e5233a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:700">Open the route →</a></p>`
+
+  await sendOwnerAlert({ smsBody, emailSubject: subject, emailHtml: html })
+}

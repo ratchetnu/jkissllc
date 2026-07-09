@@ -16,6 +16,8 @@ type Assignee = {
   payCents?: number; paySource?: 'crew_business' | 'crew_default' | 'manual'
   smsStatus?: string; smsSentAt?: number; confirmedAt?: number; declinedAt?: number; declineReason?: string
   confirmedVia?: 'link' | 'verbal'; verbalNote?: string
+  clockInAt?: number; clockInLat?: number; clockInLng?: number; clockInAccuracy?: number; clockInLocationDenied?: boolean
+  clockOutAt?: number; clockOutLat?: number; clockOutLng?: number; clockOutAccuracy?: number; clockOutLocationDenied?: boolean
 }
 type Financials = { businessPriceCents?: number; priceSource: 'contract' | 'manual' | 'none'; snapshotAt: number }
 type Op = {
@@ -191,7 +193,8 @@ function Detail({ token }: { token: string }) {
                 : a.declinedAt ? { t: `✗ Not available${a.declineReason ? ` — ${a.declineReason}` : ''}`, c: '#fca5a5' } : a.smsStatus === 'failed' ? { t: 'text failed', c: '#f87171' } : a.smsSentAt ? 'texted · awaiting reply' : 'not texted yet'
               const stt = typeof st === 'string' ? { t: st, c: 'var(--muted)' } : st
               return (
-                <div key={a.staffId} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: 11, borderRadius: 12, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+                <div key={a.staffId} style={{ padding: 11, borderRadius: 12, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
                   <Avatar name={a.name} size={40} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {/* Truncate rather than wrap, so a long name + role + pay can't push
@@ -214,6 +217,8 @@ function Detail({ token }: { token: string }) {
                       <button onClick={() => patch({ action: 'unassign', staffId: a.staffId }, `rm-${a.staffId}`)} disabled={busy !== ''} title="Remove" className="os-tap" style={{ ...iconBtn, color: '#fca5a5' }}><X size={14} /></button>
                     </div>
                   )}
+                </div>
+                <ClockStrip a={a} />
                 </div>
               )
             })}
@@ -421,6 +426,48 @@ function Tile({ label, val, tone }: { label: string; val: string; tone?: string 
 }
 
 const iconBtn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 9, background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', color: 'var(--muted)', cursor: 'pointer' }
+
+const pinUrl = (lat: number, lng: number) => `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
+const clockTime = (ts: number) => new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+const dur = (a: number, b: number) => {
+  const mins = Math.max(0, Math.round((b - a) / 60000))
+  const h = Math.floor(mins / 60), m = mins % 60
+  return h ? `${h}h ${m}m` : `${m}m`
+}
+
+// The owner's proof of where/when the crew worked. Each punch links straight to a
+// Google Maps pin at the captured coordinates — tap it, tap the report address
+// above, and it's obvious whether they were on-site. "Location off" means the
+// crew member clocked in but their phone withheld GPS: a fact worth seeing, not a
+// silent gap.
+function ClockStrip({ a }: { a: Assignee }) {
+  if (!a.clockInAt && !a.clockOutAt) return null
+  const punch = (label: string, at: number, lat?: number, lng?: number, acc?: number) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12.5 }}>
+      <span style={{ fontWeight: 800, color: 'var(--muted)', width: 30 }}>{label}</span>
+      <span className="tabular-nums" style={{ fontWeight: 700 }}>{clockTime(at)}</span>
+      {lat != null && lng != null ? (
+        <a href={pinUrl(lat, lng)} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--red)', fontWeight: 700 }}>
+          <MapPin size={12} /> Verify pin{acc != null ? ` · ±${Math.round(acc)}m` : ''}
+        </a>
+      ) : (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#fcd34d', fontWeight: 700 }}>
+          <ShieldAlert size={12} /> Location off
+        </span>
+      )}
+    </div>
+  )
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed var(--line)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 10.5, fontWeight: 800, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+        <Clock size={12} /> Timeclock
+        {a.clockInAt && a.clockOutAt && <span style={{ color: '#86efac', letterSpacing: 0, textTransform: 'none' }}>· {dur(a.clockInAt, a.clockOutAt)} on site</span>}
+      </div>
+      {a.clockInAt && punch('IN', a.clockInAt, a.clockInLat, a.clockInLng, a.clockInAccuracy)}
+      {a.clockOutAt && punch('OUT', a.clockOutAt, a.clockOutLat, a.clockOutLng, a.clockOutAccuracy)}
+    </div>
+  )
+}
 
 function Row({ Icon, label, val, href }: { Icon: typeof MapPin; label: string; val: string; href?: string }) {
   return (

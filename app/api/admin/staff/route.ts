@@ -95,6 +95,8 @@ export async function POST(req: NextRequest) {
     role: typeof body.role === 'string' ? body.role.trim().slice(0, 60) || undefined : existing?.role,
     photoUrl: typeof body.photoUrl === 'string' ? body.photoUrl.trim().slice(0, 600) || undefined : existing?.photoUrl,
     active: body.active !== false && body.active !== 'false',
+    // Absent in the request = leave as-is; present = the toggle's new value.
+    usesTimeclock: typeof body.usesTimeclock === 'boolean' ? body.usesTimeclock : existing?.usesTimeclock,
     payKind,
     defaultPayCents,
     payByBusiness,

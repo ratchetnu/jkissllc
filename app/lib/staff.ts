@@ -39,9 +39,20 @@ export type Staff = {
   payActive?: boolean                      // false = don't auto-apply their rate
   payHistory?: PayHistoryEntry[]
 
+  // ── Timeclock ──
+  // Whether this crew member clocks in/out on their route link. Undefined = on
+  // (the default): the owner opts specific people OUT (e.g. salaried staff, or a
+  // helper who rides with a driver who already punches). Read live at punch time,
+  // so flipping it takes effect on routes already assigned.
+  usesTimeclock?: boolean
+
   createdAt: number
   updatedAt: number
 }
+
+// True unless the owner explicitly turned the timeclock off for this person.
+export const staffUsesTimeclock = (s: Pick<Staff, 'usesTimeclock'> | null | undefined): boolean =>
+  s?.usesTimeclock !== false
 
 const KEY = (id: string) => `staff:${id}`
 const INDEX = 'staff:index'
@@ -55,6 +66,12 @@ export async function listStaff(limit = 200): Promise<Staff[]> {
     .map(r => { try { return JSON.parse(r as string) as Staff } catch { return null } })
     .filter((x): x is Staff => x !== null)
     .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export async function getStaff(id: string): Promise<Staff | null> {
+  const raw = await redis.get(KEY(id))
+  if (!raw) return null
+  try { return JSON.parse(raw as string) as Staff } catch { return null }
 }
 
 export async function saveStaff(s: Staff): Promise<void> {

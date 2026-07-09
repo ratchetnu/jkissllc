@@ -24,8 +24,26 @@ type PublicRoute = {
   completedAt?: number
   completionNote?: string
   completionPhotos?: string[]
+  clockInAt?: number
+  clockOutAt?: number
+  timeclock?: boolean
   expired: boolean
 }
+
+// Ask the phone where it is. Best-effort: if the browser has no geolocation, or
+// the crew member denies it / it times out, we resolve to null coordinates rather
+// than reject — clocking in must never be blocked by a location prompt.
+function getPosition(): Promise<{ lat: number; lng: number; accuracy: number } | null> {
+  return new Promise(resolve => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return resolve(null)
+    navigator.geolocation.getCurrentPosition(
+      p => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+    )
+  })
+}
+const fmtClock = (ts: number) => new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 
 function fmtDate(iso: string): string {
   const d = new Date(`${iso}T12:00:00Z`)
@@ -51,6 +69,8 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
   const [note, setNote] = useState('')
   const [photos, setPhotos] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
+  const [clocking, setClocking] = useState<'' | 'clock_in' | 'clock_out'>('')
+  const [clockWarn, setClockWarn] = useState('')
 
   useEffect(() => {
     let alive = true
@@ -95,6 +115,39 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
       } catch { setErr('A photo failed to upload.') }
     }
     setUploading(false)
+  }
+
+  async function clock(action: 'clock_in' | 'clock_out') {
+    setClocking(action); setErr(''); setClockWarn('')
+    try {
+      const pos = await getPosition()
+      // GPS didn't pick up — warn the crew member before recording. If they turn
+      // location on and retry, the punch is clean; if they proceed anyway, the
+      // carrier is alerted that their location was off.
+      if (pos === null) {
+        const proceed = confirm(
+          'GPS didn’t pick up your location.\n\n' +
+          'Your location is off, so we can’t verify you’re on-site. You can still ' +
+          (action === 'clock_in' ? 'clock in' : 'clock out') + ', but an alert will be sent to the carrier.\n\n' +
+          'Turn on Location Services and try again — or tap OK to continue without it.'
+        )
+        if (!proceed) { setClocking(''); return }
+      }
+      const res = await fetch(`/api/route/${token}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action,
+          lat: pos?.lat, lng: pos?.lng, accuracy: pos?.accuracy,
+          locationDenied: pos === null,
+        }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (d.route) {
+        setRoute(d.route)
+        if (d.locationOff) setClockWarn('GPS couldn’t verify your location, so an alert was sent to the carrier. Turn on Location Services next time for a clean record.')
+      } else if (!res.ok) setErr(d.error || 'Could not record that — please try again.')
+    } catch { setErr('Network error — please try again.') }
+    finally { setClocking('') }
   }
 
   async function submitComplete() {
@@ -199,6 +252,39 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
       <h1 style={{ fontSize: 20, fontWeight: 800, marginTop: 10 }}>You’re confirmed ✓</h1>
       <p style={{ color: 'var(--muted)', marginTop: 6, fontSize: 14 }}>Thanks{route.assignedStaffName ? `, ${route.assignedStaffName.split(' ')[0]}` : ''} — you’re set for this route. Please report on time.</p>
       <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--line)' }}><Details /></div>
+
+      {/* Timeclock — punch in on arrival, out when done. Captures GPS to verify
+          you were on-site; if your phone blocks location it still records the time.
+          Hidden entirely for crew the owner has opted out of the clock. */}
+      {route.timeclock !== false && <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--line)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, fontWeight: 800, marginBottom: 10 }}>
+          <Clock size={16} style={{ color: 'var(--red-glow, #ff6680)' }} /> Timeclock
+        </div>
+        {clockWarn && (
+          <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', marginBottom: 12, padding: '11px 13px', borderRadius: 11, background: 'rgba(245,158,11,.1)', border: '1px solid rgba(245,158,11,.35)' }}>
+            <AlertTriangle size={16} color="#f59e0b" style={{ flexShrink: 0, marginTop: 1 }} />
+            <span style={{ fontSize: 12.5, color: '#fcd34d', lineHeight: 1.5 }}>{clockWarn}</span>
+          </div>
+        )}
+        {(route.clockInAt || route.clockOutAt) && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: route.clockOutAt ? 0 : 12 }}>
+            {route.clockInAt && <div style={{ fontSize: 14, color: 'var(--text)' }}>🟢 Clocked in at <b>{fmtClock(route.clockInAt)}</b></div>}
+            {route.clockOutAt && <div style={{ fontSize: 14, color: 'var(--text)' }}>🔴 Clocked out at <b>{fmtClock(route.clockOutAt)}</b></div>}
+          </div>
+        )}
+        {!route.clockInAt ? (
+          <button onClick={() => clock('clock_in')} disabled={clocking !== ''}
+            style={{ width: '100%', padding: '13px', borderRadius: 12, border: '1px solid rgba(34,197,94,.4)', background: 'rgba(34,197,94,.1)', color: '#22c55e', fontWeight: 800, fontSize: 14.5, cursor: 'pointer', opacity: clocking === 'clock_in' ? .7 : 1 }}>
+            {clocking === 'clock_in' ? 'Locating…' : 'Clock In'}
+          </button>
+        ) : !route.clockOutAt ? (
+          <button onClick={() => clock('clock_out')} disabled={clocking !== ''}
+            style={{ width: '100%', padding: '13px', borderRadius: 12, border: '1px solid rgba(224,0,42,.4)', background: 'rgba(224,0,42,.1)', color: '#ff6680', fontWeight: 800, fontSize: 14.5, cursor: 'pointer', opacity: clocking === 'clock_out' ? .7 : 1 }}>
+            {clocking === 'clock_out' ? 'Locating…' : 'Clock Out'}
+          </button>
+        ) : null}
+        {!route.clockInAt && <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 9 }}>Your location is recorded when you clock in, so dispatch can verify you were on-site.</p>}
+      </div>}
 
       <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--line)' }}>
         {!completeMode ? (
