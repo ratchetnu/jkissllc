@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { UserPlus, Camera, ChevronDown, Sparkles, Phone, Pencil, Trash2, Wallet, History, Plus, X, Clock, Users, FileText } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
+import { invalidateOps } from '../useOps'
 import { Avatar, scoreColor, ymd, fmtDay, fmtTs, money, onActivate, MoneyInput, Toggle, centsToInput, looksLikeMoney, osLabel } from '../ui'
 import ApplyScope from '../ApplyScope'
 import CrewClaims from '../claims/CrewClaims'
@@ -333,6 +334,7 @@ function PaySettings({ s, businesses, onChanged, setMsg }: { s: Staff; businesse
       if (!res.ok) { setErr(d.error || 'Could not save pay.'); return }
       const n = d.reprice?.updated?.length ?? 0
       setMsg(n > 0 ? `Pay saved — ${n} upcoming route${n === 1 ? '' : 's'} re-priced.` : 'Compensation saved.')
+      if (n > 0) invalidateOps()   // re-priced routes show fresh on Home/List, not ≤10s-stale
       setEditing(false); setScope(false); onChanged()
     } catch { setErr('Network error.') } finally { setBusy(false) }
   }

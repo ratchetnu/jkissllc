@@ -348,6 +348,16 @@ function RouteMoney({ op, onPatch, busy }: { op: Op; onPatch: (b: Record<string,
     Object.fromEntries((op.assignees ?? []).map(a => [a.staffId, centsToInput(a.payCents)])))
   const [err, setErr] = useState('')
 
+  // Re-seed the form from the live route whenever we're NOT mid-edit. The initial
+  // useState only runs at mount, so a crew member added AFTER the card mounted would
+  // otherwise have no `pays` entry — and Save maps over the live assignees, sending
+  // that member's auto-resolved pay as a blank "clear" and silently wiping it.
+  useEffect(() => {
+    if (editing) return
+    setPrice(centsToInput(op.financials?.businessPriceCents))
+    setPays(Object.fromEntries((op.assignees ?? []).map(a => [a.staffId, centsToInput(a.payCents)])))
+  }, [op, editing])
+
   const frozen = op.status === 'completed' || op.status === 'cancelled'
   const crew = (op.assignees ?? []).filter(a => !a.declinedAt)
   const revenue = op.financials?.businessPriceCents ?? null

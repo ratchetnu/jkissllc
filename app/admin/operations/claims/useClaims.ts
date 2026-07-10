@@ -75,7 +75,10 @@ type Data = { items: ClaimListItem[]; report: ClaimsReport }
 let cache: { at: number; data: Data } | null = null
 let inflight: Promise<Data> | null = null
 
-export function invalidateClaims() { cache = null }
+// Clear BOTH the cache and any in-flight fetch. Nulling only `cache` left a pending
+// GET free to resolve and repopulate `cache` with pre-mutation data — and a forced
+// reload would then return that same stale in-flight promise — defeating the bust.
+export function invalidateClaims() { cache = null; inflight = null }
 
 async function fetchClaims(force = false): Promise<Data> {
   if (!force && cache && Date.now() - cache.at < 10_000) return cache.data

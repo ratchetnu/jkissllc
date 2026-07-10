@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Building2, ChevronDown, Link2, FileText, Plus, Check, Repeat, Pencil, Wallet, History, CalendarClock } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
+import { invalidateOps } from '../useOps'
 import { money, ymd, fmtDay, fmtTs, weekdaysLabel, onActivate, MoneyInput, Toggle, centsToInput, looksLikeMoney, osLabel, DOW, Avatar } from '../ui'
 import ApplyScope from '../ApplyScope'
 import ClaimsHistory from '../claims/ClaimsHistory'
@@ -218,6 +219,7 @@ function RoutePricing({ b, onReload, setMsg }: { b: Biz; onReload: () => void; s
       if (!res.ok) { setErr(d.error || 'Could not save the price.'); return }
       const n = d.reprice?.updated?.length ?? 0
       setMsg(n > 0 ? `Price saved — ${n} upcoming route${n === 1 ? '' : 's'} re-priced.` : 'Route price saved.')
+      if (n > 0) invalidateOps()   // re-priced routes show fresh on Home/List, not ≤10s-stale
       setEditing(false); setScope(false); onReload()
     } catch { setErr('Network error.') } finally { setBusy(false) }
   }
@@ -464,7 +466,7 @@ function BizCard({ b, staff, open, onToggle, onOpen, onCreatePortal, onReload, s
     setBusy(id)
     try {
       if (body === null) await fetch(`/api/admin/route-templates/${id}`, { method: 'DELETE', credentials: 'same-origin' })
-      else { const d = await fetch(`/api/admin/route-templates/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(body) }).then(r => r.json()); if (body.action === 'generate') setMsg(d.created?.length ? `Generated ${d.created.length} route(s).` : 'Upcoming dates already generated.') }
+      else { const d = await fetch(`/api/admin/route-templates/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(body) }).then(r => r.json()); if (body.action === 'generate') { setMsg(d.created?.length ? `Generated ${d.created.length} route(s).` : 'Upcoming dates already generated.'); if (d.created?.length) invalidateOps() } }   // newly generated routes show on Home/List immediately
       onReload()
     } finally { setBusy('') }
   }
