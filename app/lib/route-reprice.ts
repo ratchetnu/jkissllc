@@ -8,7 +8,8 @@
 //   'none'      → change the rate only; touch no existing routes (the default)
 //   'future'    → re-price live routes dated today or later
 //   'selected'  → re-price exactly the routes the admin ticked (still not frozen ones)
-import { listRoutes, saveRoute, pushAudit, type RouteRecord } from './routes'
+import { listRoutes, pushAudit, type RouteRecord } from './routes'
+import { mutateRoute } from './route-mutex'
 import { getBusiness, bizKey, type Business } from './businesses'
 import { snapshotBusinessPrice, snapshotCrewPay, isFrozen, fmtCents } from './finance'
 import type { Staff } from './staff'
@@ -51,15 +52,24 @@ export async function repriceBusinessRoutes(
   const all = (await listRoutes(2000)).filter(r => bizKey(r.businessName) === key)
   const { pick, skippedFrozen } = targets(all, applyTo, routeTokens)
 
+  // The snapshot above only PICKS which routes to touch. The actual read-modify-write
+  // must go through the per-route lock (mutateRoute re-reads fresh inside it), or a
+  // reprice would clobber a crew confirmation/decline landing on the same live route
+  // — the exact race lib/route-mutex exists to prevent.
   const updated: RepriceResult['updated'] = []
   for (const r of pick) {
-    const before = r.financials?.businessPriceCents
-    snapshotBusinessPrice(r, biz)
-    const after = r.financials?.businessPriceCents
-    if (before === after) continue
-    pushAudit(r, 'admin', `Route price updated to ${after == null ? 'no rate' : fmtCents(after)} (contract rate changed)`)
-    try { await saveRoute(r); updated.push({ routeNumber: r.routeNumber, token: r.token }) }
-    catch { /* one bad write shouldn't abort the rest */ }
+    try {
+      const res = await mutateRoute(r.token, (route) => {
+        if (isFrozen(route)) return false            // completed/cancelled since the snapshot
+        const before = route.financials?.businessPriceCents
+        snapshotBusinessPrice(route, biz)
+        const after = route.financials?.businessPriceCents
+        if (before === after) return false
+        pushAudit(route, 'admin', `Route price updated to ${after == null ? 'no rate' : fmtCents(after)} (contract rate changed)`)
+        return true
+      })
+      if (res && res.value === true) updated.push({ routeNumber: res.route.routeNumber, token: res.route.token })
+    } catch { /* one busy/bad route shouldn't abort the rest */ }
   }
   return { updated, skippedFrozen }
 }
@@ -76,19 +86,27 @@ export async function repriceCrewRoutes(
   const all = (await listRoutes(2000)).filter(r => (r.assignees ?? []).some(a => a.staffId === staff.id))
   const { pick, skippedFrozen } = targets(all, applyTo, routeTokens)
 
+  // Snapshot picks the routes; mutateRoute does the write under the per-route lock
+  // (re-reading fresh) so this can't clobber a concurrent confirm/clock on the same
+  // live route. See lib/route-mutex.
   const updated: RepriceResult['updated'] = []
   for (const r of pick) {
-    const a = (r.assignees ?? []).find(x => x.staffId === staff.id)
-    if (!a || a.paySource === 'manual') continue
-    const before = a.payCents
-    // Clear the snapshot so snapshotCrewPay re-resolves from the new settings.
-    a.payCents = undefined
-    a.paySource = undefined
-    snapshotCrewPay(a, staff, r.businessName)
-    if (before === a.payCents) continue
-    pushAudit(r, 'admin', `${a.name}'s pay updated to ${a.payCents == null ? 'no rate' : fmtCents(a.payCents)} (pay settings changed)`)
-    try { await saveRoute(r); updated.push({ routeNumber: r.routeNumber, token: r.token }) }
-    catch { /* keep going */ }
+    try {
+      const res = await mutateRoute(r.token, (route) => {
+        if (isFrozen(route)) return false
+        const a = (route.assignees ?? []).find(x => x.staffId === staff.id)
+        if (!a || a.paySource === 'manual') return false
+        const before = a.payCents
+        // Clear the snapshot so snapshotCrewPay re-resolves from the new settings.
+        a.payCents = undefined
+        a.paySource = undefined
+        snapshotCrewPay(a, staff, route.businessName)
+        if (before === a.payCents) return false
+        pushAudit(route, 'admin', `${a.name}'s pay updated to ${a.payCents == null ? 'no rate' : fmtCents(a.payCents)} (pay settings changed)`)
+        return true
+      })
+      if (res && res.value === true) updated.push({ routeNumber: res.route.routeNumber, token: res.route.token })
+    } catch { /* keep going */ }
   }
   return { updated, skippedFrozen }
 }

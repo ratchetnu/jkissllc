@@ -4,7 +4,8 @@
 // billed route is stamped with invoiceId so it can't be double-billed; voiding or
 // deleting the invoice frees its routes again.
 import { redis } from './redis'
-import { listRoutes, getRouteByToken, saveRoute } from './routes'
+import { listRoutes } from './routes'
+import { mutateRoute } from './route-mutex'
 import { parsePayCents } from './route-pay'
 
 export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'void'
@@ -97,9 +98,14 @@ export async function listInvoices(limit = 500): Promise<RouteInvoice[]> {
 async function releaseRoutes(inv: RouteInvoice): Promise<void> {
   for (const l of inv.lines) {
     if (!l.routeToken) continue
+    // Under the per-route lock so freeing a route can't clobber a concurrent write
+    // to it (a late clock-out, an admin status change). See lib/route-mutex.
     try {
-      const r = await getRouteByToken(l.routeToken)
-      if (r && r.invoiceId === inv.token) { r.invoiceId = undefined; await saveRoute(r) }
+      await mutateRoute(l.routeToken, (route) => {
+        if (route.invoiceId !== inv.token) return false
+        route.invoiceId = undefined
+        return true
+      })
     } catch { /* best effort */ }
   }
 }
@@ -152,9 +158,17 @@ export async function generateFromRoutes(
   }
   await saveInvoice(invoice)
 
+  // Stamp each route under its lock, re-reading fresh. The invoiceId guard also
+  // makes two concurrent generations race-safe: whoever locks second sees the
+  // route already billed and skips it rather than clobbering the other's write.
   for (const r of routes) {
-    r.invoiceId = invoice.token
-    try { await saveRoute(r) } catch { /* non-fatal — line still exists */ }
+    try {
+      await mutateRoute(r.token, (route) => {
+        if (route.invoiceId) return false     // already billed by a concurrent invoice
+        route.invoiceId = invoice.token
+        return true
+      })
+    } catch { /* non-fatal — line still exists */ }
   }
   return { invoice, count: routes.length }
 }
