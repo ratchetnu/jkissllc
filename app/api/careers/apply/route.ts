@@ -133,6 +133,7 @@ export async function POST(req: NextRequest) {
     score: { score: 0, band: 'not_qualified', components: [], strengths: [], weaknesses: [], riskFactors: [], suggestedQuestions: [], scenarioRubric: { safety: 0, customerService: 0, problemSolving: 0, honesty: 0, professionalism: 0 }, documentsComplete: true, missingDocs: [] },
     status: 'new',
     source: str(body.source, 120),
+    events: [{ at: now, actor: 'applicant', action: 'Application submitted' }],
     createdAt: now,
     updatedAt: now,
   }

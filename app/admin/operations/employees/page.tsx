@@ -1,7 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { UserPlus, Camera, ChevronDown, Sparkles, Phone, Pencil, Trash2, Wallet, History, Plus, X, Clock } from 'lucide-react'
+import Link from 'next/link'
+import { UserPlus, Camera, ChevronDown, Sparkles, Phone, Pencil, Trash2, Wallet, History, Plus, X, Clock, Users, FileText } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { Avatar, scoreColor, ymd, fmtDay, fmtTs, money, onActivate, MoneyInput, Toggle, centsToInput, looksLikeMoney, osLabel } from '../ui'
 import ApplyScope from '../ApplyScope'
@@ -34,6 +35,7 @@ function Hub() {
   const [openId, setOpenId] = useState('')
   const [adding, setAdding] = useState(false)
   const [msg, setMsg] = useState('')
+  const [applicantsToReview, setApplicantsToReview] = useState(0)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -44,6 +46,14 @@ function Hub() {
       ])
       setStaff(s.items || []); setStats(r.stats || {}); setRoutes(r.items || [])
     } catch { /* ignore */ } finally { setLoading(false) }
+  }, [])
+
+  // Applicant count for the sub-nav badge — how many are waiting on a decision.
+  useEffect(() => {
+    fetch('/api/admin/careers', { credentials: 'same-origin' })
+      .then(x => x.json())
+      .then(d => setApplicantsToReview((d.applicants || []).filter((a: { status: string }) => ['new', 'reviewed', 'information_requested'].includes(a.status)).length))
+      .catch(() => {})
   }, [])
   useEffect(() => { load() }, [load])
 
@@ -70,6 +80,17 @@ function Hub() {
           <h1 className="jkos-h" style={{ fontSize: 'clamp(28px,6vw,40px)' }}>Your crew</h1>
         </div>
         <button onClick={() => setAdding(a => !a)} className="btn os-tap" style={{ borderRadius: 999, height: 44 }}><UserPlus size={17} /> Add crew member</button>
+      </div>
+
+      {/* Crew sub-navigation — Directory (here) + Applicants (the hiring pipeline). */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+        <span className="os-tap" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 15px', borderRadius: 999, fontSize: 13.5, fontWeight: 700, background: 'var(--red)', color: '#fff' }}>
+          <Users size={15} /> Crew directory
+        </span>
+        <Link href="/admin/careers" className="os-tap" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 15px', borderRadius: 999, fontSize: 13.5, fontWeight: 700, background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)', color: 'var(--muted)', textDecoration: 'none' }}>
+          <FileText size={15} /> Applicants
+          {applicantsToReview > 0 && <span style={{ fontSize: 11, fontWeight: 800, padding: '1px 8px', borderRadius: 999, background: 'var(--red)', color: '#fff' }}>{applicantsToReview}</span>}
+        </Link>
       </div>
 
       {msg && <div className="os-card" style={{ padding: '10px 14px', marginBottom: 16, fontSize: 13.5, color: '#fca5a5' }}>{msg}</div>}

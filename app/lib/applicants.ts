@@ -9,16 +9,34 @@ import type { ScoreInput, ScoreResult } from './ats-scoring'
 import type { DocKind, ExperienceLevel, Position } from './ats-config'
 
 export type ApplicantStatus =
-  | 'new' | 'reviewed' | 'interview' | 'second_interview' | 'waitlist' | 'hired' | 'rejected'
+  | 'new' | 'reviewed' | 'information_requested' | 'interview' | 'second_interview'
+  | 'waitlist' | 'hired' | 'rejected' | 'withdrawn' | 'archived'
 
 export const APPLICANT_STATUS_LABEL: Record<ApplicantStatus, string> = {
   new: 'New',
-  reviewed: 'Reviewed',
-  interview: 'Interview',
+  reviewed: 'Under Review',
+  information_requested: 'Information Requested',
+  interview: 'Interviewing',
   second_interview: 'Second Interview',
   waitlist: 'Waitlist',
-  hired: 'Hired',
-  rejected: 'Rejected',
+  hired: 'Approved',
+  rejected: 'Denied',
+  withdrawn: 'Withdrawn',
+  archived: 'Archived',
+}
+
+// A terminal/inactive applicant no longer sits in the active review queue.
+export const APPLICANT_INACTIVE: ApplicantStatus[] = ['rejected', 'withdrawn', 'archived']
+
+// An append-only activity log for the applicant lifecycle (submitted, status
+// changes, notes, info requests, decisions, crew activation). Mirrors the
+// AuditEntry convention used on routes/claims.
+export type ApplicantEvent = { at: number; actor: string; action: string; note?: string }
+
+export function pushApplicantEvent(a: Applicant, actor: string, action: string, note?: string): void {
+  if (!Array.isArray(a.events)) a.events = []
+  a.events.push({ at: Date.now(), actor, action, note: note?.trim() || undefined })
+  a.events = a.events.slice(-200)
 }
 
 export type Recommendation = 'hire' | 'second_interview' | 'waitlist' | 'reject'
@@ -67,7 +85,8 @@ export type Applicant = {
   status: ApplicantStatus
   managerNotes?: string
   recommendation?: Recommendation
-  promotedStaffId?: string // set when "Hire" promotes them into the crew roster
+  promotedStaffId?: string // set when "Approve/Hire" promotes them into the crew roster
+  events?: ApplicantEvent[] // activity timeline
   // meta
   source?: string
   createdAt: number
@@ -160,7 +179,25 @@ function normalize(a: Applicant): Applicant {
   a.skills = a.skills && typeof a.skills === 'object' ? a.skills : {}
   a.scenarios = Array.isArray(a.scenarios) ? a.scenarios : []
   a.documents = Array.isArray(a.documents) ? a.documents : []
+  a.events = Array.isArray(a.events) ? a.events : []
   a.status = a.status || 'new'
   if (!a.score || typeof a.score.score !== 'number') a.score = scoreApplicant(toScoreInput(a))
   return a
+}
+
+const norm = (s: string | undefined) => (s || '').trim().toLowerCase()
+const digits = (s: string | undefined) => (s || '').replace(/\D/g, '')
+
+// Find prior applicant records that look like the same person (same email, or same
+// 10-digit phone). Used at apply time to flag a repeat application and at review
+// time so an admin never silently creates a second profile for one person.
+export async function findApplicantDuplicates(
+  email: string, phone: string, excludeId?: string,
+): Promise<Applicant[]> {
+  const e = norm(email), p = digits(phone)
+  if (!e && !p) return []
+  const all = await listApplicants(1000)
+  return all.filter(a => a.id !== excludeId && (
+    (e && norm(a.email) === e) || (p && p.length >= 10 && digits(a.phone).endsWith(p.slice(-10)))
+  ))
 }

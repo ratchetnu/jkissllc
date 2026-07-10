@@ -23,9 +23,16 @@ export type Staff = {
   id: string
   name: string
   phone?: string
+  email?: string          // carried over from an applicant on hire; contact only
   role?: string
   photoUrl?: string
   active: boolean
+  applicantId?: string    // back-link to the Applicant this crew member was hired from
+
+  // ── Onboarding ──
+  // Set when a crew member is created from an approved applicant but hasn't finished
+  // onboarding (docs, start date, etc.). Undefined = fully active. UI-only signal.
+  onboarding?: boolean
 
   // ── Pay settings ──
   // What this person earns per route. A per-business override (keyed by bizKey)
@@ -72,6 +79,20 @@ export async function getStaff(id: string): Promise<Staff | null> {
   const raw = await redis.get(KEY(id))
   if (!raw) return null
   try { return JSON.parse(raw as string) as Staff } catch { return null }
+}
+
+// Existing crew member that looks like the same person — same applicant back-link,
+// same email, or same 10-digit phone. Used when approving an applicant so hiring the
+// same person twice links to the one record instead of creating a duplicate.
+export async function findStaffDuplicate(opts: { applicantId?: string; email?: string; phone?: string }): Promise<Staff | null> {
+  const e = (opts.email || '').trim().toLowerCase()
+  const p = (opts.phone || '').replace(/\D/g, '')
+  const all = await listStaff(500)
+  return all.find(s =>
+    (opts.applicantId && s.applicantId === opts.applicantId) ||
+    (e && (s.email || '').trim().toLowerCase() === e) ||
+    (p.length >= 10 && (s.phone || '').replace(/\D/g, '').endsWith(p.slice(-10))),
+  ) ?? null
 }
 
 export async function saveStaff(s: Staff): Promise<void> {

@@ -1,9 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import AdminGate from '../AdminGate'
 import type { Applicant, ApplicantStatus, Recommendation } from '../../lib/applicants'
-import { APPLICANT_STATUS_LABEL, RECOMMENDATION_LABEL } from '../../lib/applicants'
+import { APPLICANT_STATUS_LABEL, RECOMMENDATION_LABEL, APPLICANT_INACTIVE } from '../../lib/applicants'
 import {
   BAND_META, RUBRIC_DIMENSIONS, RUBRIC_LABELS, SCENARIOS, POSITIONS, requiredDocKinds,
   type ScoreBand, type DocKind,
@@ -14,8 +15,16 @@ const DOC_LABEL: Record<DocKind, string> = {
 }
 const SCENARIO_PROMPT: Record<string, string> = Object.fromEntries(SCENARIOS.map(s => [s.key, s.prompt]))
 
+const fmtTs = (at: number): string =>
+  new Date(at).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+
 const STATUS_TABS: { key: string; label: string; match: (a: Applicant) => boolean }[] = [
-  { key: 'active', label: 'Active', match: a => !['hired', 'rejected'].includes(a.status) },
+  { key: 'active', label: 'Active', match: a => !APPLICANT_INACTIVE.includes(a.status) },
+  { key: 'new', label: 'New', match: a => a.status === 'new' },
+  { key: 'info', label: 'Info Requested', match: a => a.status === 'information_requested' },
+  { key: 'interview', label: 'Interviewing', match: a => a.status === 'interview' || a.status === 'second_interview' },
+  { key: 'approved', label: 'Approved', match: a => a.status === 'hired' },
+  { key: 'archived', label: 'Archived', match: a => a.status === 'archived' || a.status === 'withdrawn' },
   { key: 'all', label: 'All', match: () => true },
   { key: 'new', label: 'New', match: a => a.status === 'new' },
   { key: 'interview', label: 'Interview', match: a => a.status === 'interview' || a.status === 'second_interview' },
@@ -79,8 +88,11 @@ function CareersInner() {
   return (
     <main className="min-h-screen pt-16" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
       <div className="max-w-6xl mx-auto px-3 sm:px-5 py-5">
+        <div className="mb-2">
+          <Link href="/admin/operations/employees" className="text-sm" style={{ color: 'var(--muted)', textDecoration: 'none' }}>← Crew directory</Link>
+        </div>
         <div className="flex items-center justify-between gap-3 mb-4">
-          <h1 className="text-2xl font-black text-white" style={{ letterSpacing: '-0.03em' }}>Careers · ATS</h1>
+          <h1 className="text-2xl font-black text-white" style={{ letterSpacing: '-0.03em' }}>Applicants</h1>
           <span className="text-sm" style={{ color: 'var(--muted)' }}>{list.length} applicant{list.length === 1 ? '' : 's'}</span>
         </div>
         <div className="flex flex-wrap gap-2 mb-5">
@@ -270,10 +282,11 @@ function Review({ a, act, remove, busy, onBack }: {
       <Section title="Decision">
         <p className="text-xs mb-2" style={{ color: 'var(--muted)' }}>Recommendation {a.recommendation ? `· currently: ${RECOMMENDATION_LABEL[a.recommendation]}` : ''}</p>
         <div className="flex flex-wrap gap-2 mb-4">
-          <button onClick={() => act('hire')} style={btn('#059669')}>✓ Hire</button>
-          <button onClick={() => act('recommendation', 'second_interview' as Recommendation)} style={btn('#2563eb')}>Second Interview</button>
+          <button onClick={() => act('hire')} style={btn('#059669')}>✓ Approve → Crew</button>
+          <button onClick={() => act('recommendation', 'second_interview' as Recommendation)} style={btn('#2563eb')}>Interview</button>
+          <button onClick={() => { const w = prompt('What information do you need from the applicant?'); if (w != null) act('request_info', w) }} style={btn('#7c3aed')}>Request info</button>
           <button onClick={() => act('recommendation', 'waitlist' as Recommendation)} style={btn('#d97706')}>Waitlist</button>
-          <button onClick={() => act('recommendation', 'reject' as Recommendation)} style={btn('#b91c1c')}>Reject</button>
+          <button onClick={() => act('recommendation', 'reject' as Recommendation)} style={btn('#b91c1c')}>Deny</button>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <label className="text-xs" style={{ color: 'var(--muted)' }}>Status</label>
@@ -283,7 +296,26 @@ function Review({ a, act, remove, busy, onBack }: {
           <button onClick={() => act('rescore')} className="btn-ghost" style={{ padding: '8px 12px', fontSize: 12 }}>Re-score</button>
           <button onClick={remove} style={{ padding: '8px 12px', fontSize: 12, background: 'transparent', border: '1px solid rgba(248,113,113,.4)', color: '#f87171', borderRadius: 10, cursor: 'pointer', marginLeft: 'auto' }}>Delete</button>
         </div>
+        {a.promotedStaffId && (
+          <p className="text-xs mt-3" style={{ color: '#34d399' }}>
+            ✓ On the crew roster · <Link href="/admin/operations/employees" style={{ color: 'var(--red)', textDecoration: 'none' }}>view in Crew →</Link>
+          </p>
+        )}
       </Section>
+
+      {/* Activity timeline — the applicant lifecycle (submitted → decisions → crew). */}
+      {Array.isArray(a.events) && a.events.length > 0 && (
+        <Section title="Activity">
+          <div className="space-y-2">
+            {[...a.events].reverse().map((e, i) => (
+              <div key={i} className="flex gap-3 text-sm" style={{ color: 'var(--text)' }}>
+                <span className="tabular-nums shrink-0" style={{ color: 'var(--muted)', minWidth: 128, fontSize: 12 }}>{fmtTs(e.at)}</span>
+                <span>{e.action}{e.note ? <span style={{ color: 'var(--muted)' }}> — {e.note}</span> : null}</span>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
     </div>
   )
 }
