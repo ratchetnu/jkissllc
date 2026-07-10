@@ -41,6 +41,7 @@ function Hub() {
   const [msg, setMsg] = useState('')
   const [applicantsToReview, setApplicantsToReview] = useState(0)
   const [timeOffPending, setTimeOffPending] = useState(0)
+  const [signals, setSignals] = useState<Record<string, { availabilityWeeksSubmitted: number; availabilityWeeksExpected: number; incidents: number }>>({})
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -63,6 +64,11 @@ function Hub() {
     fetch('/api/admin/timeoff', { credentials: 'same-origin' })
       .then(x => x.json())
       .then(d => setTimeOffPending((d.requests || []).filter((r: { status: string }) => r.status === 'pending').length))
+      .catch(() => {})
+    // Availability + incident signals for the Crew Score.
+    fetch('/api/admin/crew-signals', { credentials: 'same-origin' })
+      .then(x => x.json())
+      .then(d => { if (d.signals) setSignals(d.signals) })
       .catch(() => {})
   }, [])
   useEffect(() => { load() }, [load])
@@ -90,9 +96,9 @@ function Hub() {
   // availability and incident factors read "not measured" until wired in.
   const scores = useMemo(() => {
     const m: Record<string, CrewScore> = {}
-    for (const s of staff) m[s.id] = buildCrewScore(stats[s.id])
+    for (const s of staff) m[s.id] = buildCrewScore(stats[s.id], signals[s.id])
     return m
-  }, [staff, stats])
+  }, [staff, stats, signals])
 
   const active = staff.filter(s => s.active)
   const inactive = staff.filter(s => !s.active)

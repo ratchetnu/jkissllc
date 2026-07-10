@@ -125,3 +125,11 @@ export async function isAvailableOn(staffId: string, dateYmd: string): Promise<b
 export function weekDates(weekStart: string): Record<DowKey, string> {
   return DOW_KEYS.reduce((acc, k, i) => { acc[k] = addDaysStr(weekStart, i); return acc }, {} as Record<DowKey, string>)
 }
+
+// How many of the next `weeks` weeks (starting this Monday) the crew member has
+// SUBMITTED availability for. Feeds the Crew Score's availability factor.
+export async function countSubmittedUpcoming(staffId: string, fromWeekStart: string, weeks = 4): Promise<number> {
+  const starts = Array.from({ length: weeks }, (_, i) => addDaysStr(fromWeekStart, i * 7))
+  const records = await Promise.all(starts.map(ws => getWeek(staffId, ws)))
+  return records.filter(w => w?.status === 'submitted').length
+}

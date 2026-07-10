@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { COMPANY } from '../../../lib/company'
 import Link from 'next/link'
-import { Building2, ClipboardList, MapPin, CalendarClock, Users, CheckCircle2, ChevronLeft, Send, Sparkles, Truck, Phone, Lock, User } from 'lucide-react'
+import { Building2, ClipboardList, MapPin, CalendarClock, Users, CheckCircle2, ChevronLeft, Send, Sparkles, Truck, Phone, Lock, User, AlertTriangle } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { invalidateOps } from '../useOps'
 import { ymd, fmtLongDay, scoreColor, DOW, weekdaysLabel, Avatar, MoneyInput, money, moneyOrDash, profitColor, centsToInput, looksLikeMoney } from '../ui'
@@ -81,6 +81,9 @@ function Builder() {
   const [repeats, setRepeats] = useState(false)
   const [weekdays, setWeekdays] = useState<number[]>([])
   const [crew, setCrew] = useState<{ staffId: string; pay: string }[]>([])
+  // Crew availability on the chosen route date (Part 7 scheduling warning). null =
+  // no submission on file; false = they marked themselves unavailable that day.
+  const [availByStaff, setAvailByStaff] = useState<Record<string, boolean | null>>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [done, setDone] = useState<null | { recurring?: boolean; generated?: number; schedule?: string; routeNumber?: string; token?: string; assigned?: boolean; sent?: boolean }>(null)
@@ -99,6 +102,19 @@ function Builder() {
       setEquipment((eq.items || []).filter((x: Equip) => x.active))
     })
   }, [])
+
+  // Pull everyone's availability for the chosen date so we can warn when a crew
+  // member is assigned outside their stated availability. Single-date routes only
+  // (a recurring contract spans many weekdays — no single date to check).
+  useEffect(() => {
+    if (repeats || !/^\d{4}-\d{2}-\d{2}$/.test(form.routeDate)) { setAvailByStaff({}); return }
+    let cancelled = false
+    fetch(`/api/admin/crew-availability?date=${form.routeDate}`, { credentials: 'same-origin' })
+      .then(r => r.json())
+      .then(d => { if (!cancelled && d.availability) setAvailByStaff(d.availability) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [form.routeDate, repeats])
 
   const set = (k: keyof typeof form, v: string) => setForm(f => ({ ...f, [k]: v }))
   // Every known client — business records (which carry the contract rate) unioned
@@ -434,6 +450,7 @@ function Builder() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 3, fontSize: 12.5, color: 'var(--muted)' }}>
                         <span>Reliability <b style={{ color: scoreColor(score) }}>{score == null ? 'new' : score}</b></span>
                         <span>{workload[s.id] || 0} upcoming</span>
+                        {availByStaff[s.id] === false && <span style={{ color: '#fcd34d', display: 'inline-flex', alignItems: 'center', gap: 3, fontWeight: 700 }}><AlertTriangle size={11} /> unavailable this day</span>}
                         {!s.phone && <span style={{ color: '#fca5a5', display: 'inline-flex', alignItems: 'center', gap: 3 }}><Phone size={11} /> no phone</span>}
                       </div>
                     </div>
