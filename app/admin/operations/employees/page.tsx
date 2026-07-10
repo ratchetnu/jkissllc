@@ -128,6 +128,9 @@ function Hub() {
 function EmployeeCard({ s, st, businesses, upcoming, comp, open, onToggle, onOpen, onChanged, setMsg, delay }: { s: Staff; st?: CStats; businesses: string[]; upcoming: RouteLite[]; comp?: CrewCompSummary; open: boolean; onToggle: () => void; onOpen: () => void; onChanged: () => void; setMsg: (m: string) => void; delay: number }) {
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
+  // Collapsing the card drops edit mode too, so reopening it shows the detail view
+  // rather than jumping straight back into the form.
+  useEffect(() => { if (!open) setEditing(false) }, [open])
   const score = st?.score
   const completionPct = st && st.assignments > 0 ? Math.round((st.completed / st.assignments) * 100) : null
 

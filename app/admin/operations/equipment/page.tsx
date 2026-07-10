@@ -84,6 +84,9 @@ function OwnerBadge({ e }: { e: Equipment }) {
 function EquipmentCard({ e, crewNames, open, onToggle, onOpen, onChanged, setMsg, delay }: { e: Equipment; crewNames: string[]; open: boolean; onToggle: () => void; onOpen: () => void; onChanged: () => void; setMsg: (m: string) => void; delay: number }) {
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
+  // Collapsing the card must drop edit mode too — otherwise reopening it via the
+  // header jumps back into the form instead of the detail view.
+  useEffect(() => { if (!open) setEditing(false) }, [open])
 
   async function post(patch: Record<string, unknown>) {
     setBusy(true)
