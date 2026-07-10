@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { UserPlus, Camera, ChevronDown, Sparkles, Phone, Pencil, Trash2, Wallet, History, Plus, X, Clock, Users, FileText } from 'lucide-react'
+import { UserPlus, Camera, ChevronDown, Sparkles, Phone, Pencil, Trash2, Wallet, History, Plus, X, Clock, Users, FileText, CalendarOff, Gauge } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { invalidateOps } from '../useOps'
 import { Avatar, scoreColor, ymd, fmtDay, fmtTs, money, onActivate, MoneyInput, Toggle, centsToInput, looksLikeMoney, osLabel } from '../ui'
 import ApplyScope from '../ApplyScope'
 import CrewClaims from '../claims/CrewClaims'
 import { computeCrewComp, type CrewCompSummary } from '../../../lib/crew-comp'
+import { buildCrewScore, type CrewScore } from '../../../lib/crew-score'
 import { mondayOf } from '../../../lib/dates'
 
 type PayKind = 'driver' | 'helper' | 'contractor' | 'employee'
@@ -39,6 +40,7 @@ function Hub() {
   const [adding, setAdding] = useState(false)
   const [msg, setMsg] = useState('')
   const [applicantsToReview, setApplicantsToReview] = useState(0)
+  const [timeOffPending, setTimeOffPending] = useState(0)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -56,6 +58,11 @@ function Hub() {
     fetch('/api/admin/careers', { credentials: 'same-origin' })
       .then(x => x.json())
       .then(d => setApplicantsToReview((d.applicants || []).filter((a: { status: string }) => ['new', 'reviewed', 'information_requested'].includes(a.status)).length))
+      .catch(() => {})
+    // Pending time-off count for the sub-nav badge.
+    fetch('/api/admin/timeoff', { credentials: 'same-origin' })
+      .then(x => x.json())
+      .then(d => setTimeOffPending((d.requests || []).filter((r: { status: string }) => r.status === 'pending').length))
       .catch(() => {})
   }, [])
   useEffect(() => { load() }, [load])
@@ -77,6 +84,15 @@ function Hub() {
     for (const s of staff) m[s.id] = computeCrewComp(s.id, routes, today, weekStart)
     return m
   }, [staff, routes, today, weekStart])
+
+  // Internal Crew Score (admin/manager only — never exposed to the crew portal).
+  // Built from the server-computed reliability stats (`stats`, one source of truth);
+  // availability and incident factors read "not measured" until wired in.
+  const scores = useMemo(() => {
+    const m: Record<string, CrewScore> = {}
+    for (const s of staff) m[s.id] = buildCrewScore(stats[s.id])
+    return m
+  }, [staff, stats])
 
   const active = staff.filter(s => s.active)
   const inactive = staff.filter(s => !s.active)
@@ -102,6 +118,10 @@ function Hub() {
           <FileText size={15} /> Applicants
           {applicantsToReview > 0 && <span style={{ fontSize: 11, fontWeight: 800, padding: '1px 8px', borderRadius: 999, background: 'var(--red)', color: '#fff' }}>{applicantsToReview}</span>}
         </Link>
+        <Link href="/admin/operations/timeoff" className="os-tap" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 15px', borderRadius: 999, fontSize: 13.5, fontWeight: 700, background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)', color: 'var(--muted)', textDecoration: 'none' }}>
+          <CalendarOff size={15} /> Time Off
+          {timeOffPending > 0 && <span style={{ fontSize: 11, fontWeight: 800, padding: '1px 8px', borderRadius: 999, background: 'var(--red)', color: '#fff' }}>{timeOffPending}</span>}
+        </Link>
       </div>
 
       {msg && <div className="os-card" style={{ padding: '10px 14px', marginBottom: 16, fontSize: 13.5, color: '#fca5a5' }}>{msg}</div>}
@@ -116,22 +136,23 @@ function Hub() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {active.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
+          {active.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} scoreData={scores[s.id]} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
           {inactive.length > 0 && <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)', margin: '14px 0 2px' }}>Inactive</div>}
-          {inactive.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
+          {inactive.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} scoreData={scores[s.id]} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
         </div>
       )}
     </div>
   )
 }
 
-function EmployeeCard({ s, st, businesses, upcoming, comp, open, onToggle, onOpen, onChanged, setMsg, delay }: { s: Staff; st?: CStats; businesses: string[]; upcoming: RouteLite[]; comp?: CrewCompSummary; open: boolean; onToggle: () => void; onOpen: () => void; onChanged: () => void; setMsg: (m: string) => void; delay: number }) {
+function EmployeeCard({ s, st, scoreData, businesses, upcoming, comp, open, onToggle, onOpen, onChanged, setMsg, delay }: { s: Staff; st?: CStats; scoreData?: CrewScore; businesses: string[]; upcoming: RouteLite[]; comp?: CrewCompSummary; open: boolean; onToggle: () => void; onOpen: () => void; onChanged: () => void; setMsg: (m: string) => void; delay: number }) {
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
   // Collapsing the card drops edit mode too, so reopening it shows the detail view
   // rather than jumping straight back into the form.
   useEffect(() => { if (!open) setEditing(false) }, [open])
-  const score = st?.score
+  // Prefer the richer client Crew Score; fall back to the server reliability score.
+  const score = scoreData?.score ?? st?.score
   const completionPct = st && st.assignments > 0 ? Math.round((st.completed / st.assignments) * 100) : null
 
   async function post(patch: Record<string, unknown>) {
@@ -175,6 +196,8 @@ function EmployeeCard({ s, st, businesses, upcoming, comp, open, onToggle, onOpe
               <PaySettings s={s} businesses={businesses} onChanged={onChanged} setMsg={setMsg} />
 
               {comp && <CrewEarnings comp={comp} s={s} />}
+
+              {scoreData && <CrewScoreCard data={scoreData} />}
 
               {/* Record */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(72px, 1fr))', gap: 8, marginBottom: 14 }}>
@@ -232,6 +255,35 @@ function EmployeeCard({ s, st, businesses, upcoming, comp, open, onToggle, onOpe
 // What this person earns per route. Snapshotted onto a route when they're
 // assigned, so editing here never changes routes they already ran.
 const bizKey = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ')
+
+// Internal Crew Score breakdown — a scheduling aid for admins/managers ONLY.
+// Never rendered in the crew portal. Composite + per-factor sub-scores; factors
+// without data read "not measured" rather than faking a number.
+function CrewScoreCard({ data }: { data: CrewScore }) {
+  return (
+    <div style={{ marginBottom: 16, padding: 14, borderRadius: 14, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div style={{ ...osLabel, display: 'flex', alignItems: 'center', gap: 7 }}><Gauge size={13} /> Crew Score · internal</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
+          <span className="jkos-h tabular-nums" style={{ fontSize: 22, color: scoreColor(data.score) }}>{data.score == null ? '—' : data.score}</span>
+          <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>{data.band}</span>
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {data.factors.map(f => (
+          <div key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ width: 82, flexShrink: 0, fontSize: 12, color: 'var(--muted)' }}>{f.label}</span>
+            <div style={{ flex: 1, height: 6, borderRadius: 999, background: 'rgba(255,255,255,.06)', overflow: 'hidden' }}>
+              {f.score != null && <div style={{ width: `${f.score}%`, height: '100%', background: scoreColor(f.score) }} />}
+            </div>
+            <span className="tabular-nums" style={{ width: 34, flexShrink: 0, textAlign: 'right', fontSize: 12, fontWeight: 700, color: f.score == null ? 'var(--muted)' : scoreColor(f.score) }}>{f.score == null ? '—' : f.score}</span>
+          </div>
+        ))}
+      </div>
+      <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 10 }}>Visible to admins &amp; managers only — never shown to crew. Scheduling aid, not a guarantee.</p>
+    </div>
+  )
+}
 
 // Read-only earnings summary — what this crew member has EARNED from completed work.
 // Distinct from the pay-rate settings above (which configure the rate). Truthful:

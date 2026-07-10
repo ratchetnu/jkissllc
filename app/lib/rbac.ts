@@ -31,6 +31,10 @@ export type Permission =
   | 'crew:view'            // see the crew directory + operational detail
   | 'crew:assign'          // assign crew to routes
   | 'crew:score:view'      // see the internal Crew Score (admin/manager only)
+  // ── Availability & time off (operational) ──
+  | 'availability:view'    // see crew availability while scheduling
+  | 'timeoff:view'         // see time-off requests
+  | 'timeoff:approve'      // approve / deny time off (admin + manager)
   // ── Applicants ──
   | 'applicants:review'
   | 'applicants:decide'    // approve / deny
@@ -70,6 +74,7 @@ const ADMIN: Permission[] = [
   'businesses:manage', 'routes:manage', 'routes:view', 'recurring:manage',
   'equipment:manage', 'equipment:assign',
   'crew:manage', 'crew:view', 'crew:assign', 'crew:score:view',
+  'availability:view', 'timeoff:view', 'timeoff:approve',
   'applicants:review', 'applicants:decide',
   'users:manage', 'roles:manage',
   'pay:configure', 'pay:generate', 'pay:view:all', 'pay:adjust:submit', 'pay:approve', 'tax:view',
@@ -85,6 +90,7 @@ const MANAGER: Permission[] = [
   'businesses:manage', 'routes:manage', 'routes:view', 'recurring:manage',
   'equipment:manage', 'equipment:assign',
   'crew:view', 'crew:assign', 'crew:score:view',
+  'availability:view', 'timeoff:view', 'timeoff:approve',   // managers run the schedule + approve time off
   'applicants:review',
   'pay:adjust:submit',       // submit adjustments for admin approval — not configure/approve
   'claims:manage', 'claims:create', 'claimguard:use',
