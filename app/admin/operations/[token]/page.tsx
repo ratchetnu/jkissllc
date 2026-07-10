@@ -46,6 +46,12 @@ function Detail({ token }: { token: string }) {
   const [addPay, setAddPay] = useState('')
   const [msg, setMsg] = useState('')
   const [okMsg, setOkMsg] = useState('')
+  const [isAdmin, setIsAdmin] = useState(false) // gates business charge/profit + the completed-route override
+
+  useEffect(() => {
+    fetch('/api/admin/session', { credentials: 'same-origin' })
+      .then(r => r.json()).then(d => setIsAdmin(d.role === 'admin')).catch(() => {})
+  }, [])
 
   // Confirm the action actually happened — the high-frequency buttons (send, assign,
   // complete…) used to give zero feedback on success, so the owner couldn't tell a
@@ -195,7 +201,7 @@ function Detail({ token }: { token: string }) {
       </div>
 
       {/* Money — admin only */}
-      <RouteMoney op={op} onPatch={patch} busy={busy} />
+      <RouteMoney op={op} onPatch={patch} busy={busy} isAdmin={isAdmin} />
 
       {/* Crew */}
       <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14 }}>
@@ -341,8 +347,9 @@ function Detail({ token }: { token: string }) {
 // Business charge, each crew member's pay, total labour payout, estimated profit.
 // None of this is on the public confirmation page — the crew see only their own
 // pay, and only if the owner enabled it in Settings.
-function RouteMoney({ op, onPatch, busy }: { op: Op; onPatch: (b: Record<string, unknown>, tag: string) => Promise<void>; busy: string }) {
+function RouteMoney({ op, onPatch, busy, isAdmin }: { op: Op; onPatch: (b: Record<string, unknown>, tag: string) => Promise<void>; busy: string; isAdmin: boolean }) {
   const [editing, setEditing] = useState(false)
+  const [override, setOverride] = useState(false) // admin: correct a completed route's money
   const [price, setPrice] = useState(centsToInput(op.financials?.businessPriceCents))
   const [pays, setPays] = useState<Record<string, string>>(() =>
     Object.fromEntries((op.assignees ?? []).map(a => [a.staffId, centsToInput(a.payCents)])))
@@ -371,7 +378,8 @@ function RouteMoney({ op, onPatch, busy }: { op: Op; onPatch: (b: Record<string,
 
   async function save() {
     if (invalid) { setErr('Amounts must be positive dollar values.'); return }
-    if (!price.trim()) { setErr('Enter what this route charges the client.'); return }
+    // Only admins set the business charge; a manager edits crew pay only.
+    if (isAdmin && !price.trim()) { setErr('Enter what this route charges the client.'); return }
     setErr('')
     // A filled field sets the pay; blanking a field that HAD a pay clears it
     // (server unsets it); a field that was already empty stays a no-op.
@@ -381,8 +389,11 @@ function RouteMoney({ op, onPatch, busy }: { op: Op; onPatch: (b: Record<string,
       if (a.payCents != null) return { staffId: a.staffId, clear: true }
       return null
     }).filter(Boolean)
-    await onPatch({ action: 'money', businessPrice: price.trim(), crewPay }, 'money')
-    setEditing(false)
+    const body: Record<string, unknown> = { action: 'money', crewPay }
+    if (isAdmin) body.businessPrice = price.trim()   // business charge is admin-only
+    if (override) body.override = true               // admin: bypass the completed-route freeze
+    await onPatch(body, 'money')
+    setEditing(false); setOverride(false)
   }
 
   return (
@@ -392,24 +403,36 @@ function RouteMoney({ op, onPatch, busy }: { op: Op; onPatch: (b: Record<string,
           <Lock size={11} /> Money · admin only
         </div>
         {!editing && !frozen && <button onClick={() => setEditing(true)} className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Edit</button>}
+        {/* Completed/cancelled routes are frozen. Only an admin can deliberately
+            correct one (e.g. a pay was entered wrong). Managers never see this. */}
+        {!editing && frozen && isAdmin && <button onClick={() => { setOverride(true); setEditing(true) }} className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Correct</button>}
       </div>
 
-      {frozen && (
+      {frozen && !editing && (
         <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', marginBottom: 13, padding: '10px 12px', borderRadius: 10, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
           <Lock size={13} style={{ color: 'var(--muted)', flexShrink: 0, marginTop: 2 }} />
-          <div style={{ fontSize: 12.5, color: 'var(--muted)', lineHeight: 1.5 }}>This route is {op.status}. It keeps the price and pay it ran at — changing a rate elsewhere won&rsquo;t touch it.</div>
+          <div style={{ fontSize: 12.5, color: 'var(--muted)', lineHeight: 1.5 }}>This route is {op.status}. It keeps the price and pay it ran at{isAdmin ? ' — use Correct to fix a mistake.' : ' — changing a rate elsewhere won’t touch it.'}</div>
+        </div>
+      )}
+
+      {editing && override && (
+        <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', marginBottom: 13, padding: '10px 12px', borderRadius: 10, background: 'rgba(252,211,77,.09)', border: '1px solid rgba(252,211,77,.28)' }}>
+          <Lock size={13} style={{ color: '#fcd34d', flexShrink: 0, marginTop: 2 }} />
+          <div style={{ fontSize: 12.5, color: '#fcd34d', lineHeight: 1.5 }}>Correcting a {op.status} route. This overwrites the money it ran at — issued pay statements already sent keep their original figures.</div>
         </div>
       )}
 
       {!editing ? (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(120px, 100%), 1fr))', gap: 8, marginBottom: crew.length ? 14 : 0 }}>
-            <Tile label="Business charge" val={moneyOrDash(revenue)} />
+            {/* Revenue + profit are unrestricted-profitability — admin only. Managers
+                see the labour payout (what crew are paid) but not the margin. */}
+            {isAdmin && <Tile label="Business charge" val={moneyOrDash(revenue)} />}
             <Tile label="Labour payout" val={money(payout)} tone={payout > 0 ? '#fca5a5' : undefined} />
-            <Tile label="Est. profit" val={moneyOrDash(profit)} tone={profitColor(profit)} />
+            {isAdmin && <Tile label="Est. profit" val={moneyOrDash(profit)} tone={profitColor(profit)} />}
           </div>
 
-          {revenue == null && (
+          {isAdmin && revenue == null && (
             <p style={{ fontSize: 12.5, color: '#fcd34d', marginBottom: crew.length ? 12 : 0 }}>
               No contract rate for {op.businessName}. Set one on the business, or price this route by hand.
             </p>
@@ -436,10 +459,12 @@ function RouteMoney({ op, onPatch, busy }: { op: Op; onPatch: (b: Record<string,
         </>
       ) : (
         <>
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>What {op.businessName} pays for this route</div>
-            <MoneyInput value={price} onChange={setPrice} invalid={priceInvalid} aria-label="Business charge" disabled={busy !== ''} />
-          </div>
+          {isAdmin && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>What {op.businessName} pays for this route</div>
+              <MoneyInput value={price} onChange={setPrice} invalid={priceInvalid} aria-label="Business charge" disabled={busy !== ''} />
+            </div>
+          )}
           {crew.length > 0 && (
             <div>
               <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', marginBottom: 7 }}>Crew pay for this route</div>

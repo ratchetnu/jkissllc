@@ -7,6 +7,7 @@ import { osField as field } from '../ui'
 
 type Config = { sms: boolean; email: boolean; smsTo: string; emailTo: string }
 type FinanceCfg = { showPayInConfirm: boolean }
+type AutoCfg = { confirmationReminders: boolean; morningReminders: boolean }
 
 const TOOL_GROUPS: { label: string; items: { href: string; label: string; Icon: typeof Star }[] }[] = [
   { label: 'Work', items: [
@@ -46,6 +47,7 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 function Settings() {
   const [cfg, setCfg] = useState<Config | null>(null)
   const [fin, setFin] = useState<FinanceCfg | null>(null)
+  const [auto, setAuto] = useState<AutoCfg | null>(null)
   const [finBusy, setFinBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -53,12 +55,14 @@ function Settings() {
 
   const load = useCallback(async () => {
     try {
-      const [a, f] = await Promise.all([
+      const [a, f, au] = await Promise.all([
         fetch('/api/admin/alerts', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
         fetch('/api/admin/finance', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
+        fetch('/api/admin/automation', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
       ])
       if (a.config) setCfg(a.config)
       if (f.settings) setFin(f.settings)
+      if (au.settings) setAuto(au.settings)
     } catch { /* ignore */ } finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
@@ -74,6 +78,17 @@ function Settings() {
       if (!res.ok || !d.settings) setFin(prev)
       else setFin(d.settings)
     } catch { setFin(prev) } finally { setFinBusy(false) }
+  }
+
+  // Toggle a crew-reminder automation switch. Optimistic with rollback.
+  async function setAutoFlag(patch: Partial<AutoCfg>) {
+    const prev = auto
+    setAuto(a => (a ? { ...a, ...patch } : a))
+    try {
+      const res = await fetch('/api/admin/automation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(patch) })
+      const d = await res.json()
+      if (!res.ok || !d.settings) setAuto(prev); else setAuto(d.settings)
+    } catch { setAuto(prev) }
   }
 
   async function save() {
@@ -124,6 +139,35 @@ function Settings() {
             <button onClick={save} disabled={saving} className="btn os-tap" style={{ borderRadius: 12, height: 46, justifyContent: 'center', marginTop: 4 }}>
               {saved ? <><Check size={17} /> Saved</> : saving ? 'Saving…' : 'Save preferences'}
             </button>
+          </div>
+        )}
+      </div>
+
+      {/* Crew reminders (daily automation) */}
+      <div className="os-card os-rise" style={{ padding: 22, marginBottom: 16 }}>
+        <h2 className="jkos-h" style={{ fontSize: 18, marginBottom: 4 }}>Crew reminders</h2>
+        <p style={{ fontSize: 13.5, color: 'var(--muted)', marginBottom: 18 }}>Automatic text reminders sent to crew each morning (9am Central). Owner alerts about unconfirmed routes still come through either way.</p>
+        {loading || !auto ? (
+          <div className="skeleton" style={{ width: '100%', height: 52, borderRadius: 12 }} />
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <CalendarCheck size={18} style={{ color: 'var(--red-glow)' }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>Confirmation reminders</div>
+                <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>Nudge crew who haven’t confirmed a route yet (today or tomorrow).</div>
+              </div>
+              <Toggle on={auto.confirmationReminders} onChange={v => setAutoFlag({ confirmationReminders: v })} />
+            </div>
+            <div style={{ height: 1, background: 'var(--line)' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <MessageSquare size={18} style={{ color: 'var(--red-glow)' }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>Morning-of reminders</div>
+                <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>Remind crew who already confirmed a route happening today.</div>
+              </div>
+              <Toggle on={auto.morningReminders} onChange={v => setAutoFlag({ morningReminders: v })} />
+            </div>
           </div>
         )}
       </div>

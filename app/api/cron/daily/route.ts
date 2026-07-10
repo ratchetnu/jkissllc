@@ -8,6 +8,7 @@ import { reminderSms, morningOfSms, alertOwnerRouteEvent } from '../../../lib/ro
 import { listTemplates, materializeTemplate } from '../../../lib/route-templates'
 import { accrueAllClaims } from '../../../lib/claim-accrual'
 import { sendSms } from '../../../lib/sms'
+import { getAutomationSettings } from '../../../lib/automation-settings'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -126,6 +127,9 @@ async function runRoutes(now: number): Promise<Record<string, number>> {
   const today = centralDate(now)
   const tomorrow = addDaysStr(today, 1)
   const counts = { routesProcessed: 0, routeReminders: 0, routeMorningOf: 0, routeNoResponse: 0, routeErrors: 0 }
+  // Owner switches for the crew reminder texts. No-response owner alerts are NOT
+  // gated — those tell the owner a route went unconfirmed, which they always want.
+  const auto = await getAutomationSettings()
   const routes = await listRoutes(1000)
 
   for (const r0 of routes) {
@@ -151,12 +155,12 @@ async function runRoutes(now: number): Promise<Record<string, number>> {
               await alertOwnerRouteEvent(r, 'no_response')
               a.noResponseAlertedAt = now; counts.routeNoResponse++; changed = true
             }
-          } else if (pending && (r.routeDate === today || r.routeDate === tomorrow) && !a.reminderSentAt) {
+          } else if (auto.confirmationReminders && pending && (r.routeDate === today || r.routeDate === tomorrow) && !a.reminderSentAt) {
             // Imminent and still unconfirmed → nudge this crew member to confirm.
             if (a.phone) await sendSms(a.phone, reminderSms(r, a))
             a.reminderSentAt = now; pushAudit(r, 'system', `Confirmation reminder sent to ${a.name}`); counts.routeReminders++; changed = true
           }
-          if (a.confirmedAt && r.routeDate === today && !a.morningOfSentAt) {
+          if (auto.morningReminders && a.confirmedAt && r.routeDate === today && !a.morningOfSentAt) {
             // Confirmed and happening today → morning-of reminder.
             if (a.phone) await sendSms(a.phone, morningOfSms(r, a))
             a.morningOfSentAt = now; pushAudit(r, 'system', `Morning-of reminder sent to ${a.name}`); counts.routeMorningOf++; changed = true

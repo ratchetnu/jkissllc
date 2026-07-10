@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSession } from '../../_lib/session'
+import { requireSession, getPrincipal } from '../../_lib/session'
 import {
   getRouteByToken, saveRoute, deleteRoute, setStatus, pushAudit,
   confirmVerbally, undoVerbalConfirm,
@@ -53,14 +53,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }, { status: 409 })
     }
   } else if (action === 'money') {
-    // Re-price a single live route by hand. Settled routes are never re-priced.
-    if (isFrozen(route)) return NextResponse.json({ error: `A ${route.status} route keeps the price it ran at.` }, { status: 409 })
+    // Role gates: business charge + the completed-route correction are ADMIN ONLY;
+    // a manager may edit crew pay only. (Crew never reach here — middleware blocks them.)
+    const who = await getPrincipal(req)
+    const admin = who?.role === 'admin'
+
+    // Settled routes are frozen. An admin may deliberately correct one with an
+    // explicit override (e.g. a pay was entered wrong); everyone else is blocked.
+    if (isFrozen(route) && !(admin && body.override === true)) {
+      return NextResponse.json({ error: `A ${route.status} route keeps the price it ran at.` }, { status: 409 })
+    }
 
     if (body.businessPrice !== undefined) {
+      if (!admin) return NextResponse.json({ error: 'Only an admin can change the business charge.' }, { status: 403 })
       const cents = parseMoneyCents(body.businessPrice)
       if (cents == null) return NextResponse.json({ error: 'Route price must be a positive dollar amount.' }, { status: 400 })
       snapshotManualPrice(route, cents)
-      pushAudit(route, 'admin', `Route price set to ${fmtCents(cents)}`)
+      pushAudit(route, admin ? 'admin' : 'manager', `Route price set to ${fmtCents(cents)}`)
     }
 
     if (Array.isArray(body.crewPay)) {
