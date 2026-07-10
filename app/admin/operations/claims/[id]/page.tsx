@@ -106,7 +106,15 @@ function Detail({ id }: { id: string }) {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14 }}>
           <label htmlFor="cl-status" style={osLabel}>Status</label>
-          <select id="cl-status" value={claim.status} disabled={busy !== ''} onChange={e => act({ action: 'status', status: e.target.value }, 'status')}
+          <select id="cl-status" value={claim.status} disabled={busy !== ''}
+            onChange={e => {
+              const s = e.target.value
+              // A settling status closes out the recovery — confirm it, like the
+              // dedicated Waive/Close buttons do. Cancelling snaps the controlled
+              // select back to the real status.
+              const settling = s === 'paid' || s === 'waived' || s === 'closed'
+              if (!settling || confirm(`Set this claim to “${s.replace(/_/g, ' ')}”? This closes out the recovery.`)) act({ action: 'status', status: s }, 'status')
+            }}
             style={{ ...osField, width: 'auto', flex: 1, height: 38, fontSize: 13.5, cursor: 'pointer' }}>
             {STATUSES.map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
           </select>
@@ -278,7 +286,12 @@ function Responsibility({ a, busy, settled, onAct }: {
           <button onClick={() => {
             const amt = prompt('Adjustment amount?')
             if (!amt) return
-            const dir = confirm('OK = credit (reduce what they owe)\nCancel = debit (put money back on what they owe)') ? 'credit' : 'debit'
+            // Explicit word, not an OK/Cancel confirm — OK=credit/Cancel=debit was an
+            // inverted-meaning trap where one wrong click moved money the wrong way.
+            const dirInput = prompt('Type "credit" to REDUCE what they owe, or "debit" to ADD to what they owe:', 'credit')
+            if (dirInput === null) return
+            const dir = dirInput.trim().toLowerCase()
+            if (dir !== 'credit' && dir !== 'debit') { alert('Please type either "credit" or "debit".'); return }
             const reason = prompt('Reason for the adjustment?')
             if (!reason) { alert('An adjustment needs a reason.'); return }
             onAct({ action: 'adjust', staffId: a.staffId, amount: amt, direction: dir, reason }, `adj-${a.staffId}`)

@@ -36,7 +36,10 @@ export default function ApplyScope({ candidatesUrl, mode, onCancel, onConfirm, b
   onConfirm: (c: Choice) => void
   busy?: boolean
 }) {
-  const [applyTo, setApplyTo] = useState<ApplyTo>('none')
+  // Default to re-pricing live routes: a rate/pay change almost always means "from
+  // now on," and the old 'none' default silently left every scheduled route at the
+  // stale number until the owner noticed to switch it.
+  const [applyTo, setApplyTo] = useState<ApplyTo>('future')
   const [cands, setCands] = useState<Candidate[]>([])
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
