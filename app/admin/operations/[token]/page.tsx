@@ -207,7 +207,10 @@ function Detail({ token }: { token: string }) {
         {(() => {
           if (!op.requiresHelper) return null
           const roles = (op.assignees ?? []).map(a => (a.role || '').toLowerCase())
-          const miss = [!roles.some(x => x.includes('driver')) && 'a driver', !roles.some(x => x.includes('helper')) && 'a helper'].filter(Boolean)
+          // Two drivers = a driver + a helper: a spare driver fills the helper seat.
+          const drivers = roles.filter(x => x.includes('driver')).length
+          const hasHelper = roles.some(x => x.includes('helper'))
+          const miss = [drivers === 0 && 'a driver', (!hasHelper && drivers < 2) && 'a helper'].filter(Boolean)
           return miss.length ? <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 10, background: 'rgba(196,181,253,.1)', border: '1px solid rgba(196,181,253,.3)', color: '#c4b5fd', fontSize: 13, fontWeight: 600 }}>This client needs a driver + helper — still missing {miss.join(' and ')}.</div> : null
         })()}
 

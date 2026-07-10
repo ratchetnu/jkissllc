@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { confirmVerbally, undoVerbalConfirm, rollupStatus } from '../app/lib/routes'
+import { confirmVerbally, undoVerbalConfirm, rollupStatus, crewGap } from '../app/lib/routes'
 import type { RouteRecord, Assignee } from '../app/lib/routes'
 
 const assignee = (o: Partial<Assignee> & { staffId: string }): Assignee =>
@@ -90,4 +90,26 @@ test('undo removes a verbal confirm but refuses to erase a signed one', () => {
   assert.equal(res.ok, false)
   assert.match(!res.ok ? res.error : '', /their own link/)
   assert.ok(a.confirmedAt, 'the signed confirmation survives')
+})
+
+// Crew composition for driver+helper clients — a spare driver fills the helper seat.
+test('two drivers satisfy a driver + helper requirement', () => {
+  const dr = (id: string) => assignee({ staffId: id, role: 'Driver' })
+  const hp = (id: string) => assignee({ staffId: id, role: 'Helper' })
+  const req = { requiresHelper: true } as Partial<RouteRecord>
+
+  // The rule the owner asked for: two drivers = a driver + a helper → complete.
+  assert.deepEqual(crewGap(route([dr('a'), dr('b')], req)), { needsDriver: false, needsHelper: false, incomplete: false })
+  // The classic pairing is still complete.
+  assert.equal(crewGap(route([dr('a'), hp('b')], req)).incomplete, false)
+  // One driver alone still needs a second body (a helper).
+  assert.deepEqual(crewGap(route([dr('a')], req)), { needsDriver: false, needsHelper: true, incomplete: true })
+  // A helper alone can't run the job — it needs a driver, but the helper seat is filled.
+  assert.deepEqual(crewGap(route([hp('a')], req)), { needsDriver: true, needsHelper: false, incomplete: true })
+  // Two helpers: still no driver.
+  assert.deepEqual(crewGap(route([hp('a'), hp('b')], req)), { needsDriver: true, needsHelper: false, incomplete: true })
+  // Empty crew needs both.
+  assert.deepEqual(crewGap(route([], req)), { needsDriver: true, needsHelper: true, incomplete: true })
+  // A client that doesn't require a helper never reports a gap.
+  assert.equal(crewGap(route([dr('a')], {})).incomplete, false)
 })

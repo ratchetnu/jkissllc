@@ -8,7 +8,14 @@ import { useOps } from '../useOps'
 import { STATUS as CHIP, ymd, fmtDay, type RouteStatus } from '../ui'
 
 type Op = { token: string; routeNumber: string; status: RouteStatus; businessName: string; reportAddress: string; reportTime: string; routeDate: string; assignedStaffName?: string; requiresHelper?: boolean; assignees?: { role?: string }[] }
-const crewGap = (o: Op) => !!o.requiresHelper && !['cancelled', 'completed'].includes(o.status) && (!(o.assignees ?? []).some(a => /driver/i.test(a.role || '')) || !(o.assignees ?? []).some(a => /helper/i.test(a.role || '')))
+// Two drivers count as a driver + helper: a spare driver fills the helper seat.
+const crewGap = (o: Op) => {
+  if (!o.requiresHelper || ['cancelled', 'completed'].includes(o.status)) return false
+  const roles = (o.assignees ?? []).map(a => (a.role || '').toLowerCase())
+  const drivers = roles.filter(x => x.includes('driver')).length
+  const hasHelper = roles.some(x => x.includes('helper'))
+  return drivers === 0 || (!hasHelper && drivers < 2)
+}
 
 type Filter = 'attention' | 'upcoming' | 'completed' | 'all'
 const FILTERS: { key: Filter; label: string }[] = [{ key: 'attention', label: 'Attention' }, { key: 'upcoming', label: 'Upcoming' }, { key: 'completed', label: 'Completed' }, { key: 'all', label: 'All' }]

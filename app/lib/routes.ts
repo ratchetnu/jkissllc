@@ -279,11 +279,16 @@ function normalize(r: RouteRecord): RouteRecord {
 }
 
 // When a client requires a driver + helper, what's still missing on the crew.
+// A driver+helper job is two people, at least one a driver. A SECOND driver fills
+// the helper seat — assigning two drivers is the same as a driver + a helper — so a
+// spare driver satisfies the helper requirement (it never satisfies the driver one).
 export function crewGap(r: RouteRecord): { needsDriver: boolean; needsHelper: boolean; incomplete: boolean } {
   if (!r.requiresHelper) return { needsDriver: false, needsHelper: false, incomplete: false }
   const roles = (r.assignees ?? []).map(a => (a.role || '').toLowerCase())
-  const needsDriver = !roles.some(x => x.includes('driver'))
-  const needsHelper = !roles.some(x => x.includes('helper'))
+  const drivers = roles.filter(x => x.includes('driver')).length
+  const hasHelper = roles.some(x => x.includes('helper'))
+  const needsDriver = drivers === 0
+  const needsHelper = !hasHelper && drivers < 2
   return { needsDriver, needsHelper, incomplete: needsDriver || needsHelper }
 }
 
