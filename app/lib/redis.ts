@@ -64,4 +64,14 @@ export const redis = {
   async zrange(key: string, start: number, stop: number): Promise<string[]> {
     return ((await call(['ZRANGE', key, start, stop])) ?? []) as string[]
   },
+  // Acquire-if-absent with a TTL, in one atomic command — the primitive behind the
+  // per-route mutex (lib/route-mutex.ts). Returns true only if THIS caller set it.
+  async setNxPx(key: string, value: string, ttlMs: number): Promise<boolean> {
+    return (await call(['SET', key, value, 'NX', 'PX', ttlMs])) === 'OK'
+  },
+  // Run a Lua script atomically. Used for compare-and-delete lock release so a caller
+  // never deletes a lock that already expired and was re-acquired by someone else.
+  async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
+    return call(['EVAL', script, keys.length, ...keys, ...args])
+  },
 }

@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { listBookings, saveBooking, balanceDueCents, paymentSummaryStatus, type Booking, type BookingStatus } from '../../../lib/bookings'
 import { notifyBookingReminder, notifyPaymentReminder, notifyJobTomorrow, notifyReviewRequest } from '../../../lib/notify'
 import { isAbandonedOnlineHold } from '../../../lib/availability'
-import { listRoutes, saveRoute, syncLead, pushAudit } from '../../../lib/routes'
+import { listRoutes, getRouteByToken, saveRoute, syncLead, pushAudit } from '../../../lib/routes'
+import { withRouteLock } from '../../../lib/route-mutex'
 import { reminderSms, morningOfSms, alertOwnerRouteEvent } from '../../../lib/route-notify'
 import { listTemplates, materializeTemplate } from '../../../lib/route-templates'
 import { accrueAllClaims } from '../../../lib/claim-accrual'
@@ -127,42 +128,45 @@ async function runRoutes(now: number): Promise<Record<string, number>> {
   const counts = { routesProcessed: 0, routeReminders: 0, routeMorningOf: 0, routeNoResponse: 0, routeErrors: 0 }
   const routes = await listRoutes(1000)
 
-  for (const r of routes) {
-    // Terminal / not-yet-live routes get no automation.
-    if (r.status === 'cancelled' || r.status === 'completed' || r.status === 'no_show' || r.status === 'draft') continue
-    const crew = r.assignees ?? []
-    if (!crew.length) continue
+  for (const r0 of routes) {
+    // Terminal / not-yet-live routes get no automation. Cheap pre-filter on the
+    // bulk-loaded copy; the actual mutation reloads fresh under the route lock.
+    if (r0.status === 'cancelled' || r0.status === 'completed' || r0.status === 'no_show' || r0.status === 'draft') continue
+    if (!(r0.assignees ?? []).length) continue
     counts.routesProcessed++
-    let changed = false
 
     try {
-      for (const a of crew) {
-        const pending = !a.confirmedAt && !a.declinedAt
-        if (pending && r.routeDate < today) {
-          // Past its date, never confirmed → one-time owner alert per person.
-          if (!a.noResponseAlertedAt) {
-            await alertOwnerRouteEvent(r, 'no_response')
-            a.noResponseAlertedAt = now; counts.routeNoResponse++; changed = true
+      // Under the lock so an early-morning confirm/decline on this route can't be
+      // clobbered by the cron's flag write (and vice versa). RouteBusyError just
+      // defers this route to the next pass — the dedupe stamps make it idempotent.
+      await withRouteLock(r0.token, async () => {
+        const r = await getRouteByToken(r0.token)
+        if (!r) return
+        let changed = false
+        for (const a of r.assignees ?? []) {
+          const pending = !a.confirmedAt && !a.declinedAt
+          if (pending && r.routeDate < today) {
+            // Past its date, never confirmed → one-time owner alert per person.
+            if (!a.noResponseAlertedAt) {
+              await alertOwnerRouteEvent(r, 'no_response')
+              a.noResponseAlertedAt = now; counts.routeNoResponse++; changed = true
+            }
+          } else if (pending && (r.routeDate === today || r.routeDate === tomorrow) && !a.reminderSentAt) {
+            // Imminent and still unconfirmed → nudge this crew member to confirm.
+            if (a.phone) await sendSms(a.phone, reminderSms(r, a))
+            a.reminderSentAt = now; pushAudit(r, 'system', `Confirmation reminder sent to ${a.name}`); counts.routeReminders++; changed = true
           }
-        } else if (pending && (r.routeDate === today || r.routeDate === tomorrow) && !a.reminderSentAt) {
-          // Imminent and still unconfirmed → nudge this crew member to confirm.
-          if (a.phone) await sendSms(a.phone, reminderSms(r, a))
-          a.reminderSentAt = now; pushAudit(r, 'system', `Confirmation reminder sent to ${a.name}`); counts.routeReminders++; changed = true
+          if (a.confirmedAt && r.routeDate === today && !a.morningOfSentAt) {
+            // Confirmed and happening today → morning-of reminder.
+            if (a.phone) await sendSms(a.phone, morningOfSms(r, a))
+            a.morningOfSentAt = now; pushAudit(r, 'system', `Morning-of reminder sent to ${a.name}`); counts.routeMorningOf++; changed = true
+          }
         }
-        if (a.confirmedAt && r.routeDate === today && !a.morningOfSentAt) {
-          // Confirmed and happening today → morning-of reminder.
-          if (a.phone) await sendSms(a.phone, morningOfSms(r, a))
-          a.morningOfSentAt = now; pushAudit(r, 'system', `Morning-of reminder sent to ${a.name}`); counts.routeMorningOf++; changed = true
-        }
-      }
+        if (changed) { syncLead(r); await saveRoute(r) }
+      })
     } catch (e) {
       counts.routeErrors++
-      console.error('[cron/routes]', r.routeNumber, e)
-    }
-
-    if (changed) {
-      syncLead(r)
-      try { await saveRoute(r) } catch (e) { console.error('[cron/routes save]', r.routeNumber, e) }
+      console.error('[cron/routes]', r0.routeNumber, e)
     }
   }
   return counts

@@ -6,6 +6,7 @@ import {
   ROUTE_STATUS_LABEL, type RouteStatus,
 } from '../../../../lib/routes'
 import { addCrew, removeCrew, sendAssignmentText } from '../../../../lib/route-notify'
+import { withRouteLock, RouteBusyError } from '../../../../lib/route-mutex'
 import { listStaff } from '../../../../lib/staff'
 import {
   parseMoneyCents, snapshotManualPrice, snapshotCrewPay, clearCrewPay, computeRouteMoney,
@@ -17,11 +18,17 @@ const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim()
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { id } = await params
-  const route = await getRouteByToken(id)
-  if (!route) return NextResponse.json({ error: 'Route not found.' }, { status: 404 })
-
   const body = await req.json().catch(() => ({}))
   const action = S(body.action, 40)
+
+  // Serialize every mutation of this route so an admin edit can't clobber (or be
+  // clobbered by) a crew member confirming/clocking on the same route at the same
+  // moment. The route is loaded fresh inside the lock. SMS sends stay inside because
+  // they set smsStatus on the route that this same save persists.
+  try {
+    return await withRouteLock(id, async () => {
+  const route = await getRouteByToken(id)
+  if (!route) return NextResponse.json({ error: 'Route not found.' }, { status: 404 })
   let smsWarning: string | undefined
 
   if (action === 'assign') {
@@ -131,6 +138,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   await saveRoute(route)
   return NextResponse.json({ ok: true, route, smsWarning })
+    })
+  } catch (e) {
+    if (e instanceof RouteBusyError) return NextResponse.json({ error: 'The route is being updated — please try again.' }, { status: 503 })
+    throw e
+  }
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
