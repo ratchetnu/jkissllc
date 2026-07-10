@@ -9,6 +9,37 @@ Legend: 🟢 shipped · 🟡 next · 🔵 later · ⚫ needs infra decision
 
 ---
 
+## ✅ Communication Center (crew reminders + dispatch + smart engine) — shipped to jkissllc
+
+The Messages module is now a full **Operations Communication Center**
+(`/admin/operations/messages`, sub-nav Inbox · Crew · Reminders · Dispatch ·
+Analytics) — built by **extending** the existing systems, not forking them:
+
+- **Engine/data** — `lib/reminders.ts` (Reminder rule + ReminderInstance delivery/
+  ack/escalation ledger, occurrence dedup via `setNxPx`), `lib/reminder-templates.ts`
+  (required template catalog + ack vocabulary + dispatch quick-blasts + segments),
+  `lib/reminder-segments.ts` (crew directory cards + segment predicates + smart
+  suppression from staff/routes/time-off/availability/uniform/ack state),
+  `lib/reminder-engine.ts` (due pass + escalation pass + immediate dispatch/bulk;
+  Central-tz aware), `lib/crew-notify.ts` (fan a message across in-app + SMS + email,
+  reusing `sendSms`/`emailRaw`), `lib/uniform.ts` (daily uniform-photo store),
+  `lib/audit.ts` (first central attributed audit log). `messages.ts` extended with
+  crew linkage (`staffId`/`kind`/`reminderId`) + a `msg:staff:{id}` thread index +
+  crew read/ack — **one** messaging system.
+- **RBAC** — new perms `reminders:view/manage`, `dispatch:send`, `messages:send`,
+  `comms:analytics` (admin+manager); `self:reminders/messages/uniform` (crew).
+- **Cron** — `/api/cron/reminders` every 5 min (`vercel.json`), same `CRON_SECRET`
+  auth as `/api/cron/daily`. Inert until a reminder is created.
+- **Crew side** — portal dashboard (today's tasks, urgent alerts, one-tap acks),
+  `/portal/messages` inbox, daily uniform-photo upload; public one-tap `/ack/[token]`.
+- Verified: tsc + eslint clean, 156 tests (13 new), prod build green.
+
+**Remaining / next:** web-push transport (the `push` channel currently rides in-app);
+manager→business scoping is a passthrough until a manager↔business map exists;
+route-relative timing is best-effort parsed from the free-text `reportTime` (routes
+still carry no structured start/end time); **port to the Supercharged tenant**
+(`git diff` → `git apply`, hand-merge branding, then `vercel --prod`).
+
 ## ✅ Shipped this cycle (live + e2e-verified on both tenants)
 
 - **Employees → Crew rename** (user-facing only; `Staff` model, `staff:*` keys,
