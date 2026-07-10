@@ -4,7 +4,7 @@ import {
   listClaims, saveClaim, getClaim, generateClaimId, nextClaimNumber,
   snapshotFromRoute, snapshotFromBusiness, pushClaimAudit,
   CLAIM_STATUS_LABEL, CLAIM_TYPE_LABEL,
-  type ClaimRecord, type ClaimType,
+  type ClaimRecord, type ClaimType, type ClaimAttachment, type AttachmentKind,
 } from '../../../lib/claims'
 import { computeClaimsReport, type ClaimFilters } from '../../../lib/claims-report'
 import { parseMoneyCents } from '../../../lib/finance'
@@ -14,6 +14,25 @@ import { centralToday, isDateStr } from '../../../lib/dates'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 const isClaimType = (v: string): v is ClaimType => v in CLAIM_TYPE_LABEL
+const ATT_KINDS: AttachmentKind[] = ['photo', 'video', 'document']
+
+// Evidence captured during intake arrives as [{ kind, url, name }] — the files were
+// already uploaded to Blob by the client (see claims/evidence.ts). Validate the same
+// way the detail-page `attach` action does: https URLs only, known kind.
+function buildIntakeAttachments(raw: unknown): ClaimAttachment[] {
+  if (!Array.isArray(raw)) return []
+  const now = Date.now()
+  const out: ClaimAttachment[] = []
+  for (const item of raw.slice(0, 30)) {
+    const o = (item ?? {}) as Record<string, unknown>
+    const kind = S(o.kind, 20) as AttachmentKind
+    const url = S(o.url, 1000)
+    if (!ATT_KINDS.includes(kind)) continue
+    if (!/^https:\/\/\S+$/.test(url)) continue
+    out.push({ id: `${now}-${out.length}`, kind, url, name: S(o.name, 200) || undefined, addedAt: now, addedBy: 'admin' })
+  }
+  return out
+}
 
 export async function GET(req: NextRequest) {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -116,7 +135,7 @@ export async function POST(req: NextRequest) {
       responseDeadline: isDateStr(S(b.responseDeadline, 20)) ? S(b.responseDeadline, 20) : undefined,
       description,
       totalCents,
-      attachments: [],
+      attachments: buildIntakeAttachments(b.attachments),
       internalNotes: S(b.internalNotes, 4000) || undefined,
       businessContact: S(b.businessContact, 200) || snapshot.businessContactName,
       assignments: [],

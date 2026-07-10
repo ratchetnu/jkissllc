@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useCallback, useEffect, useMemo, useState } from 'react'
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -10,13 +10,14 @@ import {
 import OperationsShell from '../../OperationsShell'
 import {
   ClaimChip, CLAIM_TYPE_LABEL, RESP_COLOR, Avatar, money, moneyOrDash, fmtDay, fmtTs,
-  osField, osLabel, osMiniBtn, profitColor,
+  osField, osLabel, osMiniBtn, profitColor, MoneyInput, looksLikeMoney,
 } from '../../ui'
 import {
   patchClaim, remainingCents, recoveredCents, assignedTotal,
   type Claim, type ClaimAssignment,
 } from '../useClaims'
 import ClaimGuardAssist from '../ClaimGuardAssist'
+import { uploadEvidence } from '../evidence'
 
 type Staff = { id: string; name: string; role?: string; photoUrl?: string; active: boolean }
 
@@ -31,6 +32,7 @@ function Detail({ id }: { id: string }) {
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   const [assigning, setAssigning] = useState(false)
+  const [editing, setEditing] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -120,8 +122,14 @@ function Detail({ id }: { id: string }) {
             style={{ ...osField, width: 'auto', flex: 1, height: 38, fontSize: 13.5, cursor: 'pointer' }}>
             {STATUSES.map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
           </select>
+          <button onClick={() => setEditing(v => !v)} disabled={busy !== ''} className="os-tap"
+            style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}>
+            {editing ? 'Cancel' : 'Edit'}
+          </button>
         </div>
       </div>
+
+      {editing && <ClaimEditor claim={claim} busy={busy !== ''} onSave={act} onDone={() => setEditing(false)} />}
 
       {/* What happened */}
       <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14 }}>
@@ -412,23 +420,167 @@ function SplitEditor({ claim, staff, busy, onSave }: {
   )
 }
 
+// ── Edit the facts of a claim ────────────────────────────────────────────────
+// Wired to PATCH action:'update'. The frozen snapshot (route/pricing at claim time)
+// is never editable here — only the claim's own facts. Correcting a mis-typed claim
+// type also re-points ClaimGuard Assist at the right playbook, so a wrong pick is no
+// longer a delete-and-recreate (which would burn the claim number and audit trail).
+function ClaimEditor({ claim, busy, onSave, onDone }: {
+  claim: Claim; busy: boolean
+  onSave: (b: Record<string, unknown>, tag: string) => Promise<void>
+  onDone: () => void
+}) {
+  const [claimType, setClaimType] = useState(claim.claimType)
+  const [claimDate, setClaimDate] = useState(claim.claimDate)
+  const [reportedDate, setReportedDate] = useState(claim.reportedDate)
+  const [reportedBy, setReportedBy] = useState(claim.reportedBy ?? '')
+  const [responseDeadline, setResponseDeadline] = useState(claim.responseDeadline ?? '')
+  const [total, setTotal] = useState((claim.totalCents / 100).toFixed(2))
+  const [description, setDescription] = useState(claim.description)
+  const [internalNotes, setInternalNotes] = useState(claim.internalNotes ?? '')
+  const [businessContact, setBusinessContact] = useState(claim.businessContact ?? '')
+  const [resolutionNotes, setResolutionNotes] = useState(claim.resolutionNotes ?? '')
+  const [saving, setSaving] = useState(false)
+
+  const totalInvalid = total.trim() !== '' && !looksLikeMoney(total)
+  const canSave = !busy && !saving && !totalInvalid && total.trim() !== '' && description.trim() !== '' && reportedDate >= claimDate
+
+  async function save() {
+    setSaving(true)
+    await onSave({
+      action: 'update',
+      claimType, claimDate, reportedDate,
+      reportedBy: reportedBy.trim(), responseDeadline: responseDeadline.trim(),
+      total, description: description.trim(),
+      internalNotes: internalNotes.trim(), businessContact: businessContact.trim(),
+      resolutionNotes: resolutionNotes.trim(),
+    }, 'update')
+    setSaving(false)
+    onDone()
+  }
+
+  return (
+    <div className="os-card os-expand" style={{ padding: 20, marginBottom: 14 }}>
+      <div style={{ ...osLabel, marginBottom: 12 }}>Edit claim details</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label htmlFor="ce-type" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Type</label>
+            <select id="ce-type" value={claimType} onChange={e => setClaimType(e.target.value as Claim['claimType'])} style={{ ...osField, cursor: 'pointer' }}>
+              <optgroup label="Claimed against us (recover from crew)">
+                <option value="property_damage">Property Damage</option>
+                <option value="vehicle_damage">Vehicle Damage</option>
+                <option value="cargo_damage">Cargo Damage</option>
+                <option value="lost_item">Lost / Missing Item</option>
+                <option value="injury">Injury</option>
+                <option value="service_failure">Service Failure</option>
+              </optgroup>
+              <optgroup label="We're disputing (recover from them)">
+                <option value="chargeback">Chargeback</option>
+                <option value="unfair_deduction">Unfair Deduction</option>
+                <option value="detention">Detention</option>
+                <option value="accessorial_dispute">Accessorial Dispute</option>
+                <option value="late_delivery">Late Delivery</option>
+                <option value="non_payment">Non-Payment</option>
+              </optgroup>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="ce-total" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Claim amount</label>
+            <MoneyInput value={total} onChange={setTotal} invalid={totalInvalid} aria-label="Claim amount" />
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label htmlFor="ce-cd" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Date it happened</label>
+            <input id="ce-cd" type="date" value={claimDate} onChange={e => setClaimDate(e.target.value)} style={osField} />
+          </div>
+          <div>
+            <label htmlFor="ce-rd" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Date reported</label>
+            <input id="ce-rd" type="date" value={reportedDate} min={claimDate} onChange={e => setReportedDate(e.target.value)} style={osField} />
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label htmlFor="ce-by" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Who reported it</label>
+            <input id="ce-by" value={reportedBy} onChange={e => setReportedBy(e.target.value)} placeholder="Driver, client contact, broker…" style={osField} />
+          </div>
+          <div>
+            <label htmlFor="ce-dl" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Response deadline <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 500 }}>— optional</span></label>
+            <input id="ce-dl" type="date" value={responseDeadline} min={claimDate} onChange={e => setResponseDeadline(e.target.value)} style={osField} />
+          </div>
+        </div>
+
+        <div>
+          <label htmlFor="ce-contact" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Business contact <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 500 }}>— who to reach about this</span></label>
+          <input id="ce-contact" value={businessContact} onChange={e => setBusinessContact(e.target.value)} placeholder="Name / phone / email" style={osField} />
+        </div>
+
+        <div>
+          <label htmlFor="ce-desc" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>What happened</label>
+          <textarea id="ce-desc" value={description} onChange={e => setDescription(e.target.value)} rows={3} style={{ ...osField, resize: 'vertical' }} />
+        </div>
+
+        <div>
+          <label htmlFor="ce-notes" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Internal notes <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 500 }}>— never shown to crew or client</span></label>
+          <textarea id="ce-notes" value={internalNotes} onChange={e => setInternalNotes(e.target.value)} rows={2} style={{ ...osField, resize: 'vertical' }} />
+        </div>
+
+        {(claim.status === 'closed' || claim.status === 'waived' || resolutionNotes) && (
+          <div>
+            <label htmlFor="ce-res" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Resolution notes</label>
+            <textarea id="ce-res" value={resolutionNotes} onChange={e => setResolutionNotes(e.target.value)} rows={2} style={{ ...osField, resize: 'vertical' }} />
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+        <button onClick={onDone} className="btn-ghost os-tap" style={{ borderRadius: 12, height: 42, flex: 1, justifyContent: 'center' }}>Cancel</button>
+        <button onClick={save} disabled={!canSave} className="btn os-tap" style={{ borderRadius: 12, height: 42, flex: 1, justifyContent: 'center', opacity: canSave ? 1 : .5 }}>
+          {saving ? 'Saving…' : 'Save changes'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Attachments ──────────────────────────────────────────────────────────────
 function Attachments({ claim, busy, onAct }: {
   claim: Claim; busy: boolean
   onAct: (b: Record<string, unknown>, tag: string) => Promise<void>
 }) {
   const live = claim.attachments.filter(a => !a.removedAt)
+  const fileInput = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadErr, setUploadErr] = useState('')
+
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(e.target.files ?? [])
+    if (fileInput.current) fileInput.current.value = ''
+    if (!picked.length) return
+    setUploading(true); setUploadErr('')
+    for (const file of picked) {
+      try {
+        const ev = await uploadEvidence(file)
+        await onAct({ action: 'attach', kind: ev.kind, url: ev.url, name: ev.name }, 'attach')
+      } catch { setUploadErr('One file failed to upload — check the connection and try again.') }
+    }
+    setUploading(false)
+  }
+
   return (
     <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
         <div style={{ ...osLabel, display: 'flex', alignItems: 'center', gap: 7 }}><Paperclip size={14} /> Evidence</div>
-        <button onClick={() => {
-          const url = prompt('Paste the photo, video or document URL (https):')
-          if (!url) return
-          const kind = /\.(mp4|mov|webm)$/i.test(url) ? 'video' : /\.(pdf|docx?|xlsx?)$/i.test(url) ? 'document' : 'photo'
-          onAct({ action: 'attach', kind, url, name: prompt('Label (optional):') || undefined }, 'attach')
-        }} disabled={busy} className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>+ Add</button>
+        <label className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--red)', cursor: (busy || uploading) ? 'wait' : 'pointer' }}>
+          {uploading ? 'Uploading…' : '+ Add'}
+          <input ref={fileInput} type="file" accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt" capture="environment" multiple onChange={onPick} disabled={busy || uploading} style={{ display: 'none' }} />
+        </label>
       </div>
+      {uploadErr && <p style={{ fontSize: 12.5, color: '#fca5a5', marginBottom: 8 }}>{uploadErr}</p>}
 
       {live.length === 0 ? <p style={{ fontSize: 13.5, color: 'var(--muted)' }}>No photos or documents attached.</p> : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

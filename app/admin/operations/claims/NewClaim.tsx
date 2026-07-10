@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { X } from 'lucide-react'
+import { X, Paperclip, Trash2 } from 'lucide-react'
 import { MoneyInput, looksLikeMoney, osField, osLabel, ymd } from '../ui'
 import { invalidateClaims } from './useClaims'
+import { uploadEvidence, type EvidenceUpload } from './evidence'
 
 // One create-claim sheet, used from three places:
 //   • the Claims hub        → pick a business
@@ -33,10 +34,26 @@ export default function NewClaim({
   const [reportedBy, setReportedBy] = useState('')
   const [responseDeadline, setResponseDeadline] = useState('')
   const [internalNotes, setInternalNotes] = useState('')
+  const [files, setFiles] = useState<EvidenceUpload[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [uploadErr, setUploadErr] = useState('')
+  const fileInput = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
   const fromRoute = Boolean(routeToken)
+
+  async function addFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(e.target.files ?? [])
+    if (fileInput.current) fileInput.current.value = '' // allow re-picking the same file
+    if (!picked.length) return
+    setUploading(true); setUploadErr('')
+    for (const file of picked) {
+      try { const ev = await uploadEvidence(file); setFiles(prev => [...prev, ev]) }
+      catch { setUploadErr('One file failed to upload — check the connection and try again.') }
+    }
+    setUploading(false)
+  }
 
   useEffect(() => {
     if (fromRoute || businessName) return
@@ -47,7 +64,7 @@ export default function NewClaim({
   }, [fromRoute, businessName])
 
   const totalInvalid = total.trim() !== '' && !looksLikeMoney(total)
-  const canSave = !busy && !totalInvalid && total.trim() !== '' && description.trim() !== '' && (fromRoute || biz.trim() !== '')
+  const canSave = !busy && !uploading && !totalInvalid && total.trim() !== '' && description.trim() !== '' && (fromRoute || biz.trim() !== '')
 
   async function submit() {
     setBusy(true); setError('')
@@ -57,6 +74,7 @@ export default function NewClaim({
         body: JSON.stringify({
           routeToken, businessName: fromRoute ? undefined : biz,
           claimType, claimDate, reportedDate, reportedBy, responseDeadline, total, description, internalNotes,
+          attachments: files.map(f => ({ kind: f.kind, url: f.url, name: f.name })),
         }),
       })
       const d = await res.json()
@@ -153,6 +171,26 @@ export default function NewClaim({
           <div>
             <label htmlFor="nc-notes" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Internal notes <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 500 }}>— never shown to crew or client</span></label>
             <textarea id="nc-notes" value={internalNotes} onChange={e => setInternalNotes(e.target.value)} rows={2} style={{ ...osField, resize: 'vertical' }} />
+          </div>
+
+          <div>
+            <div style={{ ...osLabel, display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}><Paperclip size={13} /> Evidence <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 500 }}>— photos, video or documents</span></div>
+            {files.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+                {files.map((f, i) => (
+                  <div key={f.url} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--muted)', textTransform: 'uppercase', minWidth: 52 }}>{f.kind}</span>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                    <button type="button" onClick={() => setFiles(prev => prev.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`} className="os-tap" style={{ background: 'none', border: 'none', color: '#fca5a5', cursor: 'pointer' }}><Trash2 size={14} /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <label className="btn-ghost os-tap" style={{ borderRadius: 10, height: 40, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px', fontSize: 13.5, cursor: uploading ? 'wait' : 'pointer' }}>
+              {uploading ? 'Uploading…' : files.length ? '+ Add more' : '+ Add evidence'}
+              <input ref={fileInput} type="file" accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt" capture="environment" multiple onChange={addFiles} disabled={uploading} style={{ display: 'none' }} />
+            </label>
+            {uploadErr && <p style={{ fontSize: 12.5, color: '#fca5a5', marginTop: 6 }}>{uploadErr}</p>}
           </div>
         </div>
 
