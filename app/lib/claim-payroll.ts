@@ -62,14 +62,22 @@ export const sumDeductions = (lines: PayDeductionLine[]): number =>
   lines.reduce((s, l) => s + l.amountCents, 0)
 
 /**
- * Net pay. Deductions never push a statement negative: we withhold at most what
- * the contractor earned this period, and the shortfall stays on their claim
- * balance for next week rather than becoming a debt we've already "collected".
+ * Net pay. A positive deduction never pushes a statement negative: we withhold at
+ * most what the contractor earned this period, and the shortfall stays on their
+ * claim balance for next week rather than becoming a debt we've already
+ * "collected".
+ *
+ * A NET-NEGATIVE deduction is a reversal owed BACK to the contractor (an
+ * adjustment debit that exceeds the week's real deductions). It must be paid out
+ * in full — `applied` goes negative so `net` exceeds gross — otherwise a
+ * correction the ledger already recorded would be silently swallowed and the
+ * contractor left both underpaid and re-charged. Clamping `applied` at 0 (the old
+ * behaviour) did exactly that.
  */
 export function applyDeductions(grossCents: number, deductionCents: number): {
   appliedCents: number; netCents: number; shortfallCents: number
 } {
-  const applied = Math.max(0, Math.min(deductionCents, grossCents))
+  const applied = Math.min(deductionCents, grossCents)   // may be negative = money handed back
   return {
     appliedCents: applied,
     netCents: grossCents - applied,

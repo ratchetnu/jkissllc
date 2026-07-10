@@ -13,9 +13,10 @@
 // so re-running the same day is a no-op.
 import { addDaysStr, centralToday, mondayOf } from './dates'
 import {
-  dueDeductions, postScheduledDeduction, skipScheduledDeduction, saveClaim, listClaims,
+  dueDeductions, postScheduledDeduction, skipScheduledDeduction, getClaim, saveClaim, listClaims,
   type ClaimRecord,
 } from './claims'
+import { withClaimLock } from './claim-mutex'
 import { computePay } from './route-pay'
 
 export type AccrualResult = {
@@ -120,7 +121,15 @@ export function seedSpendFromLedger(claims: ClaimRecord[]): Map<string, number> 
   for (const c of claims) {
     for (const a of c.assignments) {
       for (const e of a.ledger) {
-        if (e.kind !== 'scheduled' || e.direction !== 'credit') continue
+        // Both scheduled deductions AND adjustment credits come off the paycheck
+        // (see PAYROLL_KINDS in claim-payroll), so both consume paycheck room and
+        // must be seeded — otherwise the cron posts a scheduled deduction on top of
+        // an adjustment credit, crediting the ledger more than payroll can withhold
+        // and silently forgiving the difference. A debit is a giveback in the other
+        // direction; it does NOT free room for a new deduction (the reversal is paid
+        // out on the statement, not re-deducted), so only credits are seeded.
+        if (e.direction !== 'credit') continue
+        if (e.kind !== 'scheduled' && e.kind !== 'adjustment') continue
         const key = `${a.staffId}|${mondayOf(e.periodDate)}`
         spend.set(key, (spend.get(key) ?? 0) + e.amountCents)
       }
@@ -141,10 +150,18 @@ export async function accrueAllClaims(now: number = Date.now()): Promise<Accrual
 
   for (const claim of claims) {
     try {
-      const r = await accrueClaim(claim, today, grossFor, spend)
-      out.posted.push(...r.posted)
-      out.skipped.push(...r.skipped)
-      if (r.changed) await saveClaim(claim)
+      // Accrue + save under the claim lock, re-reading fresh inside, so a scheduled
+      // deduction can't clobber a concurrent admin edit (waive/adjust/attach) on the
+      // same claim. A ClaimBusyError just skips this claim for today's run — the next
+      // cron catches it up. See lib/claim-mutex.
+      await withClaimLock(claim.id, async () => {
+        const fresh = await getClaim(claim.id)
+        if (!fresh) return
+        const r = await accrueClaim(fresh, today, grossFor, spend)
+        out.posted.push(...r.posted)
+        out.skipped.push(...r.skipped)
+        if (r.changed) await saveClaim(fresh)
+      })
     } catch (e) {
       console.error('[claims/accrual]', claim.claimNumber, e)
     }
