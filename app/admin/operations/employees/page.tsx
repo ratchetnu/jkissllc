@@ -7,6 +7,8 @@ import OperationsShell from '../OperationsShell'
 import { Avatar, scoreColor, ymd, fmtDay, fmtTs, money, onActivate, MoneyInput, Toggle, centsToInput, looksLikeMoney, osLabel } from '../ui'
 import ApplyScope from '../ApplyScope'
 import CrewClaims from '../claims/CrewClaims'
+import { computeCrewComp, type CrewCompSummary } from '../../../lib/crew-comp'
+import { mondayOf } from '../../../lib/dates'
 
 type PayKind = 'driver' | 'helper' | 'contractor' | 'employee'
 type PayHistoryEntry = { at: number; defaultPayCents?: number; payByBusiness?: Record<string, number>; effectiveDate?: string; active: boolean; notes?: string }
@@ -17,7 +19,7 @@ type Staff = {
   usesTimeclock?: boolean
 }
 type CStats = { score: number | null; assignments: number; confirmed: number; completed: number; declined: number; noResponse: number; noShow: number }
-type RouteLite = { routeNumber: string; assignedStaffId?: string; businessName: string; status: string; routeDate: string; reportTime: string }
+type RouteLite = { routeNumber: string; assignedStaffId?: string; businessName: string; status: string; routeDate: string; reportTime: string; assignees?: { staffId: string; payCents?: number; role?: string }[] }
 
 const PAY_KINDS: { key: PayKind; label: string }[] = [
   { key: 'driver', label: 'Driver' }, { key: 'helper', label: 'Helper' },
@@ -67,6 +69,14 @@ function Hub() {
     return m
   }, [routes, today])
 
+  // Earnings summary per crew member, computed from completed routes (see lib/crew-comp).
+  const weekStart = mondayOf(today)
+  const comps = useMemo(() => {
+    const m: Record<string, CrewCompSummary> = {}
+    for (const s of staff) m[s.id] = computeCrewComp(s.id, routes, today, weekStart)
+    return m
+  }, [staff, routes, today, weekStart])
+
   const active = staff.filter(s => s.active)
   const inactive = staff.filter(s => !s.active)
   // Clients we've actually run routes for — the suggestions for a per-business rate.
@@ -105,16 +115,16 @@ function Hub() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {active.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} businesses={businesses} upcoming={workload[s.id] || []} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
+          {active.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
           {inactive.length > 0 && <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)', margin: '14px 0 2px' }}>Inactive</div>}
-          {inactive.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} businesses={businesses} upcoming={workload[s.id] || []} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
+          {inactive.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
         </div>
       )}
     </div>
   )
 }
 
-function EmployeeCard({ s, st, businesses, upcoming, open, onToggle, onOpen, onChanged, setMsg, delay }: { s: Staff; st?: CStats; businesses: string[]; upcoming: RouteLite[]; open: boolean; onToggle: () => void; onOpen: () => void; onChanged: () => void; setMsg: (m: string) => void; delay: number }) {
+function EmployeeCard({ s, st, businesses, upcoming, comp, open, onToggle, onOpen, onChanged, setMsg, delay }: { s: Staff; st?: CStats; businesses: string[]; upcoming: RouteLite[]; comp?: CrewCompSummary; open: boolean; onToggle: () => void; onOpen: () => void; onChanged: () => void; setMsg: (m: string) => void; delay: number }) {
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
   const score = st?.score
@@ -159,6 +169,8 @@ function EmployeeCard({ s, st, businesses, upcoming, open, onToggle, onOpen, onC
           ) : (
             <>
               <PaySettings s={s} businesses={businesses} onChanged={onChanged} setMsg={setMsg} />
+
+              {comp && <CrewEarnings comp={comp} s={s} />}
 
               {/* Record */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(72px, 1fr))', gap: 8, marginBottom: 14 }}>
@@ -216,6 +228,50 @@ function EmployeeCard({ s, st, businesses, upcoming, open, onToggle, onOpen, onC
 // What this person earns per route. Snapshotted onto a route when they're
 // assigned, so editing here never changes routes they already ran.
 const bizKey = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ')
+
+// Read-only earnings summary — what this crew member has EARNED from completed work.
+// Distinct from the pay-rate settings above (which configure the rate). Truthful:
+// no "paid/outstanding" until crew-payout settlement exists (see future-improvements).
+function CrewEarnings({ comp, s }: { comp: CrewCompSummary; s: Staff }) {
+  const rate = typeof s.defaultPayCents === 'number' ? money(s.defaultPayCents) : '—'
+  const basis = s.payKind ? PAY_KINDS.find(k => k.key === s.payKind)?.label : 'Per route'
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ ...osLabel, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 7 }}><Wallet size={13} /> Earnings</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 10 }}>
+        <MoneyTile label="This pay week" value={money(comp.periodEarningsCents)} />
+        <MoneyTile label="Year to date" value={money(comp.ytdEarningsCents)} tone="#86efac" />
+        <MoneyTile label="Lifetime" value={money(comp.lifetimeEarningsCents)} />
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: comp.recent.length ? 8 : 0 }}>
+        {comp.completedRoutes} completed · {comp.upcomingRoutes} upcoming · rate {rate}{basis ? ` · ${basis}` : ''}
+        {comp.businesses.length ? ` · ${comp.businesses.length} client${comp.businesses.length === 1 ? '' : 's'}` : ''}
+      </p>
+      {comp.recent.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)' }}>Recent earnings</div>
+          {comp.recent.map(l => (
+            <div key={l.routeNumber} style={{ display: 'flex', gap: 10, fontSize: 13 }}>
+              <span style={{ minWidth: 66, color: 'var(--muted)' }}>{fmtDay(l.date)}</span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.businessName}</span>
+              <span className="tabular-nums" style={{ fontWeight: 700 }}>{money(l.payCents)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <p style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 8 }}>Earned from completed work. Payouts aren’t settled in OpsPilot yet.</p>
+    </div>
+  )
+}
+
+function MoneyTile({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="os-card" style={{ padding: '10px 12px' }}>
+      <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)' }}>{label}</div>
+      <div className="tabular-nums" style={{ fontSize: 16, fontWeight: 800, marginTop: 3, color: tone || 'var(--text)' }}>{value}</div>
+    </div>
+  )
+}
 
 function PaySettings({ s, businesses, onChanged, setMsg }: { s: Staff; businesses: string[]; onChanged: () => void; setMsg: (m: string) => void }) {
   const [editing, setEditing] = useState(false)
