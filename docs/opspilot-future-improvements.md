@@ -22,6 +22,12 @@ Legend: 🟢 shipped · 🟡 next · 🔵 later · ⚫ needs infra decision
   `/api/admin/ai/command` (server-built target allowlist; the model only echoes a
   target id, so hallucinated URLs are impossible; answers strictly from a counts
   summary; fails soft). Reuses `lib/ai.aiText` + the Vercel AI Gateway.
+- **Crew Compensation Center (read-only earnings)** — `lib/crew-comp.ts` computes
+  this-week / YTD / lifetime earnings + completed/upcoming counts + clients + a
+  recent-earnings breakdown from completed routes' snapshotted pay; rendered on the
+  crew profile. Truthful (no fabricated paid/outstanding). *Remaining:* pay-structure
+  expansion (hourly/percentage/mileage) + a crew-payout settlement record for true
+  Paid/Outstanding — see the Compensation section below.
 - **Crew Applicant Portal core** — surfaced the existing ATS inside Crew (sub-nav
   Directory | Applicants + waiting-review badge); added statuses
   (information_requested / withdrawn / archived) + requested vocabulary; applicant
