@@ -3,9 +3,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  CLAIM_DOC_TEMPLATES, templatesForScope, buildClaimDocValues, populateClaimDoc,
+  CLAIM_DOC_TEMPLATES, templatesForScope, templatesForClaim, buildClaimDocValues, populateClaimDoc,
   type DocClaim, type DocAssignment,
 } from '../app/lib/claim-documents'
+import { CLAIM_TYPE_LABEL, type ClaimType } from '../app/lib/claim-types'
 
 const CLAIM: DocClaim = {
   claimNumber: 'JK-C-1042',
@@ -21,9 +22,22 @@ const ASSIGNMENT: DocAssignment = {
   name: 'Marcus Lee', responsibilityCents: 30000, responsibilityPct: 66, weeklyDeductionCents: 5000, startDate: 'July 15, 2026',
 }
 
-test('inbound claims get native templates; outbound get none', () => {
+test('every claim type resolves to at least one native document — no ClaimGuard login', () => {
   assert.ok(templatesForScope('inbound').length >= 2, 'inbound has templates')
-  assert.equal(templatesForScope('outbound').length, 0, 'outbound routes out to ClaimGuard, no native docs')
+  assert.ok(templatesForScope('outbound').length >= 4, 'outbound now generates natively too')
+  for (const t of Object.keys(CLAIM_TYPE_LABEL) as ClaimType[]) {
+    assert.ok(templatesForClaim(t).length >= 1, `${t} resolves to a native document`)
+  }
+})
+
+test('a claim gets the document that fits its type', () => {
+  // Targeted templates only surface for their own type.
+  assert.ok(templatesForClaim('non_payment').some(t => t.id === 'non-payment-demand'))
+  assert.ok(templatesForClaim('chargeback').some(t => t.id === 'chargeback-rebuttal'))
+  assert.ok(templatesForClaim('detention').some(t => t.id === 'freight-demand'))
+  assert.ok(templatesForClaim('accessorial_dispute').some(t => t.id === 'freight-demand'))
+  // A non-payment claim must NOT be offered the chargeback rebuttal.
+  assert.ok(!templatesForClaim('non_payment').some(t => t.id === 'chargeback-rebuttal'))
 })
 
 test('the acknowledgment fills crew, split, amount and deduction plan', () => {

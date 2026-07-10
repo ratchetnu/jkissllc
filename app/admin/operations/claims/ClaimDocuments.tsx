@@ -3,19 +3,20 @@
 import { useState } from 'react'
 import { FileText, Copy, Printer, Download, X, Check, Users } from 'lucide-react'
 import { COMPANY } from '../../../lib/company'
-import { directionOf, type ClaimType } from '../../../lib/claim-types'
+import type { ClaimType } from '../../../lib/claim-types'
 import {
-  templatesForScope, buildClaimDocValues, populateClaimDoc, type ClaimDocTemplate,
+  templatesForClaim, buildClaimDocValues, populateClaimDoc, type ClaimDocTemplate,
 } from '../../../lib/claim-documents'
 import { CLAIM_TYPE_LABEL, osLabel, money, fmtDay } from '../ui'
 import type { Claim, ClaimAssignment } from './useClaims'
 
-// Native claim documents — the OpsPilot-side complement to ClaimGuard Assist. Builds
-// crew-responsibility / claim-acknowledgment paperwork from data only OpsPilot has,
-// then offers copy / print / download. Outbound claims have no native templates
-// (they route out to ClaimGuard), so the card hides itself for them.
+// Native claim documents — ClaimGuard's document system, generated inside OpsPilot,
+// free, no ClaimGuard login. Inbound claims get the crew-responsibility /
+// acknowledgment paperwork built from data only OpsPilot has; outbound claims get the
+// dispute + demand letters (chargeback rebuttal, non-payment demand, deduction
+// dispute, freight/detention demand, late-delivery dispute). Copy / print / download.
 export default function ClaimDocuments({ claim }: { claim: Claim }) {
-  const templates = templatesForScope(directionOf(claim.claimType as ClaimType))
+  const templates = templatesForClaim(claim.claimType as ClaimType)
   const [doc, setDoc] = useState<{ title: string; text: string } | null>(null)
   if (!templates.length) return null
 
@@ -33,6 +34,7 @@ export default function ClaimDocuments({ claim }: { claim: Claim }) {
         description: claim.description,
         routeNumber: claim.routeNumber ?? claim.snapshot?.routeNumber,
         routeDate: claim.snapshot?.routeDate ? fmtDay(claim.snapshot.routeDate) : undefined,
+        responseDeadline: claim.responseDeadline ? fmtDay(claim.responseDeadline) : undefined,
       },
       company, today,
       assignment && {
@@ -52,7 +54,7 @@ export default function ClaimDocuments({ claim }: { claim: Claim }) {
         <FileText size={14} /> Documents
       </div>
       <p style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 12 }}>
-        Generated here from this claim — crew name, split and deduction plan filled in. Print or copy to send.
+        Generated here from this claim — free, no ClaimGuard login. Print, copy, or download to send.
       </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

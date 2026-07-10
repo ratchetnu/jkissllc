@@ -1,6 +1,6 @@
 'use client'
 
-import { ShieldCheck, ExternalLink, ArrowRight, CircleDot, Clock } from 'lucide-react'
+import { ShieldCheck, FileText, ArrowRight, CircleDot, Clock } from 'lucide-react'
 import { recommendForClaim } from '../../../lib/claim-assist'
 import type { ClaimType } from '../../../lib/claims'
 import { osLabel, fmtDay } from '../ui'
@@ -54,19 +54,16 @@ export default function ClaimGuardAssist({ claimType, responseDeadline, refCode,
         </div>
       </div>
 
-      {/* The recommended ClaimGuard document */}
-      <a href={p.claimGuardHref} target="_blank" rel="noopener noreferrer"
-        style={{ display: 'flex', alignItems: 'center', gap: 11, marginTop: 16, padding: 13, borderRadius: 12, background: 'var(--red)', color: '#fff', textDecoration: 'none' }}
-        className="os-tap">
+      {/* The recommended document is generated natively in the Documents card below
+          — no ClaimGuard login, free for OpsPilot users. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 16, padding: 13, borderRadius: 12, background: 'rgba(37,99,235,.07)', border: '1px solid rgba(37,99,235,.16)' }}>
+        <FileText size={17} style={{ color: 'var(--red)', flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, opacity: .85 }}>Open in ClaimGuard</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)' }}>Recommended document</div>
           <div style={{ fontSize: 14.5, fontWeight: 800 }}>{p.document}</div>
         </div>
-        <ExternalLink size={17} />
-      </a>
-      <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 8, display: 'flex', alignItems: 'center', gap: 5 }}>
-        <ArrowRight size={12} /> Opens claimguardhelp.com — free for OpsPilot users.
-      </p>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 700, color: 'var(--red)' }}>Generate below <ArrowRight size={13} /></span>
+      </div>
     </div>
   )
 }
