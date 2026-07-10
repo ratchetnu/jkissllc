@@ -17,6 +17,7 @@ import {
   type Claim, type ClaimAssignment,
 } from '../useClaims'
 import ClaimGuardAssist from '../ClaimGuardAssist'
+import ClaimDocuments from '../ClaimDocuments'
 import { uploadEvidence } from '../evidence'
 
 type Staff = { id: string; name: string; role?: string; photoUrl?: string; active: boolean }
@@ -148,6 +149,10 @@ function Detail({ id }: { id: string }) {
 
       {/* ClaimGuard Assist — recommended next step + document for this claim type */}
       <ClaimGuardAssist claimType={claim.claimType} responseDeadline={claim.responseDeadline} refCode={claim.claimNumber} amountCents={claim.totalCents} />
+
+      {/* Native documents — crew-responsibility / acknowledgment paperwork built from
+          this claim's own data (complements the outbound ClaimGuard links above). */}
+      <ClaimDocuments claim={claim} />
 
       {/* Frozen snapshot */}
       <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14 }}>
