@@ -43,6 +43,7 @@ export type ClaimListItem = {
   businessKey: string; businessName: string
   routeToken?: string; routeNumber?: string
   claimDate: string; reportedDate: string
+  reportedBy?: string; responseDeadline?: string
   description: string; totalCents: number
   assignments: ClaimAssignment[]
   attachmentCount: number

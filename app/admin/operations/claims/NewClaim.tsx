@@ -30,6 +30,8 @@ export default function NewClaim({
   const [reportedDate, setReportedDate] = useState(today)
   const [total, setTotal] = useState('')
   const [description, setDescription] = useState('')
+  const [reportedBy, setReportedBy] = useState('')
+  const [responseDeadline, setResponseDeadline] = useState('')
   const [internalNotes, setInternalNotes] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -54,7 +56,7 @@ export default function NewClaim({
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
         body: JSON.stringify({
           routeToken, businessName: fromRoute ? undefined : biz,
-          claimType, claimDate, reportedDate, total, description, internalNotes,
+          claimType, claimDate, reportedDate, reportedBy, responseDeadline, total, description, internalNotes,
         }),
       })
       const d = await res.json()
@@ -96,12 +98,22 @@ export default function NewClaim({
             <div>
               <label htmlFor="nc-type" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Type</label>
               <select id="nc-type" value={claimType} onChange={e => setClaimType(e.target.value)} style={{ ...osField, cursor: 'pointer' }}>
-                <option value="property_damage">Property Damage</option>
-                <option value="vehicle_damage">Vehicle Damage</option>
-                <option value="cargo_damage">Cargo Damage</option>
-                <option value="lost_item">Lost / Missing Item</option>
-                <option value="injury">Injury</option>
-                <option value="service_failure">Service Failure</option>
+                <optgroup label="Claimed against us (recover from crew)">
+                  <option value="property_damage">Property Damage</option>
+                  <option value="vehicle_damage">Vehicle Damage</option>
+                  <option value="cargo_damage">Cargo Damage</option>
+                  <option value="lost_item">Lost / Missing Item</option>
+                  <option value="injury">Injury</option>
+                  <option value="service_failure">Service Failure</option>
+                </optgroup>
+                <optgroup label="We're disputing (recover from them)">
+                  <option value="chargeback">Chargeback</option>
+                  <option value="unfair_deduction">Unfair Deduction</option>
+                  <option value="detention">Detention</option>
+                  <option value="accessorial_dispute">Accessorial Dispute</option>
+                  <option value="late_delivery">Late Delivery</option>
+                  <option value="non_payment">Non-Payment</option>
+                </optgroup>
                 <option value="other">Other</option>
               </select>
             </div>
@@ -122,9 +134,20 @@ export default function NewClaim({
             </div>
           </div>
 
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label htmlFor="nc-by" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Who reported it</label>
+              <input id="nc-by" value={reportedBy} onChange={e => setReportedBy(e.target.value)} placeholder="Driver, client contact, broker…" style={osField} />
+            </div>
+            <div>
+              <label htmlFor="nc-dl" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Response deadline <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 500 }}>— optional</span></label>
+              <input id="nc-dl" type="date" value={responseDeadline} min={claimDate} onChange={e => setResponseDeadline(e.target.value)} style={osField} />
+            </div>
+          </div>
+
           <div>
             <label htmlFor="nc-desc" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>What happened</label>
-            <textarea id="nc-desc" value={description} onChange={e => setDescription(e.target.value)} rows={3} placeholder="What the client reported…" style={{ ...osField, resize: 'vertical' }} />
+            <textarea id="nc-desc" value={description} onChange={e => setDescription(e.target.value)} rows={3} placeholder="What happened…" style={{ ...osField, resize: 'vertical' }} />
           </div>
 
           <div>

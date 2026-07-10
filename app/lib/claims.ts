@@ -41,8 +41,13 @@ const TERMINAL: ClaimStatus[] = ['closed', 'waived']
 export const isTerminal = (s: ClaimStatus): boolean => TERMINAL.includes(s)
 
 export type ClaimType =
+  // INBOUND — someone says our crew/service caused a loss; we may recover from crew.
   | 'property_damage' | 'vehicle_damage' | 'cargo_damage' | 'lost_item'
-  | 'injury' | 'service_failure' | 'other'
+  | 'injury' | 'service_failure'
+  // OUTBOUND — a broker/platform/customer shorted US; we dispute to recover from them.
+  | 'chargeback' | 'unfair_deduction' | 'detention' | 'accessorial_dispute'
+  | 'late_delivery' | 'non_payment'
+  | 'other'
 
 export const CLAIM_TYPE_LABEL: Record<ClaimType, string> = {
   property_damage: 'Property Damage',
@@ -51,8 +56,25 @@ export const CLAIM_TYPE_LABEL: Record<ClaimType, string> = {
   lost_item: 'Lost / Missing Item',
   injury: 'Injury',
   service_failure: 'Service Failure',
+  chargeback: 'Chargeback',
+  unfair_deduction: 'Unfair Deduction',
+  detention: 'Detention',
+  accessorial_dispute: 'Accessorial Dispute',
+  late_delivery: 'Late Delivery',
+  non_payment: 'Non-Payment',
   other: 'Other',
 }
+
+// A claim's DIRECTION is a property of its type, not a separate stored field — a
+// chargeback is always something WE dispute (outbound); property damage is always
+// something claimed against US (inbound). Inbound claims recover from the crew;
+// outbound claims are disputes we send to a broker/platform (→ ClaimGuard tools).
+export type ClaimDirection = 'inbound' | 'outbound'
+const OUTBOUND_TYPES: readonly ClaimType[] = [
+  'chargeback', 'unfair_deduction', 'detention', 'accessorial_dispute', 'late_delivery', 'non_payment',
+]
+export const directionOf = (t: ClaimType): ClaimDirection =>
+  OUTBOUND_TYPES.includes(t) ? 'outbound' : 'inbound'
 
 export type ResponsibilityStatus = 'pending' | 'active' | 'paused' | 'completed' | 'waived'
 
@@ -162,6 +184,8 @@ export type ClaimRecord = {
 
   claimDate: string                    // YYYY-MM-DD the damage happened
   reportedDate: string                 // YYYY-MM-DD the client told us
+  reportedBy?: string                  // who reported it (driver, client contact, broker…)
+  responseDeadline?: string            // YYYY-MM-DD a dispute/response is due by
   description: string
   totalCents: number
 

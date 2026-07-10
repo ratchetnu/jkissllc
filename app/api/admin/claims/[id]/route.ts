@@ -44,9 +44,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       // that would destroy the historical record it exists to preserve.
       const fields: Array<[keyof ClaimRecord, number]> = [
         ['description', 4000], ['internalNotes', 4000], ['businessContact', 200], ['resolutionNotes', 4000],
+        ['reportedBy', 200],
       ]
       for (const [k, max] of fields) {
         if (b[k] !== undefined) (claim as Record<string, unknown>)[k] = S(b[k], max) || undefined
+      }
+      if (b.responseDeadline !== undefined) {
+        const d = S(b.responseDeadline, 20)
+        claim.responseDeadline = isDateStr(d) ? d : undefined
       }
       if (b.claimType !== undefined) {
         const t = S(b.claimType, 40)

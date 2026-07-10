@@ -94,8 +94,9 @@ function Detail({ id }: { id: string }) {
         <h1 className="jkos-h" style={{ fontSize: 24, marginTop: 10 }}>{claim.businessName}</h1>
         <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: 13.5, color: 'var(--muted)', flexWrap: 'wrap' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><CalendarDays size={15} /> {fmtDay(claim.claimDate)}</span>
-          <span>Reported {fmtDay(claim.reportedDate)}</span>
+          <span>Reported {fmtDay(claim.reportedDate)}{claim.reportedBy ? ` by ${claim.reportedBy}` : ''}</span>
           {claim.routeNumber && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{claim.routeNumber}</span>}
+          {claim.responseDeadline && <span style={{ color: '#fcd34d', fontWeight: 600 }}>Response due {fmtDay(claim.responseDeadline)}</span>}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--line)' }}>

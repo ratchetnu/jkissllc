@@ -112,6 +112,8 @@ export async function POST(req: NextRequest) {
       routeNumber,
       claimDate,
       reportedDate,
+      reportedBy: S(b.reportedBy, 200) || undefined,
+      responseDeadline: isDateStr(S(b.responseDeadline, 20)) ? S(b.responseDeadline, 20) : undefined,
       description,
       totalCents,
       attachments: [],
