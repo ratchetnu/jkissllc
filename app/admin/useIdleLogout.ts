@@ -7,7 +7,15 @@ import { useEffect, useRef } from 'react'
 // is hidden, so an unattended session still logs out on schedule.
 const ACTIVITY_EVENTS = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'wheel'] as const
 
-export function useIdleLogout(enabled: boolean, onIdle: () => void, timeoutMs = 10 * 60_000) {
+// pingUrl is the endpoint the heartbeat hits so middleware slides the server-side
+// idle window. Admin uses /api/admin/session; the crew portal passes /api/portal/me
+// (the admin route is blocked for crew principals by the RBAC middleware).
+export function useIdleLogout(
+  enabled: boolean,
+  onIdle: () => void,
+  timeoutMs = 10 * 60_000,
+  pingUrl = '/api/admin/session',
+) {
   const onIdleRef = useRef(onIdle)
   onIdleRef.current = onIdle
 
@@ -18,13 +26,13 @@ export function useIdleLogout(enabled: boolean, onIdle: () => void, timeoutMs = 
     const reset = () => {
       clearTimeout(timer)
       timer = setTimeout(() => onIdleRef.current(), timeoutMs)
-      // Heartbeat: while the admin is active, ping the session route (throttled
+      // Heartbeat: while the user is active, ping the session route (throttled
       // to once per third of the window) so middleware slides the server-side
       // idle timeout forward to match the client timer.
       const now = Date.now()
       if (now - lastPing > timeoutMs / 3) {
         lastPing = now
-        fetch('/api/admin/session', { credentials: 'same-origin' }).catch(() => {})
+        fetch(pingUrl, { credentials: 'same-origin' }).catch(() => {})
       }
     }
     ACTIVITY_EVENTS.forEach(e => window.addEventListener(e, reset, { passive: true }))
@@ -33,5 +41,5 @@ export function useIdleLogout(enabled: boolean, onIdle: () => void, timeoutMs = 
       clearTimeout(timer)
       ACTIVITY_EVENTS.forEach(e => window.removeEventListener(e, reset))
     }
-  }, [enabled, timeoutMs])
+  }, [enabled, timeoutMs, pingUrl])
 }

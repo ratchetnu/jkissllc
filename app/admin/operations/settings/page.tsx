@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { MessageSquare, Mail, Star, Briefcase, CalendarCheck, Trash2, ScrollText, BarChart3, CalendarDays, LogOut, Check, ClipboardList, DollarSign, FileText, Wallet, EyeOff } from 'lucide-react'
+import { MessageSquare, Mail, Star, Briefcase, CalendarCheck, Trash2, ScrollText, BarChart3, CalendarDays, LogOut, Check, ClipboardList, DollarSign, FileText, Wallet, EyeOff, ShieldCheck } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { osField as field } from '../ui'
 
@@ -22,6 +22,7 @@ const TOOL_GROUPS: { label: string; items: { href: string; label: string; Icon: 
     { href: '/admin/reviews', label: 'Reviews', Icon: Star },
   ] },
   { label: 'Team', items: [
+    { href: '/admin/operations/users', label: 'Team & Access', Icon: ShieldCheck },
     { href: '/admin/careers', label: 'Careers', Icon: Briefcase },
     { href: '/admin/availability', label: 'Availability', Icon: CalendarCheck },
   ] },

@@ -9,6 +9,8 @@ import CommandPalette from './CommandPalette'
 import LastLogin from './LastLogin'
 import { OpsPilotMark, OpsPilotWordmark } from '../../components/opspilot/OpsPilotMark'
 
+// `adminOnly` tabs are hidden from managers in the UI AND gated server-side on the
+// matching route (hiding is never the control — see the API guards).
 const NAV = [
   { href: '/admin/operations', label: 'Home', Icon: Home },
   { href: '/admin/operations/list', label: 'Operations', Icon: ClipboardList },
@@ -17,7 +19,7 @@ const NAV = [
   { href: '/admin/operations/equipment', label: 'Equipment', Icon: Truck },
   { href: '/admin/operations/claims', label: 'Claims', Icon: ShieldAlert },
   { href: '/admin/operations/messages', label: 'Messages', Icon: MessageSquare },
-  { href: '/admin/operations/settings', label: 'Settings', Icon: Settings },
+  { href: '/admin/operations/settings', label: 'Settings', Icon: Settings, adminOnly: true },
 ]
 
 const iStyle: React.CSSProperties = {
@@ -26,23 +28,28 @@ const iStyle: React.CSSProperties = {
 }
 
 export default function OperationsShell({ children }: { children: React.ReactNode }) {
-  const { authed, checked, error, loading, login, signOut, lastLogin } = useAdminSession()
+  const { authed, checked, error, loading, login, signOut, lastLogin, role } = useAdminSession()
   const [password, setPassword] = useState('')
+  const [email, setEmail] = useState('')
   const pathname = usePathname()
   const router = useRouter()
 
   async function submitLogin(e: React.FormEvent) {
     e.preventDefault()
-    if (await login(password)) {
-      setPassword('')
+    if (await login(password, email)) {
+      setPassword(''); setEmail('')
       // Land on the operations home after signing in, regardless of which admin
       // URL the session started on (a bookmarked /admin/bookings, etc.).
       if (pathname !== '/admin/operations') router.push('/admin/operations')
     }
   }
 
+  // Managers don't see admin-only tabs (Settings). The matching APIs are gated
+  // server-side too — this only tidies the dock.
+  const nav = NAV.filter(n => !n.adminOnly || role !== 'manager')
+
   // Longest-prefix match so /admin/routes/invoices highlights Businesses, not Operations.
-  const activeHref = [...NAV].filter(n => pathname === n.href || pathname.startsWith(n.href + '/')).sort((a, b) => b.href.length - a.href.length)[0]?.href
+  const activeHref = [...nav].filter(n => pathname === n.href || pathname.startsWith(n.href + '/')).sort((a, b) => b.href.length - a.href.length)[0]?.href
 
   // The create action is reachable from every tab, not just Home — one persistent
   // "+" that follows you. Hidden only on the builder itself (you're already there).
@@ -62,10 +69,12 @@ export default function OperationsShell({ children }: { children: React.ReactNod
       <div className="os-card os-rise" style={{ width: '100%', maxWidth: 380, padding: 30 }}>
         <p className="jkos-h" style={{ fontSize: 26 }}>J KISS <span style={{ color: 'var(--red)' }}>Freight</span></p>
         <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 4, marginBottom: 22 }}>Sign in to your operations.</p>
-        <form onSubmit={submitLogin} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <input type="password" placeholder="Admin password" value={password} onChange={e => setPassword(e.target.value)} style={iStyle} required autoFocus />
+        <form onSubmit={submitLogin} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <input type="email" autoComplete="username" placeholder="Email (managers)" value={email} onChange={e => setEmail(e.target.value)} style={iStyle} />
+          <input type="password" autoComplete="current-password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} style={iStyle} required autoFocus />
           {error && <p style={{ color: '#f87171', fontSize: 14 }}>{error}</p>}
           <button type="submit" disabled={loading} className="btn os-tap" style={{ justifyContent: 'center', borderRadius: 12, height: 46 }}>{loading ? 'Checking…' : 'Sign In'}</button>
+          <p style={{ color: 'var(--muted)', fontSize: 11.5, textAlign: 'center', margin: 0 }}>Owner: leave email blank. Crew sign in at <Link href="/portal" style={{ color: 'var(--muted)', textDecoration: 'underline' }}>the crew portal</Link>.</p>
         </form>
 
         <div style={{ marginTop: 26, paddingTop: 18, borderTop: '1px solid var(--line)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--muted)' }}>
@@ -107,7 +116,7 @@ export default function OperationsShell({ children }: { children: React.ReactNod
 
       {/* Desktop floating dock */}
       <nav className="os-glass" style={{ position: 'fixed', bottom: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 50, display: 'none', gap: 2, padding: 7, borderRadius: 999, boxShadow: 'var(--os-shadow)' }} data-dock="desktop">
-        {NAV.map(n => {
+        {nav.map(n => {
           const active = n.href === activeHref
           return (
             <Link key={n.href} href={n.href} className="os-dock-item" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 999, fontSize: 13.5, fontWeight: 700, textDecoration: 'none', color: active ? '#fff' : 'var(--muted)', background: active ? 'var(--red)' : 'transparent' }}>
@@ -119,7 +128,7 @@ export default function OperationsShell({ children }: { children: React.ReactNod
 
       {/* Mobile bottom nav — same dock look: icon-only inactive, red pill for the active tab */}
       <nav className="os-glass" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'space-around', alignItems: 'center', padding: '10px 8px calc(10px + env(safe-area-inset-bottom))', borderLeft: 'none', borderRight: 'none', borderBottom: 'none' }} data-dock="mobile">
-        {NAV.map(n => {
+        {nav.map(n => {
           const active = n.href === activeHref
           return (
             <Link key={n.href} href={n.href} aria-label={n.label} className="os-dock-item" style={{ display: 'inline-flex', alignItems: 'center', gap: active ? 7 : 0, padding: active ? '9px 15px' : '9px', borderRadius: 999, textDecoration: 'none', color: active ? '#fff' : 'var(--muted)', background: active ? 'var(--red)' : 'transparent' }}>

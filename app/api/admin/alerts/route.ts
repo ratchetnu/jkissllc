@@ -3,7 +3,7 @@
 // toggled from the dashboard without a redeploy. Admin-only.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSession } from '../_lib/session'
+import { requireSession, requireAdmin } from '../_lib/session'
 import { getOwnerAlertConfig, setOwnerAlertConfig } from '../../../lib/owner-alerts'
 
 export async function GET(req: NextRequest) {
@@ -12,7 +12,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Owner-alert config is a global setting — admin only.
+  const who = await requireAdmin(req)
+  if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({}))
   const config = await setOwnerAlertConfig({
     sms: typeof body.sms === 'boolean' ? body.sms : undefined,

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSession } from '../_lib/session'
+import { requireSession, requireAdmin } from '../_lib/session'
 import { listStaff, saveStaff, deleteStaff, type Staff, type PayKind, type PayHistoryEntry } from '../../../lib/staff'
 import { bizKey } from '../../../lib/businesses'
 import { parseMoneyCents } from '../../../lib/finance'
@@ -25,7 +25,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Crew records + pay settings are admin-only (crew:manage / pay:configure).
+  // Managers assign crew to routes via the routes API, not here.
+  const who = await requireAdmin(req)
+  if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({}))
   const name = S(body.name, 80)
   if (!name) return NextResponse.json({ error: 'A name is required.' }, { status: 400 })
@@ -123,7 +126,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requireAdmin(req)
+  if (who instanceof NextResponse) return who
   const id = new URL(req.url).searchParams.get('id')
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
   await deleteStaff(id)
