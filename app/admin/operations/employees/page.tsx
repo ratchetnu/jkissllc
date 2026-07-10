@@ -66,10 +66,10 @@ function Hub() {
     <div>
       <div className="os-rise" style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
         <div>
-          <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)' }}>{active.length} active {active.length === 1 ? 'contractor' : 'contractors'}</p>
-          <h1 className="jkos-h" style={{ fontSize: 'clamp(28px,6vw,40px)' }}>Your team</h1>
+          <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)' }}>{active.length} active crew {active.length === 1 ? 'member' : 'members'}</p>
+          <h1 className="jkos-h" style={{ fontSize: 'clamp(28px,6vw,40px)' }}>Your crew</h1>
         </div>
-        <button onClick={() => setAdding(a => !a)} className="btn os-tap" style={{ borderRadius: 999, height: 44 }}><UserPlus size={17} /> Add contractor</button>
+        <button onClick={() => setAdding(a => !a)} className="btn os-tap" style={{ borderRadius: 999, height: 44 }}><UserPlus size={17} /> Add crew member</button>
       </div>
 
       {msg && <div className="os-card" style={{ padding: '10px 14px', marginBottom: 16, fontSize: 13.5, color: '#fca5a5' }}>{msg}</div>}
@@ -79,7 +79,7 @@ function Hub() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>{[0, 1, 2].map(i => <div key={i} className="os-card" style={{ padding: 16, display: 'flex', gap: 13, alignItems: 'center' }}><div className="skeleton" style={{ width: 48, height: 48, borderRadius: 999 }} /><div style={{ flex: 1 }}><div className="skeleton" style={{ width: '40%', height: 15, borderRadius: 7 }} /><div className="skeleton" style={{ width: '25%', height: 11, borderRadius: 6, marginTop: 8 }} /></div></div>)}</div>
       ) : staff.length === 0 ? (
         <div className="os-card os-rise" style={{ padding: 34, textAlign: 'center' }}>
-          <p className="jkos-h" style={{ fontSize: 18 }}>No contractors yet</p>
+          <p className="jkos-h" style={{ fontSize: 18 }}>No crew yet</p>
           <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 6 }}>Add your crew to start assigning routes.</p>
         </div>
       ) : (
@@ -255,7 +255,7 @@ function PaySettings({ s, businesses, onChanged, setMsg }: { s: Staff; businesse
       const d = await res.json()
       if (!res.ok) { setErr(d.error || 'Could not save pay.'); return }
       const n = d.reprice?.updated?.length ?? 0
-      setMsg(n > 0 ? `Pay saved — ${n} upcoming route${n === 1 ? '' : 's'} re-priced.` : 'Pay settings saved.')
+      setMsg(n > 0 ? `Pay saved — ${n} upcoming route${n === 1 ? '' : 's'} re-priced.` : 'Compensation saved.')
       setEditing(false); setScope(false); onChanged()
     } catch { setErr('Network error.') } finally { setBusy(false) }
   }
@@ -273,7 +273,7 @@ function PaySettings({ s, businesses, onChanged, setMsg }: { s: Staff; businesse
     <div style={{ marginBottom: 14, padding: 13, borderRadius: 12, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: editing ? 12 : 8 }}>
         <Wallet size={14} style={{ color: 'var(--red-glow)' }} />
-        <div style={{ ...osLabel, flex: 1 }}>Pay settings</div>
+        <div style={{ ...osLabel, flex: 1 }}>Crew compensation</div>
         {!editing && <button onClick={() => setEditing(true)} className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Edit</button>}
       </div>
 
@@ -431,14 +431,14 @@ function EmployeeForm({ existing, onDone, onCancel }: { existing?: Staff; onDone
       const res = await fetch('/api/admin/staff', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ id: existing?.id, name, phone, role, photoUrl, active: existing ? existing.active : true }) })
       const d = await res.json()
       if (!res.ok) { setErr(d.error || 'Could not save.'); return }
-      onDone(existing ? undefined : `${name.trim()} added to your team.`)
+      onDone(existing ? undefined : `${name.trim()} added to your crew.`)
     } catch { setErr('Network error.') } finally { setSaving(false) }
   }
 
   const previewStaff: Staff = { id: 'x', name: name || '—', photoUrl: photoUrl || undefined, active: true }
   return (
     <div className={existing ? '' : 'os-card os-rise'} style={existing ? {} : { padding: 16, marginBottom: 16 }}>
-      {!existing && <p style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 12 }}>New contractor</p>}
+      {!existing && <p style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 12 }}>New crew member</p>}
       <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginBottom: 12 }}>
         <Avatar name={previewStaff.name} photoUrl={previewStaff.photoUrl} size={56} />
         <label style={{ ...btnSm, cursor: uploading ? 'wait' : 'pointer' }}>
@@ -469,7 +469,7 @@ function EmployeeForm({ existing, onDone, onCancel }: { existing?: Staff; onDone
       </div>
       {err && <p style={{ color: '#f87171', fontSize: 13, marginTop: 10 }}>{err}</p>}
       <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
-        <button onClick={save} disabled={saving || uploading} className="btn os-tap" style={{ borderRadius: 11, height: 40, flex: 1, justifyContent: 'center' }}>{saving ? 'Saving…' : existing ? 'Save changes' : 'Add contractor'}</button>
+        <button onClick={save} disabled={saving || uploading} className="btn os-tap" style={{ borderRadius: 11, height: 40, flex: 1, justifyContent: 'center' }}>{saving ? 'Saving…' : existing ? 'Save changes' : 'Add crew member'}</button>
         <button onClick={onCancel} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40 }}>Cancel</button>
       </div>
     </div>

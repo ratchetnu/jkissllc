@@ -6,12 +6,13 @@ import { useState } from 'react'
 import { useAdminSession } from '../useAdminSession'
 import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, Settings, LogOut, Search, Plus } from 'lucide-react'
 import CommandPalette from './CommandPalette'
+import LastLogin from './LastLogin'
 import { OpsPilotMark, OpsPilotWordmark } from '../../components/opspilot/OpsPilotMark'
 
 const NAV = [
   { href: '/admin/operations', label: 'Home', Icon: Home },
   { href: '/admin/operations/list', label: 'Operations', Icon: ClipboardList },
-  { href: '/admin/operations/employees', label: 'Employees', Icon: Users },
+  { href: '/admin/operations/employees', label: 'Crew', Icon: Users },
   { href: '/admin/operations/businesses', label: 'Businesses', Icon: Building2 },
   { href: '/admin/operations/equipment', label: 'Equipment', Icon: Truck },
   { href: '/admin/operations/claims', label: 'Claims', Icon: ShieldAlert },
@@ -25,7 +26,7 @@ const iStyle: React.CSSProperties = {
 }
 
 export default function OperationsShell({ children }: { children: React.ReactNode }) {
-  const { authed, checked, error, loading, login, signOut } = useAdminSession()
+  const { authed, checked, error, loading, login, signOut, lastLogin } = useAdminSession()
   const [password, setPassword] = useState('')
   const pathname = usePathname()
   const router = useRouter()
@@ -89,7 +90,10 @@ export default function OperationsShell({ children }: { children: React.ReactNod
         <LogOut size={14} /> Sign out
       </button>
 
-      <main style={{ maxWidth: 940, margin: '0 auto', padding: '64px 18px 132px' }}>{children}</main>
+      <main style={{ maxWidth: 940, margin: '0 auto', padding: '64px 18px 132px' }}>
+        <LastLogin record={lastLogin} />
+        {children}
+      </main>
 
       {/* Persistent create action — a "+" that follows you across every tab, sitting
           clear of both docks. Same destination as every "New assignment" button. */}

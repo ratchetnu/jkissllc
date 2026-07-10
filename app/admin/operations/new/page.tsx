@@ -449,7 +449,7 @@ function Builder() {
                           {bad ? 'Enter a positive dollar amount.'
                             : payVal.trim() ? 'Custom pay for this route only.'
                               : resolved != null ? `Their rate: ${money(resolved)}. Leave blank to use it.`
-                                : 'No pay rate set for them — add one in Employees, or type one here.'}
+                                : 'No pay rate set for them — add one in Crew, or type one here.'}
                         </p>
                       </div>
                     )

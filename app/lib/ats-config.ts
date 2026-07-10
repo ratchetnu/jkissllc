@@ -84,12 +84,12 @@ export const REQUIRED_DOCS: Record<Position, RequiredDoc[]> = {
   driver: [
     { kind: 'drivers_license', label: "Driver's License", help: 'Clear photo of the front. Must be valid and unexpired.' },
     { kind: 'ss_card', label: 'Social Security Card', help: 'Used for onboarding and payroll if hired.' },
-    { kind: 'headshot', label: 'Professional Headshot (white background)', help: 'Used for your employee badge — see the photo rules.' },
+    { kind: 'headshot', label: 'Professional Headshot (white background)', help: 'Used for your crew badge — see the photo rules.' },
   ],
   helper: [
     { kind: 'id', label: "State ID or Driver's License", help: 'Clear photo of the front of a valid, unexpired ID.' },
     { kind: 'ss_card', label: 'Social Security Card', help: 'Used for onboarding and payroll if hired.' },
-    { kind: 'headshot', label: 'Professional Headshot (white background)', help: 'Used for your employee badge — see the photo rules.' },
+    { kind: 'headshot', label: 'Professional Headshot (white background)', help: 'Used for your crew badge — see the photo rules.' },
   ],
 }
 

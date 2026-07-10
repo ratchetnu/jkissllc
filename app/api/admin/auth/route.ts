@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSessionToken, setSessionCookie } from '../_lib/session'
 import { redis } from '../../../lib/redis'
+import { recordLogin } from '../../../lib/admin-login-log'
 
 // Failed-login limiter: max 5 failed attempts per 15 minutes per IP.
 // Backed by Upstash Redis so the count is shared across all serverless
@@ -98,6 +99,10 @@ export async function POST(req: NextRequest) {
   }
 
   await clearFailures(ip)
+
+  // Stamp the login history for the "Last Login" signal. Best-effort: never let a
+  // Redis hiccup block a valid sign-in. Runs only here (real auth), never on refresh.
+  try { await recordLogin(req.headers.get('user-agent'), Date.now()) } catch { /* non-fatal */ }
 
   try {
     const token = await createSessionToken()

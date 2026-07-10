@@ -121,7 +121,7 @@ export default function CareersPage() {
             <div className="glass-card p-7" style={{ borderRadius: 18 }}>
               <div className="label mb-4" style={{ display: 'inline-block' }}>Badge Photo</div>
               <h3 className="text-lg font-black text-white mb-2">Headshot Requirements</h3>
-              <p className="text-xs mb-4" style={{ color: 'var(--muted)' }}>Your approved photo becomes your employee ID badge — treat it like a passport photo.</p>
+              <p className="text-xs mb-4" style={{ color: 'var(--muted)' }}>Your approved photo becomes your crew ID badge — treat it like a passport photo.</p>
               <ul className="space-y-2">
                 {HEADSHOT_GUIDELINES.map((g, i) => (
                   <li key={i} className="flex items-start gap-2.5 text-sm" style={{ color: 'var(--text)' }}>

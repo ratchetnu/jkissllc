@@ -197,7 +197,7 @@ function Review({ a, act, remove, busy, onBack }: {
 
       {/* badge headshot */}
       {headshot && (
-        <Section title="Employee badge headshot">
+        <Section title="Crew badge headshot">
           <div className="flex items-center gap-4 flex-wrap">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={headshot.url} alt="" style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 10, border: `2px solid ${a.badgeHeadshotUrl ? '#34d399' : 'var(--line)'}` }} />

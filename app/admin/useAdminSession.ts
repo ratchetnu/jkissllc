@@ -6,16 +6,19 @@ import { useIdleLogout } from './useIdleLogout'
 // Single source of truth for admin auth: session check, login, sign-out, and the
 // 10-minute idle logout. Used by AdminGate and OperationsShell so the flow lives
 // in one place.
+export type LoginRecord = { at: number; device: string | null }
+
 export function useAdminSession() {
   const [authed, setAuthed] = useState(false)
   const [checked, setChecked] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [lastLogin, setLastLogin] = useState<LoginRecord | null>(null)
 
   useEffect(() => {
     fetch('/api/admin/session')
       .then(r => r.json())
-      .then(d => setAuthed(!!d.authed))
+      .then(d => { setAuthed(!!d.authed); setLastLogin(d.lastLogin ?? null) })
       .catch(() => {})
       .finally(() => setChecked(true))
   }, [])
@@ -41,5 +44,5 @@ export function useAdminSession() {
 
   useIdleLogout(authed, signOut)
 
-  return { authed, checked, error, loading, login, signOut }
+  return { authed, checked, error, loading, login, signOut, lastLogin }
 }

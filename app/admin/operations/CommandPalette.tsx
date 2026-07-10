@@ -14,7 +14,7 @@ const ACTIONS: Item[] = [
   { id: 'a-new', label: 'New assignment', sub: 'Create a route', Icon: Plus, href: '/admin/operations/new', group: 'Actions' },
   { id: 'a-home', label: 'Home', Icon: Home, href: '/admin/operations', group: 'Go to' },
   { id: 'a-ops', label: 'Operations', Icon: ClipboardList, href: '/admin/operations/list', group: 'Go to' },
-  { id: 'a-emp', label: 'Employees', Icon: Users, href: '/admin/operations/employees', group: 'Go to' },
+  { id: 'a-emp', label: 'Crew', sub: 'Crew members & applicants', Icon: Users, href: '/admin/operations/employees', group: 'Go to' },
   { id: 'a-biz', label: 'Businesses', Icon: Building2, href: '/admin/operations/businesses', group: 'Go to' },
   { id: 'a-equip', label: 'Equipment', sub: 'Trucks & gear', Icon: Truck, href: '/admin/operations/equipment', group: 'Go to' },
   { id: 'a-set', label: 'Settings', Icon: Settings, href: '/admin/operations/settings', group: 'Go to' },
@@ -69,7 +69,7 @@ export default function CommandPalette() {
       for (const b of businesses.filter(b => b.toLowerCase().includes(query)).slice(0, 5))
         list.push({ id: `b-${b}`, label: b, sub: 'Business', Icon: Building2, href: '/admin/operations/businesses', group: 'Businesses' })
       for (const s of staff.filter(s => s.name.toLowerCase().includes(query)).slice(0, 5))
-        list.push({ id: `s-${s.id}`, label: s.name, sub: s.role || 'Contractor', Icon: User, href: '/admin/operations/employees', group: 'Employees' })
+        list.push({ id: `s-${s.id}`, label: s.name, sub: s.role || 'Contractor', Icon: User, href: '/admin/operations/employees', group: 'Crew' })
       for (const o of ops.filter(o => o.businessName.toLowerCase().includes(query) || o.routeNumber.toLowerCase().includes(query) || (o.assignedStaffName || '').toLowerCase().includes(query)).slice(0, 8))
         list.push({ id: `o-${o.token}`, label: `${o.businessName} · ${o.routeNumber}`, sub: `${fmtDay(o.routeDate)} · ${o.reportTime}${o.assignedStaffName ? ` · ${o.assignedStaffName}` : ''}`, Icon: Briefcase, href: `/admin/operations/${o.token}`, group: 'Operations' })
     }
@@ -94,7 +94,7 @@ export default function CommandPalette() {
       <div onMouseDown={e => e.stopPropagation()} className="os-rise" style={{ width: '100%', maxWidth: 560, borderRadius: 18, overflow: 'hidden', background: 'rgba(18,18,20,0.99)', border: '1px solid rgba(255,255,255,.14)', boxShadow: '0 24px 70px rgba(0,0,0,.6)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '14px 16px', borderBottom: '1px solid var(--line)' }}>
           <Search size={19} style={{ color: 'var(--muted)' }} />
-          <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={onKeyDown} placeholder="Search operations, employees, businesses…"
+          <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={onKeyDown} placeholder="Search operations, crew, businesses…"
             style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 16 }} />
           <kbd style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', border: '1px solid var(--line)', borderRadius: 6, padding: '2px 6px' }}>esc</kbd>
         </div>

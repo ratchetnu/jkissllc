@@ -439,7 +439,7 @@ function ScheduleEditor({ mode, biz, tmpl, staff, onDone, onCancel, setMsg }: {
         </div>
       )}
       {days.size > 0 && staff.length === 0 && (
-        <p style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 12 }}>No active crew yet — add crew under Employees, then assign them here.</p>
+        <p style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 12 }}>No active crew yet — add crew under Crew, then assign them here.</p>
       )}
 
       {err && <p style={{ color: '#f87171', fontSize: 12.5, marginBottom: 10 }}>{err}</p>}
