@@ -46,6 +46,17 @@ export type Staff = {
   payActive?: boolean                      // false = don't auto-apply their rate
   payHistory?: PayHistoryEntry[]
 
+  // ── Year-end / 1099 (Part 6) ──
+  // W-9 collection status for 1099 readiness. We deliberately do NOT store the full
+  // TIN (SSN/EIN) — only whether it's on file + the last 4, which is enough for a
+  // readiness/missing-info view without holding sensitive PII. Admin-managed.
+  w9?: {
+    status: 'not_collected' | 'on_file' | 'verified'
+    addressComplete?: boolean
+    tinLast4?: string
+    collectedAt?: number
+  }
+
   // ── Timeclock ──
   // Whether this crew member clocks in/out on their route link. Undefined = on
   // (the default): the owner opts specific people OUT (e.g. salaried staff, or a

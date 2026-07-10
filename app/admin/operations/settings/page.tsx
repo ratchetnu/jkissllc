@@ -13,6 +13,7 @@ const TOOL_GROUPS: { label: string; items: { href: string; label: string; Icon: 
     { href: '/admin/routes', label: 'Dispatch board', Icon: ClipboardList },
     { href: '/admin/operations/finance', label: 'Money', Icon: Wallet },
     { href: '/admin/routes/pay', label: 'Contractor Pay', Icon: DollarSign },
+    { href: '/admin/operations/pay-statements', label: 'Pay Statements', Icon: FileText },
     { href: '/admin/routes/invoices', label: 'Client Invoices', Icon: FileText },
   ] },
   { label: 'Customers', items: [

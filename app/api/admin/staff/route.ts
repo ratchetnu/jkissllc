@@ -6,6 +6,22 @@ import { parseMoneyCents } from '../../../lib/finance'
 import { repriceCrewRoutes, repriceCandidates, isApplyTo, type ApplyTo } from '../../../lib/route-reprice'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
+
+// Merge a W-9 patch (1099 readiness). Absent = keep existing. We store only the
+// last 4 of the TIN — never the full SSN/EIN.
+const W9_STATUSES = ['not_collected', 'on_file', 'verified'] as const
+function parseW9(patch: unknown, existing: Staff['w9']): Staff['w9'] {
+  if (!patch || typeof patch !== 'object') return existing
+  const p = patch as Record<string, unknown>
+  const status = (W9_STATUSES as readonly string[]).includes(String(p.status)) ? p.status as NonNullable<Staff['w9']>['status'] : (existing?.status ?? 'not_collected')
+  const tinRaw = typeof p.tinLast4 === 'string' ? p.tinLast4.replace(/\D/g, '').slice(-4) : undefined
+  return {
+    status,
+    addressComplete: typeof p.addressComplete === 'boolean' ? p.addressComplete : existing?.addressComplete,
+    tinLast4: tinRaw !== undefined ? (tinRaw || undefined) : existing?.tinLast4,
+    collectedAt: status !== 'not_collected' ? (existing?.collectedAt ?? Date.now()) : existing?.collectedAt,
+  }
+}
 const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s)
 const PAY_KINDS: PayKind[] = ['driver', 'helper', 'contractor', 'employee']
 const isPayKind = (v: unknown): v is PayKind => typeof v === 'string' && (PAY_KINDS as string[]).includes(v)
@@ -107,6 +123,11 @@ export async function POST(req: NextRequest) {
     payEffectiveDate,
     payActive,
     payHistory: payHistory.length ? payHistory : undefined,
+    // Preserve fields the edit form doesn't carry (were silently dropped before).
+    email: existing?.email,
+    applicantId: existing?.applicantId,
+    onboarding: existing?.onboarding,
+    w9: parseW9(body.w9, existing?.w9),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   }

@@ -10,6 +10,7 @@ import ApplyScope from '../ApplyScope'
 import CrewClaims from '../claims/CrewClaims'
 import { computeCrewComp, type CrewCompSummary } from '../../../lib/crew-comp'
 import { buildCrewScore, type CrewScore } from '../../../lib/crew-score'
+import { computeTaxReadiness, w9StatusLabel } from '../../../lib/tax-readiness'
 import { mondayOf } from '../../../lib/dates'
 
 type PayKind = 'driver' | 'helper' | 'contractor' | 'employee'
@@ -19,6 +20,7 @@ type Staff = {
   payKind?: PayKind; defaultPayCents?: number; payByBusiness?: Record<string, number>
   payNotes?: string; payEffectiveDate?: string; payActive?: boolean; payHistory?: PayHistoryEntry[]
   usesTimeclock?: boolean
+  w9?: { status: 'not_collected' | 'on_file' | 'verified'; addressComplete?: boolean; tinLast4?: string; collectedAt?: number }
 }
 type CStats = { score: number | null; assignments: number; confirmed: number; completed: number; declined: number; noResponse: number; noShow: number }
 type RouteLite = { routeNumber: string; assignedStaffId?: string; businessName: string; status: string; routeDate: string; reportTime: string; assignees?: { staffId: string; payCents?: number; role?: string }[] }
@@ -42,6 +44,7 @@ function Hub() {
   const [applicantsToReview, setApplicantsToReview] = useState(0)
   const [timeOffPending, setTimeOffPending] = useState(0)
   const [signals, setSignals] = useState<Record<string, { availabilityWeeksSubmitted: number; availabilityWeeksExpected: number; incidents: number }>>({})
+  const [isAdmin, setIsAdmin] = useState(false) // 1099/tax info is admin-only (tax:view)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -69,6 +72,11 @@ function Hub() {
     fetch('/api/admin/crew-signals', { credentials: 'same-origin' })
       .then(x => x.json())
       .then(d => { if (d.signals) setSignals(d.signals) })
+      .catch(() => {})
+    // Role — the 1099/tax card is admin-only.
+    fetch('/api/admin/session', { credentials: 'same-origin' })
+      .then(x => x.json())
+      .then(d => setIsAdmin(d.role === 'admin'))
       .catch(() => {})
   }, [])
   useEffect(() => { load() }, [load])
@@ -142,16 +150,16 @@ function Hub() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {active.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} scoreData={scores[s.id]} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
+          {active.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} scoreData={scores[s.id]} isAdmin={isAdmin} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
           {inactive.length > 0 && <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)', margin: '14px 0 2px' }}>Inactive</div>}
-          {inactive.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} scoreData={scores[s.id]} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
+          {inactive.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} scoreData={scores[s.id]} isAdmin={isAdmin} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
         </div>
       )}
     </div>
   )
 }
 
-function EmployeeCard({ s, st, scoreData, businesses, upcoming, comp, open, onToggle, onOpen, onChanged, setMsg, delay }: { s: Staff; st?: CStats; scoreData?: CrewScore; businesses: string[]; upcoming: RouteLite[]; comp?: CrewCompSummary; open: boolean; onToggle: () => void; onOpen: () => void; onChanged: () => void; setMsg: (m: string) => void; delay: number }) {
+function EmployeeCard({ s, st, scoreData, isAdmin, businesses, upcoming, comp, open, onToggle, onOpen, onChanged, setMsg, delay }: { s: Staff; st?: CStats; scoreData?: CrewScore; isAdmin?: boolean; businesses: string[]; upcoming: RouteLite[]; comp?: CrewCompSummary; open: boolean; onToggle: () => void; onOpen: () => void; onChanged: () => void; setMsg: (m: string) => void; delay: number }) {
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
   // Collapsing the card drops edit mode too, so reopening it shows the detail view
@@ -202,6 +210,8 @@ function EmployeeCard({ s, st, scoreData, businesses, upcoming, comp, open, onTo
               <PaySettings s={s} businesses={businesses} onChanged={onChanged} setMsg={setMsg} />
 
               {comp && <CrewEarnings comp={comp} s={s} />}
+
+              {isAdmin && <Tax1099Card s={s} ytdGrossCents={comp?.ytdEarningsCents ?? 0} onChanged={onChanged} />}
 
               {scoreData && <CrewScoreCard data={scoreData} />}
 
@@ -287,6 +297,57 @@ function CrewScoreCard({ data }: { data: CrewScore }) {
         ))}
       </div>
       <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 10 }}>Visible to admins &amp; managers only — never shown to crew. Scheduling aid, not a guarantee.</p>
+    </div>
+  )
+}
+
+// Year-End 1099 Readiness (Part 6) — admin only (tax:view). READ-ONLY assessment:
+// YTD earnings, whether they cross the $600 threshold, estimated 1099 amount, W-9
+// status + missing info. We never generate a tax form. W-9 status is admin-editable
+// here (persisted on the staff record; only the TIN's last 4 is stored).
+function Tax1099Card({ s, ytdGrossCents, onChanged }: { s: Staff; ytdGrossCents: number; onChanged: () => void }) {
+  const r = computeTaxReadiness(s.w9, ytdGrossCents)
+  const [busy, setBusy] = useState(false)
+  const [tin, setTin] = useState(s.w9?.tinLast4 ?? '')
+
+  async function saveW9(patch: Record<string, unknown>) {
+    setBusy(true)
+    try {
+      await fetch('/api/admin/staff', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ id: s.id, name: s.name, active: s.active, w9: { ...s.w9, ...patch } }),
+      })
+      onChanged()
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{ marginBottom: 16, padding: 14, borderRadius: 14, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+      <div style={{ ...osLabel, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 7 }}><FileText size={13} /> Year-end 1099 · admin only</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))', gap: 8, marginBottom: 12 }}>
+        <MoneyTile label="YTD earnings" value={money(r.ytdEarningsCents)} />
+        <MoneyTile label="Est. 1099" value={r.reachesThreshold ? money(r.estimated1099Cents) : '—'} tone={r.reachesThreshold ? '#fcd34d' : undefined} />
+        <MoneyTile label="Status" value={r.ready ? 'Ready' : 'Incomplete'} tone={r.ready ? '#86efac' : '#fca5a5'} />
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: r.missing.length ? 10 : 0 }}>
+        <select value={r.w9Status} onChange={e => saveW9({ status: e.target.value })} disabled={busy}
+          style={{ padding: '7px 10px', fontSize: 12.5, borderRadius: 9, background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', color: 'var(--text)', cursor: 'pointer' }}>
+          {(['not_collected', 'on_file', 'verified'] as const).map(v => <option key={v} value={v}>W-9: {w9StatusLabel[v]}</option>)}
+        </select>
+        <button onClick={() => saveW9({ addressComplete: !s.w9?.addressComplete })} disabled={busy} className="os-tap"
+          style={{ padding: '7px 11px', fontSize: 12, fontWeight: 700, borderRadius: 9, cursor: 'pointer', border: '1px solid var(--line)', background: 'rgba(255,255,255,.05)', color: s.w9?.addressComplete ? '#86efac' : 'var(--muted)' }}>
+          {s.w9?.addressComplete ? '✓ Address on file' : 'Address incomplete'}
+        </button>
+        <input value={tin} onChange={e => setTin(e.target.value.replace(/\D/g, '').slice(0, 4))} onBlur={() => tin !== (s.w9?.tinLast4 ?? '') && saveW9({ tinLast4: tin })}
+          placeholder="TIN ••••" maxLength={4} inputMode="numeric"
+          style={{ width: 92, padding: '7px 10px', fontSize: 12.5, borderRadius: 9, background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', color: 'var(--text)', outline: 'none' }} />
+      </div>
+      {r.missing.length > 0 && (
+        <p style={{ fontSize: 12, color: r.reachesThreshold ? '#fca5a5' : 'var(--muted)' }}>
+          Missing: {r.missing.join(' · ')}{!r.reachesThreshold && ' (under $600 — no 1099 required yet)'}
+        </p>
+      )}
+      <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8 }}>Readiness only — no tax form is generated.</p>
     </div>
   )
 }
