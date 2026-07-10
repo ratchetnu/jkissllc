@@ -28,6 +28,13 @@ Legend: 🟢 shipped · 🟡 next · 🔵 later · ⚫ needs infra decision
   crew profile. Truthful (no fabricated paid/outstanding). *Remaining:* pay-structure
   expansion (hourly/percentage/mileage) + a crew-payout settlement record for true
   Paid/Outstanding — see the Compensation section below.
+- **Operations grouped by Business (§6)** — `lib/ops-groups.ts` aggregates routes into
+  per-business cards (counts / next route / upcoming value / crew / attention alerts;
+  one-time customers separated). Operations tab defaults to the grouped view (toggle to
+  the flat list; `?filter=` deep-links still open the flat list). New per-business
+  operations page `/admin/operations/business/[key]` with Today/Tomorrow/Upcoming/
+  Confirmed/Pending/Active/Completed/Cancelled/Claims tabs + search. *Remaining:*
+  calendar view (the one net-new UI).
 - **Crew Applicant Portal core** — surfaced the existing ATS inside Crew (sub-nav
   Directory | Applicants + waiting-review badge); added statuses
   (information_requested / withdrawn / archived) + requested vocabulary; applicant
