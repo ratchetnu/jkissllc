@@ -14,6 +14,7 @@
 // who the crew were, AT CLAIM TIME. Re-pricing a business or re-crewing a route
 // later must never rewrite a claim's history. Same philosophy as RouteFinancials.
 import { redis } from './redis'
+import type { ClaimType, ClaimDirection } from './claim-types'
 import { addDaysStr, centralToday, isDateStr, mondayOf } from './dates'
 import { bizKey, type Business } from './businesses'
 import { computeRouteMoney } from './finance'
@@ -40,41 +41,12 @@ export const CLAIM_STATUS_LABEL: Record<ClaimStatus, string> = {
 const TERMINAL: ClaimStatus[] = ['closed', 'waived']
 export const isTerminal = (s: ClaimStatus): boolean => TERMINAL.includes(s)
 
-export type ClaimType =
-  // INBOUND — someone says our crew/service caused a loss; we may recover from crew.
-  | 'property_damage' | 'vehicle_damage' | 'cargo_damage' | 'lost_item'
-  | 'injury' | 'service_failure'
-  // OUTBOUND — a broker/platform/customer shorted US; we dispute to recover from them.
-  | 'chargeback' | 'unfair_deduction' | 'detention' | 'accessorial_dispute'
-  | 'late_delivery' | 'non_payment'
-  | 'other'
-
-export const CLAIM_TYPE_LABEL: Record<ClaimType, string> = {
-  property_damage: 'Property Damage',
-  vehicle_damage: 'Vehicle Damage',
-  cargo_damage: 'Cargo Damage',
-  lost_item: 'Lost / Missing Item',
-  injury: 'Injury',
-  service_failure: 'Service Failure',
-  chargeback: 'Chargeback',
-  unfair_deduction: 'Unfair Deduction',
-  detention: 'Detention',
-  accessorial_dispute: 'Accessorial Dispute',
-  late_delivery: 'Late Delivery',
-  non_payment: 'Non-Payment',
-  other: 'Other',
-}
-
-// A claim's DIRECTION is a property of its type, not a separate stored field — a
-// chargeback is always something WE dispute (outbound); property damage is always
-// something claimed against US (inbound). Inbound claims recover from the crew;
-// outbound claims are disputes we send to a broker/platform (→ ClaimGuard tools).
-export type ClaimDirection = 'inbound' | 'outbound'
-const OUTBOUND_TYPES: readonly ClaimType[] = [
-  'chargeback', 'unfair_deduction', 'detention', 'accessorial_dispute', 'late_delivery', 'non_payment',
-]
-export const directionOf = (t: ClaimType): ClaimDirection =>
-  OUTBOUND_TYPES.includes(t) ? 'outbound' : 'inbound'
+// Claim taxonomy + direction now live in the pure leaf module lib/claim-types.ts
+// (no I/O), so the client-side ClaimGuard Assist engine can share the exact same
+// source without importing this server module. Re-exported here so existing
+// `from './claims'` imports keep working unchanged.
+export type { ClaimType, ClaimDirection } from './claim-types'
+export { CLAIM_TYPES, CLAIM_TYPE_LABEL, OUTBOUND_TYPES, directionOf } from './claim-types'
 
 export type ResponsibilityStatus = 'pending' | 'active' | 'paused' | 'completed' | 'waived'
 

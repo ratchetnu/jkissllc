@@ -6,6 +6,7 @@ import { COMPANY } from '../../../lib/company'
 import Link from 'next/link'
 import { Building2, ClipboardList, MapPin, CalendarClock, Users, CheckCircle2, ChevronLeft, Send, Sparkles, Truck, Phone, Lock, User } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
+import { invalidateOps } from '../useOps'
 import { ymd, fmtLongDay, scoreColor, DOW, weekdaysLabel, Avatar, MoneyInput, money, moneyOrDash, profitColor, centsToInput, looksLikeMoney } from '../ui'
 
 const VEHICLE = 'Box truck' // J KISS is box-truck only — never asked, always this.
@@ -217,6 +218,7 @@ function Builder() {
         // Generate the next 2 weeks now so routes appear immediately.
         let generated = 0
         try { const g = await fetch(`/api/admin/route-templates/${d.template.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ action: 'generate', horizonDays: 14 }) }).then(r => r.json()); generated = g.created?.length || 0 } catch { /* cron will still generate */ }
+        invalidateOps() // new contract's routes show on Home/List immediately
         setDone({ recurring: true, generated, schedule: weekdaysLabel(weekdays) })
         return
       }
@@ -244,6 +246,7 @@ function Builder() {
       }
 
       if (!res.ok) { setError(d.error || 'Could not create the assignment.'); return }
+      invalidateOps() // new route shows on Home/List immediately
       setDone({ routeNumber: d.route?.routeNumber || '', token: d.route?.token, assigned: crew.length > 0 })
     } catch { setError('Network error — please try again.') } finally { setSubmitting(false) }
   }

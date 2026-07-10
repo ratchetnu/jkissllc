@@ -168,6 +168,16 @@ export function snapshotCrewPay(
   // No rate anywhere → leave payCents undefined; the route shows as "unpriced crew".
 }
 
+// Remove a crew member's pay from this route entirely (manual override or resolved
+// snapshot), returning them to "unpriced" until a new amount is entered. Unlike
+// snapshotCrewPay with no manualCents — which no-ops when nothing resolves — this
+// unconditionally clears, so the Money editor can un-set a pay that was set by mistake.
+export function clearCrewPay(a: Assignee): void {
+  a.payCents = undefined
+  a.paySource = undefined
+  a.pay = undefined
+}
+
 // A route whose money is settled history. Re-pricing these is never automatic.
 const FROZEN: RouteStatus[] = ['completed', 'cancelled']
 export const isFrozen = (r: Pick<RouteRecord, 'status'>): boolean => FROZEN.includes(r.status)

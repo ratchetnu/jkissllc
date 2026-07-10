@@ -63,9 +63,9 @@ function Hub() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {active.map((e, i) => <EquipmentCard key={e.id} e={e} crewNames={crewNames} open={openId === e.id} onToggle={() => setOpenId(o => o === e.id ? '' : e.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
+          {active.map((e, i) => <EquipmentCard key={e.id} e={e} crewNames={crewNames} open={openId === e.id} onToggle={() => setOpenId(o => o === e.id ? '' : e.id)} onOpen={() => setOpenId(e.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
           {inactive.length > 0 && <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)', margin: '14px 0 2px' }}>Out of service</div>}
-          {inactive.map((e, i) => <EquipmentCard key={e.id} e={e} crewNames={crewNames} open={openId === e.id} onToggle={() => setOpenId(o => o === e.id ? '' : e.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
+          {inactive.map((e, i) => <EquipmentCard key={e.id} e={e} crewNames={crewNames} open={openId === e.id} onToggle={() => setOpenId(o => o === e.id ? '' : e.id)} onOpen={() => setOpenId(e.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
         </div>
       )}
     </div>
@@ -81,7 +81,7 @@ function OwnerBadge({ e }: { e: Equipment }) {
   )
 }
 
-function EquipmentCard({ e, crewNames, open, onToggle, onChanged, setMsg, delay }: { e: Equipment; crewNames: string[]; open: boolean; onToggle: () => void; onChanged: () => void; setMsg: (m: string) => void; delay: number }) {
+function EquipmentCard({ e, crewNames, open, onToggle, onOpen, onChanged, setMsg, delay }: { e: Equipment; crewNames: string[]; open: boolean; onToggle: () => void; onOpen: () => void; onChanged: () => void; setMsg: (m: string) => void; delay: number }) {
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -104,7 +104,7 @@ function EquipmentCard({ e, crewNames, open, onToggle, onChanged, setMsg, delay 
           </div>
           {e.truckType && <div style={{ marginTop: 4, fontSize: 12.5, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.truckType}</div>}
         </div>
-        <button onClick={ev => { ev.stopPropagation(); onToggle(); setEditing(true) }} aria-label={`Edit ${e.name}`} className="os-tap"
+        <button onClick={ev => { ev.stopPropagation(); onOpen(); setEditing(true) }} aria-label={`Edit ${e.name}`} className="os-tap"
           style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 10, background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', color: 'var(--muted)', cursor: 'pointer', flexShrink: 0 }}>
           <Pencil size={15} />
         </button>

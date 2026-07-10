@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { MapPin, Clock, CalendarDays, Truck, User, FileText, ChevronLeft, Send, CheckCircle2, XCircle, Link2, Plus, X, Lock, ShieldAlert } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
+import { invalidateOps } from '../useOps'
 import { statusOf, Avatar, scoreColor, fmtLongDay, fmtTs, mapsUrl, money, moneyOrDash, profitColor, MoneyInput, centsToInput, looksLikeMoney, osLabel, ClaimChip } from '../ui'
 import NewClaim from '../claims/NewClaim'
 import { useClaims } from '../claims/useClaims'
@@ -90,6 +91,7 @@ function Detail({ token }: { token: string }) {
       if (!res.ok) setMsg(d.error || 'Action failed.')
       else if (d.smsWarning) setMsg(`Text not sent: ${d.smsWarning}`)
       else flashOk(okFor(String(body.action ?? '')))
+      if (res.ok) invalidateOps() // Home/List show fresh state on return
       setReassigning(false); await load()
     } catch { setMsg('Network error.') } finally { setBusy('') }
   }
@@ -137,8 +139,10 @@ function Detail({ token }: { token: string }) {
         if (!res.ok) failed++
       } catch { failed++ }
     }
+    invalidateOps() // Home/List show fresh state on return
     await load()
     if (failed) setMsg(`Confirmed ${pending.length - failed} of ${pending.length}. Try the rest from each crew member's ✓.`)
+    else flashOk(pending.length === 1 ? 'Route confirmed.' : `All ${pending.length} crew confirmed.`)
     setBusy('')
   }
 
@@ -356,7 +360,14 @@ function RouteMoney({ op, onPatch, busy }: { op: Op; onPatch: (b: Record<string,
     if (invalid) { setErr('Amounts must be positive dollar values.'); return }
     if (!price.trim()) { setErr('Enter what this route charges the client.'); return }
     setErr('')
-    const crewPay = Object.entries(pays).filter(([, v]) => v.trim()).map(([staffId, pay]) => ({ staffId, pay }))
+    // A filled field sets the pay; blanking a field that HAD a pay clears it
+    // (server unsets it); a field that was already empty stays a no-op.
+    const crewPay = (op.assignees ?? []).map(a => {
+      const v = (pays[a.staffId] ?? '').trim()
+      if (v) return { staffId: a.staffId, pay: v }
+      if (a.payCents != null) return { staffId: a.staffId, clear: true }
+      return null
+    }).filter(Boolean)
     await onPatch({ action: 'money', businessPrice: price.trim(), crewPay }, 'money')
     setEditing(false)
   }

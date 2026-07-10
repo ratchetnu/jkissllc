@@ -13,16 +13,13 @@
 //              respond and rebut before we accept liability.
 //   outbound — a broker/platform/customer shorted US. ClaimGuard helps us demand
 //              and recover.
-// Type-only import — this module renders inside a client component, so it must not
-// pull the server-side claims.ts runtime graph (redis/finance/routes) into the
-// browser bundle. Direction is derived locally; claim-assist.test.ts asserts it
-// stays in sync with claims.directionOf.
-import type { ClaimType, ClaimDirection } from './claims'
-
-const OUTBOUND: readonly ClaimType[] = [
-  'chargeback', 'unfair_deduction', 'detention', 'accessorial_dispute', 'late_delivery', 'non_payment',
-]
-const localDirection = (t: ClaimType): ClaimDirection => OUTBOUND.includes(t) ? 'outbound' : 'inbound'
+// Direction + types come from the pure leaf module lib/claim-types.ts (no I/O), so
+// this client component shares the exact same source of truth as the server claims
+// core WITHOUT pulling claims.ts's runtime graph (redis/finance/routes) into the
+// browser bundle. scripts/claim-assist.test.ts guards that every type has a playbook
+// whose direction matches directionOf.
+import type { ClaimType, ClaimDirection } from './claim-types'
+import { directionOf } from './claim-types'
 
 export const CLAIMGUARD_BASE = 'https://claimguardhelp.com'
 export const claimGuardUrl = (path: string): string => `${CLAIMGUARD_BASE}${path}`
@@ -138,5 +135,5 @@ const PLAYBOOKS: Record<ClaimType, Play> = {
 
 export function recommendForClaim(claim: { claimType: ClaimType }): ClaimPlaybook {
   const play = PLAYBOOKS[claim.claimType] ?? PLAYBOOKS.other
-  return { direction: localDirection(claim.claimType), ...play }
+  return { direction: directionOf(claim.claimType), ...play }
 }

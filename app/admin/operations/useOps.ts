@@ -14,6 +14,15 @@ type Data = { items: unknown[]; stats: OpsStats }
 let cache: { at: number; data: Data } | null = null
 let inflight: Promise<Data> | null = null
 
+// Drop the shared cache after a mutation (route create/edit/status/crew/money)
+// so Home and List re-fetch fresh state instead of reading a ≤10s-stale copy.
+// Pages that mutate routes outside useOps (the wizard, the route detail) call
+// this on success; the next useOps mount/reload then pulls live data.
+export function invalidateOps(): void {
+  cache = null
+  inflight = null
+}
+
 async function fetchOps(force = false): Promise<Data> {
   if (!force && cache && Date.now() - cache.at < 10_000) return cache.data
   if (inflight) return inflight

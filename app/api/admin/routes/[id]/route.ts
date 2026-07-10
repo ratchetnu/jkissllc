@@ -8,7 +8,7 @@ import {
 import { addCrew, removeCrew, sendAssignmentText } from '../../../../lib/route-notify'
 import { listStaff } from '../../../../lib/staff'
 import {
-  parseMoneyCents, snapshotManualPrice, snapshotCrewPay, computeRouteMoney,
+  parseMoneyCents, snapshotManualPrice, snapshotCrewPay, clearCrewPay, computeRouteMoney,
   payExceedsPrice, fmtCents, isFrozen,
 } from '../../../../lib/finance'
 
@@ -62,6 +62,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         const sid = S(o.staffId, 80)
         const a = (route.assignees ?? []).find(x => x.staffId === sid)
         if (!a) continue
+        if (o.clear === true) {
+          clearCrewPay(a)
+          pushAudit(route, 'admin', `${a.name}'s pay cleared`)
+          continue
+        }
         const cents = parseMoneyCents(o.pay)
         if (cents == null) return NextResponse.json({ error: `Pay for ${a.name} must be a positive dollar amount.` }, { status: 400 })
         snapshotCrewPay(a, undefined, route.businessName, cents)
