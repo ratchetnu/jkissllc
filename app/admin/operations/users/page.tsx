@@ -31,7 +31,7 @@ function TeamAccess() {
   const [busy, setBusy] = useState(false)
 
   // Create form
-  const [mode, setMode] = useState<'manager' | 'crew'>('manager')
+  const [mode, setMode] = useState<'admin' | 'manager' | 'crew'>('manager')
   const [fName, setFName] = useState('')
   const [fEmail, setFEmail] = useState('')
   const [fPass, setFPass] = useState('')
@@ -67,7 +67,7 @@ function TeamAccess() {
     try {
       const payload = mode === 'crew'
         ? { role: 'crew', name: fName, email: fEmail, password: fPass, staffId: fStaffId }
-        : { role: 'manager', name: fName, email: fEmail, password: fPass }
+        : { role: mode, name: fName, email: fEmail, password: fPass } // 'admin' | 'manager'
       const res = await fetch('/api/admin/users', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin', body: JSON.stringify(payload),
@@ -132,12 +132,12 @@ function TeamAccess() {
 
       {/* Create */}
       <div className="os-card os-rise" style={{ padding: 22 }}>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-          {(['manager', 'crew'] as const).map(m => (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+          {(['admin', 'manager', 'crew'] as const).map(m => (
             <button key={m} onClick={() => setMode(m)} className="os-tap"
               style={{ padding: '8px 16px', borderRadius: 10, fontSize: 13.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--line)',
                 color: mode === m ? '#fff' : 'var(--muted)', background: mode === m ? 'var(--red)' : 'transparent' }}>
-              {m === 'manager' ? 'Invite manager' : 'Create crew login'}
+              {m === 'admin' ? 'Invite admin' : m === 'manager' ? 'Invite manager' : 'Create crew login'}
             </button>
           ))}
         </div>
@@ -169,7 +169,7 @@ function TeamAccess() {
             <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 6 }}>Share this with them securely. They sign in at {mode === 'crew' ? 'the crew portal (/portal)' : 'the operations login'}.</p>
           </div>
           <button type="submit" disabled={busy} className="btn os-tap" style={{ justifyContent: 'center', borderRadius: 12, height: 46, gap: 8 }}>
-            {savedId ? <><Check size={17} /> Created</> : <><UserPlus size={17} /> {mode === 'crew' ? 'Create crew login' : 'Invite manager'}</>}
+            {savedId ? <><Check size={17} /> Created</> : <><UserPlus size={17} /> {mode === 'crew' ? 'Create crew login' : mode === 'admin' ? 'Invite admin' : 'Invite manager'}</>}
           </button>
         </form>
       </div>
