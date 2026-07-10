@@ -2,13 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Search, Plus, Home, ClipboardList, Users, Building2, Truck, Settings, ArrowRight, User, Briefcase, Rocket } from 'lucide-react'
+import { Search, Plus, Home, ClipboardList, Users, Building2, Truck, Settings, ArrowRight, User, Briefcase, Rocket, Sparkles } from 'lucide-react'
 import { fmtDay } from './ui'
 
 type Op = { token: string; routeNumber: string; businessName: string; status: string; routeDate: string; reportTime: string; assignedStaffName?: string }
 type Staff = { id: string; name: string; role?: string; active: boolean }
 
-type Item = { id: string; label: string; sub?: string; Icon: typeof Search; href: string; group: string }
+type Item = { id: string; label: string; sub?: string; Icon: typeof Search; href: string; group: string; ai?: boolean }
 
 const ACTIONS: Item[] = [
   { id: 'a-new', label: 'New assignment', sub: 'Create a route', Icon: Plus, href: '/admin/operations/new', group: 'Actions' },
@@ -28,6 +28,9 @@ export default function CommandPalette() {
   const [active, setActive] = useState(0)
   const [ops, setOps] = useState<Op[]>([])
   const [staff, setStaff] = useState<Staff[]>([])
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiAnswer, setAiAnswer] = useState<string | null>(null)
+  const [aiError, setAiError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // Global ⌘K / Ctrl+K.
@@ -56,7 +59,9 @@ export default function CommandPalette() {
       setOps(r.items || []); setStaff(s.items || [])
     } catch { /* ignore */ }
   }, [])
-  useEffect(() => { if (open) { load(); setQ(''); setActive(0); setTimeout(() => inputRef.current?.focus(), 30) } }, [open, load])
+  useEffect(() => { if (open) { load(); setQ(''); setActive(0); setAiAnswer(null); setAiError(null); setAiBusy(false); setTimeout(() => inputRef.current?.focus(), 30) } }, [open, load])
+  // Typing a new query clears any prior AI answer/error.
+  useEffect(() => { setAiAnswer(null); setAiError(null) }, [q])
 
   const businesses = useMemo(() => [...new Set(ops.map(o => o.businessName).filter(Boolean))], [ops])
 
@@ -72,13 +77,37 @@ export default function CommandPalette() {
         list.push({ id: `s-${s.id}`, label: s.name, sub: s.role || 'Contractor', Icon: User, href: '/admin/operations/employees', group: 'Crew' })
       for (const o of ops.filter(o => o.businessName.toLowerCase().includes(query) || o.routeNumber.toLowerCase().includes(query) || (o.assignedStaffName || '').toLowerCase().includes(query)).slice(0, 8))
         list.push({ id: `o-${o.token}`, label: `${o.businessName} · ${o.routeNumber}`, sub: `${fmtDay(o.routeDate)} · ${o.reportTime}${o.assignedStaffName ? ` · ${o.assignedStaffName}` : ''}`, Icon: Briefcase, href: `/admin/operations/${o.token}`, group: 'Operations' })
+      // Natural-language fallback — always offered so you can just describe what you
+      // want ("show tomorrow's routes", "open unresolved claims") and let AI route it.
+      list.push({ id: 'ai-ask', label: 'Ask OpsPilot AI', sub: q.trim(), Icon: Sparkles, href: '', group: 'OpsPilot AI', ai: true })
     }
     return list
   }, [q, ops, staff, businesses])
 
   useEffect(() => { if (active >= items.length) setActive(Math.max(0, items.length - 1)) }, [items, active])
 
-  function go(item?: Item) { const t = item || items[active]; if (!t) return; setOpen(false); router.push(t.href) }
+  const askAi = useCallback(async (query: string) => {
+    if (!query || aiBusy) return
+    setAiBusy(true); setAiAnswer(null); setAiError(null)
+    try {
+      const res = await fetch('/api/admin/ai/command', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ query }),
+      })
+      const d = await res.json()
+      if (!res.ok) { setAiError(d.error || 'AI is unavailable right now.'); return }
+      if (d.kind === 'navigate' && d.href) { setOpen(false); router.push(d.href); return }
+      if (d.kind === 'answer') { setAiAnswer(d.answer || '—'); return }
+      setAiError('Couldn’t work that out — try rephrasing.')
+    } catch { setAiError('AI request failed — please try again.') }
+    finally { setAiBusy(false) }
+  }, [aiBusy, router])
+
+  function go(item?: Item) {
+    const t = item || items[active]; if (!t) return
+    if (t.ai) { askAi(q.trim()); return }
+    setOpen(false); router.push(t.href)
+  }
 
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, items.length - 1)) }
@@ -98,6 +127,14 @@ export default function CommandPalette() {
             style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 16 }} />
           <kbd style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', border: '1px solid var(--line)', borderRadius: 6, padding: '2px 6px' }}>esc</kbd>
         </div>
+        {(aiBusy || aiAnswer || aiError) && (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '13px 16px', borderBottom: '1px solid var(--line)', background: 'rgba(37,99,235,.06)' }}>
+            <Sparkles size={16} style={{ color: 'var(--red-glow)', flexShrink: 0, marginTop: 2 }} className={aiBusy ? 'animate-pulse' : undefined} />
+            <div style={{ fontSize: 13.5, lineHeight: 1.5, color: aiError ? '#fca5a5' : 'var(--text)' }}>
+              {aiBusy ? 'Thinking…' : aiError || aiAnswer}
+            </div>
+          </div>
+        )}
         <div style={{ maxHeight: '52vh', overflowY: 'auto', padding: 6 }}>
           {items.length === 0 ? (
             <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', fontSize: 14 }}>No matches.</div>
