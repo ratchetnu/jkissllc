@@ -38,6 +38,12 @@ export type Permission =
   // ── Applicants ──
   | 'applicants:review'
   | 'applicants:decide'    // approve / deny
+  // ── Communications / reminders (Communication Center) ──
+  | 'messages:send'        // send a crew message / reply from ops
+  | 'reminders:view'       // see the reminder management surface
+  | 'reminders:manage'     // create/edit/pause/delete reminders
+  | 'dispatch:send'        // fire dispatch quick-blasts (Call Me, Emergency, …)
+  | 'comms:analytics'      // read communication analytics
   // ── Users / identity ──
   | 'users:manage'         // invite/manage manager & crew logins
   | 'roles:manage'         // change a user's role (admin only)
@@ -67,6 +73,9 @@ export type Permission =
   | 'self:timeoff'         // request own time off (Phase B)
   | 'self:timeclock'       // clock in/out
   | 'self:pay:request'     // request a pay correction
+  | 'self:messages'        // read/send own crew messages
+  | 'self:reminders'       // see + acknowledge own reminders/tasks
+  | 'self:uniform'         // upload own daily uniform photo
 
 // Admin = everything. Defined explicitly (not "all perms") so the matrix stays
 // auditable and a new permission is a deliberate grant, never an accidental one.
@@ -76,6 +85,7 @@ const ADMIN: Permission[] = [
   'crew:manage', 'crew:view', 'crew:assign', 'crew:score:view',
   'availability:view', 'timeoff:view', 'timeoff:approve',
   'applicants:review', 'applicants:decide',
+  'messages:send', 'reminders:view', 'reminders:manage', 'dispatch:send', 'comms:analytics',
   'users:manage', 'roles:manage',
   'pay:configure', 'pay:generate', 'pay:view:all', 'pay:adjust:submit', 'pay:approve', 'tax:view',
   'invoices:manage', 'profitability:view',
@@ -92,6 +102,7 @@ const MANAGER: Permission[] = [
   'crew:view', 'crew:assign', 'crew:score:view',
   'availability:view', 'timeoff:view', 'timeoff:approve',   // managers run the schedule + approve time off
   'applicants:review',
+  'messages:send', 'reminders:view', 'reminders:manage', 'dispatch:send', 'comms:analytics',
   'pay:adjust:submit',       // submit adjustments for admin approval — not configure/approve
   'claims:manage', 'claims:create', 'claimguard:use',
   'reports:view',
@@ -101,6 +112,7 @@ const MANAGER: Permission[] = [
 // narrows every crew query to principal.staffId (see the portal APIs).
 const CREW: Permission[] = [
   'self:view', 'self:availability', 'self:timeoff', 'self:timeclock', 'self:pay:request',
+  'self:messages', 'self:reminders', 'self:uniform',
 ]
 
 const MATRIX: Record<Role, ReadonlySet<Permission>> = {

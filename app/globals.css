@@ -599,3 +599,58 @@ h1, h2, h3, .display { font-family: var(--font-display); font-feature-settings: 
   .ops-card:hover, .ops-card-light:hover { transform: none; }
   .ops-mark-in { animation: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Communication Center — the Messages module's Operations comms hub.
+   Mobile-first: full-width stacks + slide-up sheets. Desktop (≥900px): rich
+   multi-column split views + side panels. Namespaced .cc-* under .jkos.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.cc-subnav { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none; padding-bottom: 2px; }
+.cc-subnav::-webkit-scrollbar { display: none; }
+.cc-seg {
+  display: inline-flex; align-items: center; gap: 7px; white-space: nowrap;
+  padding: 9px 15px; border-radius: 999px; font-size: 13.5px; font-weight: 700;
+  border: 1px solid var(--line); background: transparent; color: var(--muted);
+  cursor: pointer; transition: background .18s var(--os-ease), color .18s var(--os-ease), border-color .18s var(--os-ease);
+}
+.cc-seg[data-active="true"] { background: var(--red); border-color: var(--red); color: #fff; }
+.cc-seg[data-active="true"] .cc-seg-badge { background: rgba(255,255,255,.25); color: #fff; }
+.cc-seg-badge { font-size: 11px; font-weight: 800; padding: 1px 7px; border-radius: 999px; background: rgba(255,255,255,.08); color: var(--muted); }
+
+/* Split view: single column on mobile, list + detail on desktop */
+.cc-split { display: grid; grid-template-columns: 1fr; gap: 14px; }
+@media (min-width: 900px) { .cc-split { grid-template-columns: minmax(300px, 380px) 1fr; align-items: start; } }
+.cc-split-detail-desktop { display: none; }
+@media (min-width: 900px) { .cc-split-detail-desktop { display: block; position: sticky; top: 66px; } }
+
+/* Slide-up sheet (mobile) that becomes a right-docked panel (desktop) */
+.cc-sheet-scrim { position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.55); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); animation: cc-fade .2s var(--os-ease) both; }
+.cc-sheet {
+  position: fixed; z-index: 71; left: 0; right: 0; bottom: 0; max-height: 92dvh;
+  background: var(--card); border-top: 1px solid var(--line);
+  border-radius: 24px 24px 0 0; box-shadow: 0 -12px 44px rgba(0,0,0,.5);
+  display: flex; flex-direction: column; animation: cc-up .32s var(--os-spring) both;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@media (min-width: 720px) {
+  .cc-sheet { left: auto; top: 0; bottom: 0; width: min(460px, 94vw); max-height: none; border-radius: 24px 0 0 24px; border-top: none; border-left: 1px solid var(--line); animation: cc-slide-in .3s var(--os-ease) both; }
+}
+@keyframes cc-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cc-up { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes cc-slide-in { from { transform: translateX(100%); } to { transform: none; } }
+.cc-sheet-grab { width: 40px; height: 4px; border-radius: 99px; background: var(--line); margin: 10px auto 4px; }
+@media (min-width: 720px) { .cc-sheet-grab { display: none; } }
+
+/* Big one-tap acknowledgement / action buttons (mobile-friendly touch targets) */
+.cc-action { min-height: 52px; border-radius: 14px; border: none; cursor: pointer; font-size: 15.5px; font-weight: 800; touch-action: manipulation; transition: transform .12s var(--os-ease); display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.cc-action:active { transform: scale(.97); }
+
+/* Crew card grid — compact cards on mobile, denser multi-column on desktop */
+.cc-crew-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+@media (min-width: 640px) { .cc-crew-grid { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 1180px) { .cc-crew-grid { grid-template-columns: 1fr 1fr 1fr; } }
+
+/* Status dot vocabulary */
+.cc-dot { width: 8px; height: 8px; border-radius: 99px; flex-shrink: 0; }
+.cc-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (min-width: 720px) { .cc-stat-grid { grid-template-columns: repeat(4, 1fr); } }

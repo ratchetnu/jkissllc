@@ -1,0 +1,39 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { put } from '@vercel/blob'
+import { requireCrew } from '../_lib/crew'
+import { saveUniformPhoto, getUniformPhoto } from '../../../lib/uniform'
+import { centralToday } from '../../../lib/dates'
+
+export const runtime = 'nodejs'
+export const maxDuration = 30
+
+// Daily uniform-photo upload (request "Uniform Photo"). A crew member submits today's
+// uniform photo; this suppresses the uniform reminder and clears the "missing uniform"
+// flag. Scoped to the caller's own staffId.
+export async function GET(req: NextRequest) {
+  const who = await requireCrew(req)
+  if (who instanceof NextResponse) return who
+  const photo = await getUniformPhoto(who.staffId, centralToday())
+  return NextResponse.json({ uploaded: !!photo, url: photo?.url ?? null, at: photo?.uploadedAt ?? null })
+}
+
+export async function POST(req: NextRequest) {
+  const who = await requireCrew(req)
+  if (who instanceof NextResponse) return who
+  const body = await req.json().catch(() => ({})) as Record<string, unknown>
+  const image = typeof body.image === 'string' ? body.image : ''
+  const m = image.match(/^data:(image\/(jpeg|png|webp|heic|heif));base64,(.+)$/)
+  if (!m || image.length > 8_000_000) {
+    return NextResponse.json({ error: 'Please attach a clear photo (JPG/PNG, under ~6MB).' }, { status: 400 })
+  }
+  try {
+    const buf = Buffer.from(m[3], 'base64')
+    const ext = m[2] === 'jpeg' ? 'jpg' : m[2]
+    const blob = await put(`uniform-photos/${who.staffId}/${crypto.randomUUID()}.${ext}`, buf, { access: 'public', contentType: m[1], addRandomSuffix: false })
+    const rec = await saveUniformPhoto(who.staffId, blob.url)
+    return NextResponse.json({ ok: true, url: rec.url, at: rec.uploadedAt })
+  } catch (e) {
+    console.error('[portal/uniform]', e)
+    return NextResponse.json({ error: 'Upload failed — please try again.' }, { status: 500 })
+  }
+}

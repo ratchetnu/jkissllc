@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
-import { Home, ClipboardList, CalendarCheck, CalendarOff, Wallet, User, LogOut } from 'lucide-react'
+import { Home, ClipboardList, MessageSquare, CalendarCheck, CalendarOff, Wallet, User, LogOut } from 'lucide-react'
 import { usePortalSession } from './usePortalSession'
 import LastLogin from '../admin/operations/LastLogin'
 import { OpsPilotMark, OpsPilotWordmark } from '../components/opspilot/OpsPilotMark'
@@ -11,6 +11,7 @@ import { OpsPilotMark, OpsPilotWordmark } from '../components/opspilot/OpsPilotM
 const NAV = [
   { href: '/portal', label: 'Home', Icon: Home },
   { href: '/portal/routes', label: 'Routes', Icon: ClipboardList },
+  { href: '/portal/messages', label: 'Messages', Icon: MessageSquare },
   { href: '/portal/availability', label: 'Availability', Icon: CalendarCheck },
   { href: '/portal/timeoff', label: 'Time Off', Icon: CalendarOff },
   { href: '/portal/pay', label: 'Pay', Icon: Wallet },

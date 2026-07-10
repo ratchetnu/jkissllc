@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { MapPin, Clock, ArrowRight } from 'lucide-react'
 import PortalShell from './PortalShell'
+import CrewTasks from './CrewTasks'
 import { money, fmtLongDay, mapsUrl, statusOf } from './ui'
 
 type Route = {
@@ -55,6 +56,9 @@ function Home() {
       </div>
 
       {loading && <p style={{ color: 'var(--muted)', fontSize: 14 }}>Loading…</p>}
+
+      {/* Today's tasks, urgent alerts, reminders + one-tap acknowledgement */}
+      <CrewTasks />
 
       {!loading && (
         <>

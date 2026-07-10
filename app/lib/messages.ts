@@ -12,6 +12,10 @@ import { redis } from './redis'
 export type MsgDirection = 'inbound' | 'outbound'
 export type MsgChannel = 'sms' | 'email' | 'note' | 'system'
 export type MsgProvider = 'twilio' | 'resend' | 'manual' | 'system' | 'gmail'
+
+// What KIND of internal message this is, when it's crew-directed rather than a
+// customer communication. Absent for customer/booking messages (the original use).
+export type MsgKind = 'reminder' | 'dispatch' | 'crew_dm' | 'ack' | 'broadcast'
 export type MsgStatus =
   | 'queued' | 'sent' | 'delivered' | 'failed'   // outbound lifecycle
   | 'received' | 'read' | 'archived'             // inbound lifecycle
@@ -42,6 +46,20 @@ export type Message = {
   quoteId?: string
   threadId?: string               // email thread / SMS conversation grouping
 
+  // ── Crew / internal (Communication Center) ──────────────────────────────────
+  // Set when this message is directed to (or from) a crew member rather than a
+  // customer. staffId is the join to the Staff roster; it powers the per-crew
+  // conversation thread (msg:staff:{id}) and the crew portal inbox. `unread`
+  // stays the admin-side badge; crew-side read/ack are tracked separately below
+  // so an outbound reminder never pollutes the admin unread count.
+  staffId?: string
+  crewName?: string
+  kind?: MsgKind
+  reminderId?: string             // links an in-app reminder message to its Reminder
+  crewReadAt?: number             // when the CREW recipient opened it
+  crewAckAt?: number              // when the crew acknowledged/actioned it
+  crewAckKind?: string            // 'acknowledged' | 'completed' | 'need_help' | …
+
   status: MsgStatus
   unread: boolean                 // true for inbound until an admin reads it
   reviewState?: MsgReviewState
@@ -58,6 +76,7 @@ const IDX_ALL = 'msg:index'                          // zset score=createdAt mem
 const IDX_UNREAD = 'msg:unread'                      // zset of unread inbound ids
 const idxBooking = (token: string) => `msg:booking:${token}`   // per-booking timeline
 const idxPhone = (e164: string) => `msg:phone:${e164}`         // per-phone thread
+const idxStaff = (staffId: string) => `msg:staff:${staffId}`   // per-crew conversation
 const dedupKey = (pid: string) => `msg:pid:${pid}`             // provider id -> msg id
 
 function genId(): string {
@@ -82,6 +101,7 @@ export async function saveMessage(m: Message): Promise<void> {
   await redis.zadd(IDX_ALL, m.createdAt, m.id)
   if (m.bookingToken) await redis.zadd(idxBooking(m.bookingToken), m.createdAt, m.id)
   if (m.customerPhone) await redis.zadd(idxPhone(m.customerPhone), m.createdAt, m.id)
+  if (m.staffId) await redis.zadd(idxStaff(m.staffId), m.createdAt, m.id)
   if (m.providerMessageId) await redis.set(dedupKey(m.providerMessageId), m.id)
   if (m.direction === 'inbound' && m.unread && m.status !== 'archived') {
     await redis.zadd(IDX_UNREAD, m.createdAt, m.id)
@@ -118,6 +138,13 @@ export async function recordMessage(input: Partial<Message> & {
     jobId: input.jobId,
     quoteId: input.quoteId,
     threadId: input.threadId,
+    staffId: input.staffId,
+    crewName: input.crewName,
+    kind: input.kind,
+    reminderId: input.reminderId,
+    crewReadAt: input.crewReadAt,
+    crewAckAt: input.crewAckAt,
+    crewAckKind: input.crewAckKind,
     status: input.status ?? (inbound ? 'received' : 'sent'),
     unread: input.unread ?? inbound,
     reviewState: input.reviewState ?? (inbound ? 'needs_reply' : undefined),
@@ -225,6 +252,32 @@ export async function timelineForBooking(token: string, limit = 500): Promise<Me
 
 export async function threadForPhone(e164: string, limit = 200): Promise<Message[]> {
   return mget(await redis.zrange(idxPhone(e164), 0, limit - 1))
+}
+
+// ── Crew (internal) conversation ─────────────────────────────────────────────
+// Oldest-first thread of everything sent to / received from one crew member across
+// reminders, dispatch, and direct messages — the crew portal inbox reads this.
+export async function threadForStaff(staffId: string, limit = 300): Promise<Message[]> {
+  return mget(await redis.zrange(idxStaff(staffId), 0, limit - 1))
+}
+
+// Newest-first, for the ops "Crew" conversation preview + admin crew inbox.
+export async function recentForStaff(staffId: string, limit = 100): Promise<Message[]> {
+  return mget(await redis.zrevrange(idxStaff(staffId), 0, limit - 1))
+}
+
+// Crew opened the message (portal read receipt — distinct from the admin `unread`).
+export async function markCrewRead(id: string, at = Date.now()): Promise<Message | null> {
+  const m = await getMessage(id)
+  if (!m) return null
+  if (!m.crewReadAt) { m.crewReadAt = at; await saveMessage(m) }
+  return m
+}
+
+// How many messages this crew member hasn't opened yet (portal unread badge).
+export async function crewUnreadCount(staffId: string, limit = 100): Promise<number> {
+  const msgs = await recentForStaff(staffId, limit)
+  return msgs.filter(m => m.direction === 'outbound' && !m.crewReadAt).length
 }
 
 // Has this provider message id already been stored? (idempotent webhook guard)
