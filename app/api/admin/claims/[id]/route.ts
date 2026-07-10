@@ -7,6 +7,7 @@ import {
   CLAIM_STATUS_LABEL, CLAIM_TYPE_LABEL,
   type ClaimRecord, type ClaimStatus, type ClaimType, type SplitMode, type SplitInput, type AttachmentKind,
 } from '../../../../lib/claims'
+import { withClaimLock, ClaimBusyError } from '../../../../lib/claim-mutex'
 import { notifyCrewOfClaim, type CrewClaimEvent } from '../../../../lib/claim-notify'
 import { parseMoneyCents } from '../../../../lib/finance'
 import { listStaff } from '../../../../lib/staff'
@@ -29,8 +30,6 @@ async function tell(c: ClaimRecord, staffId: string, event: CrewClaimEvent, noti
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!(await requireSession(req))) return bad('unauthorized', 401)
   const { id } = await params
-  const claim = await getClaim(id)
-  if (!claim) return bad('Claim not found.', 404)
 
   const b = await req.json().catch(() => ({}))
   const action = S(b.action, 40)
@@ -38,6 +37,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const staffId = S(b.staffId, 80)
 
   try {
+    // Serialize the whole read-modify-write behind the claim lock so a concurrent
+    // admin action or the accrual cron can't clobber this write. The claim is read
+    // fresh INSIDE the lock. See lib/claim-mutex.
+    return await withClaimLock(id, async (): Promise<NextResponse> => {
+    const claim = await getClaim(id)
+    if (!claim) return bad('Claim not found.', 404)
+
     if (action === 'update') {
       // Editing the facts of a claim. The SNAPSHOT is never touched — it records
       // what the route and pricing were when the claim was opened, and rewriting
@@ -188,7 +194,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (!['photo', 'video', 'document'].includes(kind)) return bad('Unknown attachment type.')
       const url = S(b.url, 1000)
       if (!/^https:\/\/\S+$/.test(url)) return bad('Attachment must be an https URL.')
-      claim.attachments.push({ id: `${Date.now()}-${claim.attachments.length}`, kind, url, name: S(b.name, 200) || undefined, addedAt: Date.now(), addedBy: 'admin' })
+      claim.attachments.push({ id: `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, kind, url, name: S(b.name, 200) || undefined, addedAt: Date.now(), addedBy: 'admin' })
       pushClaimAudit(claim, 'admin', `Attached a ${kind}`, S(b.name, 200) || undefined)
 
     } else if (action === 'detach') {
@@ -218,7 +224,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     claim.status = rollupClaimStatus(claim)
     await saveClaim(claim)
     return NextResponse.json({ ok: true, claim })
+    })
   } catch (err) {
+    if (err instanceof ClaimBusyError) return bad('This claim is being updated by someone else — try again in a moment.', 409)
     const msg = err instanceof Error ? err.message : 'update failed'
     if (msg === 'UPSTASH_NOT_CONFIGURED') return bad('UPSTASH_NOT_CONFIGURED', 503)
     console.error('[admin/claims PATCH]', err)

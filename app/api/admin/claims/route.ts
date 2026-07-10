@@ -29,7 +29,7 @@ function buildIntakeAttachments(raw: unknown): ClaimAttachment[] {
     const url = S(o.url, 1000)
     if (!ATT_KINDS.includes(kind)) continue
     if (!/^https:\/\/\S+$/.test(url)) continue
-    out.push({ id: `${now}-${out.length}`, kind, url, name: S(o.name, 200) || undefined, addedAt: now, addedBy: 'admin' })
+    out.push({ id: `${now}-${crypto.randomUUID().slice(0, 8)}`, kind, url, name: S(o.name, 200) || undefined, addedAt: now, addedBy: 'admin' })
   }
   return out
 }
