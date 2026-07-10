@@ -13,7 +13,7 @@ import { CAPABILITIES } from '../lib/opspilot';
 export const metadata: Metadata = {
   title: 'OpsPilot — The operating system behind J KISS Freight',
   description:
-    `OpsPilot is the proprietary operations platform built and run by ${COMPANY.legalNameUpper}. Route assignment, recurring contracts, crew management, claims, payroll, and financial tracking in one system. Coming soon for other owner-operators.`,
+    `OpsPilot is the proprietary operations platform built and run by ${COMPANY.legalNameUpper}. Route assignment, recurring contracts, equipment, crew and hiring, claims with crew cost recovery, invoicing, payroll, an AI command palette, and financial tracking in one system. Coming soon for other owner-operators.`,
   alternates: { canonical: 'https://www.jkissllc.com/opspilot' },
   openGraph: {
     title: 'OpsPilot — The operating system behind J KISS Freight',
@@ -62,9 +62,9 @@ export default function OpsPilotPage() {
 
           <Reveal delay={200}>
             <p style={{ marginTop: 22, maxWidth: '58ch', fontSize: 15.5, lineHeight: 1.7, color: 'var(--muted)' }}>
-              Every quote, dispatch, crew assignment, route confirmation, claim, financial calculation,
-              and customer notification at J KISS is managed through OpsPilot. We built it because nothing
-              off the shelf fit how a small carrier actually runs.
+              Every quote, dispatch, crew assignment, route confirmation, claim, crew deduction, invoice,
+              new-hire application, financial calculation, and customer notification at J KISS is managed
+              through OpsPilot. We built it because nothing off the shelf fit how a small carrier actually runs.
             </p>
           </Reveal>
 
