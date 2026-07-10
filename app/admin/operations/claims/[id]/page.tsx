@@ -16,6 +16,7 @@ import {
   patchClaim, remainingCents, recoveredCents, assignedTotal,
   type Claim, type ClaimAssignment,
 } from '../useClaims'
+import ClaimGuardAssist from '../ClaimGuardAssist'
 
 type Staff = { id: string; name: string; role?: string; photoUrl?: string; active: boolean }
 
@@ -136,6 +137,9 @@ function Detail({ id }: { id: string }) {
           <p style={{ marginTop: 12, fontSize: 13.5, color: 'var(--muted)' }}><b style={{ color: 'var(--text)' }}>Resolution:</b> {claim.resolutionNotes}</p>
         )}
       </div>
+
+      {/* ClaimGuard Assist — recommended next step + document for this claim type */}
+      <ClaimGuardAssist claimType={claim.claimType} responseDeadline={claim.responseDeadline} />
 
       {/* Frozen snapshot */}
       <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14 }}>

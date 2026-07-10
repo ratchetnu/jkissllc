@@ -1,0 +1,142 @@
+// ClaimGuard Assist — the recommendation engine.
+//
+// Pure logic over a claim's TYPE: what to do next, what evidence to gather, and
+// which ClaimGuard document/tool fits the situation. No Redis, no I/O — the claim
+// detail renders this alongside the claim.
+//
+// The `claimGuardPath` values were verified to exist on claimguardhelp.com. Do not
+// invent a path; if a situation has no dedicated ClaimGuard page, route it to the
+// general dispute builder (/tools/dispute-builder), which does.
+//
+// Framing depends on DIRECTION (see lib/claims.directionOf):
+//   inbound  — someone claims OUR crew/service caused a loss. ClaimGuard helps us
+//              respond and rebut before we accept liability.
+//   outbound — a broker/platform/customer shorted US. ClaimGuard helps us demand
+//              and recover.
+// Type-only import — this module renders inside a client component, so it must not
+// pull the server-side claims.ts runtime graph (redis/finance/routes) into the
+// browser bundle. Direction is derived locally; claim-assist.test.ts asserts it
+// stays in sync with claims.directionOf.
+import type { ClaimType, ClaimDirection } from './claims'
+
+const OUTBOUND: readonly ClaimType[] = [
+  'chargeback', 'unfair_deduction', 'detention', 'accessorial_dispute', 'late_delivery', 'non_payment',
+]
+const localDirection = (t: ClaimType): ClaimDirection => OUTBOUND.includes(t) ? 'outbound' : 'inbound'
+
+export const CLAIMGUARD_BASE = 'https://claimguardhelp.com'
+export const claimGuardUrl = (path: string): string => `${CLAIMGUARD_BASE}${path}`
+
+export type ClaimPlaybook = {
+  direction: ClaimDirection
+  headline: string          // one-line framing of the situation
+  nextAction: string        // the immediate recommended step
+  evidence: string[]        // what to gather — a checklist
+  document: string          // the ClaimGuard document/template that fits
+  claimGuardPath: string    // deep-link path on claimguardhelp.com (verified to exist)
+}
+
+type Play = Omit<ClaimPlaybook, 'direction'>
+
+const PLAYBOOKS: Record<ClaimType, Play> = {
+  // ── Inbound: claimed against us — defend and rebut ──────────────────────────
+  property_damage: {
+    headline: 'A customer says our crew caused property damage.',
+    nextAction: 'Gather the crew’s proof and send a response before you accept liability.',
+    evidence: ['Before/after photos from the crew', 'The signed route/delivery confirmation', 'The crew member’s written account', 'Any condition report or damage waiver'],
+    document: 'Dispute Response Letter',
+    claimGuardPath: '/damage-claim',
+  },
+  vehicle_damage: {
+    headline: 'Damage to a vehicle has been claimed.',
+    nextAction: 'Document the damage and the pre-trip condition, then respond.',
+    evidence: ['Photos of the damage', 'Pre-trip inspection record', 'Dashcam footage if any', 'The driver’s account'],
+    document: 'Dispute Response Letter',
+    claimGuardPath: '/damage-claim',
+  },
+  cargo_damage: {
+    headline: 'Cargo was reported damaged in our care.',
+    nextAction: 'Pull the delivery paperwork and photos, then respond to the claim.',
+    evidence: ['Bill of lading / delivery receipt', 'Photos of the cargo condition', 'Packaging condition notes', 'Signed proof of delivery'],
+    document: 'Freight Claim / Dispute Response Letter',
+    claimGuardPath: '/damage-claim',
+  },
+  lost_item: {
+    headline: 'An item is reported lost or missing.',
+    nextAction: 'Reconcile the manifest against the signed delivery before responding.',
+    evidence: ['Item manifest / inventory', 'Signed proof of delivery', 'The crew’s account', 'Site access log'],
+    document: 'Dispute Response Letter',
+    claimGuardPath: '/damage-claim',
+  },
+  injury: {
+    headline: 'An injury has been claimed.',
+    nextAction: 'Document everything and notify your insurer immediately — do not admit fault.',
+    evidence: ['Incident report', 'Photos of the scene', 'Witness statements', 'Your insurance policy details'],
+    document: 'Insurance Disclosure Request',
+    claimGuardPath: '/arbitration-prep',
+  },
+  service_failure: {
+    headline: 'The customer says the service wasn’t done right.',
+    nextAction: 'Show completion proof against the agreed scope, then respond.',
+    evidence: ['Job completion proof / photos', 'The service agreement / scope', 'Arrival + completion timestamps', 'Customer communication log'],
+    document: 'Dispute Response Letter',
+    claimGuardPath: '/damage-claim',
+  },
+
+  // ── Outbound: we're disputing — demand and recover ──────────────────────────
+  chargeback: {
+    headline: 'A payment was reversed via chargeback.',
+    nextAction: 'Build the chargeback rebuttal with your proof of service before the bank’s deadline.',
+    evidence: ['Signed proof of delivery / completion', 'The invoice + payment record', 'Customer authorization / agreement', 'Messages showing the service was accepted'],
+    document: 'Chargeback Rebuttal (Dispute Builder)',
+    claimGuardPath: '/tools/dispute-builder',
+  },
+  unfair_deduction: {
+    headline: 'Pay was withheld or deducted unfairly.',
+    nextAction: 'Demand the documentation behind the deduction, then challenge the SOP basis.',
+    evidence: ['Pay statement showing the deduction', 'The SOP / policy they cited', 'Proof you followed procedure', 'The original agreement / rate con'],
+    document: 'SOP Challenge / Documentation Request Letter',
+    claimGuardPath: '/deduction-from-pay',
+  },
+  detention: {
+    headline: 'Detention time is owed and unpaid.',
+    nextAction: 'Send a freight demand with your time-stamped detention proof.',
+    evidence: ['Check-in / check-out timestamps', 'Rate confirmation with detention terms', 'BOL / gate logs', 'Communication with the broker'],
+    document: 'Freight Demand Letter',
+    claimGuardPath: '/freight/start',
+  },
+  accessorial_dispute: {
+    headline: 'An accessorial charge is disputed or unpaid.',
+    nextAction: 'Document the accessorial and send a freight demand.',
+    evidence: ['Rate confirmation with accessorial terms', 'Proof it occurred (lumper receipt, layover log…)', 'BOL', 'Broker communication'],
+    document: 'Freight Demand Letter',
+    claimGuardPath: '/freight/start',
+  },
+  late_delivery: {
+    headline: 'A late-delivery penalty is being disputed.',
+    nextAction: 'Show the cause was outside your control and dispute the penalty.',
+    evidence: ['Delivery timestamps', 'Scheduled vs actual window', 'Proof of the delay’s cause (weather, dock, appointment)', 'Communication log'],
+    document: 'Dispute Response / Documentation Request',
+    claimGuardPath: '/tools/dispute-builder',
+  },
+  non_payment: {
+    headline: 'An invoice hasn’t been paid.',
+    nextAction: 'Send a non-payment demand with the invoice and proof of service.',
+    evidence: ['The unpaid invoice', 'Signed proof of delivery / completion', 'The agreement / rate con', 'Payment terms + due date'],
+    document: 'Non-Payment Demand Letter',
+    claimGuardPath: '/non-payment',
+  },
+
+  other: {
+    headline: 'Review the situation and pick the closest fit.',
+    nextAction: 'Open the ClaimGuard dispute builder to find the right template.',
+    evidence: ['Any signed agreement', 'Proof of what happened', 'Financial records', 'Communication log'],
+    document: 'Dispute Builder',
+    claimGuardPath: '/tools/dispute-builder',
+  },
+}
+
+export function recommendForClaim(claim: { claimType: ClaimType }): ClaimPlaybook {
+  const play = PLAYBOOKS[claim.claimType] ?? PLAYBOOKS.other
+  return { direction: localDirection(claim.claimType), ...play }
+}
