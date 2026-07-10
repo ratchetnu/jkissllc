@@ -147,7 +147,7 @@ function Detail({ id }: { id: string }) {
       </div>
 
       {/* ClaimGuard Assist — recommended next step + document for this claim type */}
-      <ClaimGuardAssist claimType={claim.claimType} responseDeadline={claim.responseDeadline} />
+      <ClaimGuardAssist claimType={claim.claimType} responseDeadline={claim.responseDeadline} refCode={claim.claimNumber} amountCents={claim.totalCents} />
 
       {/* Frozen snapshot */}
       <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14 }}>

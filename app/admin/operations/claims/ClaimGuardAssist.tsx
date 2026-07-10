@@ -1,7 +1,7 @@
 'use client'
 
 import { ShieldCheck, ExternalLink, ArrowRight, CircleDot, Clock } from 'lucide-react'
-import { recommendForClaim, claimGuardUrl } from '../../../lib/claim-assist'
+import { recommendForClaim } from '../../../lib/claim-assist'
 import type { ClaimType } from '../../../lib/claims'
 import { osLabel, fmtDay } from '../ui'
 
@@ -9,9 +9,12 @@ import { osLabel, fmtDay } from '../ui'
 //
 // Reads the claim's type and surfaces: the situation framing, the recommended next
 // action, an evidence checklist, and the matching ClaimGuard document with a
-// deep link to claimguardhelp.com. Admin-only (it lives on the claim detail).
-export default function ClaimGuardAssist({ claimType, responseDeadline }: { claimType: string; responseDeadline?: string }) {
-  const p = recommendForClaim({ claimType: claimType as ClaimType })
+// deep link to claimguardhelp.com carrying claim context (source/ref/amount, and the
+// pre-selected dispute flow). Admin-only (it lives on the claim detail).
+export default function ClaimGuardAssist({ claimType, responseDeadline, refCode, amountCents }: {
+  claimType: string; responseDeadline?: string; refCode?: string; amountCents?: number
+}) {
+  const p = recommendForClaim({ claimType: claimType as ClaimType, refCode, amountCents })
   const inbound = p.direction === 'inbound'
 
   return (
@@ -52,7 +55,7 @@ export default function ClaimGuardAssist({ claimType, responseDeadline }: { clai
       </div>
 
       {/* The recommended ClaimGuard document */}
-      <a href={claimGuardUrl(p.claimGuardPath)} target="_blank" rel="noopener noreferrer"
+      <a href={p.claimGuardHref} target="_blank" rel="noopener noreferrer"
         style={{ display: 'flex', alignItems: 'center', gap: 11, marginTop: 16, padding: 13, borderRadius: 12, background: 'var(--red)', color: '#fff', textDecoration: 'none' }}
         className="os-tap">
         <div style={{ flex: 1, minWidth: 0 }}>

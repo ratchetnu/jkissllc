@@ -31,9 +31,10 @@ export type ClaimPlaybook = {
   evidence: string[]        // what to gather — a checklist
   document: string          // the ClaimGuard document/template that fits
   claimGuardPath: string    // deep-link path on claimguardhelp.com (verified to exist)
+  claimGuardHref: string    // absolute deep link WITH claim context (see claimGuardHref)
 }
 
-type Play = Omit<ClaimPlaybook, 'direction'>
+type Play = Omit<ClaimPlaybook, 'direction' | 'claimGuardHref'>
 
 const PLAYBOOKS: Record<ClaimType, Play> = {
   // ── Inbound: claimed against us — defend and rebut ──────────────────────────
@@ -133,7 +134,40 @@ const PLAYBOOKS: Record<ClaimType, Play> = {
   },
 }
 
-export function recommendForClaim(claim: { claimType: ClaimType }): ClaimPlaybook {
+// Where an OpsPilot claim type maps onto the dispute builder's own preset modes
+// (claimguardhelp.com/tools/dispute-builder?dispute=…). Only the builder reads this
+// param, so it's appended only when the recommended path IS the builder. Its valid
+// values are damage-claim | chargeback | arbitration; types with a dedicated landing
+// page (property damage, deductions, etc.) route straight there and need no preset.
+const DISPUTE_PRESET: Partial<Record<ClaimType, string>> = {
+  chargeback: 'chargeback',
+}
+
+export type ClaimContext = {
+  claimType: ClaimType
+  refCode?: string      // e.g. JK-C-1042 — lets ClaimGuard attribute/trace the lead
+  amountCents?: number  // the claim amount, for pre-fill where supported
+}
+
+// Build the deep link to claimguardhelp.com carrying claim context:
+//   • source=opspilot + ref  → ClaimGuard can attribute and trace the lead
+//   • dispute=<preset>       → the dispute builder pre-selects the matching flow
+//   • amount=<dollars>       → pre-fill where the destination supports it
+// Unknown params are simply ignored by pages that don't read them, so this is safe
+// for every destination.
+export function claimGuardHref(ctx: ClaimContext): string {
+  const path = (PLAYBOOKS[ctx.claimType] ?? PLAYBOOKS.other).claimGuardPath
+  const params = new URLSearchParams({ source: 'opspilot' })
+  if (ctx.refCode) params.set('ref', ctx.refCode)
+  if (typeof ctx.amountCents === 'number' && ctx.amountCents > 0) params.set('amount', (ctx.amountCents / 100).toFixed(2))
+  if (path.startsWith('/tools/dispute-builder')) {
+    const preset = DISPUTE_PRESET[ctx.claimType]
+    if (preset) params.set('dispute', preset)
+  }
+  return claimGuardUrl(`${path}?${params.toString()}`)
+}
+
+export function recommendForClaim(claim: ClaimContext): ClaimPlaybook {
   const play = PLAYBOOKS[claim.claimType] ?? PLAYBOOKS.other
-  return { direction: directionOf(claim.claimType), ...play }
+  return { direction: directionOf(claim.claimType), ...play, claimGuardHref: claimGuardHref(claim) }
 }
