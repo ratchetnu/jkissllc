@@ -98,17 +98,17 @@ export default function InboxView() {
                 const K = KIND_ICON[m.kind || ''] || (m.channel === 'email' ? Mail : MessageSquare)
                 return (
                   <button key={m.id} onClick={() => { setOpenId(m.id); setReply(''); if (m.unread) act(m.id, 'read') }} className="os-card os-tap"
-                    style={{ textAlign: 'left', cursor: 'pointer', padding: 12, border: `1px solid ${active ? 'var(--red)' : 'var(--line)'}`, background: active ? 'color-mix(in srgb, var(--red) 7%, transparent)' : undefined, animationDelay: `${Math.min(i * 20, 160)}ms` }}>
+                    style={{ width: '100%', textAlign: 'left', cursor: 'pointer', padding: 12, border: `1px solid ${active ? 'var(--red)' : 'var(--line)'}`, background: active ? 'color-mix(in srgb, var(--red) 7%, transparent)' : undefined, animationDelay: `${Math.min(i * 20, 160)}ms` }}>
                     <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                       <Avatar name={who(m)} size={36} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                           {m.direction === 'inbound' ? <ArrowDownLeft size={12} style={{ color: '#86efac', flexShrink: 0 }} /> : <ArrowUpRight size={12} style={{ color: 'var(--muted)', flexShrink: 0 }} />}
                           <span style={{ fontWeight: 700, fontSize: 14.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{who(m)}</span>
                           {m.unread && <span style={{ width: 7, height: 7, borderRadius: 99, background: 'var(--red)', flexShrink: 0 }} />}
                           <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--muted)', flexShrink: 0 }}>{relTime(m.createdAt)}</span>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 3 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 3, minWidth: 0 }}>
                           <K size={11} style={{ color: 'var(--muted)', flexShrink: 0 }} />
                           <span style={{ fontSize: 12.5, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.subject ? `${m.subject} — ` : ''}{m.body}</span>
                         </div>
