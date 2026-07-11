@@ -98,7 +98,7 @@ export default function InboxView() {
                 const K = KIND_ICON[m.kind || ''] || (m.channel === 'email' ? Mail : MessageSquare)
                 return (
                   <button key={m.id} onClick={() => { setOpenId(m.id); setReply(''); if (m.unread) act(m.id, 'read') }} className="os-card os-tap"
-                    style={{ textAlign: 'left', cursor: 'pointer', padding: 12, border: `1px solid ${active ? 'var(--red)' : 'var(--line)'}`, background: active ? 'rgba(224,0,42,.06)' : undefined, animationDelay: `${Math.min(i * 20, 160)}ms` }}>
+                    style={{ textAlign: 'left', cursor: 'pointer', padding: 12, border: `1px solid ${active ? 'var(--red)' : 'var(--line)'}`, background: active ? 'color-mix(in srgb, var(--red) 7%, transparent)' : undefined, animationDelay: `${Math.min(i * 20, 160)}ms` }}>
                     <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                       <Avatar name={who(m)} size={36} />
                       <div style={{ flex: 1, minWidth: 0 }}>

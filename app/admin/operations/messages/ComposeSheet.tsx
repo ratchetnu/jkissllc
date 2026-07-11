@@ -76,7 +76,7 @@ export default function ComposeSheet({
               const on = t.id === templateId
               return (
                 <button key={t.id} type="button" onClick={() => pickTemplate(t.id)} className="os-tap"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 11px', borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'rgba(224,0,42,.14)' : 'transparent', color: on ? '#fff' : 'var(--muted)' }}>
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 11px', borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'color-mix(in srgb, var(--red) 14%, transparent)' : 'transparent', color: on ? '#fff' : 'var(--muted)' }}>
                   <Icon name={t.icon} size={14} /> {t.label}
                 </button>
               )

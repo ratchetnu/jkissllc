@@ -29,7 +29,7 @@ export default function DispatchMode({ dispatch }: { dispatch: DispatchActionT[]
 
   return (
     <div>
-      <div className="os-card os-rise" style={{ padding: 16, marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', background: 'linear-gradient(135deg, rgba(224,0,42,.10), transparent)' }}>
+      <div className="os-card os-rise" style={{ padding: 16, marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', background: 'linear-gradient(135deg, color-mix(in srgb, var(--red) 10%, transparent), transparent)' }}>
         <div style={{ width: 42, height: 42, borderRadius: 12, display: 'grid', placeItems: 'center', background: 'var(--red)', color: '#fff', flexShrink: 0 }}><Zap size={22} /></div>
         <div>
           <h2 className="jkos-h" style={{ fontSize: 19 }}>Dispatch Mode</h2>
@@ -117,7 +117,7 @@ function DispatchSheet({ action, crew, counts, onClose, onSent }: {
         {shown.map(c => {
           const on = sel.has(c.id)
           return (
-            <button key={c.id} onClick={() => toggle(c.id)} className="os-tap" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 9, borderRadius: 12, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'rgba(224,0,42,.08)' : 'transparent', textAlign: 'left' }}>
+            <button key={c.id} onClick={() => toggle(c.id)} className="os-tap" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 9, borderRadius: 12, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'color-mix(in srgb, var(--red) 8%, transparent)' : 'transparent', textAlign: 'left' }}>
               <Avatar name={c.name} photoUrl={c.photoUrl} size={34} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 700 }}>{c.name}</div>

@@ -148,7 +148,7 @@ function Dot({ ok, warn, label }: { ok?: boolean; warn?: boolean; label: string 
 function CrewCard({ c, selected, onToggle, delay }: { c: CrewCardT; selected: boolean; onToggle: () => void; delay: number }) {
   const route = c.todayRoutes[0] || c.upcomingRoutes[0]
   return (
-    <button onClick={onToggle} className="os-card os-rise os-tap" style={{ textAlign: 'left', cursor: 'pointer', padding: 14, animationDelay: `${Math.min(delay * 25, 200)}ms`, border: `1px solid ${selected ? 'var(--red)' : 'var(--line)'}`, background: selected ? 'rgba(224,0,42,.08)' : undefined, position: 'relative' }}>
+    <button onClick={onToggle} className="os-card os-rise os-tap" style={{ textAlign: 'left', cursor: 'pointer', padding: 14, animationDelay: `${Math.min(delay * 25, 200)}ms`, border: `1px solid ${selected ? 'var(--red)' : 'var(--line)'}`, background: selected ? 'color-mix(in srgb, var(--red) 8%, transparent)' : undefined, position: 'relative' }}>
       <div style={{ display: 'flex', gap: 11, alignItems: 'center' }}>
         <div style={{ position: 'relative' }}>
           <Avatar name={c.name} photoUrl={c.photoUrl} size={44} />

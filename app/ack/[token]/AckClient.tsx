@@ -52,7 +52,7 @@ export default function AckClient({ token }: { token: string }) {
     <main style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', padding: 20, background: 'linear-gradient(180deg,#0b0b0c,#161618)', color: '#f3f4f6', fontFamily: '-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif' }}>
       <div style={{ width: '100%', maxWidth: 440, background: '#121214', border: '1px solid rgba(255,255,255,.1)', borderRadius: 22, padding: 26, boxShadow: '0 20px 60px rgba(0,0,0,.5)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-          <span style={{ width: 9, height: 9, borderRadius: 99, background: '#E0002A' }} />
+          <span style={{ width: 9, height: 9, borderRadius: 99, background: 'var(--red)' }} />
           <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: '#b5b7bd' }}>Dispatch</span>
         </div>
 

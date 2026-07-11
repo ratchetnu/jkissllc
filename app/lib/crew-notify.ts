@@ -46,13 +46,13 @@ function smsBody(o: DeliverOpts): string {
 
 function emailHtml(o: DeliverOpts): string {
   const cta = o.ackUrl
-    ? `<p style="margin:22px 0 8px"><a href="${o.ackUrl}" style="display:inline-block;background:#E0002A;color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px">Open &amp; Respond</a></p>`
+    ? `<p style="margin:22px 0 8px"><a href="${o.ackUrl}" style="display:inline-block;background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px">Open &amp; Respond</a></p>`
     : ''
   return `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:520px;margin:0 auto;color:#111">
     <h2 style="font-size:19px;margin:0 0 8px">${escapeHtml(o.title)}</h2>
     <p style="font-size:15px;line-height:1.5;color:#333;margin:0">${escapeHtml(o.message)}</p>
     ${cta}
-    <p style="font-size:12px;color:#888;margin-top:20px">Sent by ${escapeHtml(COMPANY.legalName)} dispatch. Manage everything in your crew portal: <a href="${BASE}/portal" style="color:#E0002A">${BASE}/portal</a></p>
+    <p style="font-size:12px;color:#888;margin-top:20px">Sent by ${escapeHtml(COMPANY.legalName)} dispatch. Manage everything in your crew portal: <a href="${BASE}/portal" style="color:${COMPANY.brand.red}">${BASE}/portal</a></p>
   </div>`
 }
 

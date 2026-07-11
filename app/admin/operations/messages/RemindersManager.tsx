@@ -225,7 +225,7 @@ function ReminderEditor({ reminder, templates, crew, businesses, onClose, onSave
           <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
             {templates.map(t => {
               const on = t.id === templateId
-              return <button key={t.id} type="button" onClick={() => pickTemplate(t.id)} className="os-tap" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 10px', borderRadius: 11, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'rgba(224,0,42,.14)' : 'transparent', color: on ? '#fff' : 'var(--muted)' }}><Icon name={t.icon} size={13} /> {t.label}</button>
+              return <button key={t.id} type="button" onClick={() => pickTemplate(t.id)} className="os-tap" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 10px', borderRadius: 11, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'color-mix(in srgb, var(--red) 14%, transparent)' : 'transparent', color: on ? '#fff' : 'var(--muted)' }}><Icon name={t.icon} size={13} /> {t.label}</button>
             })}
           </div>
         </Field>
@@ -262,12 +262,12 @@ function ReminderEditor({ reminder, templates, crew, businesses, onClose, onSave
           )}
           {mode === 'crew' && (
             <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 12, padding: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {crew.map(c => <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8, cursor: 'pointer', background: staffIds.includes(c.id) ? 'rgba(224,0,42,.1)' : 'transparent' }}><input type="checkbox" checked={staffIds.includes(c.id)} onChange={() => toggleStaff(c.id)} /> <span style={{ fontSize: 14 }}>{c.name}</span></label>)}
+              {crew.map(c => <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8, cursor: 'pointer', background: staffIds.includes(c.id) ? 'color-mix(in srgb, var(--red) 10%, transparent)' : 'transparent' }}><input type="checkbox" checked={staffIds.includes(c.id)} onChange={() => toggleStaff(c.id)} /> <span style={{ fontSize: 14 }}>{c.name}</span></label>)}
             </div>
           )}
           {mode === 'business' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {businesses.map(b => <label key={b.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8, cursor: 'pointer', background: bizKeys.includes(b.key) ? 'rgba(224,0,42,.1)' : 'transparent' }}><input type="checkbox" checked={bizKeys.includes(b.key)} onChange={() => toggleBiz(b.key)} /> <span style={{ fontSize: 14 }}>{b.name}</span></label>)}
+              {businesses.map(b => <label key={b.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8, cursor: 'pointer', background: bizKeys.includes(b.key) ? 'color-mix(in srgb, var(--red) 10%, transparent)' : 'transparent' }}><input type="checkbox" checked={bizKeys.includes(b.key)} onChange={() => toggleBiz(b.key)} /> <span style={{ fontSize: 14 }}>{b.name}</span></label>)}
             </div>
           )}
         </Field>
@@ -303,7 +303,7 @@ function ReminderEditor({ reminder, templates, crew, businesses, onClose, onSave
   )
 }
 
-const chip = (on: boolean): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 12px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'rgba(224,0,42,.14)' : 'transparent', color: on ? '#fff' : 'var(--muted)' })
+const chip = (on: boolean): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 12px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'color-mix(in srgb, var(--red) 14%, transparent)' : 'transparent', color: on ? '#fff' : 'var(--muted)' })
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div><div style={{ ...osLabel, marginBottom: 8 }}>{label}</div>{children}</div> }
 function Row({ label, hint, children }: { label: string; hint: string; children: React.ReactNode }) {
   return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}><div><div style={{ fontSize: 14, fontWeight: 700 }}>{label}</div><div style={{ fontSize: 12, color: 'var(--muted)' }}>{hint}</div></div>{children}</div>
