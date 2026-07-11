@@ -3,6 +3,7 @@
 import AdminGate from '../AdminGate'
 import { useState, useEffect, useCallback } from 'react'
 import { useIdleLogout } from '../useIdleLogout'
+import AiFeedback from '../AiFeedback'
 import { SkeletonStats } from '../../components/Skeleton'
 import type { BookingAnalytics, NamedTotal, DayPoint } from '../../lib/analytics'
 
@@ -181,6 +182,7 @@ function AnalyticsInner() {
 
   // ── AI insights ─────────────────────────────────────────────────────────────
   const [insights, setInsights] = useState('')
+  const [insightsCallId, setInsightsCallId] = useState<string | undefined>()
   const [insightsLoading, setInsightsLoading] = useState(false)
   const [insightsErr, setInsightsErr] = useState('')
   async function fetchInsights() {
@@ -189,7 +191,7 @@ function AnalyticsInner() {
       const res = await fetch('/api/admin/ai/insights', { credentials: 'same-origin' })
       const j = await res.json()
       if (!res.ok) throw new Error(j.error ?? 'Could not generate insights.')
-      setInsights(j.insights)
+      setInsights(j.insights); setInsightsCallId(j.callId)
     } catch (e) { setInsightsErr(e instanceof Error ? e.message : 'Failed') }
     finally { setInsightsLoading(false) }
   }
@@ -382,7 +384,7 @@ function AnalyticsInner() {
               </div>
               {insightsErr && <p className="text-sm mt-3" role="alert" style={{ color: '#f87171' }}>{insightsErr}</p>}
               {insights
-                ? <pre className="text-sm mt-3 whitespace-pre-wrap" style={{ color: 'var(--text)', fontFamily: 'var(--font-body)', lineHeight: 1.6 }}>{insights}</pre>
+                ? <><pre className="text-sm mt-3 whitespace-pre-wrap" style={{ color: 'var(--text)', fontFamily: 'var(--font-body)', lineHeight: 1.6 }}>{insights}</pre><AiFeedback callId={insightsCallId} label="Was this briefing useful?" /></>
                 : !insightsErr && !insightsLoading && <p className="text-sm mt-2" style={{ color: 'var(--muted)' }}>Get a plain-English read on your revenue, A/R, and job mix — plus what to do this week.</p>}
             </div>
 

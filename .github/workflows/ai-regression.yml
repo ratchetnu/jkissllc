@@ -1,0 +1,28 @@
+name: AI Regression
+
+# Pre-deploy quality gate for the AI platform (LLMOps Phase 3, item 10). Runs the
+# deterministic golden-fixture regression + a typecheck on every push to main and on
+# every PR. A prompt or scorer change that regresses any AI feature fails this check.
+#
+# To make it BLOCK production deploys (recommended): either
+#   • GitHub → Settings → Branches → protect `main` → require the "regression" check, or
+#   • Vercel → Project → Settings → Git → enable "Only build/deploy when checks pass".
+# Without that, this is a visible signal but does not hard-stop Vercel's auto-deploy.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: Typecheck + AI regression
+        run: npm run predeploy

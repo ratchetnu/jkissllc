@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { COMPANY } from '../../lib/company'
 import { upload } from '@vercel/blob/client'
 import AdminGate from '../AdminGate'
+import AiFeedback from '../AiFeedback'
 import { SkeletonList } from '../../components/Skeleton'
 import { ConversationThread, type ThreadMessage } from '../messaging'
 import type { Booking, Payment, InvoicePhoto } from '../../lib/bookings'
@@ -613,6 +614,7 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
   const [aiBusy, setAiBusy] = useState('')
   // Message Customer composer
   const [msgText, setMsgText] = useState('')
+  const [msgCallId, setMsgCallId] = useState<string | undefined>()
   const [msgTpl, setMsgTpl] = useState('')
   const [msgBusy, setMsgBusy] = useState<'sms' | 'email' | 'both' | ''>('')
   const [msgInfo, setMsgInfo] = useState('')
@@ -663,7 +665,7 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
       })
       const j = await res.json()
       if (!res.ok) throw new Error(j.error ?? 'AI is unavailable — edit the text manually.')
-      setMsgText(j.message)
+      setMsgText(j.message); setMsgCallId(j.callId)
     } catch (e) { setMsgErr(e instanceof Error ? e.message : 'Failed') }
     finally { setAiBusy('') }
   }
@@ -926,6 +928,7 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
           <button onClick={improveWithAI} disabled={aiBusy === 'improve' || !msgText.trim()} className="text-xs font-semibold px-3 py-1.5 rounded-lg"
             style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--text)' }}>{aiBusy === 'improve' ? 'Improving…' : '✨ Improve with AI'}</button>
         </div>
+        <AiFeedback callId={msgCallId} />
 
         <div className="flex flex-wrap gap-2 mt-3">
           <button onClick={() => sendMessage('sms')} disabled={!b.customerPhone || !!msgBusy} className="text-xs font-bold px-4 py-2 rounded-lg"

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import AdminGate from '../AdminGate'
+import AiFeedback from '../AiFeedback'
 import { SkeletonList } from '../../components/Skeleton'
 
 type Review = {
@@ -24,6 +25,7 @@ function ReviewsManager() {
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
   const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [draftCallIds, setDraftCallIds] = useState<Record<string, string>>({})
   const [drafting, setDrafting] = useState('')
 
   async function draftReply(r: Review) {
@@ -36,6 +38,7 @@ function ReviewsManager() {
       const j = await res.json()
       if (!res.ok) throw new Error(j.error ?? 'Could not draft a reply.')
       setDrafts(d => ({ ...d, [r.token]: j.reply }))
+      if (j.callId) setDraftCallIds(c => ({ ...c, [r.token]: j.callId }))
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') }
     finally { setDrafting('') }
   }
@@ -142,6 +145,7 @@ function ReviewsManager() {
                   <p className="text-sm" style={{ color: 'var(--text)', lineHeight: 1.5 }}>{drafts[r.token]}</p>
                   <button onClick={() => navigator.clipboard?.writeText(drafts[r.token])} className="text-xs font-semibold px-3 py-1.5 rounded-lg mt-2"
                     style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--text)' }}>Copy</button>
+                  <AiFeedback callId={draftCallIds[r.token]} label="Was this reply helpful?" />
                 </div>
               )}
             </div>
