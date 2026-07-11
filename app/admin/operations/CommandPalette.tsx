@@ -21,6 +21,8 @@ const ACTIONS: Item[] = [
   { id: 'a-ops-wl', label: 'OpsPilot Waitlist', sub: 'Early-access requests', Icon: Rocket, href: '/admin/opspilot', group: 'Go to' },
 ]
 
+const fbBtn: React.CSSProperties = { background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', borderRadius: 7, padding: '2px 8px', fontSize: 13, cursor: 'pointer', lineHeight: 1.2 }
+
 export default function CommandPalette() {
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -31,6 +33,8 @@ export default function CommandPalette() {
   const [aiBusy, setAiBusy] = useState(false)
   const [aiAnswer, setAiAnswer] = useState<string | null>(null)
   const [aiError, setAiError] = useState<string | null>(null)
+  const [aiCallId, setAiCallId] = useState<string | null>(null)
+  const [aiRated, setAiRated] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
   // Global ⌘K / Ctrl+K.
@@ -60,8 +64,8 @@ export default function CommandPalette() {
     } catch { /* ignore */ }
   }, [])
   useEffect(() => { if (open) { load(); setQ(''); setActive(0); setAiAnswer(null); setAiError(null); setAiBusy(false); setTimeout(() => inputRef.current?.focus(), 30) } }, [open, load])
-  // Typing a new query clears any prior AI answer/error.
-  useEffect(() => { setAiAnswer(null); setAiError(null) }, [q])
+  // Typing a new query clears any prior AI answer/error/feedback.
+  useEffect(() => { setAiAnswer(null); setAiError(null); setAiCallId(null); setAiRated('') }, [q])
 
   const businesses = useMemo(() => [...new Set(ops.map(o => o.businessName).filter(Boolean))], [ops])
 
@@ -88,7 +92,7 @@ export default function CommandPalette() {
 
   const askAi = useCallback(async (query: string) => {
     if (!query || aiBusy) return
-    setAiBusy(true); setAiAnswer(null); setAiError(null)
+    setAiBusy(true); setAiAnswer(null); setAiError(null); setAiCallId(null); setAiRated('')
     try {
       const res = await fetch('/api/admin/ai/command', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
@@ -97,11 +101,23 @@ export default function CommandPalette() {
       const d = await res.json()
       if (!res.ok) { setAiError(d.error || 'AI is unavailable right now.'); return }
       if (d.kind === 'navigate' && d.href) { setOpen(false); router.push(d.href); return }
-      if (d.kind === 'answer') { setAiAnswer(d.answer || '—'); return }
+      if (d.kind === 'answer') { setAiAnswer(d.answer || '—'); setAiCallId(d.callId || null); return }
       setAiError('Couldn’t work that out — try rephrasing.')
     } catch { setAiError('AI request failed — please try again.') }
     finally { setAiBusy(false) }
   }, [aiBusy, router])
+
+  // Optional helpful / not-helpful rating on an AI answer (recorded in AI telemetry).
+  const rateAi = useCallback(async (helpful: boolean) => {
+    if (!aiCallId || aiRated) return
+    setAiRated(helpful ? 'up' : 'down')
+    try {
+      await fetch('/api/admin/ai/feedback', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ callId: aiCallId, helpful }),
+      })
+    } catch { /* best-effort */ }
+  }, [aiCallId, aiRated])
 
   function go(item?: Item) {
     const t = item || items[active]; if (!t) return
@@ -130,8 +146,23 @@ export default function CommandPalette() {
         {(aiBusy || aiAnswer || aiError) && (
           <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '13px 16px', borderBottom: '1px solid var(--line)', background: 'rgba(37,99,235,.06)' }}>
             <Sparkles size={16} style={{ color: 'var(--red-glow)', flexShrink: 0, marginTop: 2 }} className={aiBusy ? 'animate-pulse' : undefined} />
-            <div style={{ fontSize: 13.5, lineHeight: 1.5, color: aiError ? '#fca5a5' : 'var(--text)' }}>
-              {aiBusy ? 'Thinking…' : aiError || aiAnswer}
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13.5, lineHeight: 1.5, color: aiError ? '#fca5a5' : 'var(--text)' }}>
+                {aiBusy ? 'Thinking…' : aiError || aiAnswer}
+              </div>
+              {aiAnswer && aiCallId && !aiBusy && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                  {aiRated ? (
+                    <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>Thanks for the feedback.</span>
+                  ) : (
+                    <>
+                      <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>Was this helpful?</span>
+                      <button onClick={() => rateAi(true)} aria-label="Helpful" className="os-tap" style={fbBtn}>👍</button>
+                      <button onClick={() => rateAi(false)} aria-label="Not helpful" className="os-tap" style={fbBtn}>👎</button>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}

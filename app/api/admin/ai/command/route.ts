@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSession } from '../../_lib/session'
-import { aiText } from '../../../../lib/ai'
+import { requirePermission } from '../../_lib/session'
+import { runAiTask } from '../../../../lib/ai/service'
+import { COMMAND_SCHEMA } from '../../../../lib/ai/schema'
 import { listBusinesses } from '../../../../lib/businesses'
 import { listStaff } from '../../../../lib/staff'
 import { listRoutes } from '../../../../lib/routes'
@@ -41,7 +42,10 @@ const S = (v: unknown, max = 400): string => (typeof v === 'string' ? v.trim().s
 const bad = (error: string, status = 400) => NextResponse.json({ error }, { status })
 
 export async function POST(req: NextRequest) {
-  if (!(await requireSession(req))) return bad('unauthorized', 401)
+  // Role enforcement: the AI command bar requires the ai:use permission (admin +
+  // manager). Crew are additionally blocked from /admin at the edge.
+  const who = await requirePermission(req, 'ai:use')
+  if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({}))
   const query = S(body.query, 400)
   if (!query) return bad('Ask me something.')
@@ -78,33 +82,36 @@ export async function POST(req: NextRequest) {
       openClaims: openClaims.length,
     }
 
-    const r = await aiText({
-      system:
-        'You are the command bar for OpsPilot, a logistics operations platform. Map the user\'s request to exactly ONE target from the TARGETS list, or answer a short factual question using ONLY the DATA provided. ' +
-        'Respond with a single minified JSON object and nothing else. To navigate: {"targetId":"<id from TARGETS>"}. To answer: {"answer":"<one or two sentences>"}. ' +
-        'Never invent ids, routes, names, numbers, or facts. If nothing fits, return {"targetId":"ops"}. Prefer navigation over answering when the user clearly wants to go somewhere or do something.',
-      prompt:
-        `USER REQUEST: ${query}\n\n` +
-        `TARGETS (id — description):\n${targets.map(t => `${t.id} — ${t.label}`).join('\n')}\n\n` +
-        `DATA (for factual answers only):\n${JSON.stringify(summary)}`,
+    // Route through the centralized AI service: it enforces RBAC, loads the
+    // versioned prompt, calls the model fail-soft, validates the structured
+    // response, and records AI telemetry/audit. The server still builds every href
+    // from the allowlist below — the model only ever echoes an id (read-only).
+    const result = await runAiTask<{ targetId?: string; answer?: string }>({
+      taskId: 'ops.command',
+      feature: 'ops.command',
+      requiredPermission: 'ai:use',
+      principal: { sub: who.sub, role: who.role },
+      schema: COMMAND_SCHEMA,
+      requestChars: query.length,
       maxOutputTokens: 200,
       temperature: 0.1,
+      vars: {
+        query,
+        targetsText: targets.map(t => `${t.id} — ${t.label}`).join('\n'),
+        summaryJson: JSON.stringify(summary),
+      },
     })
-    if (!r.ok) return NextResponse.json({ error: r.error }, { status: 503 })
+    if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status })
 
-    // Tolerant parse — pull the first {...} even if the model wrapped it.
-    const match = r.text.match(/\{[\s\S]*\}/)
-    let parsed: { targetId?: string; answer?: string } = {}
-    try { parsed = match ? JSON.parse(match[0]) : {} } catch { /* fall through */ }
-
+    const parsed = result.data
     if (parsed.targetId) {
       const t = targets.find(x => x.id === parsed.targetId)
-      if (t) return NextResponse.json({ ok: true, kind: 'navigate', href: t.href, label: t.label })
+      if (t) return NextResponse.json({ ok: true, kind: 'navigate', href: t.href, label: t.label, callId: result.callId })
     }
-    if (parsed.answer) return NextResponse.json({ ok: true, kind: 'answer', answer: S(parsed.answer, 500) })
+    if (parsed.answer) return NextResponse.json({ ok: true, kind: 'answer', answer: S(parsed.answer, 500), callId: result.callId })
 
     // Couldn't resolve — send them to the full operations list as a safe default.
-    return NextResponse.json({ ok: true, kind: 'navigate', href: '/admin/operations/list', label: 'All operations' })
+    return NextResponse.json({ ok: true, kind: 'navigate', href: '/admin/operations/list', label: 'All operations', callId: result.callId })
   } catch (e) {
     console.error('[ai/command]', e)
     return bad('Command failed — please try again.', 500)

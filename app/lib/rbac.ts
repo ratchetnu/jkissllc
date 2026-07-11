@@ -38,6 +38,8 @@ export type Permission =
   // ── Applicants ──
   | 'applicants:review'
   | 'applicants:decide'    // approve / deny
+  // ── AI (LLMOps) ──
+  | 'ai:use'               // invoke the centralized AI service (read-only / draft-only)
   // ── Communications / reminders (Communication Center) ──
   | 'messages:send'        // send a crew message / reply from ops
   | 'reminders:view'       // see the reminder management surface
@@ -85,6 +87,7 @@ const ADMIN: Permission[] = [
   'crew:manage', 'crew:view', 'crew:assign', 'crew:score:view',
   'availability:view', 'timeoff:view', 'timeoff:approve',
   'applicants:review', 'applicants:decide',
+  'ai:use',
   'messages:send', 'reminders:view', 'reminders:manage', 'dispatch:send', 'comms:analytics',
   'users:manage', 'roles:manage',
   'pay:configure', 'pay:generate', 'pay:view:all', 'pay:adjust:submit', 'pay:approve', 'tax:view',
@@ -102,6 +105,7 @@ const MANAGER: Permission[] = [
   'crew:view', 'crew:assign', 'crew:score:view',
   'availability:view', 'timeoff:view', 'timeoff:approve',   // managers run the schedule + approve time off
   'applicants:review',
+  'ai:use',
   'messages:send', 'reminders:view', 'reminders:manage', 'dispatch:send', 'comms:analytics',
   'pay:adjust:submit',       // submit adjustments for admin approval — not configure/approve
   'claims:manage', 'claims:create', 'claimguard:use',
