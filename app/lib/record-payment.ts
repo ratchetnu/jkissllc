@@ -1,10 +1,11 @@
 import type Stripe from 'stripe'
 import {
-  getBookingByToken, saveBooking, recompute, paymentSummaryStatus,
+  getBookingByToken, saveBooking, recompute, paymentSummaryStatus, pushBookingEvent,
   type Booking, type Payment, type PaymentType,
 } from './bookings'
 import { emailOpsPaymentReceived, emailPaymentReceiptCustomer } from './booking-emails'
 import { notifyBookingConfirmed, notifyPaidInFull } from './notify'
+import { notifyOwnerNewConfirmedBooking } from './booking-notify'
 import { ensureLoyaltyCode } from './promo'
 
 // Record a paid Stripe Checkout Session against its booking. Idempotent: a
@@ -37,7 +38,13 @@ export async function recordStripeSessionPayment(session: Stripe.Checkout.Sessio
     createdAt: now, confirmedAt: now,
   }
   b.payments.push(payment)
+  pushBookingEvent(b, { actor: 'stripe', action: 'stripe.verified', result: 'paid', meta: { sessionId: session.id, amountCents } })
   recompute(b)
+  const justConfirmed = !wasConfirmed && b.status === 'confirmed'
+  if (justConfirmed) {
+    pushBookingEvent(b, { actor: 'system', action: 'booking.confirmed', meta: { via: 'stripe' } })
+    pushBookingEvent(b, { actor: 'system', action: 'customer.confirmation' })
+  }
   const nowPaidInFull = !wasPaidInFull && paymentSummaryStatus(b) === 'paid_in_full'
   if (nowPaidInFull && !b.loyaltyCode) {
     try { b.loyaltyCode = await ensureLoyaltyCode(b.token, b.bookingNumber, Date.now()) } catch (e) { console.error('[loyalty]', e) }
@@ -46,7 +53,10 @@ export async function recordStripeSessionPayment(session: Stripe.Checkout.Sessio
 
   await emailOpsPaymentReceived(b, payment)
   await emailPaymentReceiptCustomer(b, payment)
-  if (!wasConfirmed && b.status === 'confirmed') await notifyBookingConfirmed(b)
+  if (justConfirmed) {
+    await notifyBookingConfirmed(b)                                   // customer confirmation
+    await notifyOwnerNewConfirmedBooking(b, payment).catch(e => console.error('[record-payment] owner notify', e))
+  }
   if (nowPaidInFull) await notifyPaidInFull(b)
   return b
 }

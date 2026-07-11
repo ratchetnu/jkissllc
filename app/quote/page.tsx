@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { COMPANY, CREDENTIALS_DOT } from '../lib/company';
 import Link from 'next/link'
 import {
@@ -149,6 +149,12 @@ export default function QuotePage() {
   const [reserveOpen, setReserveOpen] = useState(false)
   const [avail, setAvail] = useState<{ dates: string[]; depositCents: number } | null>(null)
   const [bookDate, setBookDate] = useState(''); const [bookWin, setBookWin] = useState('')
+  // Deposit payment method chosen at checkout + Zelle proof, and a stable idempotency
+  // key so a double-click / retry can never create two bookings.
+  const [bookMethod, setBookMethod] = useState<'stripe' | 'zelle'>('stripe')
+  const [bookProof, setBookProof] = useState('')
+  const [proofReading, setProofReading] = useState(false)
+  const idemRef = useRef('')
 
   const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
   const [sent, setSent] = useState<{ estimate?: Estimate } | null>(null)
@@ -271,15 +277,24 @@ export default function QuotePage() {
   // Secondary CTA — lock a real open date + pay the deposit via /api/book.
   async function openReserve() {
     setReserveOpen(true); setErr(''); setAvail(null)
+    idemRef.current = crypto.randomUUID()   // one key per reservation attempt
     try {
       const res = await fetch(`/api/availability?loadSize=${encodeURIComponent(sizeId)}`)
       const j = await res.json()
       setAvail({ dates: j.dates ?? [], depositCents: j.depositCents ?? 5000 })
     } catch { setErr('Could not load open dates — you can still request a quote above.') }
   }
+  async function onBookProof(file: File) {
+    setErr(''); setProofReading(true)
+    try { setBookProof(await downscaleToDataUrl(file, 1600, 0.85)) }
+    catch { setErr('Please choose a JPG, PNG, or HEIC screenshot.') }
+    finally { setProofReading(false) }
+  }
   async function submitBooking() {
-    if (!svc) return
+    if (!svc || busy) return
+    if (bookMethod === 'zelle' && !bookProof) { setErr('Please upload your Zelle payment screenshot to reserve.'); return }
     setBusy(true); setErr('')
+    if (!idemRef.current) idemRef.current = crypto.randomUUID()
     try {
       const res = await fetch('/api/book', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -287,6 +302,10 @@ export default function QuotePage() {
           service: svc.bookType, loadSize: sizeId, debris: svc.debris,
           address: pickupText, notes: buildNotes(), photos,
           date: bookDate, window: bookWin, name, phone, email, promo,
+          paymentMethod: bookMethod,
+          proofImage: bookMethod === 'zelle' ? bookProof : undefined,
+          zelleReference: undefined,
+          idempotencyKey: idemRef.current,
         }),
       })
       const j = await res.json()
@@ -371,7 +390,10 @@ export default function QuotePage() {
                           showLow={showLow} showHigh={showHigh} deposit={deposit} est={est}
                           reserveOpen={reserveOpen} avail={avail} bookDate={bookDate} setBookDate={setBookDate}
                           bookWin={bookWin} setBookWin={setBookWin} onOpenReserve={openReserve} onReserve={submitBooking}
-                          jobBased={svc.jobBased}
+                          jobBased={svc.jobBased} busy={busy}
+                          bookMethod={bookMethod} setBookMethod={setBookMethod}
+                          bookProof={bookProof} onBookProof={onBookProof} proofReading={proofReading}
+                          zelleAddress={COMPANY.zelle}
                         />
                       )}
                     </div>
@@ -728,7 +750,9 @@ function StepReview(props: {
   est: { hasPrice: boolean } | null
   reserveOpen: boolean; avail: { dates: string[]; depositCents: number } | null
   bookDate: string; setBookDate: (v: string) => void; bookWin: string; setBookWin: (v: string) => void
-  onOpenReserve: () => void; onReserve: () => void; jobBased: boolean
+  onOpenReserve: () => void; onReserve: () => void; jobBased: boolean; busy: boolean
+  bookMethod: 'stripe' | 'zelle'; setBookMethod: (m: 'stripe' | 'zelle') => void
+  bookProof: string; onBookProof: (f: File) => void; proofReading: boolean; zelleAddress: string
 }) {
   const rows: [string, string][] = [
     ['Service', props.svc.label],
@@ -807,8 +831,39 @@ function StepReview(props: {
                       </div>
                     </>
                   )}
-                  <button type="button" onClick={props.onReserve} disabled={!props.bookDate || !props.bookWin} className="btn w-full wiz-ease" style={{ justifyContent: 'center', opacity: props.bookDate && props.bookWin ? 1 : 0.5 }}>
-                    Reserve &amp; Pay ${props.deposit} <ArrowRight size={16} />
+                  {props.bookDate && props.bookWin && (
+                    <>
+                      <label style={lbl}>How would you like to pay the ${props.deposit} deposit?</label>
+                      <div className="grid grid-cols-1 gap-2 mb-3">
+                        <button type="button" onClick={() => props.setBookMethod('stripe')} className="rounded-2xl px-4 py-3 text-left wiz-ease" style={{ border: `1.5px solid ${props.bookMethod === 'stripe' ? RED : 'rgba(255,255,255,.12)'}`, background: props.bookMethod === 'stripe' ? 'rgba(224,0,42,.08)' : 'rgba(255,255,255,.03)' }}>
+                          <p className="font-bold text-white text-sm">💳 Credit / Debit Card</p>
+                          <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>Instant confirmation · secure checkout · booking confirmed right after payment.</p>
+                        </button>
+                        <button type="button" onClick={() => props.setBookMethod('zelle')} className="rounded-2xl px-4 py-3 text-left wiz-ease" style={{ border: `1.5px solid ${props.bookMethod === 'zelle' ? RED : 'rgba(255,255,255,.12)'}`, background: props.bookMethod === 'zelle' ? 'rgba(224,0,42,.08)' : 'rgba(255,255,255,.03)' }}>
+                          <p className="font-bold text-white text-sm">🏦 Zelle <span style={{ color: 'var(--muted)', fontWeight: 400 }}>· no processing fee</span></p>
+                          <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>Send the deposit by Zelle, upload your confirmation, and we&apos;ll confirm after verifying it.</p>
+                        </button>
+                      </div>
+
+                      {props.bookMethod === 'zelle' && (
+                        <div className="rounded-2xl px-4 py-3 mb-3" style={{ border: '1px solid rgba(255,255,255,.1)', background: 'rgba(255,255,255,.03)' }}>
+                          <p className="text-sm mb-2" style={{ color: 'var(--muted)' }}>Send <span className="font-bold text-white">${props.deposit}</span> to <span className="font-mono text-white">{props.zelleAddress}</span>, then upload a screenshot showing the amount, recipient, and date.</p>
+                          {props.bookProof ? (
+                            <div className="rounded-xl overflow-hidden mb-2" style={{ border: '1px solid rgba(255,255,255,.12)' }}>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={props.bookProof} alt="Your Zelle confirmation" style={{ display: 'block', width: '100%', maxHeight: 220, objectFit: 'contain', background: 'rgba(0,0,0,.2)' }} />
+                            </div>
+                          ) : null}
+                          <label className="flex items-center justify-center gap-2 rounded-xl px-4 py-3 cursor-pointer text-sm font-semibold" style={{ border: '1px dashed rgba(255,255,255,.25)', color: '#fff' }}>
+                            {props.proofReading ? 'Reading…' : props.bookProof ? '↻ Choose a different screenshot' : '📷 Upload payment screenshot'}
+                            <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" hidden onChange={e => { const f = e.target.files?.[0]; if (f) props.onBookProof(f) }} />
+                          </label>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  <button type="button" onClick={props.onReserve} disabled={!props.bookDate || !props.bookWin || props.busy || props.proofReading || (props.bookMethod === 'zelle' && !props.bookProof)} className="btn w-full wiz-ease" style={{ justifyContent: 'center', opacity: (props.bookDate && props.bookWin && !props.busy && !(props.bookMethod === 'zelle' && !props.bookProof)) ? 1 : 0.5 }}>
+                    {props.busy ? 'Reserving…' : props.bookMethod === 'zelle' ? <>Reserve with Zelle · Upload Confirmation</> : <>Reserve &amp; Pay ${props.deposit} <ArrowRight size={16} /></>}
                   </button>
                   <p className="text-xs text-center mt-2" style={{ color: 'rgba(255,255,255,.4)' }}>Your deposit holds the date and is fully refunded if we can&apos;t make it.</p>
                 </>

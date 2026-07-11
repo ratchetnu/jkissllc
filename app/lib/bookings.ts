@@ -29,6 +29,7 @@ export const SERVICE_TYPES = Object.keys(SERVICE_LABELS) as ServiceType[]
 export type BookingStatus =
   | 'quote_received'
   | 'pending_payment'
+  | 'pending_zelle_verification'   // Zelle proof uploaded, awaiting owner review
   | 'payment_received'
   | 'booking_created'
   | 'confirmation_link_sent'
@@ -47,6 +48,7 @@ export type BookingStatus =
 export const BOOKING_STATUS_LABEL: Record<BookingStatus, string> = {
   quote_received: 'Quote Received',
   pending_payment: 'Pending Payment',
+  pending_zelle_verification: 'Pending Zelle Verification',
   payment_received: 'Payment Received',
   booking_created: 'Booking Created',
   confirmation_link_sent: 'Confirmation Link Sent',
@@ -106,8 +108,55 @@ export type Payment = {
   stripePaymentIntentId?: string
   reference?: string           // manual reference / confirmation number
   note?: string                // manual confirmation notes (ops only)
+
+  // ── Zelle / proof-upload evidence (sensitive — never sent to the browser) ──
+  // proofPath is the SEALED (AES-256-GCM) Vercel Blob pathname of the customer's
+  // payment screenshot. It is ciphertext at rest and only ever decrypted by the
+  // admin-gated serve endpoint — the raw path is never exposed to a customer.
+  proofPath?: string
+  proofUploadedAt?: number
+  proofHistory?: { path: string; at: number; replacedAt?: number }[]  // superseded proofs, kept for audit
+  reviewedBy?: string          // principal.sub who approved/rejected
+  reviewedAt?: number
+  rejectionReason?: string
+
   createdAt: number
   confirmedAt?: number
+}
+
+// ── Per-booking audit trail (request Part 12) ────────────────────────────────
+export type BookingEventAction =
+  | 'booking.created' | 'booking.confirmed'
+  | 'stripe.verified'
+  | 'zelle.uploaded' | 'zelle.replacement_uploaded' | 'zelle.approved' | 'zelle.rejected'
+  | 'notification.sent' | 'notification.failed' | 'notification.resent'
+  | 'customer.confirmation'
+
+export type BookingEvent = {
+  at: number
+  actor: string                // 'customer' | 'system' | 'stripe' | principal.sub
+  action: BookingEventAction
+  result?: string
+  meta?: Record<string, unknown>
+}
+
+// ── Owner-notification ledger (request Part 7) ───────────────────────────────
+export type NotificationKind =
+  | 'zelle_review'             // ZELLE PAYMENT REVIEW REQUIRED → owner
+  | 'new_confirmed_booking'    // NEW CONFIRMED BOOKING → owner (after Stripe verify)
+  | 'zelle_rejected_customer'  // proof rejected → customer, with replacement link
+  | 'confirmation_customer'    // booking confirmed → customer
+
+export type NotificationAttempt = {
+  id: string
+  kind: NotificationKind
+  channel: 'sms' | 'email'
+  to?: string
+  status: 'sent' | 'failed'
+  providerId?: string          // Twilio SID / Resend id
+  error?: string
+  at: number
+  retryCount: number
 }
 
 // ── Derived payment status (for display + bookkeeping) ───────────────────────
@@ -182,6 +231,23 @@ export type Booking = {
   // How the booking was created — 'online' = self-service instant/deposit hold flow,
   // 'admin' = created in the admin. Used to scope the abandoned-hold cleanup.
   source?: 'online' | 'admin'
+
+  // Attribution captured at booking time (UTM / referrer / referral code).
+  leadSource?: string
+  marketingSource?: string
+  referralSource?: string
+
+  // Idempotency: the client-supplied key that created this booking. A retry with
+  // the same key returns this booking instead of creating a duplicate.
+  idempotencyKey?: string
+
+  // Structured, attributed audit trail + owner-notification delivery ledger.
+  events?: BookingEvent[]
+  notifications?: NotificationAttempt[]
+
+  // Secure replacement-upload grant issued when a Zelle proof is rejected — the
+  // customer can upload a new screenshot via a one-time token without a new booking.
+  replacementUpload?: { token: string; paymentId: string; at: number; usedAt?: number }
 
   // Internal (never exposed to the customer)
   internalNotes?: string
@@ -411,6 +477,8 @@ export function recompute(b: Booking): Booking {
   b.amountPaidCents = confirmedPaidCents(b)
   const paidSomething = b.amountPaidCents > 0
   const timeVerified = !!b.customerTimeVerifiedAt && !!b.selectedDate && !!b.selectedWindow
+  // A Zelle screenshot uploaded and awaiting owner review (not yet money in hand).
+  const pendingZelleProof = b.payments.some(p => p.method === 'zelle' && p.status === 'sent_by_customer' && !!p.proofPath)
 
   // Never downgrade terminal/active workflow states. Closed states + the mid-job
   // states 'in_progress'/'continued' are human-set — payment/time changes must not
@@ -420,6 +488,9 @@ export function recompute(b: Booking): Booking {
       b.status = 'confirmed'
       if (!b.confirmedAt) b.confirmedAt = Date.now()
       if (!b.customerConfirmedAt) b.customerConfirmedAt = b.confirmedAt
+    } else if (pendingZelleProof && !paidSomething) {
+      // Proof is in, but a human must verify it before the booking is Confirmed.
+      b.status = 'pending_zelle_verification'
     } else if (timeVerified) {
       b.status = 'time_verified'
     } else if (paidSomething && rank(b.status) < rank('payment_received')) {
@@ -429,8 +500,34 @@ export function recompute(b: Booking): Booking {
   return b
 }
 
+// ── Audit + notification ledger helpers (pure mutations on the record) ───────
+const MAX_EVENTS = 200
+const MAX_NOTIFICATIONS = 100
+
+export function pushBookingEvent(b: Booking, e: Omit<BookingEvent, 'at'> & { at?: number }): BookingEvent {
+  const entry: BookingEvent = { at: e.at ?? Date.now(), actor: e.actor, action: e.action, result: e.result, meta: e.meta }
+  b.events = [...(b.events ?? []), entry].slice(-MAX_EVENTS)
+  return entry
+}
+
+export function recordNotificationAttempt(b: Booking, a: Omit<NotificationAttempt, 'id' | 'at'> & { id?: string; at?: number }): NotificationAttempt {
+  const entry: NotificationAttempt = {
+    id: a.id ?? crypto.randomUUID(),
+    kind: a.kind, channel: a.channel, to: a.to,
+    status: a.status, providerId: a.providerId, error: a.error,
+    at: a.at ?? Date.now(), retryCount: a.retryCount ?? 0,
+  }
+  b.notifications = [...(b.notifications ?? []), entry].slice(-MAX_NOTIFICATIONS)
+  return entry
+}
+
+// Most recent attempt of a given kind — used to dedupe (don't re-send unless forced).
+export function lastNotification(b: Booking, kind: NotificationKind): NotificationAttempt | undefined {
+  return (b.notifications ?? []).filter(n => n.kind === kind).at(-1)
+}
+
 const STATUS_ORDER: BookingStatus[] = [
-  'quote_received', 'pending_payment', 'payment_received', 'booking_created',
+  'quote_received', 'pending_payment', 'pending_zelle_verification', 'payment_received', 'booking_created',
   'confirmation_link_sent', 'customer_viewed', 'time_verification_pending',
   'time_verified', 'confirmed', 'in_progress', 'continued', 'completed',
 ]
@@ -453,17 +550,23 @@ export function dollarsToCents(v: string | number): number {
 // ── Customer-safe projection ─────────────────────────────────────────────────
 // Strips internal notes and the agreement audit trail (IP / UA) before sending
 // a booking to the browser.
-export type CustomerBooking = Omit<Booking, 'internalNotes' | 'agreementIp' | 'agreementUserAgent' | 'payments' | 'disposalEstimateCents' | 'disposalActualCents'> & {
+export type CustomerBooking = Omit<Booking,
+  'internalNotes' | 'agreementIp' | 'agreementUserAgent' | 'payments' | 'disposalEstimateCents' | 'disposalActualCents'
+  | 'events' | 'notifications' | 'replacementUpload' | 'idempotencyKey'> & {
   balanceDueCents: number
   paymentSummary: PaymentSummaryStatus
-  payments: Array<Pick<Payment, 'type' | 'method' | 'status' | 'amountCents' | 'feeCents' | 'totalChargedCents' | 'createdAt' | 'confirmedAt'>>
+  payments: Array<Pick<Payment, 'type' | 'method' | 'status' | 'amountCents' | 'feeCents' | 'totalChargedCents' | 'createdAt' | 'confirmedAt'> & { hasProof: boolean }>
 }
 
 export function customerView(b: Booking): CustomerBooking {
-  // Strip everything internal: audit fields, full payment detail, and the disposal
-  // cost / margin numbers (never expose those to the customer).
-  const { internalNotes: _i, agreementIp: _ip, agreementUserAgent: _ua, payments, disposalEstimateCents: _de, disposalActualCents: _da, ...rest } = b
-  void _i; void _ip; void _ua; void _de; void _da
+  // Strip everything internal: audit fields, full payment detail (incl. sealed proof
+  // paths), the owner-notification ledger, and the disposal cost / margin numbers.
+  const {
+    internalNotes: _i, agreementIp: _ip, agreementUserAgent: _ua, payments,
+    disposalEstimateCents: _de, disposalActualCents: _da,
+    events: _ev, notifications: _no, replacementUpload: _ru, idempotencyKey: _ik, ...rest
+  } = b
+  void _i; void _ip; void _ua; void _de; void _da; void _ev; void _no; void _ru; void _ik
   return {
     ...rest,
     balanceDueCents: balanceDueCents(b),
@@ -472,6 +575,7 @@ export function customerView(b: Booking): CustomerBooking {
       type: p.type, method: p.method, status: p.status,
       amountCents: p.amountCents, feeCents: p.feeCents, totalChargedCents: p.totalChargedCents,
       createdAt: p.createdAt, confirmedAt: p.confirmedAt,
+      hasProof: !!p.proofPath,   // customer can see THAT they uploaded proof, never the path
     })),
   }
 }

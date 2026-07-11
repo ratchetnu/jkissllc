@@ -292,7 +292,9 @@ export default function BookingClient({
 function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; token: string; onChange: () => void; disabled: boolean }) {
   const [busy, setBusy] = useState<string>('')
   const [err, setErr] = useState('')
-  const [showManual, setShowManual] = useState(false)
+  // Auto-open the upload form when the customer arrives from a "re-upload your
+  // payment" link (?replace=…) after a rejected Zelle screenshot.
+  const [showManual, setShowManual] = useState(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('replace'))
   const [copied, setCopied] = useState('')
 
   const [promoInput, setPromoInput] = useState('')
@@ -397,7 +399,7 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
             {!showManual ? (
               <button onClick={() => setShowManual(true)} className="btn-ghost w-full mt-3" style={{ padding: '13px 18px', fontSize: 14, justifyContent: 'center' }}>I Sent Payment →</button>
             ) : (
-              <ManualPaymentForm token={token} balance={depositDue} onDone={() => { setShowManual(false); onChange() }} onCancel={() => setShowManual(false)} />
+              <ManualPaymentForm token={token} balance={depositDue} deposit={b.depositAmountCents} onDone={() => { setShowManual(false); onChange() }} onCancel={() => setShowManual(false)} />
             )}
           </div>
         </>
@@ -458,7 +460,7 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
             {!showManual ? (
               <button onClick={() => setShowManual(true)} className="btn-ghost w-full mt-3" style={{ padding: '13px 18px', fontSize: '14px', justifyContent: 'center' }}>I Sent Payment →</button>
             ) : (
-              <ManualPaymentForm token={token} balance={balance} onDone={() => { setShowManual(false); onChange() }} onCancel={() => setShowManual(false)} />
+              <ManualPaymentForm token={token} balance={balance} deposit={b.depositAmountCents} onDone={() => { setShowManual(false); onChange() }} onCancel={() => setShowManual(false)} />
             )}
           </div>
         </>
@@ -467,38 +469,82 @@ function PaymentCard({ b, token, onChange, disabled }: { b: CustomerBooking; tok
   )
 }
 
-function ManualPaymentForm({ token, balance, onDone, onCancel }: { token: string; balance: number; onDone: () => void; onCancel: () => void }) {
+// Read + downscale a chosen image to a data URL. HEIC is passed through (browsers
+// can't canvas-draw it; the server accepts HEIC). Everything else is re-encoded to a
+// reasonable JPEG so uploads stay small. Rejects non-images up front.
+async function fileToProofDataUrl(file: File, max = 1600, quality = 0.85): Promise<string> {
+  if (!/^image\/(jpeg|png|webp|heic|heif)$/.test(file.type)) throw new Error('unsupported')
+  const dataUrl = await new Promise<string>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result as string); fr.onerror = () => rej(new Error('read')); fr.readAsDataURL(file) })
+  if (/heic|heif/.test(file.type)) return dataUrl
+  try {
+    const img = await new Promise<HTMLImageElement>((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('decode')); i.src = dataUrl })
+    const scale = Math.min(1, max / Math.max(img.width, img.height))
+    if (scale >= 1 && dataUrl.length < 2_500_000) return dataUrl
+    const c = document.createElement('canvas')
+    c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale)
+    const ctx = c.getContext('2d'); if (!ctx) return dataUrl
+    ctx.drawImage(img, 0, 0, c.width, c.height)
+    return c.toDataURL('image/jpeg', quality)
+  } catch { return dataUrl }
+}
+
+function ManualPaymentForm({ token, balance, deposit, onDone, onCancel }: { token: string; balance: number; deposit: number; onDone: () => void; onCancel: () => void }) {
+  const [method, setMethod] = useState('zelle')
+  const [proof, setProof] = useState('')
+  const [preview, setPreview] = useState('')
+  const [reading, setReading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   const [done, setDone] = useState(false)
+  const needsProof = method === 'zelle'
+  const placeholderAmt = ((balance || deposit) / 100).toFixed(2)
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]; if (!f) return
+    setErr(''); setReading(true)
+    try { const d = await fileToProofDataUrl(f); setProof(d); setPreview(d) }
+    catch { setErr('Please choose a JPG, PNG, or HEIC screenshot.') }
+    finally { setReading(false) }
+  }
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
+    if (needsProof && !proof) { setErr('Please upload a screenshot of your Zelle payment confirmation.'); return }
     setSaving(true); setErr('')
-    const data = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>
+    const form = new FormData(e.currentTarget)
+    const replaceToken = new URLSearchParams(window.location.search).get('replace') || undefined
     try {
       const res = await fetch(`/api/booking/${token}/manual-payment`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          method, amount: form.get('amount'), dateSent: form.get('dateSent'), reference: form.get('reference'),
+          proofImage: needsProof ? proof : undefined, replaceToken,
+        }),
       })
       const j = await res.json()
       if (!res.ok) throw new Error(j.error ?? 'Failed')
       setDone(true)
-      setTimeout(onDone, 1800)
+      setTimeout(onDone, 2200)
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed'); setSaving(false) }
   }
 
-  if (done) return <p className="text-sm mt-4" style={{ color: '#34d399' }}>✓ Thanks — we&apos;ll confirm your payment once it lands and update your balance.</p>
+  if (done) return (
+    <div className="mt-4 rounded-xl px-4 py-3" style={{ background: 'rgba(52,211,153,.08)', border: '1px solid rgba(52,211,153,.3)' }}>
+      <p className="text-sm font-semibold" style={{ color: '#34d399' }}>✓ Payment confirmation received</p>
+      <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>Our team will verify it shortly. Your booking is confirmed once we&apos;ve verified your payment — we&apos;ll text you.</p>
+    </div>
+  )
 
   return (
     <form onSubmit={submit} className="mt-4 space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label style={labelStyle}>Amount Sent</label>
-          <input name="amount" required inputMode="decimal" placeholder={(balance / 100).toFixed(2)} style={iStyle} />
+          <input name="amount" required inputMode="decimal" placeholder={placeholderAmt} style={iStyle} />
         </div>
         <div>
           <label style={labelStyle}>Method</label>
-          <select name="method" defaultValue="zelle" style={{ ...iStyle, cursor: 'pointer' }}>
+          <select name="method" value={method} onChange={e => setMethod(e.target.value)} style={{ ...iStyle, cursor: 'pointer' }}>
             <option value="zelle">Zelle</option>
             <option value="apple_cash">Apple Pay / Cash</option>
             <option value="cash">Cash</option>
@@ -506,6 +552,24 @@ function ManualPaymentForm({ token, balance, onDone, onCancel }: { token: string
           </select>
         </div>
       </div>
+
+      {needsProof && (
+        <div>
+          <label style={labelStyle}>Payment Confirmation Screenshot <span style={{ color: 'var(--red)' }}>*</span></label>
+          <p className="text-xs mb-2" style={{ color: 'var(--muted)' }}>Upload your Zelle confirmation clearly showing the amount, recipient, and date. Required to confirm your booking.</p>
+          {preview ? (
+            <div className="rounded-xl overflow-hidden mb-2" style={{ border: '1px solid rgba(255,255,255,.12)' }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={preview} alt="Your payment confirmation" style={{ display: 'block', width: '100%', maxHeight: 260, objectFit: 'contain', background: 'rgba(0,0,0,.2)' }} />
+            </div>
+          ) : null}
+          <label className="flex items-center justify-center gap-2 rounded-xl px-4 py-3 cursor-pointer text-sm font-semibold" style={{ border: '1px dashed rgba(255,255,255,.25)', color: 'var(--text)' }}>
+            {reading ? 'Reading…' : preview ? '↻ Choose a different screenshot' : '📷 Upload screenshot'}
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" hidden onChange={onFile} />
+          </label>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label style={labelStyle}>Date Sent</label>
@@ -518,7 +582,7 @@ function ManualPaymentForm({ token, balance, onDone, onCancel }: { token: string
       </div>
       {err && <p className="text-sm" style={{ color: '#f87171' }}>{err}</p>}
       <div className="flex gap-2">
-        <button type="submit" disabled={saving} className="btn" style={{ padding: '10px 18px', fontSize: '13px' }}>{saving ? 'Sending…' : 'Submit Payment Notice'}</button>
+        <button type="submit" disabled={saving || reading || (needsProof && !proof)} className="btn" style={{ padding: '10px 18px', fontSize: '13px', opacity: (needsProof && !proof) ? .6 : 1 }}>{saving ? 'Submitting…' : needsProof ? 'Submit Payment Confirmation' : 'Submit Payment Notice'}</button>
         <button type="button" onClick={onCancel} className="btn-ghost" style={{ padding: '10px 18px', fontSize: '13px' }}>Cancel</button>
       </div>
     </form>

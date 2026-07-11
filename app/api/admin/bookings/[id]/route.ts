@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSession } from '../../_lib/session'
+import { requireSession, getPrincipal } from '../../_lib/session'
+import { can } from '../../../../lib/rbac'
 import {
   getBookingByToken, saveBooking, deleteBooking, recompute, balanceDueCents, dollarsToCents,
-  paymentSummaryStatus, sanitizePhotos,
+  paymentSummaryStatus, sanitizePhotos, pushBookingEvent, generateToken,
   SERVICE_TYPES, type Booking, type ServiceType, type Payment, type PaymentMethod, type PaymentType,
   type BookingStatus,
 } from '../../../../lib/bookings'
+import { notifyCustomerZelleRejected, resendOwnerNotification } from '../../../../lib/booking-notify'
 import { getPolicyVersion, getCurrentPolicy } from '../../../../lib/policy'
 import { sendConfirmationLink, notifyJobCompleted, notifyBookingConfirmed, notifyPaidInFull, notifyContinuation, notifyCustomerMessage } from '../../../../lib/notify'
-import { emailOpsPaymentReceived, emailPaymentReceiptCustomer, emailRefundCustomer, bookingLink } from '../../../../lib/booking-emails'
+import { emailOpsPaymentReceived, emailPaymentReceiptCustomer, emailRefundCustomer, bookingLink, siteUrl } from '../../../../lib/booking-emails'
 import { str, strList, num } from '../../../../lib/validators'
 import { sendSmsDetailed, getSmsStatus, toE164 } from '../../../../lib/sms'
 import { recordMessage } from '../../../../lib/messages'
@@ -60,10 +62,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const body = await req.json().catch(() => ({}))
   const action: string = body.action ?? 'update'
+  const who = await getPrincipal(req)
+  const actor = who?.sub || 'admin'
   const wasConfirmed = b.status === 'confirmed'
   const wasPaidInFull = paymentSummaryStatus(b) === 'paid_in_full'
   let extra: Record<string, unknown> = {}
   let refundedNowCents = 0
+  let rejectReplacementUrl: string | undefined
+  let rejectReason: string | undefined
 
   switch (action) {
     case 'update': {
@@ -121,7 +127,50 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       p.status = 'confirmed'
       p.confirmedAt = Date.now()
       if (str(body.note, 500)) p.note = `${p.note ? p.note + ' · ' : ''}${str(body.note, 500)}`
+      pushBookingEvent(b, { actor, action: 'zelle.approved', result: 'confirmed', meta: { paymentId: p.id, method: p.method } })
       await sendReceipts(b, p)
+      break
+    }
+    case 'approve-zelle': {
+      // Owner/Admin only — verify a Zelle proof and confirm the deposit.
+      if (!who || !can(who.role, 'invoices:manage')) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+      const p = b.payments.find(x => x.id === body.paymentId && x.method === 'zelle')
+      if (!p) return NextResponse.json({ error: 'Zelle payment not found' }, { status: 404 })
+      if (p.status === 'confirmed') return NextResponse.json({ error: 'Already confirmed.' }, { status: 400 })
+      p.status = 'confirmed'
+      p.confirmedAt = Date.now()
+      p.reviewedBy = actor
+      p.reviewedAt = Date.now()
+      pushBookingEvent(b, { actor, action: 'zelle.approved', result: 'confirmed', meta: { paymentId: p.id, amountCents: p.amountCents } })
+      pushBookingEvent(b, { actor, action: 'booking.confirmed', meta: { via: 'zelle' } })
+      await sendReceipts(b, p)
+      break
+    }
+    case 'reject-zelle': {
+      if (!who || !can(who.role, 'invoices:manage')) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+      const p = b.payments.find(x => x.id === body.paymentId && x.method === 'zelle')
+      if (!p) return NextResponse.json({ error: 'Zelle payment not found' }, { status: 404 })
+      if (p.status === 'confirmed') return NextResponse.json({ error: 'That payment is already confirmed.' }, { status: 400 })
+      rejectReason = str(body.reason, 300) || 'The screenshot could not be verified.'
+      p.status = 'failed'
+      p.reviewedBy = actor
+      p.reviewedAt = Date.now()
+      p.rejectionReason = rejectReason
+      // Keep the rejected proof for audit; issue a one-time replacement-upload grant.
+      const rtoken = generateToken()
+      b.replacementUpload = { token: rtoken, paymentId: p.id, at: Date.now() }
+      rejectReplacementUrl = `${siteUrl()}/booking/${b.token}?replace=${rtoken}`
+      pushBookingEvent(b, { actor, action: 'zelle.rejected', result: rejectReason, meta: { paymentId: p.id } })
+      break
+    }
+    case 'resend-notification': {
+      const kind = body.kind === 'new_confirmed_booking' ? 'new_confirmed_booking' : 'zelle_review'
+      const p = kind === 'zelle_review'
+        ? b.payments.find(x => x.method === 'zelle' && x.status === 'sent_by_customer')
+        : [...b.payments].reverse().find(x => x.status === 'confirmed')
+      const r = await resendOwnerNotification(b, kind, p)
+      pushBookingEvent(b, { actor, action: 'notification.resent', result: r.sent ? 'sent' : 'failed', meta: { kind } })
+      extra = { resent: r.sent }
       break
     }
     case 'void-payment': {
@@ -405,6 +454,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   await saveBooking(b)
 
   // Side-effect notifications after persistence.
+  if (action === 'reject-zelle' && rejectReplacementUrl && rejectReason) {
+    await notifyCustomerZelleRejected(b, rejectReason, rejectReplacementUrl).catch(e => console.error('[reject-zelle notify]', e))
+    await saveBooking(b)   // persist the customer-notified event
+  }
   if (action === 'refund' && refundedNowCents > 0) await emailRefundCustomer(b, refundedNowCents)
   if (action === 'mark-completed') await notifyJobCompleted(b)
   if (!wasConfirmed && b.status === 'confirmed' && action !== 'send-link') await notifyBookingConfirmed(b)
@@ -422,7 +475,7 @@ async function sendReceipts(b: Booking, p: Payment): Promise<void> {
 }
 
 const STATUS_SET: Record<BookingStatus, true> = {
-  quote_received: true, pending_payment: true, payment_received: true, booking_created: true,
+  quote_received: true, pending_payment: true, pending_zelle_verification: true, payment_received: true, booking_created: true,
   confirmation_link_sent: true, customer_viewed: true, time_verification_pending: true,
   time_verified: true, confirmed: true, in_progress: true, continued: true, completed: true,
   partially_completed: true, could_not_complete: true, cancelled: true, refunded: true,

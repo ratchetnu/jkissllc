@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { COMPANY } from '../../lib/company'
 import { upload } from '@vercel/blob/client'
 import AdminGate from '../AdminGate'
@@ -16,7 +16,7 @@ const SERVICE_LABELS: Record<string, string> = {
 }
 const SERVICE_TYPES = Object.keys(SERVICE_LABELS)
 const STATUS_LABEL: Record<string, string> = {
-  quote_received: 'Quote Received', pending_payment: 'Pending Payment', payment_received: 'Payment Received',
+  quote_received: 'Quote Received', pending_payment: 'Pending Payment', pending_zelle_verification: 'Zelle Review', payment_received: 'Payment Received',
   booking_created: 'Booking Created', confirmation_link_sent: 'Link Sent', customer_viewed: 'Viewed',
   time_verification_pending: 'Awaiting Time', time_verified: 'Time Verified', confirmed: 'Confirmed',
   in_progress: 'In Progress', continued: 'Continued — Return Needed', completed: 'Completed',
@@ -70,6 +70,7 @@ function statusColor(s: string): string {
   if (s === 'cancelled' || s === 'could_not_complete' || s === 'refunded') return '#f87171'
   if (s === 'continued' || s === 'partially_completed') return '#fb923c'
   if (s === 'in_progress') return '#60a5fa'
+  if (s === 'pending_zelle_verification') return '#c084fc'
   if (s === 'time_verified' || s === 'payment_received') return '#fbbf24'
   return 'var(--muted)'
 }
@@ -135,6 +136,7 @@ function prefillFromBooking(b: Booking): Prefill {
 // Which status bucket a booking falls in, for the filter chips.
 function matchesStatusFilter(b: Booking, f: string): boolean {
   if (f === 'all') return true
+  if (f === 'zelle') return b.status === 'pending_zelle_verification'
   if (f === 'cancelled') return b.status === 'cancelled'
   if (f === 'completed') return b.status === 'completed'
   if (f === 'unpaid') return b.status !== 'cancelled' && balanceDue(b) > 0 && b.amountPaidCents === 0
@@ -154,7 +156,7 @@ function Dashboard() {
   const [showNew, setShowNew] = useState(false)
   const [editing, setEditing] = useState(false)
   const [prefill, setPrefill] = useState<Prefill | null>(null)
-  const [statusFilter, setStatusFilter] = useState<'active' | 'all' | 'unpaid' | 'unscheduled' | 'completed' | 'cancelled'>('active')
+  const [statusFilter, setStatusFilter] = useState<'active' | 'zelle' | 'all' | 'unpaid' | 'unscheduled' | 'completed' | 'cancelled'>('active')
   const [showArchived, setShowArchived] = useState(false)
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [visibleCount, setVisibleCount] = useState(25)
@@ -189,6 +191,18 @@ function Dashboard() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // Deep-link from an owner notification SMS/email: ?b=<bookingNumber> opens that
+  // booking's detail once the list has loaded (then strips the query).
+  const bParamDone = useRef(false)
+  useEffect(() => {
+    if (bParamDone.current || items.length === 0) return
+    const bn = new URLSearchParams(window.location.search).get('b')
+    if (!bn) { bParamDone.current = true; return }
+    const match = items.find(x => (x.bookingNumber || '').toUpperCase() === bn.toUpperCase())
+    if (match) { setSelected(match.token); window.history.replaceState({}, '', window.location.pathname) }
+    bParamDone.current = true
+  }, [items])
 
   const current = items.find(b => b.token === selected) ?? null
 
@@ -225,7 +239,7 @@ function Dashboard() {
     setChecked(prev => { const n = new Set(prev); n.has(token) ? n.delete(token) : n.add(token); return n })
   }
 
-  const STATUS_FILTERS = ['active', 'unpaid', 'unscheduled', 'completed', 'cancelled', 'all'] as const
+  const STATUS_FILTERS = ['active', 'zelle', 'unpaid', 'unscheduled', 'completed', 'cancelled', 'all'] as const
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -825,6 +839,14 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
         {pendingPayments.length > 0 && <p className="text-xs mt-2" style={{ color: '#fbbf24' }}>⚠ {pendingPayments.length} customer-reported payment(s) need confirmation.</p>}
       </div>
 
+      {/* Zelle payment review — screenshot + verify/reject */}
+      {b.payments.some(p => p.method === 'zelle' && !!p.proofPath) && (
+        <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px', border: '1px solid rgba(192,132,252,.35)' }}>
+          <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: '#c084fc' }}>🏦 Zelle Payment Review</p>
+          {b.payments.filter(p => p.method === 'zelle' && !!p.proofPath).map(p => <ZelleReview key={p.id} p={p} />)}
+        </div>
+      )}
+
       {/* Multi-day / continuation */}
       <ContinuationCard b={b} run={run} busy={busy} />
 
@@ -930,6 +952,35 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
       {/* Customer timeline */}
       <Timeline b={b} />
 
+      {/* Structured, attributed audit trail + owner-notification delivery ledger */}
+      {(!!b.events?.length || !!b.notifications?.length) && (
+        <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
+          <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)' }}>Audit &amp; Notifications</p>
+          {!!b.notifications?.length && (
+            <div className="mb-3">
+              <p className="text-xs font-semibold mb-1" style={{ color: '#c084fc' }}>Owner notifications</p>
+              {[...b.notifications].reverse().map(n => (
+                <div key={n.id} className="text-xs flex justify-between gap-2 py-0.5" style={{ color: 'var(--muted)' }}>
+                  <span>{n.kind.replace(/_/g, ' ')} · {n.channel}{n.retryCount ? ` · retry ${n.retryCount}` : ''}{n.error ? ` · ${n.error}` : ''}</span>
+                  <span className="shrink-0" style={{ color: n.status === 'sent' ? '#34d399' : '#f87171' }}>{n.status} · {fmtTs(n.at)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {!!b.events?.length && (
+            <div>
+              <p className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>Event history</p>
+              {[...b.events].reverse().map((e, i) => (
+                <div key={i} className="text-xs flex justify-between gap-2 py-0.5" style={{ color: 'var(--muted)' }}>
+                  <span>{e.action.replace(/[._]/g, ' ')}{e.result ? ` · ${e.result}` : ''}</span>
+                  <span className="shrink-0">{e.actor} · {fmtTs(e.at)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Chargeback evidence */}
       <details className="glass-card p-5" style={{ borderRadius: '16px' }}>
         <summary className="cursor-pointer text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Chargeback Evidence / Audit Trail</summary>
@@ -975,6 +1026,33 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
           {p.status === 'sent_by_customer' && <button onClick={likelyDuplicate ? confirmDup : onConfirm} disabled={busy} className="font-bold px-2 py-1 rounded" style={{ background: 'var(--red)', color: '#fff' }}>Confirm</button>}
           <button onClick={onVoid} disabled={busy} className="font-semibold px-2 py-1 rounded" style={{ background: 'rgba(224,0,42,.08)', border: '1px solid rgba(224,0,42,.3)', color: '#ff6680' }}>Void</button>
         </span>
+      </div>
+    )
+  }
+
+  // A Zelle payment awaiting review: its sealed screenshot (served decrypted, admin-
+  // only) + Approve / Reject / Resend-owner-alert. The blob path is never in the DOM.
+  function ZelleReview({ p }: { p: Payment }) {
+    const pending = p.status === 'sent_by_customer'
+    const src = `/api/admin/bookings/${b.token}/proof?p=${p.id}`
+    return (
+      <div className="mb-3 pb-3" style={{ borderBottom: '1px solid rgba(255,255,255,.06)' }}>
+        <div className="text-xs mb-2" style={{ color: 'var(--muted)' }}>
+          {usd(p.amountCents)} · {p.type} · <span style={{ color: p.status === 'confirmed' ? '#34d399' : p.status === 'failed' ? '#f87171' : '#c084fc' }}>{p.status.replace(/_/g, ' ')}</span>
+          {p.reference && <> · ref {p.reference}</>}
+          {p.reviewedAt && <> · reviewed {fmtTs(p.reviewedAt)}</>}
+        </div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <a href={src} target="_blank" rel="noreferrer"><img src={src} alt="Zelle payment confirmation" style={{ maxWidth: '100%', maxHeight: 340, borderRadius: 12, border: '1px solid rgba(255,255,255,.1)', display: 'block' }} /></a>
+        {p.rejectionReason && <p className="text-xs mt-1.5" style={{ color: '#f87171' }}>Rejected: {p.rejectionReason}</p>}
+        {!!p.proofHistory?.length && <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>{p.proofHistory.length} earlier screenshot(s) kept for audit.</p>}
+        {pending && (
+          <div className="flex flex-wrap gap-2 mt-2.5">
+            <ActBtn label="✓ Approve Zelle Payment" primary busy={busy === 'approve-zelle'} onClick={() => run('approve-zelle', { paymentId: p.id })} />
+            <ActBtn label="Reject" danger busy={busy === 'reject-zelle'} onClick={() => { const r = prompt('Reason for rejecting (shown to the customer):'); if (r !== null) run('reject-zelle', { paymentId: p.id, reason: r }) }} />
+            <ActBtn label="Resend Owner Alert" busy={busy === 'resend-notification'} onClick={() => run('resend-notification', { kind: 'zelle_review' })} />
+          </div>
+        )}
       </div>
     )
   }

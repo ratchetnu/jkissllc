@@ -1,0 +1,170 @@
+import { COMPANY } from './company'
+import { sendSmsDetailed, toE164 } from './sms'
+import { emailRaw } from './booking-emails'
+import { getOwnerAlertConfig } from './owner-alerts'
+import {
+  saveBooking, fmtUSD, balanceDueCents, effectiveServiceDate,
+  pushBookingEvent, recordNotificationAttempt, lastNotification,
+  SERVICE_LABELS,
+  type Booking, type Payment, type NotificationKind,
+} from './bookings'
+
+// Owner-notification LEDGER (request Part 7). Unlike the existing fire-and-forget
+// ops emails, every owner alert here is recorded on the booking with its channel,
+// provider id, status, error, and retry count — deduped so a booking never double-
+// texts, and resendable from the admin. This is the reliability backbone the request
+// asks for ("Store attempt / status / provider id / failure reason / retry count").
+
+const BASE = (process.env.NEXT_PUBLIC_SITE_URL || COMPANY.siteUrlApex).replace(/\/$/, '')
+
+// Deep link the owner taps to review a booking in OpsPilot (the dashboard opens it
+// via ?b=<bookingNumber>). This is the "Secure OpsPilot link".
+export function ownerBookingUrl(b: Booking): string {
+  return `${BASE}/admin/bookings?b=${encodeURIComponent(b.bookingNumber)}`
+}
+
+function svcDateLabel(b: Booking): string {
+  const d = effectiveServiceDate(b)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return b.selectedWindow ? `TBD, ${b.selectedWindow}` : 'To be scheduled'
+  const dt = new Date(`${d}T12:00:00Z`)
+  return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) + (b.selectedWindow ? `, ${b.selectedWindow}` : '')
+}
+
+function locationLabel(b: Booking): string {
+  return b.jobSiteAddress || b.pickupAddress || '—'
+}
+
+// ── Core sender: one owner notification, fully ledgered ──────────────────────
+type OwnerMessage = { sms: string; emailSubject: string; emailHtml: string }
+
+async function sendOwnerNotification(
+  b: Booking, kind: NotificationKind, msg: OwnerMessage, opts: { force?: boolean; resend?: boolean } = {},
+): Promise<{ sent: boolean; deduped: boolean }> {
+  // Dedupe — don't re-alert for the same event unless explicitly forced/resent.
+  const prior = lastNotification(b, kind)
+  if (prior && prior.status === 'sent' && !opts.force && !opts.resend) {
+    return { sent: true, deduped: true }
+  }
+  const retryBase = prior ? prior.retryCount + 1 : 0
+
+  const cfg = await getOwnerAlertConfig().catch(() => null)
+  const smsTo = cfg?.smsTo || process.env.OWNER_SMS || ''
+  const emailTo = cfg?.emailTo || COMPANY.ownerEmail
+  const wantSms = (cfg?.sms ?? true) && !!toE164(smsTo)
+  const wantEmail = (cfg?.email ?? true) && !!emailTo
+
+  let anySent = false
+
+  if (wantSms) {
+    const r = await sendSmsDetailed(smsTo, msg.sms)
+    recordNotificationAttempt(b, {
+      kind, channel: 'sms', to: toE164(smsTo) || smsTo,
+      status: r.ok ? 'sent' : 'failed', providerId: r.ok ? r.sid : undefined,
+      error: r.ok ? undefined : r.error, retryCount: retryBase,
+    })
+    if (r.ok) anySent = true
+  }
+
+  if (wantEmail) {
+    try {
+      await emailRaw({ to: [emailTo], subject: msg.emailSubject, html: msg.emailHtml })
+      recordNotificationAttempt(b, { kind, channel: 'email', to: emailTo, status: 'sent', retryCount: retryBase })
+      anySent = true
+    } catch (e) {
+      recordNotificationAttempt(b, { kind, channel: 'email', to: emailTo, status: 'failed', error: e instanceof Error ? e.message : 'email failed', retryCount: retryBase })
+    }
+  }
+
+  pushBookingEvent(b, {
+    actor: 'system',
+    action: opts.resend ? 'notification.resent' : anySent ? 'notification.sent' : 'notification.failed',
+    result: anySent ? 'sent' : 'failed',
+    meta: { kind },
+  })
+  await saveBooking(b)
+  return { sent: anySent, deduped: false }
+}
+
+// ── Templates ────────────────────────────────────────────────────────────────
+
+/** Immediately after a Zelle proof is uploaded — owner must review it. */
+export async function notifyOwnerZelleReview(b: Booking, payment: Payment, opts: { force?: boolean; resend?: boolean } = {}) {
+  const url = ownerBookingUrl(b)
+  const sms =
+    `${COMPANY.legalNameUpper}: ZELLE PAYMENT REVIEW REQUIRED\n` +
+    `Booking: ${b.bookingNumber}\n` +
+    `Customer: ${b.customerName}\n` +
+    `Deposit: ${fmtUSD(payment.amountCents)}\n` +
+    `Service Date: ${svcDateLabel(b)}\n` +
+    `Review: ${url}`
+  const emailHtml =
+    `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif">` +
+    `<h2 style="margin:0 0 8px">Zelle payment review required</h2>` +
+    `<p style="margin:0 0 12px;color:#333">A customer uploaded a Zelle payment screenshot. Verify it before confirming.</p>` +
+    `<table style="font-size:14px;color:#222">` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Booking</td><td><strong>${b.bookingNumber}</strong></td></tr>` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Customer</td><td>${b.customerName}</td></tr>` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Deposit</td><td>${fmtUSD(payment.amountCents)}</td></tr>` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Service date</td><td>${svcDateLabel(b)}</td></tr></table>` +
+    `<p style="margin:16px 0 0"><a href="${url}" style="background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px;display:inline-block">Review in OpsPilot</a></p></div>`
+  return sendOwnerNotification(b, 'zelle_review', { sms, emailSubject: `Zelle review required — ${b.bookingNumber}`, emailHtml }, opts)
+}
+
+/** After a Stripe payment verifies (webhook/return) and the booking is Confirmed. */
+export async function notifyOwnerNewConfirmedBooking(b: Booking, payment: Payment, opts: { force?: boolean; resend?: boolean } = {}) {
+  const url = ownerBookingUrl(b)
+  const sms =
+    `${COMPANY.legalNameUpper}: NEW CONFIRMED BOOKING\n` +
+    `Booking: ${b.bookingNumber}\n` +
+    `Customer: ${b.customerName}\n` +
+    `Service: ${SERVICE_LABELS[b.serviceType]}\n` +
+    `Date: ${svcDateLabel(b)}\n` +
+    `Location: ${locationLabel(b)}\n` +
+    `Deposit Paid: ${fmtUSD(payment.amountCents)}\n` +
+    `Balance: ${fmtUSD(balanceDueCents(b))}\n` +
+    `${url}`
+  const emailHtml =
+    `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif">` +
+    `<h2 style="margin:0 0 8px">New confirmed booking</h2>` +
+    `<table style="font-size:14px;color:#222">` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Booking</td><td><strong>${b.bookingNumber}</strong></td></tr>` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Customer</td><td>${b.customerName}</td></tr>` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Service</td><td>${SERVICE_LABELS[b.serviceType]}</td></tr>` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Date</td><td>${svcDateLabel(b)}</td></tr>` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Location</td><td>${locationLabel(b)}</td></tr>` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Deposit paid</td><td>${fmtUSD(payment.amountCents)}</td></tr>` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Balance</td><td>${fmtUSD(balanceDueCents(b))}</td></tr></table>` +
+    `<p style="margin:16px 0 0"><a href="${url}" style="background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px;display:inline-block">Open in OpsPilot</a></p></div>`
+  return sendOwnerNotification(b, 'new_confirmed_booking', { sms, emailSubject: `New confirmed booking — ${b.bookingNumber}`, emailHtml }, opts)
+}
+
+/** Owner-initiated resend of the most relevant pending owner notification. */
+export async function resendOwnerNotification(b: Booking, kind: NotificationKind, payment?: Payment): Promise<{ sent: boolean }> {
+  if (kind === 'zelle_review' && payment) return notifyOwnerZelleReview(b, payment, { resend: true })
+  if (kind === 'new_confirmed_booking' && payment) return notifyOwnerNewConfirmedBooking(b, payment, { resend: true })
+  return { sent: false }
+}
+
+// ── Customer: proof rejected → upload a new one ──────────────────────────────
+export async function notifyCustomerZelleRejected(b: Booking, reason: string, replacementUrl: string): Promise<void> {
+  const firstName = b.customerName.split(' ')[0] || 'there'
+  if (b.customerPhone && toE164(b.customerPhone)) {
+    await sendSmsDetailed(b.customerPhone,
+      `${COMPANY.legalName}: We couldn't verify your Zelle payment for booking ${b.bookingNumber}. ${reason} Please re-upload your confirmation here: ${replacementUrl}`)
+  }
+  if (b.customerEmail && process.env.RESEND_API_KEY) {
+    try {
+      await emailRaw({
+        to: [b.customerEmail],
+        subject: `Action needed — re-upload your payment for ${b.bookingNumber}`,
+        html: `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:520px">` +
+          `<h2 style="margin:0 0 8px">We couldn't verify your payment yet</h2>` +
+          `<p style="color:#333;font-size:15px;line-height:1.5">Hi ${firstName}, we weren't able to verify your Zelle payment for booking <strong>${b.bookingNumber}</strong>.</p>` +
+          `<p style="color:#333;font-size:15px;line-height:1.5"><strong>Reason:</strong> ${reason}</p>` +
+          `<p style="margin:18px 0"><a href="${replacementUrl}" style="background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:8px;display:inline-block">Upload a new confirmation</a></p>` +
+          `<p style="color:#888;font-size:12px">Your booking is still held — this just confirms your deposit.</p></div>`,
+      })
+    } catch (e) { console.error('[booking-notify] customer reject email', e) }
+  }
+  pushBookingEvent(b, { actor: 'system', action: 'notification.sent', result: 'sent', meta: { kind: 'zelle_rejected_customer' } })
+}
