@@ -36,10 +36,12 @@ export async function generateAI(opts: {
   messages?: ModelMessage[]
   maxOutputTokens?: number
   temperature?: number
+  model?: string          // per-feature routing override (Phase 2); defaults to MODEL
 }): Promise<AiGenResult> {
+  const model = opts.model || MODEL
   try {
     const res = await generateText({
-      model: MODEL,
+      model,
       system: opts.system,
       ...(opts.messages ? { messages: opts.messages } : { prompt: opts.prompt ?? '' }),
       maxOutputTokens: opts.maxOutputTokens ?? 700,
@@ -50,7 +52,7 @@ export async function generateAI(opts: {
     const inputTokens = u.inputTokens ?? u.promptTokens ?? 0
     const outputTokens = u.outputTokens ?? u.completionTokens ?? 0
     const totalTokens = u.totalTokens ?? inputTokens + outputTokens
-    return { ok: true, text: res.text.trim(), usage: { inputTokens, outputTokens, totalTokens }, model: MODEL }
+    return { ok: true, text: res.text.trim(), usage: { inputTokens, outputTokens, totalTokens }, model }
   } catch (e) {
     console.error('[ai]', e)
     return { ok: false, error: friendlyError(e) }

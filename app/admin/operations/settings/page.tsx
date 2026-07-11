@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { MessageSquare, Mail, Star, Briefcase, CalendarCheck, Trash2, ScrollText, BarChart3, CalendarDays, LogOut, Check, ClipboardList, DollarSign, FileText, Wallet, EyeOff, ShieldCheck } from 'lucide-react'
+import { MessageSquare, Mail, Star, Briefcase, CalendarCheck, Trash2, ScrollText, BarChart3, CalendarDays, LogOut, Check, ClipboardList, DollarSign, FileText, Wallet, EyeOff, ShieldCheck, Sparkles } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { osField as field } from '../ui'
 
@@ -32,6 +32,7 @@ const TOOL_GROUPS: { label: string; items: { href: string; label: string; Icon: 
     { href: '/admin/disposal', label: 'Disposal Pricing', Icon: Trash2 },
     { href: '/admin/policy', label: 'Policy', Icon: ScrollText },
     { href: '/admin/analytics', label: 'Analytics', Icon: BarChart3 },
+    { href: '/admin/operations/ai', label: 'AI Control Center', Icon: Sparkles },
   ] },
 ]
 

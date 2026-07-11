@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { COMPANY } from '../../../../lib/company'
-import { requireSession } from '../../_lib/session'
+import { requirePermission } from '../../_lib/session'
 import { getBookingByToken, balanceDueCents, fmtUSD, SERVICE_LABELS } from '../../../../lib/bookings'
-import { aiText } from '../../../../lib/ai'
+import { runAiTask } from '../../../../lib/ai/service'
 
 export const maxDuration = 30
 
@@ -17,7 +17,8 @@ const INTENTS: Record<string, string> = {
 
 // POST /api/admin/ai/message — drafts a short SMS/email message to a customer.
 export async function POST(req: NextRequest) {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'ai:use')
+  if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({}))
   const b = await getBookingByToken(String(body.token ?? ''))
   if (!b) return NextResponse.json({ error: 'not_found' }, { status: 404 })
@@ -33,12 +34,12 @@ export async function POST(req: NextRequest) {
     status: b.status,
     bookingNumber: b.bookingNumber,
   }
-  const r = await aiText({
-    system: 'You write short, warm, professional customer messages for ' + COMPANY.legalName + ' (a DFW box-truck delivery, junk-removal, and property-cleanout company), ready to send as a text or email. First-name basis, no greeting-card fluff, no placeholders/brackets. Sign off as "— J Kiss LLC". Keep under 65 words. Use only the facts provided. Output only the message.',
-    prompt: `Write ${INTENTS[intent]}.\n\nBooking facts (JSON): ${JSON.stringify(ctx)}\n${extra ? `Owner's extra instruction: ${extra}` : ''}`,
-    maxOutputTokens: 250,
-    temperature: 0.6,
+  const result = await runAiTask({
+    taskId: 'ops.message', feature: 'ops.message', requiredPermission: 'ai:use',
+    principal: { sub: who.sub, role: who.role },
+    vars: { intentInstruction: INTENTS[intent], ctxJson: JSON.stringify(ctx), extra },
+    maxOutputTokens: 250, temperature: 0.6, requestChars: extra.length,
   })
-  if (!r.ok) return NextResponse.json({ error: r.error }, { status: 503 })
-  return NextResponse.json({ ok: true, message: r.text })
+  if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status })
+  return NextResponse.json({ ok: true, message: result.text })
 }

@@ -7,7 +7,7 @@ import { redis } from '../redis'
 // observability substrate the later AI Control Center will read; Phase 1 just writes
 // it. Mirrors the platform's Redis conventions (JSON blob per record + a zset index).
 
-export type AiCallOutcome = 'success' | 'invalid_response' | 'provider_error' | 'forbidden'
+export type AiCallOutcome = 'success' | 'invalid_response' | 'provider_error' | 'forbidden' | 'budget_exceeded'
 
 export type AiCallRecord = {
   id: string
