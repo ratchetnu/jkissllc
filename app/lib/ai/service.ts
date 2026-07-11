@@ -3,20 +3,23 @@ import { can, type Permission, type Role } from '../rbac'
 import { generateAI, type AiGenResult } from '../ai'
 import { tenantId } from '../tenant'
 import { getPrompt } from './prompts'
+import { resolvePrompt, type ResolvedPrompt } from './prompt-store'
 import { validateJson, type ObjectSchema } from './schema'
-import { recordAiCall, estimateCostUsd, type AiCallRecord, type AiCallOutcome } from './telemetry'
+import { recordAiCall, estimateCostUsd, type AiCallRecord, type AiCallOutcome, type CostSource } from './telemetry'
 import { modelForFeature } from './routing'
 import { overBudget, addCost } from './budget'
+import { scoreResponse, type QualityResult } from './quality'
 
-// Centralized server-side AI service (LLMOps Phase 1-2). Every AI feature routes
+// Centralized server-side AI service (LLMOps Phase 1→3). Every AI feature routes
 // through runAiTask, the ONE place that:
 //   1. enforces RBAC (when a permission is required)
 //   2. enforces the daily cost cap (governance)
-//   3. loads the versioned prompt from the registry
+//   3. resolves the versioned prompt — built-in, an admin override, or an A/B arm
 //   4. routes to the per-feature model
-//   5. calls the model via the Gateway (fail-soft; supports text or multimodal messages)
-//   6. validates the structured response against a schema (rejects invalid output)
-//   7. records AI telemetry/audit + accrues estimated cost
+//   5. calls the model via the Gateway with fail-soft retries (attempts tracked)
+//   6. reconciles cost (provider-reported when available, else estimated) + accrues it
+//   7. validates the structured response against a schema (rejects invalid output)
+//   8. scores response quality (heuristic, read-only) and records full telemetry/audit
 // It is read-only/draft-only by construction: it returns validated data/text and
 // writes only to the AI audit log + the cost counter. No autonomous business writes.
 
@@ -41,11 +44,29 @@ export type AiTaskDeps = {
   now?: () => number
   isOverBudget?: () => Promise<boolean>
   accrueCost?: (usd: number) => Promise<number>
+  resolve?: (taskId: string, vars: Record<string, unknown>, roll?: number) => Promise<ResolvedPrompt>
+  score?: (feature: string, text: string) => QualityResult
+  roll?: number                    // injected A/B roll (0..1) for deterministic tests
+  maxAttempts?: number             // model-call attempts on transient failure (default 2)
 }
 
 export type AiTaskResult<T> =
-  | { ok: true; data: T; text: string; callId: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number }; latencyMs: number; model: string }
+  | { ok: true; data: T; text: string; callId: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number }; latencyMs: number; model: string; promptVersion: number; qualityScore: number }
   | { ok: false; error: string; status: number; callId: string; outcome: AiCallOutcome }
+
+// Coarse failure classification for observability dashboards.
+function classifyError(msg: string): string {
+  const m = msg.toLowerCase()
+  if (/credit|quota|billing|payment|insufficient/.test(m)) return 'billing'
+  if (/unauthor|forbidden|api key|token/.test(m)) return 'auth'
+  if (/rate|429|too many/.test(m)) return 'rate_limit'
+  if (/timeout|timed out|etimedout|econn|network|fetch failed/.test(m)) return 'network'
+  if (/overload|unavailable|503|502|temporarily/.test(m)) return 'provider_unavailable'
+  return 'other'
+}
+function isTransient(errClass: string): boolean {
+  return errClass === 'network' || errClass === 'provider_unavailable' || errClass === 'rate_limit'
+}
 
 export async function runAiTask<T = Record<string, unknown>>(input: AiTaskInput, deps: AiTaskDeps = {}): Promise<AiTaskResult<T>> {
   const generate = deps.generate ?? generateAI
@@ -53,14 +74,17 @@ export async function runAiTask<T = Record<string, unknown>>(input: AiTaskInput,
   const now = deps.now ?? Date.now
   const isOverBudget = deps.isOverBudget ?? overBudget
   const accrueCost = deps.accrueCost ?? addCost
+  const resolve = deps.resolve ?? resolvePrompt
+  const score = deps.score ?? scoreResponse
+  const maxAttempts = Math.max(1, deps.maxAttempts ?? 2)
   const tid = tenantId()
   const callId = crypto.randomUUID()
-  const prompt = getPrompt(input.taskId)
+  const builtinVersion = getPrompt(input.taskId).version   // throws on unknown taskId (guarded by tests)
 
   const base: Omit<AiCallRecord, 'ok' | 'outcome'> = {
     id: callId, at: now(), tenantId: tid,
     actor: input.principal?.sub ?? 'public', role: input.principal?.role ?? 'public',
-    feature: input.feature, taskId: input.taskId, promptVersion: prompt.version,
+    feature: input.feature, taskId: input.taskId, promptVersion: builtinVersion,
     model: '', latencyMs: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0,
     estCostUsd: 0, requestChars: input.requestChars ?? 0, responseValid: false,
   }
@@ -80,33 +104,55 @@ export async function runAiTask<T = Record<string, unknown>>(input: AiTaskInput,
     }
   } catch { /* budget check is best-effort — never block on it */ }
 
-  // 3) Versioned prompt + 4) per-feature model + 5) model call (fail-soft).
-  const built = prompt.build(input.vars)
+  // 3) Resolve the prompt: built-in, an admin override, or an A/B arm.
+  const resolved = await resolve(input.taskId, input.vars, deps.roll)
+  const promptVersion = resolved.version
+  const promptVariant = resolved.variant
+  const versioned: Omit<AiCallRecord, 'ok' | 'outcome'> = { ...base, promptVersion, promptVariant }
+
+  // 4) per-feature model + 5) model call with fail-soft retries.
   const model = modelForFeature(input.feature)
   const start = now()
-  let gen: AiGenResult
-  try {
-    gen = await generate({ system: built.system, prompt: input.messages ? undefined : built.prompt, messages: input.messages, model, maxOutputTokens: input.maxOutputTokens, temperature: input.temperature })
-  } catch (e) {
-    gen = { ok: false, error: e instanceof Error ? e.message : 'AI request failed' }
+  let gen: AiGenResult = { ok: false, error: 'not run' }
+  let attempts = 0
+  let lastClass = 'other'
+  while (attempts < maxAttempts) {
+    attempts++
+    try {
+      gen = await generate({ system: resolved.system, prompt: input.messages ? undefined : resolved.prompt, messages: input.messages, model, maxOutputTokens: input.maxOutputTokens, temperature: input.temperature })
+    } catch (e) {
+      gen = { ok: false, error: e instanceof Error ? e.message : 'AI request failed' }
+    }
+    if (gen.ok) break
+    lastClass = classifyError(gen.error)
+    if (!isTransient(lastClass)) break   // don't retry permanent failures (billing/auth/bad request)
   }
   const latencyMs = Math.max(0, now() - start)
+  const retried = attempts > 1
 
   if (!gen.ok) {
-    await write({ ...base, ok: false, outcome: 'provider_error', error: gen.error, latencyMs, model })
+    await write({ ...versioned, ok: false, outcome: 'provider_error', error: gen.error, errorClass: lastClass, latencyMs, model, attempts, retried })
     return { ok: false, error: gen.error, status: 503, callId, outcome: 'provider_error' }
   }
 
-  // 7) Token / latency / model / estimated-cost tracking (+ accrue toward the cap).
+  // 6) Cost reconciliation: provider-reported cost when available, else estimate.
   const estCostUsd = estimateCostUsd(gen.model, gen.usage.inputTokens, gen.usage.outputTokens)
-  await accrueCost(estCostUsd).catch(() => {})
+  const hasActual = typeof gen.providerCostUsd === 'number' && Number.isFinite(gen.providerCostUsd)
+  const costSource: CostSource = hasActual ? 'actual' : 'estimated'
+  const chargedCost = hasActual ? (gen.providerCostUsd as number) : estCostUsd
+  await accrueCost(chargedCost).catch(() => {})
+
+  // 8) Heuristic quality score (read-only, fail-soft).
+  const quality = score(input.feature, gen.text)
+
   const usageBase: Omit<AiCallRecord, 'ok' | 'outcome' | 'responseValid'> = {
-    ...base, model: gen.model, latencyMs,
+    ...versioned, model: gen.model, latencyMs, attempts, retried,
     inputTokens: gen.usage.inputTokens, outputTokens: gen.usage.outputTokens, totalTokens: gen.usage.totalTokens,
-    estCostUsd,
+    estCostUsd, actualCostUsd: hasActual ? (gen.providerCostUsd as number) : undefined, costSource,
+    qualityScore: quality.score, qualityFlags: quality.flags,
   }
 
-  // 6) Structured, schema-validated response (invalid → rejected).
+  // 7) Structured, schema-validated response (invalid → rejected).
   if (input.schema) {
     const v = validateJson(gen.text, input.schema)
     if (!v.ok) {
@@ -114,9 +160,9 @@ export async function runAiTask<T = Record<string, unknown>>(input: AiTaskInput,
       return { ok: false, error: 'The AI returned an unexpected response.', status: 502, callId, outcome: 'invalid_response' }
     }
     await write({ ...usageBase, ok: true, outcome: 'success', responseValid: true })
-    return { ok: true, data: v.value as T, text: gen.text, callId, usage: gen.usage, latencyMs, model: gen.model }
+    return { ok: true, data: v.value as T, text: gen.text, callId, usage: gen.usage, latencyMs, model: gen.model, promptVersion, qualityScore: quality.score }
   }
 
   await write({ ...usageBase, ok: true, outcome: 'success', responseValid: true })
-  return { ok: true, data: {} as T, text: gen.text, callId, usage: gen.usage, latencyMs, model: gen.model }
+  return { ok: true, data: {} as T, text: gen.text, callId, usage: gen.usage, latencyMs, model: gen.model, promptVersion, qualityScore: quality.score }
 }

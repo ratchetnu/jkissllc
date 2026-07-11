@@ -68,3 +68,16 @@ export const COMMAND_SCHEMA: ObjectSchema = {
   },
   atLeastOneOf: ['targetId', 'answer'],
 }
+
+// The public photo-estimate returns a load size + price range + one-line summary.
+// All four are required; the "can't haul this" case still returns numbers (0/0) with
+// an explanatory summary. Validating here (AUDIT-F1) means a malformed model response
+// is recorded as invalid_response — not silently logged as success.
+export const ESTIMATE_SCHEMA: ObjectSchema = {
+  fields: {
+    loadSize: { type: 'string', maxLen: 60 },
+    low: { type: 'number' },
+    high: { type: 'number' },
+    summary: { type: 'string', maxLen: 200 },
+  },
+}

@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
       maxOutputTokens: 600, temperature: 0.4,
     })
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status })
-    return NextResponse.json({ ok: true, insights: result.text, generatedAt: Date.now() })
+    return NextResponse.json({ ok: true, insights: result.text, generatedAt: Date.now(), callId: result.callId })
   } catch (e) {
     console.error('[ai/insights]', e)
     return NextResponse.json({ error: 'Failed to generate insights.' }, { status: 500 })

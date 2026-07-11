@@ -24,8 +24,29 @@ export function aiModel(): string { return MODEL }
 
 export type AiUsage = { inputTokens: number; outputTokens: number; totalTokens: number }
 export type AiGenResult =
-  | { ok: true; text: string; usage: AiUsage; model: string }
+  | { ok: true; text: string; usage: AiUsage; model: string; providerCostUsd?: number }
   | { ok: false; error: string }
+
+// Best-effort extraction of a provider-reported cost from the AI SDK result's
+// providerMetadata. The Vercel AI Gateway may surface real cost under a few shapes;
+// we probe defensively and only accept a finite positive number. When present, the
+// service records it as the ACTUAL cost (costSource='actual') instead of the estimate.
+function readProviderCost(meta: unknown): number | undefined {
+  if (!meta || typeof meta !== 'object') return undefined
+  const paths: Array<(m: Record<string, unknown>) => unknown> = [
+    m => (m.gateway as Record<string, unknown> | undefined)?.cost,
+    m => (m.gateway as Record<string, unknown> | undefined)?.costUsd,
+    m => (m.openai as Record<string, unknown> | undefined)?.cost,
+    m => (m.anthropic as Record<string, unknown> | undefined)?.cost,
+    m => m.cost,
+  ]
+  for (const get of paths) {
+    const v = get(meta as Record<string, unknown>)
+    const n = typeof v === 'string' ? parseFloat(v) : typeof v === 'number' ? v : NaN
+    if (Number.isFinite(n) && n >= 0) return n
+  }
+  return undefined
+}
 
 // Lower-level generate that also returns token usage + the model — the telemetry the
 // centralized AI service records. Fail-soft, same as aiText. aiText is left untouched
@@ -52,7 +73,8 @@ export async function generateAI(opts: {
     const inputTokens = u.inputTokens ?? u.promptTokens ?? 0
     const outputTokens = u.outputTokens ?? u.completionTokens ?? 0
     const totalTokens = u.totalTokens ?? inputTokens + outputTokens
-    return { ok: true, text: res.text.trim(), usage: { inputTokens, outputTokens, totalTokens }, model }
+    const providerCostUsd = readProviderCost((res as { providerMetadata?: unknown }).providerMetadata)
+    return { ok: true, text: res.text.trim(), usage: { inputTokens, outputTokens, totalTokens }, model, providerCostUsd }
   } catch (e) {
     console.error('[ai]', e)
     return { ok: false, error: friendlyError(e) }

@@ -9,6 +9,8 @@ import { redis } from '../redis'
 
 export type AiCallOutcome = 'success' | 'invalid_response' | 'provider_error' | 'forbidden' | 'budget_exceeded'
 
+export type CostSource = 'estimated' | 'actual'
+
 export type AiCallRecord = {
   id: string
   at: number
@@ -22,13 +24,22 @@ export type AiCallRecord = {
   ok: boolean
   outcome: AiCallOutcome
   error?: string
+  errorClass?: string      // coarse failure classification (Phase 3 observability)
   latencyMs: number
   inputTokens: number
   outputTokens: number
   totalTokens: number
   estCostUsd: number
+  actualCostUsd?: number   // provider-reported cost when the Gateway returns it
+  costSource?: CostSource  // 'actual' when reconciled from provider metadata, else 'estimated'
   requestChars: number
   responseValid: boolean
+  // ── Phase 3: observability + quality + A/B ──
+  attempts?: number        // model-call attempts (1 = no retry)
+  retried?: boolean
+  promptVariant?: string   // A/B arm label ('control' | 'variant') when a test is live
+  qualityScore?: number    // 0–100 heuristic score of the response (read-only)
+  qualityFlags?: string[]  // e.g. ['too_long','has_placeholder','empty']
   feedback?: 'helpful' | 'not_helpful'
   feedbackAt?: number
 }
@@ -40,13 +51,23 @@ const MAX_KEEP = 10_000
 // ── Estimated cost (documented estimate, not a billed figure) ────────────────
 // USD per 1M tokens. Sonnet-class default; extend as models are added. These are
 // list-price estimates for visibility only — the Gateway is the source of truth.
-const RATES: Record<string, { in: number; out: number }> = {
+export type ModelRate = { in: number; out: number }
+export const MODEL_RATES: Record<string, ModelRate> = {
   'anthropic/claude-sonnet-4-6': { in: 3, out: 15 },
   'anthropic/claude-haiku-4-5': { in: 1, out: 5 },
+  'anthropic/claude-opus-4-8': { in: 15, out: 75 },
   default: { in: 3, out: 15 },
 }
+// True when we have a published rate for this exact model string (so the UI can flag
+// costs that fell back to the default rate — see AUDIT-F4).
+export function isKnownModel(model: string): boolean {
+  return Object.prototype.hasOwnProperty.call(MODEL_RATES, model) && model !== 'default'
+}
+export function modelRate(model: string): ModelRate {
+  return MODEL_RATES[model] ?? MODEL_RATES.default
+}
 export function estimateCostUsd(model: string, inputTokens: number, outputTokens: number): number {
-  const r = RATES[model] ?? RATES.default
+  const r = modelRate(model)
   const usd = (inputTokens / 1_000_000) * r.in + (outputTokens / 1_000_000) * r.out
   return Math.round(usd * 1_000_000) / 1_000_000   // 6-dp micro-dollars
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { rateLimit } from '../../../lib/rate-limit'
 import { isBlockedBot } from '../../../lib/botcheck'
 import { runAiTask } from '../../../lib/ai/service'
+import { ESTIMATE_SCHEMA } from '../../../lib/ai/schema'
 
 export const maxDuration = 30
 
@@ -20,9 +21,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Please attach a clear photo (JPG/PNG, under ~6MB).' }, { status: 400 })
   }
 
-  const result = await runAiTask({
+  // Validation happens INSIDE runAiTask now (ESTIMATE_SCHEMA) — a malformed model
+  // response is recorded as invalid_response, not silently logged as success (AUDIT-F1).
+  const result = await runAiTask<{ loadSize: string; low: number; high: number; summary: string }>({
     taskId: 'ops.photoEstimate', feature: 'ops.photoEstimate',
-    vars: {},
+    vars: {}, schema: ESTIMATE_SCHEMA,
     messages: [{
       role: 'user',
       content: [
@@ -32,18 +35,22 @@ export async function POST(req: NextRequest) {
     }],
     maxOutputTokens: 300, temperature: 0.3, requestChars: image.length,
   })
-  if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status })
+  if (!result.ok) {
+    // A schema failure (invalid_response, 502) reads to the customer as "couldn't read it".
+    const status = result.outcome === 'invalid_response' ? 422 : result.status
+    const error = result.outcome === 'invalid_response'
+      ? 'Could not read that photo clearly — try another angle, or request a custom quote below.'
+      : result.error
+    return NextResponse.json({ error }, { status })
+  }
 
-  try {
-    const json = JSON.parse(result.text.replace(/```json|```/g, '').trim())
-    const low = Math.max(0, Math.round(Number(json.low) || 0))
-    const high = Math.max(low, Math.round(Number(json.high) || 0))
-    const loadSize = String(json.loadSize || '').slice(0, 60)
-    const summary = String(json.summary || '').slice(0, 200)
-    // high === 0 with a summary is a valid "we can't haul this" response.
-    if (high <= 0 && !summary) throw new Error('bad shape')
-    return NextResponse.json({ ok: true, loadSize, low, high, summary })
-  } catch {
+  const d = result.data
+  const low = Math.max(0, Math.round(Number(d.low) || 0))
+  const high = Math.max(low, Math.round(Number(d.high) || 0))
+  const loadSize = String(d.loadSize || '').slice(0, 60)
+  const summary = String(d.summary || '').slice(0, 200)
+  if (high <= 0 && !summary) {
     return NextResponse.json({ error: 'Could not read that photo clearly — try another angle, or request a custom quote below.' }, { status: 422 })
   }
+  return NextResponse.json({ ok: true, loadSize, low, high, summary, callId: result.callId })
 }

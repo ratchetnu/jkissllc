@@ -41,5 +41,5 @@ export async function POST(req: NextRequest) {
     maxOutputTokens: 250, temperature: 0.6, requestChars: extra.length,
   })
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status })
-  return NextResponse.json({ ok: true, message: result.text })
+  return NextResponse.json({ ok: true, message: result.text, callId: result.callId })
 }

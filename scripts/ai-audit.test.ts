@@ -17,7 +17,7 @@ import { runAiTask, type AiTaskDeps } from '../app/lib/ai/service'
 import { getPrompt } from '../app/lib/ai/prompts'
 import { estimateCostUsd, type AiCallRecord } from '../app/lib/ai/telemetry'
 import { computeAiAnalytics } from '../app/lib/ai/analytics'
-import { COMMAND_SCHEMA } from '../app/lib/ai/schema'
+import { COMMAND_SCHEMA, ESTIMATE_SCHEMA } from '../app/lib/ai/schema'
 import { can } from '../app/lib/rbac'
 
 type Gen = NonNullable<AiTaskDeps['generate']>
@@ -164,14 +164,19 @@ test('[rbac] ai:use and ai:analytics grants match the matrix; crew is denied bot
   assert.equal(can('crew', 'ai:analytics'), false)
 })
 
-// ── AUDIT-F1 (defect pin): photoEstimate has no schema, so garbage model output
-// is recorded as SUCCESS even though the route will 422 the user. When this is
-// fixed (schema added), flip this to expect 'invalid_response'. ─────────────────
-test('[AUDIT-F1] ops.photoEstimate records malformed model output as success (no schema) — known defect', async () => {
+// ── AUDIT-F1 (fixed): the photo route now passes ESTIMATE_SCHEMA, so malformed
+// model output is rejected + recorded as invalid_response (not a phantom success). ─
+test('[AUDIT-F1 fixed] ops.photoEstimate with ESTIMATE_SCHEMA rejects malformed output as invalid_response', async () => {
   const { deps, records } = harness('NOT JSON — the model rambled')
-  const r = await runAiTask({ taskId: 'ops.photoEstimate', feature: 'ops.photoEstimate', vars: {}, messages: [{ role: 'user', content: [{ type: 'text', text: 'x' }] }] }, deps)
-  assert.equal(r.ok, true)                       // service says success…
-  assert.equal(records[0].outcome, 'success')    // …and logs success, though the route returns 422
+  const r = await runAiTask({ taskId: 'ops.photoEstimate', feature: 'ops.photoEstimate', vars: {}, schema: ESTIMATE_SCHEMA, messages: [{ role: 'user', content: [{ type: 'text', text: 'x' }] }] }, deps)
+  assert.equal(r.ok, false)
+  assert.equal((r as { outcome: string }).outcome, 'invalid_response')
+  assert.equal(records[0].outcome, 'invalid_response')
+  // a well-formed response still passes + returns typed data
+  const good = harness('{"loadSize":"A few items","low":200,"high":325,"summary":"Looks like a quick haul."}')
+  const r2 = await runAiTask({ taskId: 'ops.photoEstimate', feature: 'ops.photoEstimate', vars: {}, schema: ESTIMATE_SCHEMA, messages: [{ role: 'user', content: [{ type: 'text', text: 'x' }] }] }, good.deps)
+  assert.equal(r2.ok, true)
+  assert.deepEqual((r2 as { data: unknown }).data, { loadSize: 'A few items', low: 200, high: 325, summary: 'Looks like a quick haul.' })
 })
 
 function cmdVars() { return { query: 'go to claims', targetsText: 'claims — Claims', summaryJson: '{}' } }

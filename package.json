@@ -9,6 +9,9 @@
     "lint": "eslint",
     "test:finance": "npx --yes tsx@4 --test scripts/finance.test.ts",
     "test:routes": "npx --yes tsx@4 --test scripts/verbal-confirm.test.ts",
+    "test:ai": "npx --yes tsx@4 --test scripts/ai-service.test.ts scripts/ai-phase2.test.ts scripts/ai-phase3.test.ts scripts/ai-audit.test.ts",
+    "test:ai:regression": "npx --yes tsx@4 --test scripts/ai-regression.test.ts",
+    "predeploy": "npx tsc --noEmit && npm run test:ai:regression",
     "test": "npx --yes tsx@4 --test scripts/*.test.ts"
   },
   "dependencies": {
