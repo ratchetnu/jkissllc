@@ -2,7 +2,7 @@ import { listRoutes, type RouteRecord } from './routes'
 import { centralToday, addDaysStr, weekdayOf } from './dates'
 import { getTemplate, type ReminderChannel, type AckKind } from './reminder-templates'
 import {
-  listReminders, createInstance, saveInstance, claimOccurrence, bumpReminderStats,
+  listReminders, getReminder, createInstance, saveInstance, claimOccurrence, bumpReminderStats,
   saveReminder, listOpenInstances,
   type Reminder, type ReminderInstance, type ReminderSchedule, type InstanceOrigin,
 } from './reminders'
@@ -217,7 +217,13 @@ export async function runDueReminders(now: number = Date.now()): Promise<{ evalu
       }
     }
 
-    if (firedAny) { r.lastRunAt = now; await saveReminder(r) }
+    // Re-read before stamping lastRunAt: trySend's bumpReminderStats already
+    // persisted stat increments on a fresh copy, so saving our stale `r` here would
+    // clobber them (stats.sent would stay 0). Stamp on the fresh record instead.
+    if (firedAny) {
+      const fresh = await getReminder(r.id)
+      if (fresh) { fresh.lastRunAt = now; await saveReminder(fresh) }
+    }
   }
   return { evaluated, sent }
 }
