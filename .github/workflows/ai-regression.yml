@@ -24,5 +24,9 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm ci
-      - name: Typecheck + AI regression
-        run: npm run predeploy
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Full AI test suite
+        run: npm run test:ai
+      - name: AI regression gate (golden fixtures)
+        run: npm run test:ai:regression

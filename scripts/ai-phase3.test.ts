@@ -127,7 +127,7 @@ test('[service] retries transient failures, records attempts, and reconciles pro
     record: async (r) => { records.push(r) },
     now: () => 1000,
     isOverBudget: async () => false,
-    resolve: async (_id, _vars) => ({ system: 's', prompt: 'p', version: 7, variant: 'variant' }),
+    resolve: async () => ({ system: 's', prompt: 'p', version: 7, variant: 'variant' }),
     accrueCost: async () => 0,
   }
   const r = await runAiTask({ taskId: 'ops.message', feature: 'ops.message', requiredPermission: 'ai:use', principal: { sub: 'o', role: 'admin' }, vars: {} }, deps)
