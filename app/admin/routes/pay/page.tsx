@@ -19,8 +19,8 @@ const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart
 function mondayOf(d: Date) { const x = new Date(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); x.setHours(0, 0, 0, 0); return x }
 function addDays(d: Date, n: number) { const x = new Date(d); x.setDate(x.getDate() + n); return x }
 
-const dInput: React.CSSProperties = { padding: '8px 10px', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 9, color: '#f3f4f6', fontSize: 13.5, outline: 'none' }
-const preset: React.CSSProperties = { padding: '7px 12px', fontSize: 12.5, fontWeight: 700, borderRadius: 8, background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', color: 'var(--muted)', cursor: 'pointer' }
+const dInput: React.CSSProperties = { height: 38, boxSizing: 'border-box', padding: '0 10px', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 9, color: '#f3f4f6', fontSize: 13.5, outline: 'none' }
+const preset: React.CSSProperties = { height: 38, boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 12px', fontSize: 12.5, fontWeight: 700, borderRadius: 9, background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', color: 'var(--muted)', cursor: 'pointer' }
 
 function Pay() {
   const now = new Date()
