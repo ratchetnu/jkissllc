@@ -7,7 +7,7 @@ import { withRouteLock } from '../../../lib/route-mutex'
 import { reminderSms, morningOfSms, alertOwnerRouteEvent } from '../../../lib/route-notify'
 import { listTemplates, materializeTemplate } from '../../../lib/route-templates'
 import { accrueAllClaims } from '../../../lib/claim-accrual'
-import { sendSms } from '../../../lib/sms'
+import { sendSms, withSmsSuppressed } from '../../../lib/sms'
 import { getAutomationSettings } from '../../../lib/automation-settings'
 
 export const dynamic = 'force-dynamic'
@@ -215,6 +215,10 @@ export async function GET(req: NextRequest) {
   // ?dryRun=1 → don't send reminders or cancel anything; just report abandoned holds.
   const dryRun = new URL(req.url).searchParams.get('dryRun') === '1'
   try {
+    // Automated TEXTS are permanently disabled for the 9am run: everything below still
+    // runs (email reminders, route generation, claim deductions, hold cleanup), but any
+    // outbound SMS it would send is suppressed at the send layer. See withSmsSuppressed.
+    return await withSmsSuppressed(async () => {
     const counts = dryRun ? { skipped: 'reminders (dry-run)' } : await run()
     // Template generation is isolated: nextRouteNumber() now throws rather than
     // minting a possibly-duplicate number when Redis is unreachable, and a throw
@@ -230,7 +234,8 @@ export async function GET(req: NextRequest) {
     // Post any weekly claim deductions whose pay week has closed. Idempotent per
     // (contractor, week), and capped at what they actually earned.
     const claims = dryRun ? { skipped: 'claim deductions (dry-run)' } : await runClaims(Date.now())
-    return NextResponse.json({ ok: true, dryRun, ...counts, templates, routes, cleanup, claims })
+    return NextResponse.json({ ok: true, dryRun, smsSuppressed: true, ...counts, templates, routes, cleanup, claims })
+    })
   } catch (e) {
     console.error('[cron/daily] fatal', e)
     return NextResponse.json({ error: 'failed' }, { status: 500 })

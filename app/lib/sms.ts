@@ -6,7 +6,25 @@
 //            or: TWILIO_AUTH_TOKEN
 // Sender (either): TWILIO_FROM (a Twilio number)  or  TWILIO_MESSAGING_SERVICE_SID (MG…)
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { redis } from './redis'
+
+// Per-async-context kill switch for OUTBOUND texts. When a run wraps its work in
+// withSmsSuppressed(), every sendSms/sendSmsDetailed call inside that async context
+// no-ops and reports "suppressed" — without touching email, which travels a separate
+// (Resend) path. The daily 9am cron uses this so it can still do its housekeeping
+// (route generation, claim deductions, hold cleanup) and still fire EMAIL reminders,
+// while sending NO automated texts. Scoped per-request via async context, so it never
+// bleeds into the every-5-min reminders cron, inbound webhooks, or admin sends.
+const smsSuppression = new AsyncLocalStorage<boolean>()
+
+export function withSmsSuppressed<T>(fn: () => Promise<T>): Promise<T> {
+  return smsSuppression.run(true, fn)
+}
+
+export function isSmsSuppressed(): boolean {
+  return smsSuppression.getStore() === true
+}
 
 function authPair(): { user: string; pass: string } | null {
   if (process.env.TWILIO_API_KEY_SID && process.env.TWILIO_API_KEY_SECRET) {
@@ -45,6 +63,9 @@ export type SmsDetail =
   | { ok: false; error: string; code?: number; httpStatus?: number }
 
 export async function sendSmsDetailed(to: string | undefined | null, body: string): Promise<SmsDetail> {
+  // Honor an active suppression context (e.g. the daily 9am cron) before anything
+  // else — no Twilio call is attempted for an automated text that's been switched off.
+  if (isSmsSuppressed()) return { ok: false, error: 'SMS suppressed (automated run — outbound texts disabled).' }
   if (!smsConfigured()) return { ok: false, error: 'SMS is not configured (missing Twilio credentials).' }
   const dest = toE164(to)
   if (!dest) return { ok: false, error: `Invalid phone number: ${to}` }
