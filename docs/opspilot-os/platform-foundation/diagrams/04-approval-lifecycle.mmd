@@ -1,0 +1,18 @@
+%% AI action approval lifecycle. See 07-approval-domain.md
+stateDiagram-v2
+  [*] --> draft
+  draft --> pending
+  draft --> cancelled
+  pending --> approved: human decidedBy (never restricted)
+  pending --> rejected: human decidedBy
+  pending --> expired
+  pending --> cancelled
+  approved --> executing: ONLY path to execution
+  approved --> cancelled
+  executing --> completed
+  executing --> failed: carries rollbackMetadata
+  rejected --> [*]
+  expired --> [*]
+  completed --> [*]
+  failed --> [*]
+  cancelled --> [*]

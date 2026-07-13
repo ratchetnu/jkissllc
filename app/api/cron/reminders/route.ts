@@ -12,7 +12,7 @@ export const maxDuration = 60
 // of /api/cron/daily (CRON_SECRET bearer; Vercel injects it automatically).
 function authorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET
-  if (!secret) return true // not configured — allow (Vercel adds the bearer once set)
+  if (!secret) return false // fail closed — an unconfigured secret must not leave this open
   return req.headers.get('authorization') === `Bearer ${secret}`
 }
 

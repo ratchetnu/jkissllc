@@ -1,0 +1,35 @@
+%% Container architecture (target). See 14-target-architecture.md
+flowchart TB
+  subgraph Edge
+    Proxy[proxy.ts\napex->www, tenant resolve, RBAC gate, sliding session]
+  end
+  subgraph App[Next.js 16 App Router — single Vercel project]
+    UIadmin[/admin/* operator UI/]
+    UIportal[/portal/* crew UI/]
+    UIpublic[/booking /client /route /quote token surfaces/]
+    APIadmin[/api/admin/*]
+    APIportal[/api/portal/*]
+    APIpublic[/api/(public)/*]
+    APIplatform[/api/platform/* NEW]
+    APIwebhooks[/api/webhooks/*]
+    APIcron[/api/cron/*]
+    Ctx[AsyncLocalStorage tenant context]
+    AIsvc[app/lib/ai/service.ts runAiTask]
+    Outbox[Outbox drainer]
+  end
+  subgraph Stores
+    Redis[(Upstash Redis t:tid:*)]
+    Blob[(Vercel Blob)]
+    PG[(Neon Postgres — billing/analytics future)]
+  end
+  Proxy --> UIadmin & UIportal & UIpublic
+  UIadmin --> APIadmin
+  UIportal --> APIportal
+  UIpublic --> APIpublic
+  APIadmin & APIportal & APIpublic & APIplatform --> Ctx
+  Ctx --> Redis
+  Ctx --> Blob
+  APIadmin --> AIsvc
+  APIcron --> Outbox --> Redis
+  APIwebhooks --> Ctx
+  APIplatform -.-> PG

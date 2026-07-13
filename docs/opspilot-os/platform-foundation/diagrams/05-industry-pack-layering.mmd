@@ -1,0 +1,7 @@
+%% Industry-pack layered configuration. See 05-industry-pack-contract.md
+flowchart TB
+  Platform[Platform defaults] --> Pack[Industry-pack defaults\ne.g. jkiss-field-service]
+  Pack --> Tenant[Tenant configuration\nt:jkiss]
+  Tenant --> Override[Location / service overrides]
+  Override --> Effective[Effective config]
+  note[resolveConfig precedence:\noverride > tenant > pack > platform]

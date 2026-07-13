@@ -16,7 +16,12 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url, 308)
   }
 
-  const res = NextResponse.next()
+  // Anti-spoofing: strip any client-supplied tenant header before the request
+  // reaches a handler. Tenant identity is ALWAYS derived server-side from the
+  // signed session (see requireTenantSession), never trusted from the wire.
+  const requestHeaders = new Headers(request.headers)
+  requestHeaders.delete('x-tenant-id')
+  const res = NextResponse.next({ request: { headers: requestHeaders } })
 
   const path = request.nextUrl.pathname
   const isAdminRequest = path.startsWith('/admin') || path.startsWith('/api/admin')

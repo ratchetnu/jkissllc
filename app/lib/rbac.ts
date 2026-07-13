@@ -138,6 +138,12 @@ export function isStaffRole(role: Role | undefined | null): boolean {
   return role === 'admin' || role === 'manager'
 }
 
+/** The full permission set a role holds, materialized from the matrix (order-stable). */
+export function permissionsForRole(role: Role | undefined | null): Permission[] {
+  if (!role) return []
+  return [...(MATRIX[role] ?? new Set<Permission>())]
+}
+
 export const roleLabel: Record<Role, string> = {
   admin: 'Admin',
   manager: 'Manager',

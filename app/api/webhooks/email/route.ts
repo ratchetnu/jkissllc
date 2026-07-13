@@ -33,7 +33,10 @@ export async function POST(req: NextRequest) {
       }
     } catch { return new NextResponse('forbidden', { status: 403 }) }
   } else {
-    console.warn('[email-webhook] EMAIL_WEBHOOK_SECRET not set — processing UNVERIFIED (set it in prod)')
+    // Fail closed: reject when the shared secret is not configured rather than
+    // accepting an unauthenticated inbound webhook (previously it warned and continued).
+    console.error('[email-webhook] fail-closed: EMAIL_WEBHOOK_SECRET not configured')
+    return new NextResponse('webhook not configured', { status: 503 })
   }
 
   // Accept JSON (Apps Script) or form-encoded (parse services).

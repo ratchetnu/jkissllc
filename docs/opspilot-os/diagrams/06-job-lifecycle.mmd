@@ -1,0 +1,23 @@
+%% Job lifecycle. See 03-capability-matrix.md, 08-event-and-workflow-architecture.md
+stateDiagram-v2
+  [*] --> Lead
+  Lead --> Quoted: QuoteGenerated
+  Quoted --> Booked: QuoteAccepted / DepositPaid
+  Booked --> Scheduled: JobScheduled
+  Scheduled --> Assigned: CrewAssigned / AssignmentSent
+  Assigned --> Confirmed: AssignmentAccepted (link or verbal)
+  Assigned --> Reassign: AssignmentDeclined
+  Reassign --> Assigned
+  Confirmed --> InProgress: WorkerClockedIn / JobStarted
+  InProgress --> Changed: ChangeOrderCreated
+  Changed --> InProgress: ChangeOrderApproved
+  InProgress --> Delayed: JobDelayed
+  Delayed --> InProgress
+  InProgress --> Completed: JobCompleted (photos, clock-out)
+  Completed --> Invoiced: InvoiceIssued
+  Invoiced --> Paid: PaymentReceived
+  Paid --> Reviewed: ReviewRequested
+  Reviewed --> [*]
+  Booked --> Cancelled
+  Scheduled --> Cancelled
+  Cancelled --> [*]

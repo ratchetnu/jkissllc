@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { redis } from './redis'
 import type { ReminderChannel, AckKind, SegmentId } from './reminder-templates'
 import { ACK_IS_DONE } from './reminder-templates'
@@ -144,7 +145,13 @@ const tokKey = (t: string) => `rsend:token:${t}`         // public ack token -> 
 
 function rid(): string { return `rem_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}` }
 function iid(): string { return `rs_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}` }
-function tok(): string { return `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}` }
+// Public ack token — the sole bearer credential for the login-less /api/ack/[token]
+// endpoint, so it MUST be cryptographically unguessable (was Math.random, which is
+// predictable). 256 bits of CSPRNG hex, matching the token pattern in bookings.ts /
+// routes.ts. rid()/iid() stay on Math.random by design: they are internal record
+// ids, never exposed as a public capability.
+export function newAckToken(): string { return (randomUUID() + randomUUID()).replace(/-/g, '') }
+function tok(): string { return newAckToken() }
 
 // ── Reminder CRUD ────────────────────────────────────────────────────────────
 export type NewReminder = Omit<Reminder, 'id' | 'stats' | 'createdAt' | 'updatedAt'> &

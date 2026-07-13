@@ -1,0 +1,10 @@
+%% Multi-tenant data boundaries. See 05 and 09.
+flowchart TB
+  Req[Request] --> Proxy[proxy.ts\nresolve tenant from host/subdomain]
+  Proxy --> Ctx[AsyncLocalStorage\ntenantId + principal]
+  Ctx --> Call["redis.ts call() prefixes t:tid:"]
+  Call --> A[t:acme:bk:* ...]
+  Call --> B[t:jkiss:bk:* ...]
+  Platform[platform:* keys\nTenant, IndustryPack, waitlist, billing] --- Call
+  Bypass["track + admin/analytics\ninline fetch — MUST be hand-migrated"] -.->|leak risk if missed| A
+  Blob[(Blob t/tid/*)] --- Ctx

@@ -1,0 +1,9 @@
+%% Role-adaptive workspace model. See 09-role-adaptive-workspaces.md
+flowchart TB
+  Persona[9 personas\nplatform-owner ... customer] --> WS[RoleWorkspace]
+  WS --> Dests[visible destinations\nToday Jobs Customers Team Messages Money Assets Insights Automations Settings + portals]
+  Dests --> Caps[capabilities DERIVED from destinations\n= no inaccessible destination]
+  Dests --> Map[route-map -> current routes]
+  Map --> Gaps[destinationGaps: customers has no home yet]
+  WS --> AI[available AI workers per persona]
+  WS --> Auth[approval authority: admins + manager]

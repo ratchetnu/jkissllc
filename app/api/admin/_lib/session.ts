@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { can, isRole, isStaffRole, type Permission, type Role } from '../../../lib/rbac'
+import { DEFAULT_TENANT_ID, type TenantPrincipal } from '../../../lib/platform/tenancy/types'
+import { buildTenantPrincipal } from '../../../lib/platform/tenancy/principal'
 
 export const COOKIE_NAME = 'jk_admin_session'
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000 // 2 hours — absolute cap, never slides
@@ -21,6 +23,7 @@ type SessionPayload = {
   sub?: string       // user id, or 'owner' for the legacy shared-password admin
   role?: Role        // absent on legacy tokens → resolves to 'admin'
   staffId?: string   // crew principals only — the Staff record they may read
+  tid?: string       // tenant id — absent on pre-tenancy tokens → resolves to the reference tenant
 }
 
 // The resolved caller. Guards return this instead of a bare boolean so every
@@ -29,12 +32,14 @@ export type Principal = {
   sub: string
   role: Role
   staffId?: string
+  tenantId: string   // the reference tenant for pre-tenancy tokens (DEFAULT_TENANT_ID)
 }
 
-// Turn a live payload into a principal. Legacy tokens (no role) → owner admin.
+// Turn a live payload into a principal. Legacy tokens (no role) → owner admin;
+// pre-tenancy tokens (no tid) → the reference tenant (single-tenant continuity).
 function toPrincipal(p: SessionPayload): Principal {
   const role: Role = isRole(p.role) ? p.role : 'admin'
-  return { sub: p.sub || 'owner', role, staffId: p.staffId }
+  return { sub: p.sub || 'owner', role, staffId: p.staffId, tenantId: p.tid || DEFAULT_TENANT_ID }
 }
 
 function b64url(bytes: ArrayBuffer | Uint8Array): string {
@@ -111,14 +116,18 @@ function isLive(p: SessionPayload, now = Date.now()): boolean {
 }
 
 // Legacy shared-password admin (the owner). No subject → resolves to owner admin.
+// Stamped with the reference tenant so every session is tenant-attributed.
 export async function createSessionToken(): Promise<string> {
   const now = Date.now()
-  return signPayload({ iat: now, exp: now + SESSION_TTL_MS, idleExp: now + IDLE_TTL_MS })
+  return signPayload({ iat: now, exp: now + SESSION_TTL_MS, idleExp: now + IDLE_TTL_MS, tid: DEFAULT_TENANT_ID })
 }
 
 // A named user session (manager / crew / additional admin). Carries the identity
-// that RBAC and the crew portal scope on.
-export async function createUserSessionToken(user: { id: string; role: Role; staffId?: string }): Promise<string> {
+// that RBAC and the crew portal scope on. `tenantId` defaults to the reference
+// tenant (single-tenant today); named per-tenant users pass it explicitly later.
+export async function createUserSessionToken(
+  user: { id: string; role: Role; staffId?: string; tenantId?: string },
+): Promise<string> {
   const now = Date.now()
   return signPayload({
     iat: now,
@@ -127,6 +136,7 @@ export async function createUserSessionToken(user: { id: string; role: Role; sta
     sub: user.id,
     role: user.role,
     staffId: user.staffId,
+    tid: user.tenantId || DEFAULT_TENANT_ID,
   })
 }
 
@@ -158,7 +168,7 @@ export async function slideSessionToken(token: string | undefined | null): Promi
   const p = await parseToken(token)
   if (!p || !isLive(p)) return null
   const idleExp = Math.min(p.exp, Date.now() + IDLE_TTL_MS)
-  return signPayload({ iat: p.iat, exp: p.exp, idleExp, sub: p.sub, role: p.role, staffId: p.staffId })
+  return signPayload({ iat: p.iat, exp: p.exp, idleExp, sub: p.sub, role: p.role, staffId: p.staffId, tid: p.tid })
 }
 
 export function setSessionCookie(res: NextResponse, token: string): void {
@@ -232,4 +242,19 @@ export async function requirePermission(req: NextRequest, permission: Permission
   if (!who) return unauthorized()
   if (!can(who.role, permission)) return forbidden()
   return who
+}
+
+// ── Tenant-aware principal ─────────────────────────────────────────────────────
+// Any live session, resolved to the richer TenantPrincipal (adds tenantId, the
+// materialized permission set, and provenance). This is additive: existing guards
+// above are unchanged and keep working. New tenant-aware code adopts this
+// gradually. Returns a 401 NextResponse when there is no live session — it never
+// falls back to an unauthenticated or shared-tenant principal.
+export async function requireTenantSession(req: NextRequest): Promise<TenantPrincipal | NextResponse> {
+  const who = await getPrincipal(req)
+  if (!who) return unauthorized()
+  return buildTenantPrincipal(
+    { sub: who.sub, role: who.role, staffId: who.staffId },
+    { tenantId: who.tenantId, authSource: who.sub === 'owner' ? 'legacy-admin' : 'password' },
+  )
 }

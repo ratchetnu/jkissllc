@@ -1,0 +1,11 @@
+%% Insight-to-action flow. See 08-operational-intelligence.md
+flowchart TB
+  Snapshot[verified data snapshot\nroutes / AI budget / overdue reminders] --> Gen[read-only generators]
+  Gen --> Insights[Insights w/ evidence + confidence + recommendedAction]
+  Insights --> Prioritize[prioritize: severity > confidence > $impact]
+  Prioritize --> Flag{INSIGHTS_UI_ENABLED?}
+  Flag -- off --> None[nothing surfaced]
+  Flag -- on --> Surface[owner-facing insight cards]
+  Surface --> Worker[eligible AI worker]
+  Worker --> Approval[approval queue if Level 3+]
+  Approval --> Act[human-approved action]

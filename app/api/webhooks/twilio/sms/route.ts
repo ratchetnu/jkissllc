@@ -71,7 +71,13 @@ export async function POST(req: NextRequest) {
     }
     authed = true
   }
-  if (!authed) console.warn('[twilio-sms] no TWILIO_AUTH_TOKEN or TWILIO_WEBHOOK_SECRET set — processing UNVERIFIED (set one in prod)')
+  // Fail closed: with no verifying secret configured, reject rather than process an
+  // unauthenticated inbound webhook (previously it warned and continued).
+  if (!token && !secret) {
+    console.error('[twilio-sms] fail-closed: neither TWILIO_AUTH_TOKEN nor TWILIO_WEBHOOK_SECRET configured')
+    return new NextResponse('webhook not configured', { status: 503 })
+  }
+  if (!authed) return new NextResponse('forbidden', { status: 403 })
 
   const messageSid = params.MessageSid || params.SmsSid || ''
   const fromRaw = params.From || ''

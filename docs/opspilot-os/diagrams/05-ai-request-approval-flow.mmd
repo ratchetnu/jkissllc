@@ -1,0 +1,23 @@
+%% AI request & approval flow (target). See 07-ai-operating-layer.md
+flowchart TB
+  U[User intent] --> Svc[runAiTask]
+  Svc --> RBAC{can role, perm?}
+  RBAC -- no --> D403[403]
+  RBAC -- yes --> Bud{over budget?}
+  Bud -- yes --> D429[429 fail-soft]
+  Bud -- no --> Ctx[Context Service\ntenant-scoped + PII redacted]
+  Ctx --> Model[Prompt + model routing + retries]
+  Model --> Val{schema valid?}
+  Val -- no --> D502[invalid_response]
+  Val -- yes --> Lvl{action level}
+  Lvl -- L0/L1 --> Info[return info/recommendation]
+  Lvl -- L2 --> Draft[return draft — human sends]
+  Lvl -- L3 --> AQ[ApprovalRequest queue]
+  AQ --> Appr{approved?}
+  Appr -- no --> Drop[logged, not executed]
+  Appr -- yes --> Exec[Action Executor under tenant ctx]
+  Lvl -- L4 --> Policy{within policy + cap + kill-switch?}
+  Policy -- yes --> Exec
+  Policy -- no --> AQ
+  Exec --> Log[AiActionLog + rollback consideration]
+  Info & Draft & Log --> Tel[Telemetry: tenant, cost, quality, outcome]

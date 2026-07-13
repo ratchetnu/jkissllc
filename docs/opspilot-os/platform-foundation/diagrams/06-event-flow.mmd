@@ -1,0 +1,10 @@
+%% Business event flow (in-process outbox). See 06-business-events.md
+flowchart LR
+  Producer[domain action] --> Create[createEvent - envelope w/ tenantId, correlationId, idempotencyKey]
+  Create --> Validate{validateEnvelope}
+  Validate -- invalid --> Drop[rejected]
+  Validate -- valid --> Enqueue[InProcessOutbox.enqueue]
+  Enqueue --> Dedup{idempotency key seen?}
+  Dedup -- yes --> Skip[dropped - at-least-once + idempotent]
+  Dedup -- no --> Queue[(outbox queue)]
+  Queue --> Drain[drain] --> Consumers[idempotent consumers\nnotify / analytics / audit]

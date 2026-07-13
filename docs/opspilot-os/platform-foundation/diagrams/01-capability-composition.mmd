@@ -1,0 +1,13 @@
+%% Platform capability composition. See 02-capability-registry.md
+flowchart TB
+  subgraph Registry[Capability Registry - 37 typed capabilities]
+    direction LR
+    Core[core: identity, roles, bookings, routes, messaging, ...]
+    Optional[optional: gps-verification, equipment, fleet]
+    Industry[industry-specific: fleet]
+  end
+  Registry --> Deps[dependency validation - no cycles, all resolve]
+  Registry --> RoleVis[capabilitiesForRole - role visibility]
+  Registry --> TenantEn[isCapabilityEnabledForTenant - jkiss enablement]
+  Registry --> AiElig[aiEligibleCapabilities - AI tool eligibility]
+  Flag[CAPABILITY_REGISTRY_ENABLED] -. gates .-> RoleVis & TenantEn & AiElig

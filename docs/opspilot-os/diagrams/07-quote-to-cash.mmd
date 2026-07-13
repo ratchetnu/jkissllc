@@ -1,0 +1,24 @@
+%% Quote-to-cash lifecycle. See 04-domain-model.md, 09-data-architecture.md
+sequenceDiagram
+  participant C as Customer
+  participant Q as /quote wizard
+  participant API as API + tenant ctx
+  participant AI as photoEstimate (L0)
+  participant B as Booking/Job
+  participant S as Stripe Connect
+  participant L as LedgerEntry
+  C->>Q: request estimate (photos)
+  Q->>AI: photo -> load size + price range
+  Q->>API: submit -> LeadCreated
+  API->>B: BookingCreated (customerId)
+  API->>S: Checkout Session (deposit)
+  C->>S: pay deposit
+  S-->>API: webhook DepositPaid (idempotent by session id)
+  API->>L: LedgerEntry(revenue, deposit)
+  Note over B: job runs (see job-lifecycle)
+  API->>API: InvoiceIssued (balance)
+  C->>S: pay balance
+  S-->>API: PaymentReceived
+  API->>L: LedgerEntry(revenue, balance)
+  API->>L: LedgerEntry(payout to crew, expense)
+  L-->>API: P&L / profitability read-model

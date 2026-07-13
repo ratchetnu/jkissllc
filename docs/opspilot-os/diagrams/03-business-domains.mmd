@@ -1,0 +1,26 @@
+%% Major business domains. See 04-domain-model.md
+flowchart TB
+  subgraph Core[Platform Core — industry-neutral]
+    Identity[Identity & Tenancy]
+    CRM[Customers & CRM]
+    Sales[Quotes & Estimates]
+    Jobs[Bookings & Jobs]
+    Sched[Routes & Scheduling]
+    Work[Workforce & Compliance]
+    Fleet[Equipment & Fleet]
+    Money[Invoicing / Payments / Comp / Expenses / Ledger]
+    Comms[Messaging & Notifications]
+    Docs[Documents]
+    Analytics[Analytics read-model]
+    Automation[Automation & AI]
+    Audit[Audit & Governance]
+    Config[Industry + Tenant Config]
+  end
+  Identity --> CRM & Jobs & Work & Money & Audit
+  CRM --> Sales --> Jobs --> Sched --> Work
+  Jobs --> Money
+  Sched --> Fleet
+  Comms --- Jobs & Work & CRM
+  Automation --- Jobs & Money & Comms
+  Config --- Sales & Money & Sched
+  Money --> Analytics

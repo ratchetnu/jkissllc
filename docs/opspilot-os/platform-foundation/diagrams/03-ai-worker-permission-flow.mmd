@@ -1,0 +1,17 @@
+%% AI worker permission flow (authorizeWorkerAction). See 03-ai-workforce.md
+flowchart TB
+  Start[worker action request] --> KS{kill switch? global/tenant}
+  KS -- yes --> Deny[DENY + audit]
+  KS -- no --> WF{AI_WORKFORCE_ENABLED?}
+  WF -- no --> Deny
+  WF -- yes --> Ten{worker enabled for tenant?}
+  Ten -- no --> Deny
+  Ten -- yes --> Cap{capability + tool declared?}
+  Cap -- no --> Deny
+  Cap -- yes --> Perm{invoker holds required permissions?}
+  Perm -- no --> Deny
+  Perm -- yes --> L5{Level 5 / prohibited action?}
+  L5 -- yes --> Deny
+  L5 -- no --> L3{autonomy >= L3?}
+  L3 -- yes --> Approve[ALLOW - requires approval, no auto-execute + audit]
+  L3 -- no --> Allow[ALLOW - may auto-execute (L0-L2/L4) + audit]

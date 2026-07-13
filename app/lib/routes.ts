@@ -25,8 +25,10 @@ export const ROUTE_STATUS_LABEL: Record<RouteStatus, string> = {
 // ── Sub-records ──────────────────────────────────────────────────────────────
 export type AuditEntry = {
   at: number
-  actor: string                 // 'admin' | 'contractor' | 'system'
+  actor: string                 // 'admin' | 'contractor' | 'system' (coarse bucket)
   action: string                // human-readable
+  actorId?: string              // resolved Principal.sub — WHICH named user acted (H3 attribution)
+  actorRole?: string            // resolved Principal.role
   from?: RouteStatus
   to?: RouteStatus
   note?: string
@@ -445,6 +447,20 @@ export function pushAudit(
   opts?: { from?: RouteStatus; to?: RouteStatus; note?: string },
 ): void {
   r.audit.push({ at: Date.now(), actor, action, ...opts })
+  if (r.audit.length > 200) r.audit = r.audit.slice(-200)
+}
+
+// Attributed audit: records WHICH named user acted (Principal.sub + role), not just
+// the coarse 'admin'/'contractor'/'system' bucket. New guarded mutation sites should
+// prefer this so every operational change is traceable to a person. Existing
+// pushAudit callers keep the coarse actor until migrated (deferred — see
+// docs/opspilot-os/20-security-hardening-sprint.md).
+export function pushAuditFor(
+  r: RouteRecord, who: { sub: string; role: string },
+  actor: AuditEntry['actor'], action: string,
+  opts?: { from?: RouteStatus; to?: RouteStatus; note?: string },
+): void {
+  r.audit.push({ at: Date.now(), actor, action, actorId: who.sub, actorRole: who.role, ...opts })
   if (r.audit.length > 200) r.audit = r.audit.slice(-200)
 }
 

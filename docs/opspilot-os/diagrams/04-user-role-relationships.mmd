@@ -1,0 +1,20 @@
+%% User & role relationships (target). See 05-multi-tenant-architecture.md
+flowchart TB
+  PO[Platform Owner\ncross-tenant]
+  subgraph Tenant[Tenant]
+    OWN[Organization Owner = admin]
+    ADM[Administrator]
+    MGR[Manager]
+    DIS[Dispatcher / Ops NEW]
+    OFF[Office Staff NEW]
+    CRW[Crew Member = crew]
+    CON[Independent Contractor = crew]
+  end
+  CUSTOMER[Customer — token, no session]
+  PO --> Tenant
+  OWN --> ADM --> MGR --> DIS
+  MGR --> OFF
+  DIS --> CRW
+  DIS --> CON
+  CUSTOMER -.token.-> Tenant
+  note1[[Membership = User x Tenant x Role;\nPermissions via rbac.ts matrix;\ntenantId on every principal]]

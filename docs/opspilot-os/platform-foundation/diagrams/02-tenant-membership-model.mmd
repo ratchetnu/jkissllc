@@ -1,0 +1,25 @@
+%% Tenant + membership model. See 04-tenancy-foundation.md
+erDiagram
+  TENANT ||--o{ MEMBERSHIP : has
+  USER ||--o{ MEMBERSHIP : has
+  MEMBERSHIP }o--|| ROLE : grants
+  TENANT {
+    string id "opaque, e.g. jkiss (NOT name-derived)"
+    string displayName
+    string industryPackId
+    string status
+  }
+  USER {
+    string id
+    string passwordHash
+  }
+  MEMBERSHIP {
+    string id
+    string tenantId
+    string userId
+    string role
+    string status
+  }
+  ROLE {
+    string name "admin | manager | crew"
+  }

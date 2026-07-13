@@ -1,0 +1,15 @@
+%% Event processing (outbox). See 08-event-and-workflow-architecture.md
+flowchart LR
+  Producer[Domain action\nemit(event) with tenantId envelope] --> Sync{sync?}
+  Sync -- money/approval --> Inproc[in-process consumer\nidempotent]
+  Sync -- async --> Outbox[(t:tid:outbox)]
+  Outbox --> Drain[Cron outbox drainer]
+  Drain --> C1[Notifications]
+  Drain --> C2[AI actions]
+  Drain --> C3[Analytics read-model]
+  Drain --> C4[Audit]
+  Drain --> Retry{success?}
+  Retry -- no, attempts<N --> Backoff[backoff -> re-enqueue]
+  Backoff --> Outbox
+  Retry -- no, attempts>=N --> Dead[(t:tid:outbox:dead)] --> Alert[owner alert + admin UI]
+  Retry -- yes --> Done[ack]
