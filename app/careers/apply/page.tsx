@@ -328,7 +328,7 @@ export default function ApplyPage() {
                   ))}
                 </div>
                 {missingDocs.length > 0 && <p className="text-sm mb-3" style={{ color: '#fbbf24' }}>⚠️ You still need to upload {missingDocs.length} required document(s). <button onClick={() => setStep(5)} className="underline" style={{ color: '#fbbf24' }}>Go back</button>.</p>}
-                <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,.4)', lineHeight: 1.5 }}>By submitting, you confirm the information is accurate. {COMPANY.legalName} is an equal-opportunity employer.</p>
+                <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,.4)', lineHeight: 1.5 }}>By submitting, you confirm the information is accurate. {COMPANY.legalName} is an equal-opportunity employer. By providing your phone number, you agree to receive text messages about your application from {COMPANY.legalName} at the number provided. Message &amp; data rates may apply. Reply STOP to opt out, HELP for help.</p>
                 {err && <p className="text-sm mb-3" role="alert" style={{ color: '#f87171' }}>{err}</p>}
                 <Nav onBack={() => setStep(5)} onNext={submit} nextLabel={busy ? 'Submitting…' : 'Submit Application →'} nextDisabled={busy || missingDocs.length > 0 || !contactOk} />
               </>

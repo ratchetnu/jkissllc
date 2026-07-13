@@ -967,6 +967,9 @@ function VerifyCard({ b, token, policy, onUpdated, verified }: {
           <p className="text-xs text-center mt-3" style={{ color: 'rgba(255,255,255,.4)' }}>
             Your booking is not fully confirmed until you verify your service time above.
           </p>
+          <p className="text-xs text-center mt-2" style={{ color: 'rgba(255,255,255,.4)', lineHeight: 1.5 }}>
+            By providing your phone number, you agree to receive booking and service-related text messages from {COMPANY.legalName} at the number provided. Message &amp; data rates may apply. Reply STOP to opt out, HELP for help.
+          </p>
         </>
       )}
     </form>
