@@ -20,6 +20,7 @@ const GROUP_LABEL: Record<string, string> = { junk: 'Junk Removal', moving: 'Mov
 const STAGE_TONE: Record<BookNowStage, string> = {
   new: '#f87171', awaiting_photos: '#fbbf24', awaiting_ai: '#fbbf24',
   ai_queued: '#fbbf24', ai_processing: '#60a5fa', ai_failed: '#f87171',
+  final_processing: '#60a5fa', awaiting_owner_approval: '#c084fc',
   quote_ready: '#60a5fa', manual_review: '#c084fc', quote_sent: '#60a5fa', payment_pending: '#fbbf24',
   paid: '#34d399', booked: '#34d399', failed: '#f87171',
 }

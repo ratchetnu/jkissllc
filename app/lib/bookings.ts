@@ -1,5 +1,7 @@
 import { redis } from './redis'
 import type { StoredAiEstimate } from './ai/estimate-store'
+import type { CustomerConfirmation } from './ai/confirmation-schema'
+import type { FinalAnalysisResult } from './ai/confirmed-analysis'
 
 // ── Service types ────────────────────────────────────────────────────────────
 // Reusable across every line of business J Kiss runs (and future ones).
@@ -145,6 +147,10 @@ export type BookingEventAction =
   | 'customer.confirmation'
   | 'ai.override' | 'ai.reprice' | 'ai.modify'
   | 'ai.queued' | 'ai.analyzed' | 'ai.failed' | 'ai.manual_review'
+  // ── Customer inventory-confirmation + second (final) analysis (Part 3/7/10) ──
+  | 'confirmation.requested' | 'confirmation.submitted' | 'confirmation.owner_edited'
+  | 'ai.final_queued' | 'ai.final_analyzed' | 'ai.final_failed' | 'ai.final_manual_review'
+  | 'ai.owner_approved'
   | 'test.marked' | 'test.unmarked'
 
 export type BookingEvent = {
@@ -303,8 +309,16 @@ export type Booking = {
   assignedHelper?: string      // helper / second rep (shown to customer)
   disposalEstimateCents?: number // estimated dump/disposal cost (from the quote)
   disposalActualCents?: number   // actual disposal cost entered after the job
-  aiEstimate?: StoredAiEstimate  // AI photo analysis + deterministic pricing + decision (internal)
+  aiEstimate?: StoredAiEstimate  // INITIAL AI photo analysis + deterministic pricing + decision (internal)
   aiJob?: AiJob                  // durable server-side AI processing job (recovery + retry)
+  // ── Guided customer inventory-confirmation workflow (Part 3–11) ──────────────
+  // The confirmation record is the customer's confirmed/corrected inventory +
+  // targeted answers + attestation. The FINAL estimate is the SECOND, governed
+  // analysis (confirmed inventory + photos). Both are ADDITIVE — the original
+  // `aiEstimate` (initial read) is never overwritten.
+  confirmation?: CustomerConfirmation      // customer-confirmed inventory + answers + attestation
+  finalAiEstimate?: FinalAnalysisResult    // second (confirmed) analysis + governed pricing (internal)
+  finalAiJob?: AiJob                        // durable server-side FINAL-analysis job (recovery + retry)
   loyaltyCode?: string         // 10% off code issued when paid in full (reuse/referral)
   archived?: boolean           // hidden from the default list (soft delete)
   archivedAt?: number
@@ -624,7 +638,7 @@ export function dollarsToCents(v: string | number): number {
 // a booking to the browser.
 export type CustomerBooking = Omit<Booking,
   'internalNotes' | 'agreementIp' | 'agreementUserAgent' | 'payments' | 'disposalEstimateCents' | 'disposalActualCents'
-  | 'aiEstimate' | 'events' | 'notifications' | 'replacementUpload' | 'idempotencyKey'> & {
+  | 'aiEstimate' | 'finalAiEstimate' | 'events' | 'notifications' | 'replacementUpload' | 'idempotencyKey'> & {
   balanceDueCents: number
   paymentSummary: PaymentSummaryStatus
   payments: Array<Pick<Payment, 'type' | 'method' | 'status' | 'amountCents' | 'feeCents' | 'totalChargedCents' | 'createdAt' | 'confirmedAt'> & { hasProof: boolean }>
@@ -635,10 +649,10 @@ export function customerView(b: Booking): CustomerBooking {
   // paths), the owner-notification ledger, and the disposal cost / margin numbers.
   const {
     internalNotes: _i, agreementIp: _ip, agreementUserAgent: _ua, payments,
-    disposalEstimateCents: _de, disposalActualCents: _da, aiEstimate: _ai,
+    disposalEstimateCents: _de, disposalActualCents: _da, aiEstimate: _ai, finalAiEstimate: _fai,
     events: _ev, notifications: _no, replacementUpload: _ru, idempotencyKey: _ik, ...rest
   } = b
-  void _i; void _ip; void _ua; void _de; void _da; void _ai; void _ev; void _no; void _ru; void _ik
+  void _i; void _ip; void _ua; void _de; void _da; void _ai; void _fai; void _ev; void _no; void _ru; void _ik
   return {
     ...rest,
     balanceDueCents: balanceDueCents(b),

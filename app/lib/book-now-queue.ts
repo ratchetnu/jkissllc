@@ -46,7 +46,9 @@ export type BookNowStage =
   | 'payment_pending'
   | 'quote_sent'
   | 'manual_review'
+  | 'awaiting_owner_approval'   // FINAL analysis produced an estimate; owner must approve before send
   | 'quote_ready'
+  | 'final_processing'          // customer confirmed → second (final) analysis running
   | 'ai_failed'
   | 'ai_processing'
   | 'ai_queued'
@@ -61,7 +63,9 @@ export const BOOK_NOW_STAGE_LABEL: Record<BookNowStage, string> = {
   payment_pending: 'Payment Pending',
   quote_sent: 'Quote Sent',
   manual_review: 'Manual Review',
+  awaiting_owner_approval: 'Owner Approval Needed',
   quote_ready: 'Quote Ready',
+  final_processing: 'Finalizing Estimate',
   ai_failed: 'AI Failed',
   ai_processing: 'AI Processing',
   ai_queued: 'AI Queued',
@@ -86,6 +90,21 @@ export function bookNowStage(b: Booking): BookNowStage {
   if ((b.amountPaidCents ?? 0) > 0) return 'paid'
   if (PAYMENT_PENDING_STATUSES.has(b.status)) return 'payment_pending'
   if ((b.invoiceAmountCents ?? 0) > 0) return 'quote_sent'                     // priced → quote is out
+  // ── Guided-confirmation FINAL workflow — only when the confirmation flow is
+  // engaged (confirmation / finalAiJob / finalAiEstimate present). Records that
+  // predate the feature fall through to the unchanged initial-AI logic below. ──
+  if (b.finalAiEstimate && b.confirmation && b.finalAiEstimate.confirmationVersion === b.confirmation.confirmationVersion) {
+    const fd = b.finalAiEstimate.finalDecision
+    if (fd === 'manual_review') return 'manual_review'
+    if (fd === 'awaiting_owner_approval') return 'awaiting_owner_approval'
+    return 'quote_ready'
+  }
+  if (b.finalAiJob) {
+    if (b.finalAiJob.status === 'failed') return 'ai_failed'
+    if (b.finalAiJob.status === 'manual_review') return 'manual_review'
+    return 'final_processing'                                                  // queued / processing / retrying
+  }
+  if (b.confirmation) return 'final_processing'                               // confirmed, job about to enqueue
   if (b.aiJob?.status === 'manual_review' || b.aiEstimate?.decision === 'manual_review') return 'manual_review'
   if (hasValidEstimate(b)) return 'quote_ready'                               // AI priced, owner can send
   // ── AI recovery phase (real, persisted job states) ──
@@ -133,11 +152,44 @@ export function ownerAlertStatus(b: Booking): 'sent' | 'failed' | 'none' {
   return last.status === 'sent' ? 'sent' : 'failed'
 }
 
+// ── Customer inventory-confirmation phase read-out (independent of the canonical
+// stage, so it never disturbs backward-compatible records). Drives the OpsPilot
+// "Confirmation" column + the customer workflow banner. ──
+export type ConfirmationStatusRead =
+  | 'none'          // not a photo-AI service, or first analysis not done yet
+  | 'awaiting'      // first analysis done, customer has not confirmed the inventory
+  | 'processing'    // customer confirmed → final analysis running
+  | 'approval'      // final estimate needs owner approval before sending
+  | 'ready'         // final estimate priced, owner can send
+  | 'review'        // final analysis routed to manual review
+  | 'failed'        // final analysis failed after retries
+  | 'submitted'     // confirmation recorded, final job not yet resolved
+export function confirmationStatus(b: Booking): ConfirmationStatusRead {
+  const isJunk = bookNowServiceGroup(b.serviceType) === 'junk'
+  if (b.finalAiEstimate && b.confirmation && b.finalAiEstimate.confirmationVersion === b.confirmation.confirmationVersion) {
+    switch (b.finalAiEstimate.finalDecision) {
+      case 'manual_review': return 'review'
+      case 'awaiting_owner_approval': return 'approval'
+      default: return 'ready'
+    }
+  }
+  if (b.finalAiJob?.status === 'failed') return 'failed'
+  if (b.finalAiJob?.status === 'manual_review') return 'review'
+  if (b.finalAiJob && ['queued', 'processing', 'retrying'].includes(b.finalAiJob.status)) return 'processing'
+  if (b.confirmation) return 'submitted'
+  // No confirmation yet — is the request waiting for the customer to confirm?
+  const firstDone = b.aiJob?.status === 'completed' || b.aiJob?.status === 'manual_review'
+    || (!!b.aiEstimate && b.aiEstimate.status !== 'failed')
+  if (isJunk && firstDone) return 'awaiting'
+  return 'none'
+}
+
 // ── Queue filters (superset of stages + service groups + inclusion toggles) ─────
 export type BookNowFilter =
   | 'all' | 'new'
   | 'junk' | 'moving' | 'delivery'
   | 'awaiting_photos' | 'ai_queued' | 'ai_processing' | 'ai_failed'
+  | 'awaiting_confirmation' | 'final_processing' | 'awaiting_owner_approval'
   | 'awaiting_approval' | 'quote_ready' | 'manual_review' | 'quote_sent'
   | 'accepted' | 'payment_pending' | 'paid' | 'booked' | 'failed'
 
@@ -153,7 +205,10 @@ export function matchesBookNowFilter(b: Booking, f: BookNowFilter): boolean {
     case 'ai_queued': return stage === 'ai_queued'
     case 'ai_processing': return stage === 'ai_processing'
     case 'ai_failed': return stage === 'ai_failed'                 // REAL persisted status
-    case 'awaiting_approval': return stage === 'quote_ready'       // an estimate awaiting the owner's send
+    case 'awaiting_confirmation': return confirmationStatus(b) === 'awaiting'
+    case 'final_processing': return stage === 'final_processing'
+    case 'awaiting_owner_approval': return stage === 'awaiting_owner_approval'
+    case 'awaiting_approval': return stage === 'quote_ready' || stage === 'awaiting_owner_approval' // an estimate awaiting the owner's send
     case 'quote_ready': return stage === 'quote_ready'
     case 'manual_review': return stage === 'manual_review'
     case 'quote_sent': return stage === 'quote_sent'
@@ -170,7 +225,8 @@ export function matchesBookNowFilter(b: Booking, f: BookNowFilter): boolean {
 export function summarizeBookNow(bookings: Booking[]): Record<BookNowStage, number> {
   const out: Record<BookNowStage, number> = {
     failed: 0, booked: 0, paid: 0, payment_pending: 0, quote_sent: 0, manual_review: 0,
-    quote_ready: 0, ai_failed: 0, ai_processing: 0, ai_queued: 0, awaiting_ai: 0, awaiting_photos: 0, new: 0,
+    awaiting_owner_approval: 0, quote_ready: 0, final_processing: 0,
+    ai_failed: 0, ai_processing: 0, ai_queued: 0, awaiting_ai: 0, awaiting_photos: 0, new: 0,
   }
   for (const b of bookings) if (isBookNow(b)) out[bookNowStage(b)]++
   return out
