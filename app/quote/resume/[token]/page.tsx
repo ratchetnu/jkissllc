@@ -30,7 +30,7 @@ type ResumeData = {
   final: CustomerFinalState
 }
 
-type Ph = { id: string; previewUrl: string; status: 'uploading' | 'done' | 'error'; url?: string }
+type Ph = { id: string; previewUrl: string; status: 'uploading' | 'done' | 'error'; url?: string; file?: File }
 
 async function toDataUrl(file: File): Promise<string> {
   try {
@@ -78,20 +78,30 @@ function Resume({ token }: { token: string }) {
   const uploadedUrls = photos.filter(p => p.status === 'done' && p.url).map(p => p.url!)
   const anyUploading = photos.some(p => p.status === 'uploading')
 
+  async function uploadOne(id: string, file: File) {
+    setPhotos(ps => ps.map(p => p.id === id ? { ...p, status: 'uploading' } : p))
+    try {
+      const dataUrl = await toDataUrl(file)
+      if (dataUrl.length > 8_000_000) { setPhotos(ps => ps.map(p => p.id === id ? { ...p, status: 'error' } : p)); return }
+      const res = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }) })
+      const j = await res.json().catch(() => ({}))
+      setPhotos(ps => ps.map(p => p.id === id ? { ...p, status: res.ok && j.url ? 'done' : 'error', url: j.url } : p))
+    } catch { setPhotos(ps => ps.map(p => p.id === id ? { ...p, status: 'error' } : p)) }
+  }
   async function addFiles(files: FileList | File[]) {
     const room = Math.max(0, MAX - photos.length)
     const chosen = Array.from(files).slice(0, room)
     for (const file of chosen) {
       const id = crypto.randomUUID()
-      setPhotos(ps => [...ps, { id, previewUrl: URL.createObjectURL(file), status: 'uploading' }])
-      try {
-        const dataUrl = await toDataUrl(file)
-        const res = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }) })
-        const j = await res.json().catch(() => ({}))
-        setPhotos(ps => ps.map(p => p.id === id ? { ...p, status: res.ok && j.url ? 'done' : 'error', url: j.url } : p))
-      } catch { setPhotos(ps => ps.map(p => p.id === id ? { ...p, status: 'error' } : p)) }
+      setPhotos(ps => [...ps, { id, previewUrl: URL.createObjectURL(file), status: 'uploading', file }])
+      void uploadOne(id, file)
     }
   }
+  function retryOne(id: string) {
+    const it = photos.find(p => p.id === id)
+    if (it?.file) void uploadOne(id, it.file)
+  }
+  const anyFailed = photos.some(p => p.status === 'error')
 
   async function submit() {
     if (submitting || !data) return
@@ -176,11 +186,13 @@ function Resume({ token }: { token: string }) {
                           <img src={p.url || p.previewUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: p.status === 'done' ? 1 : 0.5 }} />
                           {p.status === 'uploading' && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.35)' }}><Loader2 size={18} className="animate-spin" style={{ color: '#fff' }} /></div>}
                           {p.status === 'done' && <span style={{ position: 'absolute', bottom: 4, left: 4, width: 20, height: 20, borderRadius: 999, background: '#16a34a', color: '#fff', display: 'grid', placeItems: 'center' }}><Check size={12} /></span>}
+                          {p.status === 'error' && <button type="button" onClick={() => retryOne(p.id)} aria-label="Retry upload" style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, background: 'rgba(224,0,42,.4)', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}><Loader2 size={15} /> Retry</button>}
                           <button type="button" onClick={() => setPhotos(ps => ps.filter(x => x.id !== p.id))} aria-label="Remove" style={{ position: 'absolute', top: 4, right: 4, width: 22, height: 22, borderRadius: 999, border: 'none', background: 'rgba(0,0,0,.7)', color: '#fff', display: 'grid', placeItems: 'center', cursor: 'pointer' }}><X size={12} /></button>
                         </div>
                       ))}
                     </div>
                   )}
+                  {anyFailed && <p style={{ color: '#ffb3c0', fontSize: 12.5, marginTop: 8 }}>Some photos didn’t upload — tap a red tile to retry, or remove and choose another.</p>}
                 </div>
               )}
 

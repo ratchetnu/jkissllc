@@ -254,12 +254,13 @@ export function projectCustomerFinalState(b: MinimalBookingState): CustomerFinal
         message: 'Because of the size and contents of this job, we’ll set up a short on-site visit to give you an accurate quote. A team member will reach out to schedule it.',
       }
     }
-    // manual_review
+    // manual_review — NEVER surface the internal reviewer-voice `missingInfo`
+    // strings to the customer (they read as ops notes about the customer). Ops
+    // sees them on the booking; the customer gets calm, generic copy.
     return {
-      stage: fe.missingInfo && fe.missingInfo.length > 0 ? 'more_info' : 'manual_review',
+      stage: 'manual_review',
       headline: 'Request received',
       message: 'We received your request. A team member will review it before pricing.',
-      moreInfo: fe.missingInfo && fe.missingInfo.length > 0 ? fe.missingInfo : undefined,
     }
   }
 

@@ -283,13 +283,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
       if (!Array.isArray(body.items)) return NextResponse.json({ error: 'items[] required.' }, { status: 400 })
       const existing = b.confirmation
+      // Deterministic idempotency key so an owner double-click doesn't create two
+      // versions + two final runs (submitConfirmation dedups on this key).
+      const itemsSig = (body.items as unknown[]).map((it) => {
+        const o = (it ?? {}) as Record<string, unknown>
+        return `${String(o.id ?? '')}:${String(o.category ?? '')}:${String(o.quantity ?? '')}:${o.removed ? 1 : 0}`
+      }).join('|').slice(0, 200)
       const raw = {
         items: body.items,
         accessConditions: existing?.accessConditions ?? {},
         disclosures: existing?.disclosures ?? {},
         photoQuality: existing?.photoQuality ?? {},
+        estate: existing?.estate,
         followUpAnswers: existing?.followUpAnswers ?? [],
         attestation: existing?.attestation,
+        idempotencyKey: `owner-edit:${actor}:${(body.items as unknown[]).length}:${itemsSig}`,
       }
       let tenantId: string | undefined
       try { tenantId = currentTenantId() } catch { /* ignore */ }
@@ -352,6 +360,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       break
     }
     case 'void-payment': {
+      if (!who || !can(who.role, 'invoices:manage')) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
       // Remove a payment record (e.g. a customer re-reported a payment that was
       // already recorded — confirming it would double-count). Recompute drops it
       // from Amount Paid. Logged to the audit trail for chargeback evidence.
@@ -367,6 +376,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     case 'mark-deposit-paid':
     case 'mark-balance-paid':
     case 'mark-paid-full': {
+      if (!who || !can(who.role, 'invoices:manage')) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
       const method = (METHODS.includes(body.method) ? body.method : 'cash') as PaymentMethod
       const balance = balanceDueCents(b)
       let amountCents: number
@@ -580,6 +590,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       break
     }
     case 'refund': {
+      if (!who || !can(who.role, 'invoices:manage')) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
       // One-click Stripe refund for the eligible amount. Records a negative payment
       // so Amount Paid drops, and emails the customer. Zelle/cash refunds are manual.
       const refundCents = dollarsToCents(body.amount)
@@ -625,6 +636,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
     // ── AI estimate: admin price override (recorded, never silent) ───────────
     case 'ai-override': {
+      if (!who || !can(who.role, 'invoices:manage')) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
       if (!b.aiEstimate) return NextResponse.json({ error: 'No AI estimate on this booking.' }, { status: 400 })
       const overriddenUsd = Math.round(num(body.overriddenUsd) ?? 0)
       const reason = str(body.reason, 500)
@@ -639,6 +651,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     // ── AI estimate: re-run the deterministic pricing on the stored analysis ──
     // (no new AI call — cheap; picks up pricing-config changes).
     case 'ai-reprice': {
+      if (!who || !can(who.role, 'invoices:manage')) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
       if (!b.aiEstimate?.analysis) return NextResponse.json({ error: 'No stored analysis to re-price.' }, { status: 400 })
       const [settings, calibration] = await Promise.all([getDisposalSettings(), getCalibration()])
       const d = decideQuote({ analysis: b.aiEstimate.analysis, settings, calibration, serviceType: b.serviceType })
@@ -654,6 +667,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     // as an additive override with a required reason + who/when + an immutable
     // ai.modify timeline event. Does NOT send the quote — that's a separate approve.
     case 'ai-modify': {
+      if (!who || !can(who.role, 'invoices:manage')) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
       if (!b.aiEstimate) return NextResponse.json({ error: 'No AI estimate on this booking.' }, { status: 400 })
       const reason = str(body.reason, 500) ?? ''
       const overriddenUsd = Math.round(num(body.overriddenUsd) ?? 0)

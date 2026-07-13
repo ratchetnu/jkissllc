@@ -1,5 +1,6 @@
+import { redis } from './redis'
 import {
-  getBookingByToken, saveBooking, listBookings, pushBookingEvent, serviceFamily,
+  getBookingByToken, saveBooking, listBookings, pushBookingEvent,
   type Booking, type AiJob, type AiJobErrorCode, type AiJobStatus,
 } from './bookings'
 import {
@@ -9,6 +10,18 @@ import {
 import { detectPhotoTextConflicts } from './ai/photo-text-consistency'
 import { buildConfirmedPhotoEstimate } from './ai/confirmed-analysis'
 import { supportsPhotoAi } from './book-now-ai'
+
+// Per-booking leases (setNxPx — the only atomic primitive the KV exposes). They
+// SERIALIZE the two concurrency hazards on the confirmation workflow: two submits
+// racing to the same confirmation version, and the inline + cron final-analysis
+// runners double-executing. A missed lease is fail-soft (the caller returns the
+// current state; the cron retries later), never a lost request.
+async function withBookingLock<T>(key: string, ttlMs: number, fn: () => Promise<T>, onBusy: () => T): Promise<T> {
+  let got = false
+  try { got = await redis.setNxPx(key, '1', ttlMs) } catch { got = true /* KV hiccup: don't block the customer */ }
+  if (!got) return onBusy()
+  try { return await fn() } finally { try { await redis.del(key) } catch { /* lease expires on its own */ } }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Durable customer inventory-confirmation + SECOND (final) analysis worker.
@@ -57,13 +70,16 @@ export async function submitConfirmation(
   rawConfirmation: unknown,
   opts: { submittedBy?: 'customer' | 'owner'; tenantId?: string; initiatedBy?: string; nowIso?: string } = {},
 ): Promise<SubmitConfirmationResult> {
-  const b = await getBookingByToken(token)
-  if (!b) return { ok: false, status: 'rejected', reason: 'not_found' }
-  if (b.isTest || b.archived) return { ok: false, status: 'rejected', reason: 'ineligible' }
-
   const incomingKey = typeof (rawConfirmation as { idempotencyKey?: unknown })?.idempotencyKey === 'string'
     ? (rawConfirmation as { idempotencyKey: string }).idempotencyKey
     : undefined
+
+  // Serialize concurrent submits for the SAME booking so two racing submits can't
+  // land the same confirmation version (which would collide on the final-job key).
+  return withBookingLock(`bk:conflock:${token}`, 15_000, async () => {
+  const b = await getBookingByToken(token)
+  if (!b) return { ok: false, status: 'rejected', reason: 'not_found' }
+  if (b.isTest || b.archived) return { ok: false, status: 'rejected', reason: 'ineligible' }
 
   // ── Idempotency: same key as the stored confirmation → return it, no new version.
   if (incomingKey && b.confirmation?.idempotencyKey === incomingKey) {
@@ -108,6 +124,7 @@ export async function submitConfirmation(
   await saveBooking(b)
 
   return { ok: true, confirmation, status: b.finalAiJob?.status ?? 'queued' }
+  }, () => ({ ok: false as const, status: 'rejected' as const, reason: 'busy' }))
 }
 
 /**
@@ -160,12 +177,25 @@ export type ProcessFinalResult = {
 }
 
 /**
- * Run one attempt of the durable FINAL-analysis job. Persists "processing" before
- * the pricing call, attaches the final estimate on success, advances the workflow
- * by the routing decision (quote_ready / owner_approval → completed;
- * manual_review → manual_review), or schedules a bounded retry on error. Idempotent.
+ * Run one attempt of the durable FINAL-analysis job. Leased per booking so the
+ * inline (submit) runner and the cron runner can never double-execute the same
+ * job; a missed lease returns the current state and the cron retries later.
  */
 export async function processFinalAiJob(
+  token: string,
+  opts: { initiatedBy?: string; tenantId?: string } = {},
+): Promise<ProcessFinalResult> {
+  return withBookingLock(
+    `bk:finallock:${token}`, 90_000,
+    () => processFinalAiJobInner(token, opts),
+    () => ({ ok: false, status: 'processing', reason: 'locked' }),
+  )
+}
+
+// The unleased body — persists "processing" before the pricing call, attaches the
+// final estimate on success, advances by the routing decision, or schedules a
+// bounded retry on error. Idempotent (hasFinalEstimate guard).
+async function processFinalAiJobInner(
   token: string,
   opts: { initiatedBy?: string; tenantId?: string } = {},
 ): Promise<ProcessFinalResult> {

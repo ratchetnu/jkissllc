@@ -12,6 +12,7 @@ import { SERVICE_TYPES, getBookingByToken, type ServiceType } from '../../lib/bo
 import { submitConfirmation, processFinalAiJob } from '../../lib/book-now-confirmation'
 import { projectCustomerFinalState, type CustomerFinalState } from '../../lib/ai/confirmation-ui'
 import { recordFunnelEvent } from '../../lib/analytics-events'
+import { filterPhotoUrls } from '../../lib/photo-url'
 
 // Look up a US ZIP via zippopotam.us (free, no key required).
 async function lookupZip(zip: string): Promise<{ lat: number; lon: number; city: string; state: string } | null> {
@@ -159,10 +160,9 @@ export async function POST(request: NextRequest) {
   const addOnLabels = selectedAddOns.map(a => `${ADDON_LABELS[a] ?? a} (+$${PRICING.addOns[a]})`)
 
   // Job photos uploaded via /api/upload (Vercel Blob) — carried into the ops email
-  // so the team can size the job accurately. Only trusted http(s) URLs, capped at 6.
-  const photoUrls: string[] = Array.isArray(body.photos)
-    ? body.photos.map((u: unknown) => String(u)).filter((u: string) => /^https?:\/\//.test(u)).slice(0, 6)
-    : []
+  // so the team can size the job accurately. ONLY our Blob host (no attacker links
+  // reaching ops inboxes or the model), deduped, capped at 6.
+  const photoUrls: string[] = filterPhotoUrls(body.photos, 6)
 
   // Compute estimate (delivery only — job-based services are quoted by hand)
   let low = 0

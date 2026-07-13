@@ -536,10 +536,13 @@ function normalize(b: Booking): Booking {
 export function sanitizePhotos(v: unknown): InvoicePhoto[] {
   if (!Array.isArray(v)) return []
   const out: InvoicePhoto[] = []
+  const seen = new Set<string>()   // dedup by URL — a retried append never duplicates a photo
   for (const item of v) {
     if (!item || typeof item !== 'object') continue
     const url = String((item as { url?: unknown }).url ?? '').trim()
     if (!/^https:\/\/\S+$/i.test(url) || url.length > 1000) continue
+    if (seen.has(url)) continue
+    seen.add(url)
     const rawName = (item as { name?: unknown }).name
     const name = typeof rawName === 'string' ? rawName.trim().slice(0, 120) : undefined
     out.push(name ? { url, name } : { url })

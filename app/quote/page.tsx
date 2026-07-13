@@ -277,6 +277,26 @@ export default function QuotePage() {
     if (match) { setSvcId(match.id); setStep(1) }
   }, [])
 
+  // Refresh recovery: if we land with a saved request token (URL ?r= or session),
+  // rehydrate the submitted/result view and resume polling — the durable worker
+  // never lost the request, so the customer never loses it either.
+  useEffect(() => {
+    let token = ''
+    try { token = new URLSearchParams(window.location.search).get('r') || sessionStorage.getItem('jkq_r') || '' } catch { token = '' }
+    if (!token || !/^[a-f0-9]{16,}$/i.test(token)) return
+    let alive = true
+    fetch(`/api/quote/status/${encodeURIComponent(token)}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => {
+        if (!alive || !j?.ok) return
+        setSent({ request: { number: j.requestNumber, token } })
+        recordClientEvent('confirmation_resumed')
+        if (j.final) { setFinalState(j.final as CustomerFinalState); if (j.final.stage === 'processing') void pollFinalState(token) }
+      })
+      .catch(() => { /* stale/expired token — fall through to a fresh wizard */ })
+    return () => { alive = false }
+  }, [])
+
   // Scroll to top on each step change, AFTER the new step renders. A scrollTo in
   // the click handler runs before the re-render and gets undone by the step swap.
   useEffect(() => {
@@ -316,6 +336,9 @@ export default function QuotePage() {
     let dataUrl = ''
     try { dataUrl = await downscaleToDataUrl(item.file) }
     catch { setPhotos(ps => ps.map(p => p.id === item.id ? { ...p, status: 'error' } : p)); return }
+    // Guard the doomed case (e.g. a HEIC the browser can't downscale falls back to
+    // full size) so it fast-fails locally instead of looping against the 8MB server cap.
+    if (dataUrl.length > 8_000_000) { setPhotos(ps => ps.map(p => p.id === item.id ? { ...p, status: 'error' } : p)); return }
     setPhotos(ps => ps.map(p => p.id === item.id ? { ...p, status: 'uploading' } : p))
     try {
       const res = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }) })
@@ -506,6 +529,11 @@ export default function QuotePage() {
       if (res.ok) {
         if (j.final) setFinalState(j.final as CustomerFinalState)
         setSent({ estimate: j.estimate, request: j.request })
+        // Refresh recovery: remember the token so a reload can rehydrate the result
+        // (the durable worker keeps running server-side regardless).
+        if (j.request?.token) {
+          try { sessionStorage.setItem('jkq_r', j.request.token); window.history.replaceState(null, '', `/quote?r=${j.request.token}`) } catch { /* private mode */ }
+        }
         window.scrollTo({ top: 0, behavior: 'smooth' })
         // Durable: if the server's inline final analysis is still processing, poll
         // the customer-safe status (the cron worker is the real source of truth).
@@ -532,6 +560,12 @@ export default function QuotePage() {
         }
       } catch { /* keep the current state; the customer already sees "received" */ }
     }
+    // Poll budget spent and still processing — the durable worker keeps going, but
+    // we must NOT leave a perpetual "this only takes a moment" spinner. Flip to a
+    // calm static state; the owner alert + email carry it from here.
+    setFinalState(prev => (prev && prev.stage === 'processing')
+      ? { stage: 'owner_review', headline: 'We’ve got your request', message: 'Your estimate is taking a little longer than usual — we’ll email it to you shortly. No need to wait here.' }
+      : prev)
   }
 
   // Secondary CTA — lock a real open date + pay the deposit via /api/book.
@@ -604,7 +638,7 @@ export default function QuotePage() {
                 photoCount: uploadedUrls.length,
                 contactMethod,
               }}
-              onReset={() => { setSent(null); setFinalState(null); quoteIdemRef.current = ''; confIdemRef.current = ''; setEstimate(null); analysisIdRef.current = ''; setFollowUps([]); setConfItems([]); setConfAnswers({}); setIsEverything(''); setEverythingPictured(null); setAttest(EMPTY_ATTEST); setEstate({}); setStep(0); setSvcId(''); setPickupText(''); setDeliveryText(''); setSizeId(''); setHeavy(null); setStairs(null); setElevator(null); setPrefDate(''); setPhotos([]); setUpgrades([]); setName(''); setCompany(''); setPhone(''); setEmail(''); setPromo(''); setEst(null); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
+              onReset={() => { try { sessionStorage.removeItem('jkq_r'); window.history.replaceState(null, '', '/quote') } catch { /* noop */ } setSent(null); setFinalState(null); quoteIdemRef.current = ''; confIdemRef.current = ''; setEstimate(null); analysisIdRef.current = ''; setFollowUps([]); setConfItems([]); setConfAnswers({}); setIsEverything(''); setEverythingPictured(null); setAttest(EMPTY_ATTEST); setEstate({}); setStep(0); setSvcId(''); setPickupText(''); setDeliveryText(''); setSizeId(''); setHeavy(null); setStairs(null); setElevator(null); setPrefDate(''); setPhotos([]); setUpgrades([]); setName(''); setCompany(''); setPhone(''); setEmail(''); setPromo(''); setEst(null); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
           ) : (
             <>
               {/* Intro */}

@@ -8,7 +8,8 @@ import {
 import { customerEstimateView } from '../../../../lib/ai/estimate-store'
 import { selectFollowUpQuestions } from '../../../../lib/ai/followup-questions'
 import { projectCustomerFinalState } from '../../../../lib/ai/confirmation-ui'
-import { submitConfirmation, processFinalAiJob, enqueueFinalAiJob, hasFinalEstimate } from '../../../../lib/book-now-confirmation'
+import { submitConfirmation, processFinalAiJob, enqueueFinalAiJob } from '../../../../lib/book-now-confirmation'
+import { filterPhotoUrls } from '../../../../lib/photo-url'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -64,19 +65,28 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ token: str
   const b = await getBookingByInfoRequest(token)
   if (!b || !b.infoRequest) return NextResponse.json({ error: 'not_found' }, { status: 404 })
 
-  // Idempotent: a repeat submission on a completed request just returns the state.
-  if (b.infoRequest.completed && hasFinalEstimate(b)) {
+  // Idempotent: a repeat submission on a completed request just returns the state —
+  // independent of whether the final estimate has landed yet (avoids a re-run race
+  // while the job is still queued/processing).
+  if (b.infoRequest.completed) {
+    return NextResponse.json({ ok: true, final: projectCustomerFinalState(b) })
+  }
+  // Refuse to re-estimate a request that has already moved past quoting (owner sent
+  // a quote / it's booked / paid) — the info-request continuation is for pre-quote
+  // clarification only.
+  const PAST_QUOTING = new Set(['pending_payment', 'pending_zelle_verification', 'payment_received', 'booking_created', 'confirmation_link_sent', 'customer_viewed', 'time_verification_pending', 'time_verified', 'confirmed', 'in_progress', 'continued', 'completed', 'partially_completed', 'could_not_complete', 'cancelled', 'refunded'])
+  if ((b.invoiceAmountCents ?? 0) > 0 || (b.amountPaidCents ?? 0) > 0 || PAST_QUOTING.has(b.status)) {
     return NextResponse.json({ ok: true, final: projectCustomerFinalState(b) })
   }
 
   const body = await req.json().catch(() => ({}))
 
-  // Appended photos (better wide-angle / close-up / more).
-  const newPhotos: string[] = Array.isArray(body.photos)
-    ? body.photos.map((u: unknown) => String(u)).filter((u: string) => /^https:\/\/\S+$/i.test(u)).slice(0, 8)
-    : []
+  // Appended photos — ONLY our Blob host, deduped (H1: persist BEFORE the fresh
+  // reload inside submitConfirmation, or the appended photos are lost).
+  const newPhotos = filterPhotoUrls(body.photos, 8)
   if (newPhotos.length > 0) {
-    b.invoicePhotos = sanitizePhotos([...(b.invoicePhotos ?? []), ...newPhotos.map(u => ({ url: u }))]).slice(0, 16)
+    b.invoicePhotos = sanitizePhotos([...(b.invoicePhotos ?? []), ...newPhotos.map(u => ({ url: u }))])
+    await saveBooking(b)
   }
 
   // Updated confirmation (quantities / access / inventory).

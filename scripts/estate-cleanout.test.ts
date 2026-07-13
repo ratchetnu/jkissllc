@@ -6,7 +6,7 @@ import test from 'node:test'
 
 import { INVENTORY_TAXONOMY, taxonomyEntry, normalizeToInventoryCategory, classifyFreeText } from '../app/lib/ai/inventory-taxonomy'
 import {
-  normalizeConfirmation, activeItems, sensitiveItems, hasSensitiveItems, estateNeedsSiteVisit, isEstateConfirmation,
+  normalizeConfirmation, sensitiveItems, hasSensitiveItems, estateNeedsSiteVisit, isEstateConfirmation,
   CLEANOUT_SUBTYPE_LABEL,
 } from '../app/lib/ai/confirmation-schema'
 import { buildConfirmedEstimate } from '../app/lib/ai/confirmed-analysis'
