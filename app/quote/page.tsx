@@ -253,7 +253,7 @@ export default function QuotePage() {
   // the input already restricts to images and the server validates each upload.
   function invalidateEstimate() { setEstimate(null); analysisIdRef.current = '' }
 
-  function addPhotos(files: FileList) {
+  function addPhotos(files: FileList | File[]) {
     setErr(''); invalidateEstimate()   // new photos → any prior estimate is stale
     const room = Math.max(0, MAX_PHOTOS - photos.length)
     if (room <= 0) { setErr(`You can attach up to ${MAX_PHOTOS} photos.`); return }
@@ -770,7 +770,7 @@ function YesNo({ label, value, onChange }: { label: string; value: boolean | nul
 // ── Step 3: Photos ───────────────────────────────────────────────────────────
 function StepPhotos(props: {
   photos: PhotoItem[]; dragOver: boolean; setDragOver: (v: boolean) => void
-  onAdd: (f: FileList) => void; onRemove: (id: string) => void; onRetry: (id: string) => void
+  onAdd: (f: FileList | File[]) => void; onRemove: (id: string) => void; onRetry: (id: string) => void
 }) {
   const total = props.photos.length
   const done = props.photos.filter(p => p.status === 'done').length
@@ -799,7 +799,7 @@ function StepPhotos(props: {
         </span>
         <p className="font-bold text-white">Tap to take a photo or choose from your library</p>
         <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>JPG, PNG or HEIC · up to {MAX_PHOTOS} photos · ~6MB each</p>
-        <input type="file" accept="image/*" multiple onChange={e => { const fs = e.target.files; e.target.value = ''; if (fs?.length) props.onAdd(fs) }} style={{ display: 'none' }} />
+        <input type="file" accept="image/*" multiple onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; if (files.length) props.onAdd(files) }} style={{ display: 'none' }} />
       </label>
 
       {/* How to take useful photos (helps the estimate). */}
