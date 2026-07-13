@@ -6,7 +6,7 @@ import test from 'node:test'
 import type { Booking } from '../app/lib/bookings'
 import {
   needsAiJob, supportsPhotoAi, hasValidEstimate, photoVersion, aiJobIdempotencyKey,
-  enqueueAiJob, classifyOutcome, retryDecision, isDue, MAX_ATTEMPTS,
+  enqueueAiJob, classifyOutcome, retryDecision, isDue, needsManualReview, MAX_ATTEMPTS,
 } from '../app/lib/book-now-ai'
 
 function mk(p: Partial<Booking>): Booking {
@@ -79,6 +79,13 @@ test('retry policy: transient backs off then exhausts; permanent fails immediate
   const permanent = retryDecision(1, 'unsupported_image')
   assert.equal(permanent.terminal, true)
   assert.equal(permanent.finalCode, 'unsupported_image')             // not retried
+})
+
+test('a model-ran-but-empty read routes to manual review, not endless retries', () => {
+  assert.equal(needsManualReview('no_items'), true)     // AI saw the photos, found nothing to price
+  assert.equal(needsManualReview('provider_error'), false)
+  assert.equal(needsManualReview('rate_limited'), false)
+  assert.equal(needsManualReview(undefined), false)
 })
 
 test('isDue: queued/retrying past backoff are due; processing/completed/test are not', () => {

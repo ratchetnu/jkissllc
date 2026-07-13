@@ -22,6 +22,14 @@ const BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000] // 1m, 5m, 15m
 // Errors that will never succeed on retry — route straight to a terminal state.
 const PERMANENT: AiJobErrorCode[] = ['unsupported_image', 'bot_blocked', 'invalid_schema', 'pricing_validation_failed']
 
+// Analyzer outcomes where the model RAN fine but produced no usable read — not a
+// provider error, so retrying is futile → route to owner manual review instead.
+const MODEL_RAN_EMPTY = ['no_items']
+/** True when a failed read is "model ran, nothing to price" → manual review, not retry. */
+export function needsManualReview(outcome: string | undefined): boolean {
+  return MODEL_RAN_EMPTY.includes(outcome ?? '')
+}
+
 const now = () => Date.now()
 
 /** Photos count doubles as a version — a changed set re-triggers analysis. */
@@ -160,6 +168,23 @@ export async function processAiJob(token: string, opts: { initiatedBy?: string; 
   }
 
   if (!res.analyzedOk) {
+    // The model ran and returned valid output but found NO identifiable items — a
+    // photo the AI can't price, not a provider error. Retrying just repeats it, so
+    // route straight to MANUAL REVIEW for the owner to price by hand. We attach the
+    // (item-less) analysis so the owner sees what the model observed.
+    if (MODEL_RAN_EMPTY.includes(res.outcome)) {
+      b.aiEstimate = res.stored
+      b.aiJob = {
+        status: 'manual_review', idempotencyKey: b.aiJob.idempotencyKey, photoVersion: photoVersion(b), attempts,
+        lastAttemptAt: now(), completedAt: now(), provider: res.stored.provider, model: res.model, providerTraceId: res.callId,
+        errorSummary: 'AI found no identifiable items in the photos — needs manual pricing.',
+        initiatedBy: opts.initiatedBy ?? b.aiJob.initiatedBy, updatedAt: now(),
+      }
+      pushBookingEvent(b, { actor: opts.initiatedBy ?? 'system', action: 'ai.manual_review', result: `ai:${res.outcome}`, meta: { attempts, outcome: res.outcome } })
+      await saveBooking(b)
+      return { ok: false, status: 'manual_review', reason: res.outcome }
+    }
+    // A genuine provider failure (timeout, 5xx, rate limit, image fetch) → retry.
     const code = classifyOutcome(res.outcome, false)
     b.aiJob = scheduleRetryOrFail(b, attempts, code, `AI vision did not return a usable read (${res.outcome}).`, opts.initiatedBy)
     await saveBooking(b)
