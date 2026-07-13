@@ -59,10 +59,14 @@ export type BookingAnalytics = {
 }
 
 export function computeBookingAnalytics(
-  bookings: Booking[],
+  allBookings: Booking[],
   now: number,
   reviews?: { count: number; rating: number },
 ): BookingAnalytics {
+  // Sandbox isolation: test records NEVER count toward revenue, tickets, KPIs,
+  // customer counts, disposal accuracy, or any series. This is the single chokepoint
+  // for booking analytics, so excluding here covers reports, insights, and dashboards.
+  const bookings = allBookings.filter((b) => !b.isTest)
   const todayStr = centralDate(now)
   const [ty, tm, td] = todayStr.split('-').map(Number)
   const dow = new Date(Date.UTC(ty, tm - 1, td)).getUTCDay() // 0 = Sunday

@@ -133,6 +133,7 @@ export type BookingEventAction =
   | 'notification.sent' | 'notification.failed' | 'notification.resent'
   | 'customer.confirmation'
   | 'ai.override' | 'ai.reprice' | 'ai.modify'
+  | 'test.marked' | 'test.unmarked'
 
 export type BookingEvent = {
   at: number
@@ -262,6 +263,11 @@ export type Booking = {
   loyaltyCode?: string         // 10% off code issued when paid in full (reuse/referral)
   archived?: boolean           // hidden from the default list (soft delete)
   archivedAt?: number
+  // Owner-controlled SANDBOX record: never counts toward revenue/analytics/KPIs,
+  // never sends automatic customer comms, badged everywhere. Set by an owner only.
+  isTest?: boolean
+  testMarkedBy?: string        // who flagged it as test
+  testMarkedAt?: number
 
   // Status + payments
   status: BookingStatus
@@ -359,6 +365,9 @@ export async function getBookingByNumber(bookingNumber: string): Promise<Booking
   if (!token) return null
   return getBookingByToken(token)
 }
+
+/** Owner-controlled sandbox record — excluded from all business analytics/comms. */
+export const isTestBooking = (b: Pick<Booking, 'isTest'>): boolean => !!b.isTest
 
 export async function saveBooking(b: Booking): Promise<void> {
   b.updatedAt = Date.now()

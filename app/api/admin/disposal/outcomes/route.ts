@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
     estLaborCents: dollarsToCents(b.estLabor), actualLaborCents: dollarsToCents(b.actualLabor),
     estProfitCents: dollarsToCents(b.estProfit), actualProfitCents: dollarsToCents(b.actualProfit),
     finalPriceCents: dollarsToCents(b.finalPrice),
+    isTest: b.isTest === true, // sandbox outcomes never train the model
     notes: typeof b.notes === 'string' ? b.notes.slice(0, 300) : undefined,
   }
 

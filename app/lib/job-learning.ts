@@ -31,6 +31,7 @@ export type JobOutcome = {
   finalPriceCents: number      // what the customer actually paid
   aiRecommendedCents?: number  // the AI's recommended price at quote time (Booking.aiEstimate)
   overridden?: boolean         // an admin manually overrode the AI number before quoting
+  isTest?: boolean             // sandbox outcome — never trains the model or enters history
   notes?: string
 }
 
@@ -73,6 +74,9 @@ export async function getCalibration(): Promise<Calibration> {
 
 // Record a completed job and fold its actual-vs-estimated fill into the bias.
 export async function recordJobOutcome(o: JobOutcome): Promise<Calibration> {
+  // Sandbox outcomes never train the pricing model or enter the accuracy history —
+  // AI safety: test data must not influence calibration or pricing metrics.
+  if (o.isTest) return getCalibration()
   // Prepend to the capped history.
   const history = await listOutcomes(MAX_OUTCOMES)
   history.unshift(o)

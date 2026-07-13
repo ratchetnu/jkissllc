@@ -56,12 +56,15 @@ export async function recordStripeSessionPayment(session: Stripe.Checkout.Sessio
   // confirm). Flag-gated + fail-soft — never affects payment capture or emails.
   await onPaymentCaptured(b, { amountCents, method: 'stripe', justConfirmed })
 
-  await emailOpsPaymentReceived(b, payment)
-  await emailPaymentReceiptCustomer(b, payment)
-  if (justConfirmed) {
-    await notifyBookingConfirmed(b)                                   // customer confirmation
-    await notifyOwnerNewConfirmedBooking(b, payment).catch(e => console.error('[record-payment] owner notify', e))
+  // Sandbox records never send automatic customer/owner comms.
+  if (!b.isTest) {
+    await emailOpsPaymentReceived(b, payment)
+    await emailPaymentReceiptCustomer(b, payment)
+    if (justConfirmed) {
+      await notifyBookingConfirmed(b)                                 // customer confirmation
+      await notifyOwnerNewConfirmedBooking(b, payment).catch(e => console.error('[record-payment] owner notify', e))
+    }
+    if (nowPaidInFull) await notifyPaidInFull(b)
   }
-  if (nowPaidInFull) await notifyPaidInFull(b)
   return b
 }

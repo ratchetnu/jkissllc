@@ -172,9 +172,17 @@ function Dashboard() {
   const [prefill, setPrefill] = useState<Prefill | null>(null)
   const [statusFilter, setStatusFilter] = useState<'active' | 'requests' | 'zelle' | 'all' | 'unpaid' | 'unscheduled' | 'completed' | 'cancelled'>('active')
   const [showArchived, setShowArchived] = useState(false)
+  const [showTest, setShowTest] = useState(false)
+  const [isOwner, setIsOwner] = useState(false)
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [visibleCount, setVisibleCount] = useState(25)
   const [bulkBusy, setBulkBusy] = useState(false)
+
+  // Owner-only test-data controls are hidden from managers/crew (server enforces too).
+  useEffect(() => {
+    fetch('/api/admin/session', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null).then(d => setIsOwner(d?.role === 'admin')).catch(() => {})
+  }, [])
 
   function startDuplicate(b: Booking) {
     setSelected(null); setEditing(false)
@@ -223,6 +231,8 @@ function Dashboard() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return items.filter(b => {
+      if (!showTest && b.isTest) return false          // sandbox records hidden from normal views
+      if (showTest && !b.isTest) return false          // "Manage Test Data" shows only test records
       if (!showArchived && b.archived) return false
       if (showArchived && !b.archived) return false
       if (!matchesStatusFilter(b, statusFilter)) return false
@@ -230,7 +240,7 @@ function Dashboard() {
       return [b.customerName, b.customerPhone, b.customerEmail, b.bookingNumber, b.invoiceNumber, b.assignedTo]
         .filter(Boolean).some(v => v!.toLowerCase().includes(q))
     })
-  }, [items, search, statusFilter, showArchived])
+  }, [items, search, statusFilter, showArchived, showTest])
 
   // Reset pagination + selection whenever the visible set changes.
   useEffect(() => { setVisibleCount(25); setChecked(new Set()) }, [search, statusFilter, showArchived, view])
@@ -286,7 +296,7 @@ function Dashboard() {
           editing ? (
             <BookingForm booking={current} onClose={() => setEditing(false)} onSaved={async () => { setEditing(false); await load() }} />
           ) : (
-            <BookingDetail b={current} onBack={() => setSelected(null)} onEdit={() => setEditing(true)} onChanged={load} onDuplicate={() => startDuplicate(current)} />
+            <BookingDetail b={current} onBack={() => setSelected(null)} onEdit={() => setEditing(true)} onChanged={load} onDuplicate={() => startDuplicate(current)} isOwner={isOwner} />
           )
         ) : (
           <div className="space-y-2.5">
@@ -303,6 +313,10 @@ function Dashboard() {
               ))}
               <button onClick={() => setShowArchived(v => !v)} className="text-xs font-semibold px-3 py-1.5 rounded-lg"
                 style={{ background: showArchived ? 'var(--red)' : 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: showArchived ? '#fff' : 'var(--muted)' }}>Archived</button>
+              {isOwner && (
+                <button onClick={() => setShowTest(v => !v)} className="text-xs font-semibold px-3 py-1.5 rounded-lg"
+                  style={{ background: showTest ? '#a855f7' : 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: showTest ? '#fff' : 'var(--muted)' }}>🧪 Manage Test Data</button>
+              )}
             </div>
 
             {/* Bulk action bar */}
@@ -340,7 +354,7 @@ function Dashboard() {
 
       {!loading && view === 'calendar' && !showNew && (
         current ? (
-          <BookingDetail b={current} onBack={() => setSelected(null)} onEdit={() => setEditing(true)} onChanged={load} onDuplicate={() => startDuplicate(current)} />
+          <BookingDetail b={current} onBack={() => setSelected(null)} onEdit={() => setEditing(true)} onChanged={load} onDuplicate={() => startDuplicate(current)} isOwner={isOwner} />
         ) : (
           <CalendarView items={items.filter(b => !b.archived)} onSelect={setSelected} />
         )
@@ -543,6 +557,7 @@ function BookingCard({ b, onClick, checked, onCheck }: { b: Booking; onClick: ()
           <div className="min-w-0">
             <p className="font-black text-white flex items-center gap-2 flex-wrap">
               {b.customerName}
+              {b.isTest && <span style={{ background: '#a855f7', color: '#fff', borderRadius: 999, fontSize: 10, fontWeight: 800, padding: '2px 7px', letterSpacing: '.04em' }}>TEST DATA</span>}
               {isNewRequest(b) && <span style={{ background: 'var(--red)', color: '#fff', borderRadius: 999, fontSize: 10, fontWeight: 800, padding: '2px 7px', letterSpacing: '.04em' }}>NEW</span>}
               {b.archived && <span className="text-xs font-normal" style={{ color: 'rgba(255,255,255,.4)' }}> · archived</span>}
             </p>
@@ -810,7 +825,7 @@ function BookingMessages({ token, customerName, reloadKey, communications }: { t
 }
 
 // ── Detail + actions ─────────────────────────────────────────────────────────
-function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booking; onBack: () => void; onEdit: () => void; onChanged: () => Promise<void>; onDuplicate: () => void }) {
+function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: { b: Booking; onBack: () => void; onEdit: () => void; onChanged: () => Promise<void>; onDuplicate: () => void; isOwner?: boolean }) {
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
@@ -943,6 +958,13 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
   return (
     <div>
       <button onClick={onBack} className="text-sm mb-4" style={{ color: 'var(--muted)' }}>← All bookings</button>
+
+      {b.isTest && (
+        <div className="mb-3 px-3 py-2 flex items-center justify-between gap-3 flex-wrap" style={{ borderRadius: 12, background: 'rgba(168,85,247,.14)', border: '1px solid #a855f7' }}>
+          <span className="text-sm font-black" style={{ color: '#c084fc' }}>🧪 SANDBOX TEST RECORD — excluded from revenue, analytics &amp; comms</span>
+          {isOwner && <button onClick={() => run('unmark-test')} disabled={busy === 'unmark-test'} className="text-xs font-bold px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.1)', color: '#fff' }}>{busy === 'unmark-test' ? '…' : 'Convert to production'}</button>}
+        </div>
+      )}
 
       <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
         <div className="flex items-start justify-between gap-3 mb-3">
@@ -1105,6 +1127,8 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
         <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)' }}>Actions</p>
         <div className="flex flex-wrap gap-2">
           <ActBtn label="Copy Link" onClick={copyLink} />
+          {isOwner && !b.isTest && <ActBtn label="🧪 Mark as Test" busy={busy === 'mark-test'} onClick={() => { if (confirm('Mark this booking as a SANDBOX test record? It will be excluded from revenue, analytics, and automatic customer comms.')) run('mark-test') }} />}
+          {isOwner && b.isTest && <ActBtn label="Convert to Production" busy={busy === 'unmark-test'} onClick={() => run('unmark-test')} />}
           <ActBtn label={b.confirmationLinkSentAt ? 'Resend Confirmation Link' : 'Send Confirmation Link'} primary busy={busy === 'send-link'} onClick={() => run('send-link')} />
           <ActBtn label="Add Note" onClick={() => { const n = prompt('Internal note:'); if (n) run('add-note', { note: n }) }} />
           <ActBtn label="Edit" onClick={onEdit} />

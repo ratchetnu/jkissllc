@@ -23,10 +23,12 @@ export async function GET(req: NextRequest) {
   const service = searchParams.get('service') ?? ''
   const from = searchParams.get('from') ?? ''
   const to = searchParams.get('to') ?? ''
+  const includeTest = searchParams.get('includeTest') === '1'
 
   let rows = await listBookings(1000)
 
   rows = rows.filter(b => {
+    if (!includeTest && b.isTest) return false // sandbox records excluded unless explicitly requested
     if (service && b.serviceType !== service) return false
     const d = jobDate(b)
     if (from && d < from) return false

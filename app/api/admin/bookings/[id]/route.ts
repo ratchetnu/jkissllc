@@ -69,6 +69,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const action: string = body.action ?? 'update'
   const who = await getPrincipal(req)
   const actor = who?.sub || 'admin'
+
+  // Sandbox comms safety: a test record never sends automatic customer messages.
+  // An owner may still force one with an explicit confirmTest flag.
+  const OUTBOUND_COMMS = new Set(['send-link', 'send-receipt', 'send-continuation', 'send-message', 'resend-notification'])
+  if (b.isTest && OUTBOUND_COMMS.has(action) && body.confirmTest !== true) {
+    return NextResponse.json({ error: 'This is a SANDBOX test record — outbound customer communication is blocked. Confirm explicitly to override.' }, { status: 400 })
+  }
+
   const wasConfirmed = b.status === 'confirmed'
   const wasPaidInFull = paymentSummaryStatus(b) === 'paid_in_full'
   let extra: Record<string, unknown> = {}
@@ -383,6 +391,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     case 'unarchive': {
       b.archived = false
       b.archivedAt = undefined
+      break
+    }
+    // ── Sandbox test-record classification (OWNER only) ──────────────────────
+    case 'mark-test':
+    case 'unmark-test': {
+      if (who?.role !== 'admin') return NextResponse.json({ error: 'Only the owner can manage test records.' }, { status: 403 })
+      const on = action === 'mark-test'
+      b.isTest = on
+      b.testMarkedBy = on ? actor : undefined
+      b.testMarkedAt = on ? Date.now() : undefined
+      pushBookingEvent(b, { actor, action: on ? 'test.marked' : 'test.unmarked', result: on ? 'sandbox' : 'production' })
       break
     }
     case 'assign': {
