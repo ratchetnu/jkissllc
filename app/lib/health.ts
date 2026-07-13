@@ -34,7 +34,9 @@ export function configChecks(env: Env): HealthComponent[] {
   const has = (...keys: string[]) => keys.some(k => !!env[k])
   return [
     { name: 'storage', critical: false, status: has('BLOB_READ_WRITE_TOKEN') ? 'ok' : 'degraded', detail: has('BLOB_READ_WRITE_TOKEN') ? 'Blob configured' : 'Blob token not set — photo uploads disabled' },
-    { name: 'ai_provider', critical: false, status: has('AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN') ? 'ok' : 'degraded', detail: has('AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN') ? 'AI gateway configured' : 'AI gateway not configured — analysis falls back to manual review' },
+    // The Vercel AI Gateway authenticates via auto-injected OIDC when deployed on
+    // Vercel (no static key needed), so `VERCEL` presence is a valid "configured".
+    { name: 'ai_provider', critical: false, status: has('AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN', 'VERCEL') ? 'ok' : 'degraded', detail: has('AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN', 'VERCEL') ? 'AI gateway configured' : 'AI gateway not configured — analysis falls back to manual review' },
     { name: 'scheduled_worker', critical: false, status: has('CRON_SECRET') ? 'ok' : 'degraded', detail: has('CRON_SECRET') ? 'Cron secret set' : 'CRON_SECRET not set — durable worker + cron disabled' },
     { name: 'payments', critical: false, status: has('STRIPE_SECRET_KEY') ? 'ok' : 'degraded', detail: has('STRIPE_SECRET_KEY') ? 'Stripe configured' : 'Stripe not configured — card payments disabled' },
     { name: 'email', critical: false, status: has('RESEND_API_KEY') ? 'ok' : 'degraded', detail: has('RESEND_API_KEY') ? 'Email configured' : 'Email not configured — notifications limited' },

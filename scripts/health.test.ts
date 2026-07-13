@@ -14,6 +14,13 @@ const FULL_ENV = {
   RESEND_API_KEY: 're_SECRETVALUE_do_not_leak',
 }
 
+test('ai_provider is "ok" via Vercel OIDC even without a static AI key (no false degraded)', () => {
+  const onVercel = configChecks({ ...FULL_ENV, AI_GATEWAY_API_KEY: undefined, VERCEL: '1' })
+  assert.equal(onVercel.find(c => c.name === 'ai_provider')?.status, 'ok')
+  const nowhere = configChecks({ CRON_SECRET: 'x' })
+  assert.equal(nowhere.find(c => c.name === 'ai_provider')?.status, 'degraded')
+})
+
 test('summarize: critical down → unhealthy; non-critical → degraded; all ok → healthy', () => {
   assert.equal(summarize([{ name: 'kv', critical: true, status: 'ok', detail: '' }]), 'healthy')
   assert.equal(summarize([{ name: 'kv', critical: true, status: 'down', detail: '' }]), 'unhealthy')
