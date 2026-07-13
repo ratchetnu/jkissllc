@@ -27,6 +27,7 @@ import { decideQuote } from '../../../../lib/pricing/quote-decision'
 import { onEstimateModified } from '../../../../lib/intake-workflow'
 import { validateEstimateModification } from '../../../../lib/estimate-modify'
 import { alert } from '../../../../lib/alerts'
+import { canApproveAndSend } from '../../../../lib/ai/guided-approval'
 
 export const runtime = 'nodejs'
 
@@ -321,18 +322,38 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
     // ── Approve the FINAL estimate and set the quote from it (owner approval,
     // recorded). Optionally sends the customer their confirmation link. ─────────
     case 'approve-final': {
-      if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
-      if (!b.finalAiEstimate) return NextResponse.json({ error: 'No final estimate to approve.' }, { status: 400 })
+      // Owner/admin only + requires a final estimate + a SEND is idempotent (one
+      // quote per booking). One pure gate, shared with the panel; controlled codes.
+      const gate = canApproveAndSend({ role: who?.role, booking: b, send: body.send === true })
+      if (!gate.allowed) {
+        if (gate.reason === 'not_owner') {
+          console.warn(`[approve-final] unauthorized role=${who?.role ?? 'none'} booking=${b.bookingNumber}`)
+          await alert({ type: 'unauthorized_approval', severity: 'WARNING', route: '/api/admin/bookings/[id]', booking: b.bookingNumber, errorClass: `role_${who?.role ?? 'none'}` })
+        } else if (gate.reason === 'already_sent') {
+          console.warn(`[approve-final] duplicate send blocked booking=${b.bookingNumber}`)
+        }
+        return NextResponse.json({ error: gate.message, ...(gate.reason === 'already_sent' ? { alreadySent: true } : {}) }, { status: gate.status })
+      }
+      const fe = b.finalAiEstimate!   // guaranteed by the gate above
       const overrideUsd = Math.round(num(body.amount) ?? 0)
-      const approvedUsd = overrideUsd > 0 ? overrideUsd : b.finalAiEstimate.pricing.recommendedUsd
+      const approvedUsd = overrideUsd > 0 ? overrideUsd : fe.pricing.recommendedUsd
       b.invoiceAmountCents = approvedUsd * 100
       if (b.depositAmountCents <= 0) b.depositAmountCents = Math.min(approvedUsd * 100, Math.max(5000, Math.round(approvedUsd * 100 * 0.2)))
-      pushBookingEvent(b, { actor, action: 'ai.owner_approved', result: `$${approvedUsd}`, meta: { approvedUsd, tier: b.finalAiEstimate.routingTier, override: overrideUsd > 0 } })
+      pushBookingEvent(b, { actor, action: 'ai.owner_approved', result: `$${approvedUsd}`, meta: { approvedUsd, tier: fe.routingTier, override: overrideUsd > 0, send: body.send === true } })
       b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[Final estimate approved by ${actor}] $${approvedUsd}${overrideUsd > 0 ? ' (owner-set)' : ''}`
+      console.info(`[approve-final] submitted booking=${b.bookingNumber} amount=$${approvedUsd} send=${body.send === true} by=${actor}`)
       if (body.send === true) {
         const channels = await sendConfirmationLink(b)
+        b.confirmationLinkSentAt = Date.now()
+        b.confirmationLinkSentBy = actor
         if (['quote_received', 'pending_payment', 'payment_received', 'booking_created'].includes(b.status)) b.status = 'confirmation_link_sent'
-        extra = { channels }
+        const anySent = !!(channels.email || channels.sms)
+        console.info(`[approve-final] quote_sent booking=${b.bookingNumber} email=${!!channels.email} sms=${!!channels.sms}`)
+        if (!anySent) {
+          console.error(`[approve-final] notification_failed booking=${b.bookingNumber} (no channel delivered)`)
+          await alert({ type: 'quote_send_failed', severity: 'ERROR', route: '/api/admin/bookings/[id]', booking: b.bookingNumber, errorClass: 'no_channel_delivered' })
+        }
+        extra = { channels, quoteSent: anySent }
       } else {
         extra = { confirmLink: bookingLink(b.token) }
       }

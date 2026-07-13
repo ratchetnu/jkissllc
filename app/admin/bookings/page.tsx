@@ -12,6 +12,7 @@ import ModifyEstimate from './ModifyEstimate'
 import type { Booking, Payment, InvoicePhoto } from '../../lib/bookings'
 import { serviceFamily } from '../../lib/bookings'
 import type { StoredAiEstimate } from '../../lib/ai/estimate-store'
+import { guidedApprovalState } from '../../lib/ai/guided-approval'
 
 // ── Local label maps + helpers (avoid bundling server lib runtime) ───────────
 const SERVICE_LABELS: Record<string, string> = {
@@ -383,13 +384,22 @@ function StatusBadge({ s }: { s: string }) {
 function GuidedApprovalPanel({ booking, busy, run, isOwner }: { booking: Booking; busy: string; run: (action: string, body?: Record<string, unknown>, confirmMsg?: string) => void; isOwner: boolean }) {
   const fe = booking.finalAiEstimate!
   const [amt, setAmt] = useState('')
-  const alreadySent = (booking.invoiceAmountCents ?? 0) > 0
+  // Deep-link target: the owner alert links to …#guided-estimate-approval; scroll
+  // this panel into view once it renders (the booking loads async after the fetch).
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.hash === '#guided-estimate-approval') {
+      const el = document.getElementById('guided-estimate-approval')
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [])
+  const st = guidedApprovalState(booking)
+  const alreadySent = st.alreadySent
   const decisionLabel: Record<string, string> = { quote_ready: 'Ready to send', awaiting_owner_approval: 'Awaiting your approval', manual_review: 'Manual review', site_visit_required: 'Site visit required' }
   const tone = fe.finalDecision === 'manual_review' ? '#f87171' : fe.finalDecision === 'site_visit_required' ? '#f59e0b' : fe.finalDecision === 'quote_ready' ? '#34d399' : '#fbbf24'
-  const canSend = (fe.finalDecision === 'quote_ready' || fe.finalDecision === 'awaiting_owner_approval')
+  const canSend = st.canSend || (!alreadySent && (fe.finalDecision === 'quote_ready' || fe.finalDecision === 'awaiting_owner_approval'))
   const approveBody = () => (parseFloat(amt) > 0 ? { amount: parseFloat(amt) } : {})
   return (
-    <div className="os-card" style={{ padding: 16, marginBottom: 14, border: `1px solid ${tone}55` }}>
+    <div id="guided-estimate-approval" className="os-card" style={{ padding: 16, marginBottom: 14, border: `1px solid ${tone}55`, scrollMarginTop: 80 }}>
       <div className="flex items-center justify-between gap-2 flex-wrap" style={{ marginBottom: 8 }}>
         <p style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--muted)' }}>Guided Estimate · Customer Confirmed</p>
         <span style={{ fontSize: 11.5, fontWeight: 800, color: tone }}>{decisionLabel[fe.finalDecision] ?? fe.finalDecision} · {fe.routingTier} confidence</span>
