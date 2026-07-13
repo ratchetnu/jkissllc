@@ -7,6 +7,9 @@ import { getPromo, validatePromo, normalizeCode } from '../../lib/promo'
 import { getDisposalSettings, priceJob, categoryFor, type DisposalQuote } from '../../lib/disposal'
 import { getCalibration } from '../../lib/job-learning'
 import { COMPANY } from '../../lib/company'
+import { persistQuoteRequest } from '../../lib/booking-requests'
+import { unitsForLoad } from '../../lib/availability'
+import { SERVICE_TYPES, type ServiceType } from '../../lib/bookings'
 
 // Look up a US ZIP via zippopotam.us (free, no key required).
 async function lookupZip(zip: string): Promise<{ lat: number; lon: number; city: string; state: string } | null> {
@@ -111,6 +114,8 @@ export async function POST(request: NextRequest) {
     pickupZip, deliveryZip,
     pallets, weight, serviceType, timing, loadSize,
     name, email, phone, company, notes, referral, promo,
+    // Structured fields for persisting the request as an OpsPilot booking.
+    bookService, pickupAddress, dropoffAddress, preferredDate, contactMethod, idempotencyKey,
   } = body
 
   // Junk removal and eviction/property cleanouts are priced per job, not by
@@ -255,7 +260,45 @@ export async function POST(request: NextRequest) {
     if (disposal) bookingParams.set('disposalEst', String(Math.round(disposal.disposalCents / 100)))
     const desc = [notes, isJobBased ? `Est. load: ${LOAD_LABELS[loadSize] ?? loadSize}` : '', timing ? `Timing: ${timing}` : '', addOnLabels.length ? `Add-ons: ${addOnLabels.join(', ')}` : '', promoCode ? `Promo: ${promoCode}` : '', disposal ? `Disposal est $${Math.round(disposal.disposalCents / 100)} · ${disposal.confidence} confidence` : ''].filter(Boolean).join(' · ')
     if (desc) bookingParams.set('desc', desc)
-    const bookingUrl = `${COMPANY.siteUrl}/admin/bookings?${bookingParams.toString()}`
+    const createUrl = `${COMPANY.siteUrl}/admin/bookings?${bookingParams.toString()}`
+
+    // ── Persist the request as a booking so it appears in OpsPilot ──────────
+    // Done BEFORE the ops email so the email can link straight to the real record
+    // (?b=<number> opens its detail) instead of a blank create form — which would
+    // otherwise create a DUPLICATE. Best-effort: a storage hiccup must not deny the
+    // customer their estimate or block the ops email.
+    let request_out: { number: string; token: string } | undefined
+    try {
+      const svcType: ServiceType = SERVICE_TYPES.includes(bookService) ? bookService : 'other'
+      const persisted = await persistQuoteRequest({
+        name, email, phone, company,
+        serviceType: svcType,
+        jobSiteAddress: isJobBased ? (pickupAddress || `${from.city}, ${from.state} ${pickupZip}`) : undefined,
+        pickupAddress: !isJobBased ? (pickupAddress || `${from.city}, ${from.state} ${pickupZip}`) : undefined,
+        dropoffAddress: !isJobBased ? (dropoffAddress || `${to.city}, ${to.state} ${deliveryZip}`) : undefined,
+        description: desc || notes || undefined,
+        photos: photoUrls,
+        jobUnits: unitsForLoad(loadSize),
+        preferredDate,
+        contactMethod,
+        promoCode: promoCode || undefined,
+        estimateLow: low, estimateHigh: high,
+        leadSource: 'website:book-now',
+        referralSource: typeof referral === 'string' ? referral : undefined,
+        idempotencyKey: typeof idempotencyKey === 'string' ? idempotencyKey : undefined,
+      })
+      if (persisted) request_out = { number: persisted.bookingNumber, token: persisted.token }
+    } catch (e) {
+      console.error('[quote] persist request', e)
+    }
+
+    // Ops CTA: open the persisted booking's detail when we have it; otherwise fall
+    // back to the pre-filled create form (only reached if persistence failed).
+    const ctaUrl = request_out ? `${COMPANY.siteUrl}/admin/bookings?b=${encodeURIComponent(request_out.number)}` : createUrl
+    const ctaLabel = request_out ? `Review Request ${request_out.number} →` : 'Create Booking →'
+    const ctaHint = request_out
+      ? 'Opens this request in your admin — photos, details, and quote/message/schedule actions are ready. (Sign in if prompted.)'
+      : 'Opens your admin with a new booking pre-filled from this request. (Sign in if prompted.)'
 
     // Notify ops
     await resend.emails.send({
@@ -280,8 +323,8 @@ export async function POST(request: NextRequest) {
             </table>` : ''}
 
           <div style="margin:18px 0">
-            <a href="${bookingUrl}" style="display:inline-block;background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;font-size:15px;padding:13px 24px;border-radius:8px">Create Booking →</a>
-            <p style="color:#999;font-size:12px;margin:8px 0 0">Opens your admin with a new booking pre-filled from this request. (Sign in if prompted.)</p>
+            <a href="${ctaUrl}" style="display:inline-block;background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;font-size:15px;padding:13px 24px;border-radius:8px">${ctaLabel}</a>
+            <p style="color:#999;font-size:12px;margin:8px 0 0">${ctaHint}</p>
           </div>
 
           <h3 style="margin-bottom:8px">${isJobBased ? 'Job' : 'Route'}</h3>
@@ -314,6 +357,7 @@ export async function POST(request: NextRequest) {
     if (isJobBased) {
       return NextResponse.json({
         ok: true,
+        request: request_out,
         estimate: {
           low, high, miles: 0, promoCode, promoPct,
           confidence: disposal?.confidence ?? 'medium',
@@ -325,6 +369,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
+      request: request_out,
       estimate: { low, high, miles: Math.round(miles), fuelCharge, promoCode, promoPct, confidence: 'high', pickupLabel: `${from.city}, ${from.state}`, deliveryLabel: `${to.city}, ${to.state}` },
     })
   } catch (err) {

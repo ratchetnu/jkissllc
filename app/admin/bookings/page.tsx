@@ -134,9 +134,19 @@ function prefillFromBooking(b: Booking): Prefill {
   }
 }
 
+// A public "Book Now" submission the owner hasn't priced/actioned yet — a genuine
+// new lead needing review. Online source + still unpriced + not closed/archived.
+function isNewRequest(b: Booking): boolean {
+  return b.source === 'online'
+    && (b.invoiceAmountCents || 0) === 0
+    && !b.archived
+    && b.status !== 'cancelled' && b.status !== 'completed' && b.status !== 'refunded'
+}
+
 // Which status bucket a booking falls in, for the filter chips.
 function matchesStatusFilter(b: Booking, f: string): boolean {
   if (f === 'all') return true
+  if (f === 'requests') return b.source === 'online'
   if (f === 'zelle') return b.status === 'pending_zelle_verification'
   if (f === 'cancelled') return b.status === 'cancelled'
   if (f === 'completed') return b.status === 'completed'
@@ -157,7 +167,7 @@ function Dashboard() {
   const [showNew, setShowNew] = useState(false)
   const [editing, setEditing] = useState(false)
   const [prefill, setPrefill] = useState<Prefill | null>(null)
-  const [statusFilter, setStatusFilter] = useState<'active' | 'zelle' | 'all' | 'unpaid' | 'unscheduled' | 'completed' | 'cancelled'>('active')
+  const [statusFilter, setStatusFilter] = useState<'active' | 'requests' | 'zelle' | 'all' | 'unpaid' | 'unscheduled' | 'completed' | 'cancelled'>('active')
   const [showArchived, setShowArchived] = useState(false)
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [visibleCount, setVisibleCount] = useState(25)
@@ -240,7 +250,9 @@ function Dashboard() {
     setChecked(prev => { const n = new Set(prev); n.has(token) ? n.delete(token) : n.add(token); return n })
   }
 
-  const STATUS_FILTERS = ['active', 'zelle', 'unpaid', 'unscheduled', 'completed', 'cancelled', 'all'] as const
+  const STATUS_FILTERS = ['active', 'requests', 'zelle', 'unpaid', 'unscheduled', 'completed', 'cancelled', 'all'] as const
+  // New online "Book Now" submissions awaiting the owner's first action.
+  const newRequestCount = useMemo(() => items.filter(isNewRequest).length, [items])
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -278,8 +290,13 @@ function Dashboard() {
             {/* Status filter chips + archived toggle */}
             <div className="flex flex-wrap items-center gap-1.5 mb-1">
               {STATUS_FILTERS.map(f => (
-                <button key={f} onClick={() => setStatusFilter(f)} className="text-xs font-semibold px-3 py-1.5 rounded-lg capitalize"
-                  style={{ background: statusFilter === f && !showArchived ? 'var(--red)' : 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: statusFilter === f && !showArchived ? '#fff' : 'var(--muted)' }}>{f}</button>
+                <button key={f} onClick={() => setStatusFilter(f)} className="text-xs font-semibold px-3 py-1.5 rounded-lg capitalize inline-flex items-center gap-1.5"
+                  style={{ background: statusFilter === f && !showArchived ? 'var(--red)' : 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: statusFilter === f && !showArchived ? '#fff' : 'var(--muted)' }}>
+                  {f === 'requests' ? 'Requests' : f}
+                  {f === 'requests' && newRequestCount > 0 && (
+                    <span style={{ background: statusFilter === f && !showArchived ? '#fff' : 'var(--red)', color: statusFilter === f && !showArchived ? 'var(--red)' : '#fff', borderRadius: 999, fontSize: 10, fontWeight: 800, minWidth: 16, height: 16, padding: '0 4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{newRequestCount}</span>
+                  )}
+                </button>
               ))}
               <button onClick={() => setShowArchived(v => !v)} className="text-xs font-semibold px-3 py-1.5 rounded-lg"
                 style={{ background: showArchived ? 'var(--red)' : 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: showArchived ? '#fff' : 'var(--muted)' }}>Archived</button>
@@ -335,6 +352,59 @@ function StatusBadge({ s }: { s: string }) {
   return <span className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ background: 'rgba(255,255,255,.06)', color: statusColor(s) }}>{STATUS_LABEL[s] ?? s}</span>
 }
 
+// ── Full-screen photo lightbox ───────────────────────────────────────────────
+// Fixed overlay at the top of the stacking context (z 9999) so it sits ABOVE the
+// header, tabs, drawers, and the mobile viewport bar — never behind them. Keyboard
+// (← → Esc) + on-screen controls; body scroll locked while open; safe-area padding
+// so controls clear notches on phones.
+function PhotoLightbox({ photos, index, onClose, onIndex }: {
+  photos: InvoicePhoto[]; index: number; onClose: () => void; onIndex: (i: number) => void
+}) {
+  const count = photos.length
+  const go = useCallback((delta: number) => onIndex((index + delta + count) % count), [index, count, onIndex])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+      else if (e.key === 'ArrowRight') go(1)
+      else if (e.key === 'ArrowLeft') go(-1)
+    }
+    window.addEventListener('keydown', onKey)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prevOverflow }
+  }, [go, onClose])
+
+  const p = photos[index]
+  if (!p) return null
+  return (
+    <div role="dialog" aria-modal="true" onClick={onClose}
+      style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,.92)', display: 'flex', flexDirection: 'column',
+        paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
+      {/* Top bar */}
+      <div className="flex items-center justify-between px-4 py-3" onClick={e => e.stopPropagation()}>
+        <span className="text-sm font-semibold" style={{ color: 'rgba(255,255,255,.85)' }}>{index + 1} / {count}{p.name ? ` · ${p.name}` : ''}</span>
+        <div className="flex items-center gap-2">
+          <a href={p.url} target="_blank" rel="noopener noreferrer" download className="text-xs font-bold px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.12)', color: '#fff' }}>Download</a>
+          <button type="button" onClick={onClose} aria-label="Close" className="text-sm font-bold px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.12)', color: '#fff' }}>✕</button>
+        </div>
+      </div>
+      {/* Image stage */}
+      <div className="flex-1 flex items-center justify-center px-3 min-h-0" onClick={e => e.stopPropagation()} style={{ position: 'relative' }}>
+        {count > 1 && (
+          <button type="button" onClick={() => go(-1)} aria-label="Previous photo"
+            style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', width: 44, height: 44, borderRadius: 999, border: 'none', background: 'rgba(255,255,255,.14)', color: '#fff', fontSize: 20, cursor: 'pointer' }}>‹</button>
+        )}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={p.url} alt={p.name ?? `Photo ${index + 1}`} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 8 }} />
+        {count > 1 && (
+          <button type="button" onClick={() => go(1)} aria-label="Next photo"
+            style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', width: 44, height: 44, borderRadius: 999, border: 'none', background: 'rgba(255,255,255,.14)', color: '#fff', fontSize: 20, cursor: 'pointer' }}>›</button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function BookingCard({ b, onClick, checked, onCheck }: { b: Booking; onClick: () => void; checked?: boolean; onCheck?: () => void }) {
   return (
     <div className="glass-card flex items-stretch transition" style={{ borderRadius: '14px', opacity: b.archived ? 0.6 : 1 }}>
@@ -346,9 +416,17 @@ function BookingCard({ b, onClick, checked, onCheck }: { b: Booking; onClick: ()
       <button onClick={onClick} className="flex-1 text-left p-4">
         <div className="flex items-start justify-between gap-3 mb-2">
           <div className="min-w-0">
-            <p className="font-black text-white">{b.customerName}{b.archived && <span className="text-xs font-normal" style={{ color: 'rgba(255,255,255,.4)' }}> · archived</span>}</p>
-            <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>
-              <span className="font-mono">{b.bookingNumber}</span> · {SERVICE_LABELS[b.serviceType] ?? b.serviceType}{b.assignedTo ? ` · 👷 ${b.assignedTo}` : ''}
+            <p className="font-black text-white flex items-center gap-2 flex-wrap">
+              {b.customerName}
+              {isNewRequest(b) && <span style={{ background: 'var(--red)', color: '#fff', borderRadius: 999, fontSize: 10, fontWeight: 800, padding: '2px 7px', letterSpacing: '.04em' }}>NEW</span>}
+              {b.archived && <span className="text-xs font-normal" style={{ color: 'rgba(255,255,255,.4)' }}> · archived</span>}
+            </p>
+            <p className="text-xs mt-0.5 flex items-center gap-1.5 flex-wrap" style={{ color: 'var(--muted)' }}>
+              <span className="font-mono">{b.bookingNumber}</span>
+              <span>· {SERVICE_LABELS[b.serviceType] ?? b.serviceType}</span>
+              {b.source === 'online' && <span style={{ background: 'rgba(255,255,255,.06)', color: '#9ca3af', borderRadius: 6, fontSize: 10, fontWeight: 700, padding: '1px 6px' }}>🌐 Website Book Now</span>}
+              {b.invoicePhotos && b.invoicePhotos.length > 0 && <span style={{ color: '#9ca3af' }}>· 📷 {b.invoicePhotos.length}</span>}
+              {b.assignedTo ? <span>· 👷 {b.assignedTo}</span> : null}
             </p>
           </div>
           <StatusBadge s={b.status} />
@@ -620,6 +698,7 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
   const [msgInfo, setMsgInfo] = useState('')
   const [msgErr, setMsgErr] = useState('')
   const [tabKey, setTabKey] = useState<'overview' | 'messages' | 'timeline' | 'actions'>('overview')
+  const [lightbox, setLightbox] = useState<number | null>(null)   // open photo index, or null
   const [msgReload, setMsgReload] = useState(0)
   const [staffNames, setStaffNames] = useState<string[]>([])
   useEffect(() => {
@@ -785,16 +864,26 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
         {b.description && <p className="text-sm mt-3" style={{ color: 'var(--muted)' }}>{b.description}</p>}
         {b.items.length > 0 && <ul className="text-sm mt-2 space-y-0.5" style={{ color: 'var(--muted)' }}>{b.items.map((i, n) => <li key={n}>• {i}</li>)}</ul>}
         {b.invoicePhotos && b.invoicePhotos.length > 0 && (
-          <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 mt-3">
-            {b.invoicePhotos.map((p, n) => (
-              <a key={n} href={p.url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', aspectRatio: '1 / 1', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={p.url} alt={p.name ?? `Photo ${n + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              </a>
-            ))}
+          <div className="mt-3">
+            <p className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: 'var(--muted)' }}>
+              Customer photos · {b.invoicePhotos.length}
+            </p>
+            <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+              {b.invoicePhotos.map((p, n) => (
+                <button key={n} type="button" onClick={() => setLightbox(n)} aria-label={`View photo ${n + 1}`}
+                  style={{ display: 'block', aspectRatio: '1 / 1', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)', cursor: 'zoom-in', padding: 0 }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={p.url} alt={p.name ?? `Photo ${n + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
+
+      {b.invoicePhotos && lightbox !== null && (
+        <PhotoLightbox photos={b.invoicePhotos} index={lightbox} onClose={() => setLightbox(null)} onIndex={setLightbox} />
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1.5 mb-4 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>

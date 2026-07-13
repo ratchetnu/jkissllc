@@ -21,6 +21,17 @@ import {
 const RED = '#E0002A'
 const STEP_LABELS = ['Service', 'The job', 'Photos', 'Upgrades', 'Your info', 'Review']
 const WINDOWS = ['8am–10am', '10am–12pm', '12pm–2pm', '2pm–4pm', '4pm–6pm']
+const MAX_PHOTOS = 8
+
+// A single selected photo, tracked from selection → upload → done/error so the UI
+// can show real per-file status (and a retry) instead of a lone spinner.
+type PhotoItem = {
+  id: string
+  name: string
+  dataUrl: string                 // downscaled image, kept so a failed upload can retry
+  status: 'uploading' | 'done' | 'error'
+  url?: string                    // Vercel Blob URL once uploaded
+}
 
 type Svc = {
   id: string
@@ -130,10 +141,13 @@ export default function QuotePage() {
   const [elevator, setElevator] = useState<boolean | null>(null)
   const [prefDate, setPrefDate] = useState('')
 
-  // Step 2 — photos
-  const [photos, setPhotos] = useState<string[]>([])
-  const [photoBusy, setPhotoBusy] = useState(false)
+  // Step 2 — photos. Each selected image is tracked individually so the customer
+  // can SEE upload progress, success, and failure (and retry) — not a single
+  // opaque spinner. Only `done` items are attached to the request on submit.
+  const [photos, setPhotos] = useState<PhotoItem[]>([])
   const [dragOver, setDragOver] = useState(false)
+  const uploadedUrls = photos.filter(p => p.status === 'done' && p.url).map(p => p.url as string)
+  const anyUploading = photos.some(p => p.status === 'uploading')
 
   // Step 3 — upgrades
   const [upgrades, setUpgrades] = useState<string[]>([])
@@ -155,9 +169,10 @@ export default function QuotePage() {
   const [bookProof, setBookProof] = useState('')
   const [proofReading, setProofReading] = useState(false)
   const idemRef = useRef('')
+  const quoteIdemRef = useRef('')   // stable key so a retried quote can't double-submit
 
   const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
-  const [sent, setSent] = useState<{ estimate?: Estimate } | null>(null)
+  const [sent, setSent] = useState<{ estimate?: Estimate; request?: { number: string; token: string } } | null>(null)
 
   // Deep-link: /quote?service=junk-removal preselects a card and jumps to step 2.
   // Always land at the top — Next's client navigation keeps the homepage's scroll
@@ -186,18 +201,42 @@ export default function QuotePage() {
     setUpgrades(u => u.includes(id) ? u.filter(x => x !== id) : [...u, id])
   }
 
-  async function addPhotos(files: FileList) {
-    setPhotoBusy(true); setErr('')
+  // Upload (or re-upload) a single tracked photo, updating just that item's status.
+  async function uploadItem(item: PhotoItem) {
+    setPhotos(ps => ps.map(p => p.id === item.id ? { ...p, status: 'uploading' } : p))
     try {
-      for (const file of Array.from(files).slice(0, 8)) {
-        if (!file.type.startsWith('image/')) continue
-        const dataUrl = await downscaleToDataUrl(file)
-        const res = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }) })
-        const j = await res.json()
-        if (res.ok && j.url) setPhotos(p => [...p, j.url].slice(0, 8))
+      const res = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: item.dataUrl }) })
+      const j = await res.json().catch(() => ({}))
+      if (res.ok && j.url) {
+        setPhotos(ps => ps.map(p => p.id === item.id ? { ...p, status: 'done', url: j.url } : p))
+      } else {
+        setPhotos(ps => ps.map(p => p.id === item.id ? { ...p, status: 'error' } : p))
       }
-    } catch { setErr('A photo failed to upload — you can still continue without it.') }
-    finally { setPhotoBusy(false) }
+    } catch {
+      setPhotos(ps => ps.map(p => p.id === item.id ? { ...p, status: 'error' } : p))
+    }
+  }
+
+  async function addPhotos(files: FileList) {
+    setErr('')
+    const imgs = Array.from(files).filter(f => f.type.startsWith('image/'))
+    const room = Math.max(0, MAX_PHOTOS - photos.length)
+    if (room <= 0) { setErr(`You can attach up to ${MAX_PHOTOS} photos.`); return }
+    if (imgs.length === 0) { setErr('Please choose image files (JPG, PNG, or HEIC).'); return }
+    for (const file of imgs.slice(0, room)) {
+      let dataUrl = ''
+      try { dataUrl = await downscaleToDataUrl(file) } catch { continue }
+      const item: PhotoItem = { id: crypto.randomUUID(), name: file.name || 'photo', dataUrl, status: 'uploading' }
+      setPhotos(ps => [...ps, item].slice(0, MAX_PHOTOS))
+      void uploadItem(item)   // fire-and-forget; per-item state tracks the result
+    }
+  }
+  function retryPhoto(id: string) {
+    const it = photos.find(p => p.id === id)
+    if (it) void uploadItem(it)
+  }
+  function removePhoto(id: string) {
+    setPhotos(ps => ps.filter(p => p.id !== id))
   }
 
   // Instant, email-free price/deposit preview once service + size are known.
@@ -248,10 +287,13 @@ export default function QuotePage() {
     ].filter(Boolean).join(' · ')
   }
 
-  // Primary CTA — file the quote request (lead) via the existing engine.
+  // Primary CTA — file the quote request via the existing engine, which now ALSO
+  // persists it as an OpsPilot booking (so it appears in the admin with photos).
   async function submitLead() {
-    if (!svc) return
+    if (!svc || busy) return
+    if (anyUploading) { setErr('Your photos are still uploading — give it a moment.'); return }
     setBusy(true); setErr('')
+    if (!quoteIdemRef.current) quoteIdemRef.current = crypto.randomUUID()
     const pickupZip = parseZip(pickupText)
     const deliveryZip = singleSite ? pickupZip : parseZip(deliveryText)
     try {
@@ -264,11 +306,19 @@ export default function QuotePage() {
           loadSize: sizeId, debris: svc.debris ?? 'general',
           name, email, phone, company,
           notes: buildNotes(), referral: '', promo,
-          addOns: upgrades, photos,
+          addOns: upgrades, photos: uploadedUrls,
+          // Structured fields so the persisted booking has a real service type,
+          // address, and preferred date — plus an idempotency key against retries.
+          bookService: svc.bookType,
+          pickupAddress: pickupText,
+          dropoffAddress: singleSite ? '' : deliveryText,
+          preferredDate: prefDate,
+          contactMethod,
+          idempotencyKey: quoteIdemRef.current,
         }),
       })
       const j = await res.json()
-      if (res.ok && j.estimate) { setSent({ estimate: j.estimate }); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+      if (res.ok) { setSent({ estimate: j.estimate, request: j.request }); window.scrollTo({ top: 0, behavior: 'smooth' }) }
       else setErr(j.error ?? 'Could not submit your request. Please try again.')
     } catch { setErr(`Connection error — please try again or email ${COMPANY.email}.`) }
     setBusy(false)
@@ -292,6 +342,7 @@ export default function QuotePage() {
   }
   async function submitBooking() {
     if (!svc || busy) return
+    if (anyUploading) { setErr('Your photos are still uploading — give it a moment.'); return }
     if (bookMethod === 'zelle' && !bookProof) { setErr('Please upload your Zelle payment screenshot to reserve.'); return }
     setBusy(true); setErr('')
     if (!idemRef.current) idemRef.current = crypto.randomUUID()
@@ -300,7 +351,7 @@ export default function QuotePage() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           service: svc.bookType, loadSize: sizeId, debris: svc.debris,
-          address: pickupText, notes: buildNotes(), photos,
+          address: pickupText, notes: buildNotes(), photos: uploadedUrls,
           date: bookDate, window: bookWin, name, phone, email, promo,
           paymentMethod: bookMethod,
           proofImage: bookMethod === 'zelle' ? bookProof : undefined,
@@ -333,7 +384,17 @@ export default function QuotePage() {
       <section className="relative z-10 pt-28 md:pt-32 pb-28 lg:pb-20 px-5 sm:px-6">
         <div className="max-w-6xl mx-auto">
           {sent ? (
-            <SuccessView sent={sent} deposit={deposit} onReset={() => { setSent(null); setStep(0); setSvcId(''); setPickupText(''); setDeliveryText(''); setSizeId(''); setHeavy(null); setStairs(null); setElevator(null); setPrefDate(''); setPhotos([]); setUpgrades([]); setName(''); setCompany(''); setPhone(''); setEmail(''); setPromo(''); setEst(null); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
+            <SuccessView
+              sent={sent} deposit={deposit}
+              summary={{
+                name,
+                service: svc?.label ?? 'Service',
+                address: singleSite ? pickupText : [pickupText, deliveryText].filter(Boolean).join(' → '),
+                prefDate: prefDate ? fmtDateLabel(prefDate) : 'Flexible',
+                photoCount: uploadedUrls.length,
+                contactMethod,
+              }}
+              onReset={() => { setSent(null); quoteIdemRef.current = ''; setStep(0); setSvcId(''); setPickupText(''); setDeliveryText(''); setSizeId(''); setHeavy(null); setStairs(null); setElevator(null); setPrefDate(''); setPhotos([]); setUpgrades([]); setName(''); setCompany(''); setPhone(''); setEmail(''); setPromo(''); setEst(null); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
           ) : (
             <>
               {/* Intro */}
@@ -369,8 +430,8 @@ export default function QuotePage() {
                       )}
                       {step === 2 && (
                         <StepPhotos
-                          photos={photos} photoBusy={photoBusy} dragOver={dragOver} setDragOver={setDragOver}
-                          onAdd={addPhotos} onRemove={(i) => setPhotos(p => p.filter((_, idx) => idx !== i))}
+                          photos={photos} dragOver={dragOver} setDragOver={setDragOver}
+                          onAdd={addPhotos} onRemove={removePhoto} onRetry={retryPhoto}
                         />
                       )}
                       {step === 3 && <StepUpgrades selected={upgrades} onToggle={toggleUpgrade} />}
@@ -385,7 +446,7 @@ export default function QuotePage() {
                       {step === 5 && svc && (
                         <StepReview
                           svc={svc} singleSite={singleSite} pickupText={pickupText} deliveryText={deliveryText}
-                          size={size} photos={photos} upgrades={upgrades} prefDate={prefDate}
+                          size={size} photoCount={uploadedUrls.length} upgrades={upgrades} prefDate={prefDate}
                           name={name} company={company} email={email} phone={phone} contactMethod={contactMethod}
                           showLow={showLow} showHigh={showHigh} deposit={deposit} est={est}
                           reserveOpen={reserveOpen} avail={avail} bookDate={bookDate} setBookDate={setBookDate}
@@ -408,12 +469,12 @@ export default function QuotePage() {
                         </button>
                       )}
                       {step < 5 ? (
-                        <button type="button" onClick={next} className="btn wiz-ease" style={{ flex: 1, justifyContent: 'center', padding: '15px 24px', fontSize: 15 }}>
-                          {step === 2 && photos.length === 0 ? 'Skip for now' : 'Continue'} <ArrowRight size={16} />
+                        <button type="button" onClick={next} disabled={step === 2 && anyUploading} className="btn wiz-ease" style={{ flex: 1, justifyContent: 'center', padding: '15px 24px', fontSize: 15, opacity: step === 2 && anyUploading ? 0.6 : 1 }}>
+                          {step === 2 && anyUploading ? <><Loader2 size={16} className="animate-spin" /> Uploading photos…</> : <>{step === 2 && photos.length === 0 ? 'Skip for now' : 'Continue'} <ArrowRight size={16} /></>}
                         </button>
                       ) : (
-                        <button type="button" onClick={submitLead} disabled={busy} className="btn wiz-ease" style={{ flex: 1, justifyContent: 'center', padding: '16px 24px', fontSize: 16 }}>
-                          {busy ? <Loader2 size={18} className="animate-spin" /> : <>Request My Quote <ArrowRight size={16} /></>}
+                        <button type="button" onClick={submitLead} disabled={busy || anyUploading} className="btn wiz-ease" style={{ flex: 1, justifyContent: 'center', padding: '16px 24px', fontSize: 16, opacity: busy || anyUploading ? 0.6 : 1 }}>
+                          {busy ? <Loader2 size={18} className="animate-spin" /> : anyUploading ? <><Loader2 size={18} className="animate-spin" /> Uploading photos…</> : <>Request My Quote <ArrowRight size={16} /></>}
                         </button>
                       )}
                     </div>
@@ -424,7 +485,7 @@ export default function QuotePage() {
                 <aside className="hidden lg:block lg:sticky lg:top-28 self-start">
                   <SummaryCard
                     svc={svc} size={size} singleSite={singleSite} pickupText={pickupText} deliveryText={deliveryText}
-                    photos={photos} upgrades={upgrades} prefDate={prefDate}
+                    photoCount={uploadedUrls.length} upgrades={upgrades} prefDate={prefDate}
                     showLow={showLow} showHigh={showHigh} deposit={deposit} est={est}
                   />
                 </aside>
@@ -639,34 +700,71 @@ function YesNo({ label, value, onChange }: { label: string; value: boolean | nul
 
 // ── Step 3: Photos ───────────────────────────────────────────────────────────
 function StepPhotos(props: {
-  photos: string[]; photoBusy: boolean; dragOver: boolean; setDragOver: (v: boolean) => void
-  onAdd: (f: FileList) => void; onRemove: (i: number) => void
+  photos: PhotoItem[]; dragOver: boolean; setDragOver: (v: boolean) => void
+  onAdd: (f: FileList) => void; onRemove: (id: string) => void; onRetry: (id: string) => void
 }) {
+  const total = props.photos.length
+  const done = props.photos.filter(p => p.status === 'done').length
+  const uploading = props.photos.filter(p => p.status === 'uploading').length
+  const failed = props.photos.filter(p => p.status === 'error').length
+
+  // One clear, human status line — not a fleeting toast.
+  let status = ''
+  if (total === 0) status = ''
+  else if (uploading > 0) status = `Uploading ${done + 1} of ${total}…`
+  else if (failed > 0) status = `${done} of ${total} uploaded · ${failed} failed — tap ↻ to retry`
+  else status = `${done} photo${done === 1 ? '' : 's'} uploaded successfully — they'll be included with your booking`
+
   return (
     <>
-      <StepHeading kicker="Help us see the job" title="Show us what we're moving." sub="The more photos you provide, the more accurate your quote will be. This step is optional — but it really helps." />
+      <StepHeading kicker="Help us see the job" title="Upload photos of the items, junk, debris, rooms, or property." sub="The more photos you provide, the more accurate your quote will be. This step is optional — but it really helps." />
       <label
         onDragOver={e => { e.preventDefault(); props.setDragOver(true) }}
         onDragLeave={() => props.setDragOver(false)}
         onDrop={e => { e.preventDefault(); props.setDragOver(false); if (e.dataTransfer.files?.length) props.onAdd(e.dataTransfer.files) }}
         className="flex flex-col items-center justify-center text-center rounded-2xl wiz-ease"
-        style={{ padding: '38px 20px', cursor: props.photoBusy ? 'wait' : 'pointer', border: `1.5px dashed ${props.dragOver ? RED : 'rgba(255,255,255,.18)'}`, background: props.dragOver ? 'rgba(224,0,42,.06)' : 'rgba(255,255,255,.02)' }}
+        style={{ padding: '38px 20px', cursor: 'pointer', border: `1.5px dashed ${props.dragOver ? RED : 'rgba(255,255,255,.18)'}`, background: props.dragOver ? 'rgba(224,0,42,.06)' : 'rgba(255,255,255,.02)' }}
       >
         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 52, height: 52, borderRadius: 999, background: 'rgba(224,0,42,.12)', color: RED, marginBottom: 12 }}>
-          {props.photoBusy ? <Loader2 size={24} className="animate-spin" /> : <Camera size={24} />}
+          <Camera size={24} />
         </span>
-        <p className="font-bold text-white">{props.photoBusy ? 'Uploading…' : 'Drag photos here, or tap to browse'}</p>
-        <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>JPG, PNG or HEIC · up to 8 photos</p>
-        <input type="file" accept="image/*" multiple onChange={e => { const fs = e.target.files; e.target.value = ''; if (fs?.length) props.onAdd(fs) }} disabled={props.photoBusy} style={{ display: 'none' }} />
+        <p className="font-bold text-white">Tap to take a photo or choose from your library</p>
+        <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>JPG, PNG or HEIC · up to {MAX_PHOTOS} photos · ~6MB each</p>
+        <input type="file" accept="image/*" multiple onChange={e => { const fs = e.target.files; e.target.value = ''; if (fs?.length) props.onAdd(fs) }} style={{ display: 'none' }} />
       </label>
 
-      {props.photos.length > 0 && (
+      {status && (
+        <p className="mt-3 text-sm font-semibold flex items-center gap-2" style={{ color: failed > 0 ? '#ffb3c0' : uploading > 0 ? 'var(--muted)' : '#34d399' }}>
+          {uploading > 0 ? <Loader2 size={15} className="animate-spin" /> : failed > 0 ? <X size={15} /> : <Check size={15} />}
+          {status}
+        </p>
+      )}
+
+      {total > 0 && (
         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5 mt-4">
-          {props.photos.map((url, i) => (
-            <div key={url} style={{ position: 'relative', aspectRatio: '1 / 1', borderRadius: 12, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}>
+          {props.photos.map(p => (
+            <div key={p.id} style={{ position: 'relative', aspectRatio: '1 / 1', borderRadius: 12, overflow: 'hidden', border: `1px solid ${p.status === 'error' ? 'rgba(224,0,42,.5)' : 'rgba(255,255,255,.1)'}` }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={url} alt="Job photo" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              <button type="button" onClick={() => props.onRemove(i)} aria-label="Remove photo" style={{ position: 'absolute', top: 4, right: 4, width: 24, height: 24, borderRadius: 999, border: 'none', background: 'rgba(0,0,0,.7)', color: '#fff', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+              <img src={p.url || p.dataUrl} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: p.status === 'done' ? 1 : 0.55 }} />
+
+              {/* Per-photo status overlay */}
+              {p.status === 'uploading' && (
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,.35)' }}>
+                  <Loader2 size={20} className="animate-spin" style={{ color: '#fff' }} />
+                </div>
+              )}
+              {p.status === 'done' && (
+                <span style={{ position: 'absolute', bottom: 4, left: 4, width: 20, height: 20, borderRadius: 999, background: '#16a34a', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Check size={12} />
+                </span>
+              )}
+              {p.status === 'error' && (
+                <button type="button" onClick={() => props.onRetry(p.id)} aria-label="Retry upload" style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, background: 'rgba(224,0,42,.35)', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>
+                  <Loader2 size={16} /> Retry
+                </button>
+              )}
+
+              <button type="button" onClick={() => props.onRemove(p.id)} aria-label="Remove photo" style={{ position: 'absolute', top: 4, right: 4, width: 24, height: 24, borderRadius: 999, border: 'none', background: 'rgba(0,0,0,.7)', color: '#fff', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                 <X size={13} />
               </button>
             </div>
@@ -744,7 +842,7 @@ function StepContact(props: {
 // ── Step 6: Review ───────────────────────────────────────────────────────────
 function StepReview(props: {
   svc: Svc; singleSite: boolean; pickupText: string; deliveryText: string
-  size?: { label: string }; photos: string[]; upgrades: string[]; prefDate: string
+  size?: { label: string }; photoCount: number; upgrades: string[]; prefDate: string
   name: string; company: string; email: string; phone: string; contactMethod: string
   showLow: number | null; showHigh: number | null; deposit: string
   est: { hasPrice: boolean } | null
@@ -759,7 +857,7 @@ function StepReview(props: {
     [props.singleSite ? 'Job location' : 'Pickup', props.pickupText || '—'],
     ...(!props.singleSite ? [['Delivery', props.deliveryText || '—'] as [string, string]] : []),
     ['Size', props.size?.label ?? '—'],
-    ['Photos', props.photos.length ? `${props.photos.length} attached` : 'None'],
+    ['Photos', props.photoCount ? `${props.photoCount} attached` : 'None'],
     ['Upgrades', props.upgrades.length ? props.upgrades.map(id => UPGRADES.find(u => u.id === id)?.label).filter(Boolean).join(', ') : 'None'],
     ['Preferred date', props.prefDate ? fmtDateLabel(props.prefDate) : 'Flexible'],
     ['Name', props.name || '—'],
@@ -879,7 +977,7 @@ function StepReview(props: {
 // ── Sticky summary card ──────────────────────────────────────────────────────
 function SummaryCard(props: {
   svc?: Svc; size?: { label: string }; singleSite: boolean; pickupText: string; deliveryText: string
-  photos: string[]; upgrades: string[]; prefDate: string
+  photoCount: number; upgrades: string[]; prefDate: string
   showLow: number | null; showHigh: number | null; deposit: string; est: { hasPrice: boolean } | null
 }) {
   const { svc } = props
@@ -903,7 +1001,7 @@ function SummaryCard(props: {
             {props.size && <Row k="Size" v={props.size.label} />}
             {props.pickupText && <Row k={props.singleSite ? 'Location' : 'Pickup'} v={props.pickupText} />}
             {!props.singleSite && props.deliveryText && <Row k="Delivery" v={props.deliveryText} />}
-            {props.photos.length > 0 && <Row k="Photos" v={`${props.photos.length} attached`} />}
+            {props.photoCount > 0 && <Row k="Photos" v={`${props.photoCount} attached`} />}
             {props.upgrades.length > 0 && <Row k="Upgrades" v={`${props.upgrades.length} selected`} />}
             {props.prefDate && <Row k="Preferred" v={fmtDateLabel(props.prefDate)} />}
 
@@ -926,31 +1024,71 @@ function SummaryCard(props: {
 }
 
 // ── Success ──────────────────────────────────────────────────────────────────
-function SuccessView({ sent, deposit, onReset }: { sent: { estimate?: Estimate }; deposit: string; onReset: () => void }) {
+type SuccessSummary = { name: string; service: string; address: string; prefDate: string; photoCount: number; contactMethod: string }
+function SuccessView({ sent, deposit, summary, onReset }: {
+  sent: { estimate?: Estimate; request?: { number: string; token: string } }
+  deposit: string; summary: SuccessSummary; onReset: () => void
+}) {
+  void deposit
   const e = sent.estimate
+  const reqNo = sent.request?.number
+  const rows: [string, string][] = [
+    ...(reqNo ? [['Request number', reqNo] as [string, string]] : []),
+    ['Name', summary.name || '—'],
+    ['Service', summary.service],
+    ['Address', summary.address || '—'],
+    ['Preferred date', summary.prefDate],
+    ['Photos attached', summary.photoCount ? `${summary.photoCount} photo${summary.photoCount === 1 ? '' : 's'}` : 'None'],
+  ]
   return (
     <div className="max-w-2xl mx-auto wiz-reveal">
-      <div className="glass-card p-8 sm:p-10 text-center" style={{ borderRadius: 24, border: '1px solid rgba(224,0,42,.25)' }}>
+      <div className="glass-card p-7 sm:p-10 text-center" style={{ borderRadius: 24, border: '1px solid rgba(224,0,42,.25)' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 64, height: 64, borderRadius: 999, background: 'rgba(224,0,42,.12)', color: RED, marginBottom: 18 }}>
           <Check size={32} />
         </span>
-        <h1 className="text-3xl md:text-4xl font-black text-white mb-3" style={{ letterSpacing: '-0.03em', fontFamily: 'var(--font-display)' }}>Request received.</h1>
-        {e && e.low > 0 ? (
-          <>
-            <p className="text-base mb-4" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>Here&apos;s your instant estimate. Our team is already reviewing the details and will confirm a firm number shortly.</p>
-            <div className="inline-block rounded-2xl px-8 py-5 mb-4" style={{ background: 'rgba(224,0,42,.07)', border: '1px solid rgba(224,0,42,.25)' }}>
-              <p className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Estimated range</p>
-              <p className="text-5xl font-black tabular-nums mt-1" style={{ color: RED, letterSpacing: '-0.04em', fontFamily: 'var(--font-display)' }}>${e.low.toLocaleString()}–${e.high.toLocaleString()}</p>
-              {e.promoCode && <p className="text-xs mt-2 font-semibold" style={{ color: '#34d399' }}>✓ Promo {e.promoCode} applied{e.promoPct ? ` — ${e.promoPct}% off` : ''}.</p>}
-            </div>
-          </>
-        ) : (
-          <p className="text-base mb-4" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>Because every job is a little different, our team will review your details and send a custom quote — most come back within one business hour during operating hours.</p>
+        <h1 className="text-3xl md:text-4xl font-black text-white mb-2" style={{ letterSpacing: '-0.03em', fontFamily: 'var(--font-display)' }}>Request received.</h1>
+        {reqNo && (
+          <p className="text-sm font-bold mb-3" style={{ color: RED }}>
+            Your request number is <span className="font-mono">{reqNo}</span> — keep it for your records.
+          </p>
         )}
+
+        {/* Honest status — pending review, NOT a confirmed booking. */}
+        <p className="text-base mb-5" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>
+          Thanks{summary.name ? `, ${summary.name.split(' ')[0]}` : ''} — we&apos;ve got your details{summary.photoCount ? ` and your ${summary.photoCount} photo${summary.photoCount === 1 ? '' : 's'}` : ''}. Your request is <strong className="text-white">pending review</strong>; our team will send a firm quote by your preferred method — most come back within one business hour during operating hours.
+        </p>
+
+        {e && e.low > 0 && (
+          <div className="inline-block rounded-2xl px-8 py-4 mb-5" style={{ background: 'rgba(224,0,42,.07)', border: '1px solid rgba(224,0,42,.25)' }}>
+            <p className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Instant estimate (not final)</p>
+            <p className="text-4xl font-black tabular-nums mt-1" style={{ color: RED, letterSpacing: '-0.04em', fontFamily: 'var(--font-display)' }}>${e.low.toLocaleString()}–${e.high.toLocaleString()}</p>
+            {e.promoCode && <p className="text-xs mt-2 font-semibold" style={{ color: '#34d399' }}>✓ Promo {e.promoCode} applied{e.promoPct ? ` — ${e.promoPct}% off` : ''}.</p>}
+          </div>
+        )}
+
+        {/* Structured recap so the customer can see exactly what we received. */}
+        <div className="rounded-2xl overflow-hidden text-left mb-5" style={{ border: '1px solid var(--line)' }}>
+          <div className="px-5 py-2">
+            {rows.map(([k, v], i) => (
+              <div key={k} className="flex justify-between gap-4 py-2.5 text-sm" style={i > 0 ? { borderTop: '1px solid rgba(255,255,255,.06)' } : undefined}>
+                <span style={{ color: 'var(--muted)', flexShrink: 0 }}>{k}</span>
+                <span className="text-white text-right" style={{ minWidth: 0, wordBreak: 'break-word' }}>{v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-xl px-4 py-3 mb-5 text-left flex items-start gap-3" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+          <Star size={16} style={{ color: RED, flexShrink: 0, marginTop: 2 }} />
+          <p className="text-sm" style={{ color: 'var(--muted)', lineHeight: 1.5 }}>
+            <strong className="text-white">What happens next:</strong> our team reviews your request and photos, prepares a firm quote, and reaches out by {summary.contactMethod?.toLowerCase() || 'your preferred method'}. No charge until you approve.
+          </p>
+        </div>
+
         <p className="text-sm" style={{ color: 'rgba(255,255,255,.5)', lineHeight: 1.6 }}>Need it handled fast? Call or email us at <a href={"mailto:" + COMPANY.email} className="underline" style={{ color: '#fff' }}>info@jkissllc.com</a>.</p>
-        <div className="mt-8 flex justify-center gap-3 flex-wrap">
-          <button onClick={onReset} className="btn wiz-ease">Request Another Quote</button>
-          <Link href="/" className="btn-ghost wiz-ease">Back to Home</Link>
+        <div className="mt-7 flex justify-center gap-3 flex-wrap">
+          <Link href="/" className="btn wiz-ease">Back to Home</Link>
+          <button onClick={onReset} className="btn-ghost wiz-ease">Request Another Quote</button>
         </div>
       </div>
     </div>
