@@ -215,6 +215,12 @@ export default function QuotePage() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [step])
 
+  // Any change to the service, size, or the uploaded photo set invalidates a prior
+  // AI estimate so it is always recomputed from the CURRENT inputs (fixes a stale
+  // estimate lingering after Back → remove a photo or change the job).
+  const uploadedKey = uploadedUrls.join('|')
+  useEffect(() => { setEstimate(null); analysisIdRef.current = '' }, [svcId, sizeId, uploadedKey])
+
   const size = SIZES.find(s => s.id === sizeId)
   const upgradeTotal = UPGRADES.filter(u => upgrades.includes(u.id)).reduce((s, u) => s + u.price, 0)
   const deposit = ((est?.depositCents ?? avail?.depositCents ?? 5000) / 100).toFixed(0)

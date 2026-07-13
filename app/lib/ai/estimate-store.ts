@@ -1,5 +1,7 @@
 import { redis } from '../redis'
 import type { JunkPhotoAnalysis } from './analysis-schema'
+import type { MonitorReport } from './analysis-monitor'
+import type { CriticVerdict } from './junk-critic'
 import type { QuoteDecision, PricingBreakdown } from '../pricing/quote-decision'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,6 +34,10 @@ export type StoredAiEstimate = {
     breakdown: PricingBreakdown
   }
   reviewReasons: string[]
+  // QA layers: the deterministic consistency monitor + the second-opinion AI
+  // reviewer (both auditable, shown in OpsPilot).
+  monitor?: MonitorReport
+  critic?: CriticVerdict
   // Admin adjustment (Phase 11) — recorded, never silently overwriting the AI number.
   override?: { overriddenUsd: number; reason: string; by: string; at: string }
 }

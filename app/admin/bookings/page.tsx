@@ -417,6 +417,35 @@ function AiEstimatePanel({ est, busy, run }: { est: StoredAiEstimate; busy: stri
         </div>
       )}
 
+      {/* QA LAYERS — deterministic monitor + second-opinion reviewer */}
+      {(est.monitor?.concerns.length || est.critic) && (
+        <div className="px-4 pb-2 grid gap-2 sm:grid-cols-2">
+          {est.monitor && est.monitor.concerns.length > 0 && (
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Consistency monitor</p>
+              <ul className="text-xs" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                {est.monitor.concerns.map((c, i) => (
+                  <li key={i} style={{ color: c.severity === 'block' ? '#f87171' : c.severity === 'warn' ? '#fbbf24' : 'var(--muted)' }}>• {c.message}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {est.critic && (
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>
+                AI reviewer · <span style={{ color: est.critic.recommend === 'accept' ? '#34d399' : est.critic.recommend === 'range' ? '#fbbf24' : '#f87171' }}>{est.critic.recommend}</span>
+              </p>
+              <p className="text-xs" style={{ color: 'var(--muted)' }}>
+                {est.critic.agrees ? 'Agrees with estimator' : 'Disagrees'}{est.critic.adjustedTruckLoadFraction != null ? ` · reviewer read ${Math.round(est.critic.adjustedTruckLoadFraction * 100)}% truck` : ''} · {Math.round(est.critic.confidence * 100)}% conf
+              </p>
+              {est.critic.concerns.length > 0 && (
+                <ul className="text-xs" style={{ color: 'var(--muted)', listStyle: 'none', padding: 0, margin: 0 }}>{est.critic.concerns.map((c, i) => <li key={i}>• {c}</li>)}</ul>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ADMIN ADJUSTMENT → FINAL QUOTE */}
       <div className="px-4 py-3" style={{ borderTop: '1px solid var(--line)', background: 'rgba(255,255,255,.02)' }}>
         <div className="flex items-center justify-between mb-2">

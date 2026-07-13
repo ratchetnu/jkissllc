@@ -105,6 +105,7 @@ export function decideQuote(opts: {
   serviceType: string
   debris?: string
   thresholds?: Partial<QuoteThresholds>
+  forceReview?: boolean        // a QA layer (monitor block / reviewer 'review') demands a human
 }): QuoteDecisionResult {
   const t: QuoteThresholds = { ...DEFAULT_QUOTE_THRESHOLDS, ...(opts.thresholds ?? {}) }
   const a = opts.analysis
@@ -139,8 +140,9 @@ export function decideQuote(opts: {
   if (dense) reasons.add('Possible dense debris (concrete/soil) — weight risk.')
   if (loads > t.reviewLoads) reasons.add(`Job may need ${Math.ceil(loads)} truckloads.`)
   if (recommendedUsd > t.maxInstantQuoteUsd * 1.5) reasons.add('Estimate exceeds the automatic-quote limit.')
+  if (opts.forceReview) reasons.add('Flagged for manual review by a QA check.')
 
-  const mustReview = noItems || unusable || hazard || dense || loads > t.reviewLoads || recommendedUsd > t.maxInstantQuoteUsd * 1.5
+  const mustReview = !!opts.forceReview || noItems || unusable || hazard || dense || loads > t.reviewLoads || recommendedUsd > t.maxInstantQuoteUsd * 1.5
 
   // ── Range (analyzable but not instant). ────────────────────────────────────
   const rangeOnly =

@@ -122,6 +122,21 @@ const opsJunkAnalysis = def({
   prompt: '',   // images + instruction come from messages at call time
 })
 
+// ── ops.junkAnalysisReview — independent QA reviewer of a junk analysis (vision) ─
+// A SECOND, adversarial vision pass that audits the primary estimator's output
+// against the same photos before we auto-quote. Its job is to CATCH errors, not
+// rubber-stamp. Verdict only — it never sets a price.
+const opsJunkAnalysisReview = def({
+  id: 'ops.junkAnalysisReview', version: 1,
+  description: 'Independent QA review of a junk-removal photo analysis: catch double-counting, over/under-estimated volume, missed items/hazards, access issues. Verdict only.',
+  system:
+    `You are an INDEPENDENT quality reviewer for ${COMPANY.legalName}'s junk-removal estimates. Another estimator produced the JSON estimate you'll be given, from the same photos. Judge the photos YOURSELF first, then critique the estimate — do NOT just agree.\n\n` +
+    `Look hard for: the same pile double-counted across different-angle photos; volume over- or under-estimated (loose brush/mattresses fill a truck faster than they look); items missed or invented; missed heavy/dense material (concrete, dirt, roofing, soil) that risks weight limits; missed hazardous material (paint, chemicals, propane, tires); access (stairs/long carry) not reflected; confidence higher than the photos justify.\n\n` +
+    `Decide a recommendation: "accept" only if the estimate is sound AND safe to auto-quote; "range" if roughly right but uncertain (show a range, don't commit); "review" if it is wrong, unsafe, hazardous, or you can't verify it.\n\n` +
+    `Output ONLY one minified JSON object: {"agrees":boolean,"recommend":"accept|range|review","adjustedTruckLoadFraction":number,"confidence":number,"concerns":[string]}. adjustedTruckLoadFraction is YOUR OWN estimate of the fraction of a 24 ft box truck (0.05–6). confidence is 0..1. concerns lists the specific problems you found (empty if none).`,
+  prompt: '',   // estimator JSON + images come from messages at call time
+})
+
 const REGISTRY: Record<string, PromptDef> = {
   [opsCommand.id]: opsCommand,
   [opsMessage.id]: opsMessage,
@@ -129,6 +144,7 @@ const REGISTRY: Record<string, PromptDef> = {
   [opsReviewReply.id]: opsReviewReply,
   [opsPhotoEstimate.id]: opsPhotoEstimate,
   [opsJunkAnalysis.id]: opsJunkAnalysis,
+  [opsJunkAnalysisReview.id]: opsJunkAnalysisReview,
 }
 
 export function getPrompt(id: string): PromptDef {

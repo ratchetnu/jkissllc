@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { rateLimit } from '../../../lib/rate-limit'
 import { isBlockedBot } from '../../../lib/botcheck'
 import { analyzeJunkPhotos } from '../../../lib/ai/junk-analysis'
+import { monitorAnalysis, applyMonitor } from '../../../lib/ai/analysis-monitor'
+import { reviewJunkAnalysis, reconcileWithCritic, criticEnabled, type CriticVerdict } from '../../../lib/ai/junk-critic'
 import { decideQuote } from '../../../lib/pricing/quote-decision'
 import { getDisposalSettings } from '../../../lib/disposal'
 import { getCalibration } from '../../../lib/job-learning'
@@ -40,16 +42,33 @@ export async function POST(req: NextRequest) {
 
   await recordFunnelEvent('quote_analyze_started', nowIso)
 
+  const serviceLabel = SERVICE_LABELS[serviceType] ?? serviceType
+
   // 1) AI visual analysis (fail-soft — always returns an analysis object).
   const analyzed = await analyzeJunkPhotos({
-    analysisId, bookingId: 'draft', photoUrls: photos,
-    serviceLabel: SERVICE_LABELS[serviceType] ?? serviceType, nowIso,
+    analysisId, bookingId: 'draft', photoUrls: photos, serviceLabel, nowIso,
   })
   await recordFunnelEvent(analyzed.ok ? 'ai_analysis_completed' : 'ai_analysis_failed', nowIso)
 
-  // 2) + 3) Deterministic pricing + decision.
+  // 1b) Deterministic consistency monitor (always on, zero AI cost) — cross-checks
+  // the model's own numbers and penalizes/flags contradictions before pricing.
+  const monitor = monitorAnalysis(analyzed.analysis)
+  let analysis = applyMonitor(analyzed.analysis, monitor)
+
+  // 2) + 3) Deterministic pricing + decision. A monitor 'block' forces manual review.
   const [settings, calibration] = await Promise.all([getDisposalSettings(), getCalibration()])
-  const decision = decideQuote({ analysis: analyzed.analysis, settings, calibration, serviceType, debris })
+  let decision = decideQuote({ analysis, settings, calibration, serviceType, debris, forceReview: monitor.forceReview })
+
+  // 1c) Second-opinion AI reviewer — only when we're about to auto-quote (verify
+  // before commit). It can confirm, downgrade to a range, or force review. Fail-soft.
+  let critic: CriticVerdict | null = null
+  if (decision.decision === 'instant_quote' && criticEnabled()) {
+    critic = await reviewJunkAnalysis({ analysis, photoUrls: photos, serviceLabel })
+    if (critic) {
+      analysis = reconcileWithCritic(analysis, critic)
+      decision = decideQuote({ analysis, settings, calibration, serviceType, debris, forceReview: monitor.forceReview || critic.recommend === 'review' })
+    }
+  }
 
   await recordFunnelEvent(
     decision.decision === 'instant_quote' ? 'instant_quote_displayed'
@@ -64,13 +83,13 @@ export async function POST(req: NextRequest) {
     createdAt: nowIso,
     status: analyzed.ok ? (decision.decision === 'manual_review' ? 'review' : 'completed') : 'failed',
     decision: decision.decision,
-    provider: analyzed.analysis.modelProvider,
-    model: analyzed.model ?? analyzed.analysis.modelName,
-    schemaVersion: analyzed.analysis.schemaVersion,
+    provider: analysis.modelProvider,
+    model: analyzed.model ?? analysis.modelName,
+    schemaVersion: analysis.schemaVersion,
     callId: analyzed.callId,
     latencyMs: analyzed.latencyMs,
     inputPhotoUrls: photos,
-    analysis: analyzed.analysis,
+    analysis,
     pricing: {
       recommendedUsd: decision.recommendedUsd,
       lowUsd: decision.rangeUsd.low,
@@ -78,6 +97,8 @@ export async function POST(req: NextRequest) {
       breakdown: decision.breakdown,
     },
     reviewReasons: decision.reviewReasons,
+    monitor,
+    critic: critic ?? undefined,
   }
   try { await saveDraftEstimate(stored) } catch (e) { console.error('[quote/analyze] save draft', e) }
 

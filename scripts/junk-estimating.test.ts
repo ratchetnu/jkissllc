@@ -6,6 +6,8 @@ import test from 'node:test'
 
 import { normalizeAnalysis, reviewFallbackAnalysis, type NormalizeCtx } from '../app/lib/ai/analysis-schema'
 import { decideQuote, DEFAULT_QUOTE_THRESHOLDS } from '../app/lib/pricing/quote-decision'
+import { monitorAnalysis, applyMonitor } from '../app/lib/ai/analysis-monitor'
+import { reconcileWithCritic, type CriticVerdict } from '../app/lib/ai/junk-critic'
 import { DEFAULT_DISPOSAL } from '../app/lib/disposal'
 
 const ctx = (): NormalizeCtx => ({
@@ -119,4 +121,72 @@ test('thresholds are honored (tight cap forces range)', () => {
 test('DEFAULT_QUOTE_THRESHOLDS are sane', () => {
   assert.ok(DEFAULT_QUOTE_THRESHOLDS.instantConfidenceMin > 0 && DEFAULT_QUOTE_THRESHOLDS.instantConfidenceMin <= 1)
   assert.ok(DEFAULT_QUOTE_THRESHOLDS.maxInstantLoads >= 1)
+})
+
+// ── consistency monitor ──────────────────────────────────────────────────────
+test('monitor is clean on a consistent analysis', () => {
+  const a = normalizeAnalysis(goodRaw(), ctx())
+  const m = monitorAnalysis(a)
+  assert.equal(m.forceReview, false)
+})
+
+test('monitor flags fraction-vs-volume contradiction', () => {
+  const a = normalizeAnalysis(goodRaw({
+    totalEstimatedVolumeCubicYards: { minimum: 25, likely: 30, maximum: 35 },
+    estimatedTruckLoadFraction: { minimum: 0.08, likely: 0.1, maximum: 0.12 },
+  }), ctx())
+  const m = monitorAnalysis(a)
+  assert.ok(m.concerns.some(c => c.code === 'fraction_volume_mismatch'))
+  assert.ok(m.confidencePenalty > 0)
+  const adj = applyMonitor(a, m)
+  assert.ok(adj.confidence.overall < a.confidence.overall, 'confidence penalized')
+})
+
+test('monitor blocks a dense load with no dense flag (weight risk)', () => {
+  const a = normalizeAnalysis(goodRaw({
+    totalEstimatedVolumeCubicYards: { minimum: 6, likely: 7, maximum: 8 },
+    totalEstimatedWeightPounds: { minimum: 6500, likely: 7000, maximum: 7500 },
+    detectedConditions: {},
+  }), ctx())
+  const m = monitorAnalysis(a)
+  assert.equal(m.forceReview, true)
+  const adj = applyMonitor(a, m)
+  assert.equal(adj.reviewRequired, true)
+})
+
+// ── second-opinion reviewer reconciliation ───────────────────────────────────
+test("critic 'review' verdict forces manual review", () => {
+  const a = normalizeAnalysis(goodRaw(), ctx())
+  const v: CriticVerdict = { agrees: false, recommend: 'review', confidence: 0.4, concerns: ['photos hide the back of the pile'] }
+  const r = reconcileWithCritic(a, v)
+  assert.equal(r.reviewRequired, true)
+  // The route passes forceReview when the reviewer says 'review'.
+  const d = decideQuote({ analysis: r, settings: DEFAULT_DISPOSAL, serviceType: 'junk-removal', forceReview: v.recommend === 'review' })
+  assert.equal(d.decision, 'manual_review')
+})
+
+test('monitor block forces manual_review via forceReview', () => {
+  const a = normalizeAnalysis(goodRaw({
+    totalEstimatedVolumeCubicYards: { minimum: 6, likely: 7, maximum: 8 },
+    totalEstimatedWeightPounds: { minimum: 6500, likely: 7000, maximum: 7500 },
+  }), ctx())
+  const m = monitorAnalysis(a)
+  const d = decideQuote({ analysis: applyMonitor(a, m), settings: DEFAULT_DISPOSAL, serviceType: 'junk-removal', forceReview: m.forceReview })
+  assert.equal(d.decision, 'manual_review')
+})
+
+test("critic 'range' verdict drops it out of instant", () => {
+  const a = normalizeAnalysis(goodRaw(), ctx())
+  const v: CriticVerdict = { agrees: true, recommend: 'range', confidence: 0.6, concerns: [] }
+  const r = reconcileWithCritic(a, v)
+  const d = decideQuote({ analysis: r, settings: DEFAULT_DISPOSAL, serviceType: 'junk-removal' })
+  assert.notEqual(d.decision, 'instant_quote')
+})
+
+test('critic disagreeing on size widens the range and lowers confidence', () => {
+  const a = normalizeAnalysis(goodRaw(), ctx())   // fraction likely ~0.3
+  const v: CriticVerdict = { agrees: false, recommend: 'accept', adjustedTruckLoadFraction: 0.9, confidence: 0.7, concerns: [] }
+  const r = reconcileWithCritic(a, v)
+  assert.ok(r.estimatedTruckLoadFraction.maximum >= 0.9)
+  assert.ok(r.confidence.overall <= 0.6)
 })
