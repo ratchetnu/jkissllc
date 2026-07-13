@@ -35,10 +35,29 @@ test('panel state: once the link is sent, it shows sent and is no longer sendabl
   assert.equal(st.canSend, false)
 })
 
-test('no final estimate → nothing to approve', () => {
+test('no final estimate + no prior read → mode none, nothing to approve', () => {
   const st = guidedApprovalState(mk({ finalAiEstimate: undefined }))
   assert.equal(st.hasFinal, false)
   assert.equal(st.canSend, false)
+  assert.equal(st.mode, 'none')
+})
+
+// ── Manual pricing mode: online booking, an initial read but NO guided estimate ──
+test('manual mode: online booking with an initial read but no final estimate needs a price', () => {
+  const st = guidedApprovalState(mk({ finalAiEstimate: undefined, source: 'online', aiEstimate: { decision: 'manual_review' } as never }))
+  assert.equal(st.mode, 'manual')
+  assert.equal(st.needsPrice, true)
+  assert.equal(st.hasFinal, false)
+  assert.equal(st.recommendedUsd, 0)
+  assert.equal(st.decision, 'manual_review')
+})
+
+test('manual mode ends once quoted/sent → not manual anymore', () => {
+  const sent = guidedApprovalState(mk({ finalAiEstimate: undefined, source: 'online', aiEstimate: { decision: 'manual_review' } as never, confirmationLinkSentAt: 5 }))
+  assert.equal(sent.mode, 'sent')
+  const quoted = guidedApprovalState(mk({ finalAiEstimate: undefined, source: 'online', aiEstimate: { decision: 'manual_review' } as never, invoiceAmountCents: 42000 }))
+  assert.equal(quoted.mode, 'none')
+  assert.equal(quoted.needsPrice, false)
 })
 
 // ── Server gate: authorization ───────────────────────────────────────────────
@@ -53,10 +72,15 @@ test('AUTHZ: only admin may approve/send; manager/crew/anon are refused 403', ()
   assert.equal(canApproveAndSend({ role: 'admin', booking: b, send: true }).allowed, true)
 })
 
-test('gate: no final estimate → 400 no_estimate', () => {
+test('gate: no final estimate AND no owner-entered price → 400 no_price', () => {
   const g = canApproveAndSend({ role: 'admin', booking: mk({ finalAiEstimate: undefined }), send: true })
-  assert.equal(!g.allowed && g.reason, 'no_estimate')
+  assert.equal(!g.allowed && g.reason, 'no_price')
   assert.equal(!g.allowed && g.status, 400)
+})
+
+test('gate: manual mode — an owner-entered amount satisfies the price requirement', () => {
+  const g = canApproveAndSend({ role: 'admin', booking: mk({ finalAiEstimate: undefined }), send: true, amount: 425 })
+  assert.equal(g.allowed, true)
 })
 
 // ── Server gate: idempotency (one quote per booking) ─────────────────────────

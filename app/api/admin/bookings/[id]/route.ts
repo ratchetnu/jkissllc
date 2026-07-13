@@ -322,9 +322,11 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
     // ── Approve the FINAL estimate and set the quote from it (owner approval,
     // recorded). Optionally sends the customer their confirmation link. ─────────
     case 'approve-final': {
-      // Owner/admin only + requires a final estimate + a SEND is idempotent (one
-      // quote per booking). One pure gate, shared with the panel; controlled codes.
-      const gate = canApproveAndSend({ role: who?.role, booking: b, send: body.send === true })
+      // Owner/admin only + a SEND is idempotent (one quote per booking). A quote
+      // needs a number: the guided estimate's recommended price OR an owner-entered
+      // `amount` (manual pricing for a manual_review booking). Shared pure gate.
+      const overrideUsd = Math.round(num(body.amount) ?? 0)
+      const gate = canApproveAndSend({ role: who?.role, booking: b, send: body.send === true, amount: overrideUsd })
       if (!gate.allowed) {
         if (gate.reason === 'not_owner') {
           console.warn(`[approve-final] unauthorized role=${who?.role ?? 'none'} booking=${b.bookingNumber}`)
@@ -334,13 +336,12 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
         }
         return NextResponse.json({ error: gate.message, ...(gate.reason === 'already_sent' ? { alreadySent: true } : {}) }, { status: gate.status })
       }
-      const fe = b.finalAiEstimate!   // guaranteed by the gate above
-      const overrideUsd = Math.round(num(body.amount) ?? 0)
-      const approvedUsd = overrideUsd > 0 ? overrideUsd : fe.pricing.recommendedUsd
+      const fe = b.finalAiEstimate   // may be undefined in manual-pricing mode
+      const approvedUsd = overrideUsd > 0 ? overrideUsd : (fe?.pricing.recommendedUsd ?? 0)
       b.invoiceAmountCents = approvedUsd * 100
       if (b.depositAmountCents <= 0) b.depositAmountCents = Math.min(approvedUsd * 100, Math.max(5000, Math.round(approvedUsd * 100 * 0.2)))
-      pushBookingEvent(b, { actor, action: 'ai.owner_approved', result: `$${approvedUsd}`, meta: { approvedUsd, tier: fe.routingTier, override: overrideUsd > 0, send: body.send === true } })
-      b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[Final estimate approved by ${actor}] $${approvedUsd}${overrideUsd > 0 ? ' (owner-set)' : ''}`
+      pushBookingEvent(b, { actor, action: 'ai.owner_approved', result: `$${approvedUsd}`, meta: { approvedUsd, tier: fe?.routingTier ?? 'manual', override: overrideUsd > 0, send: body.send === true } })
+      b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[Estimate approved by ${actor}] $${approvedUsd}${overrideUsd > 0 ? ' (owner-set)' : ''}`
       console.info(`[approve-final] submitted booking=${b.bookingNumber} amount=$${approvedUsd} send=${body.send === true} by=${actor}`)
       if (body.send === true) {
         const channels = await sendConfirmationLink(b)
