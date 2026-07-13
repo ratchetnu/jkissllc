@@ -94,7 +94,7 @@ test('unresolved contention returns a controlled conflict (never a silent clobbe
 })
 
 test('not_found and controlled abort are distinct non-retry outcomes', async () => {
-  const missing = { load: async () => null, versionOf: (_: unknown) => 0, save: async (): Promise<CasResult> => 'ok', sleep: async () => {} }
+  const missing = { load: async () => null, versionOf: () => 0, save: async (): Promise<CasResult> => 'ok', sleep: async () => {} }
   const nf = await optimisticUpdate(missing, () => {})
   assert.equal(!nf.ok && nf.reason, 'not_found')
 
