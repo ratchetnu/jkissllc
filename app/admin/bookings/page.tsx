@@ -375,6 +375,67 @@ function StatusBadge({ s }: { s: string }) {
 // ── AI Estimate panel (Phase 11) ─────────────────────────────────────────────
 // Clearly separates the four layers: AI OBSERVATION → PRICING CALCULATION →
 // ADMIN ADJUSTMENT → FINAL QUOTE. The vision model never sets the price.
+// Guided-confirmation FINAL estimate approval. The customer confirmed their
+// inventory and the second (governed) analysis produced a number that — for
+// quote_ready / owner_approval — is awaiting the owner's one-click Approve & Send
+// (sets the invoice, texts/emails the customer, advances to Quote Sent). Review /
+// site-visit outcomes are surfaced for hand-pricing, never auto-sent.
+function GuidedApprovalPanel({ booking, busy, run, isOwner }: { booking: Booking; busy: string; run: (action: string, body?: Record<string, unknown>, confirmMsg?: string) => void; isOwner: boolean }) {
+  const fe = booking.finalAiEstimate!
+  const [amt, setAmt] = useState('')
+  const alreadySent = (booking.invoiceAmountCents ?? 0) > 0
+  const decisionLabel: Record<string, string> = { quote_ready: 'Ready to send', awaiting_owner_approval: 'Awaiting your approval', manual_review: 'Manual review', site_visit_required: 'Site visit required' }
+  const tone = fe.finalDecision === 'manual_review' ? '#f87171' : fe.finalDecision === 'site_visit_required' ? '#f59e0b' : fe.finalDecision === 'quote_ready' ? '#34d399' : '#fbbf24'
+  const canSend = (fe.finalDecision === 'quote_ready' || fe.finalDecision === 'awaiting_owner_approval')
+  const approveBody = () => (parseFloat(amt) > 0 ? { amount: parseFloat(amt) } : {})
+  return (
+    <div className="os-card" style={{ padding: 16, marginBottom: 14, border: `1px solid ${tone}55` }}>
+      <div className="flex items-center justify-between gap-2 flex-wrap" style={{ marginBottom: 8 }}>
+        <p style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--muted)' }}>Guided Estimate · Customer Confirmed</p>
+        <span style={{ fontSize: 11.5, fontWeight: 800, color: tone }}>{decisionLabel[fe.finalDecision] ?? fe.finalDecision} · {fe.routingTier} confidence</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+        <div><p style={{ fontSize: 10.5, color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase' }}>Revised estimate</p><p style={{ fontSize: 18, fontWeight: 900, color: 'var(--text)' }}>${fe.pricing.lowUsd.toLocaleString()}–${fe.pricing.highUsd.toLocaleString()}</p></div>
+        <div><p style={{ fontSize: 10.5, color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase' }}>Recommended</p><p style={{ fontSize: 18, fontWeight: 900, color: tone }}>${fe.pricing.recommendedUsd.toLocaleString()}</p></div>
+      </div>
+
+      {alreadySent ? (
+        <p style={{ fontSize: 12.5, color: '#34d399', fontWeight: 700 }}>✓ Quote sent — invoice set to {usd(booking.invoiceAmountCents)}.</p>
+      ) : canSend ? (
+        isOwner ? (
+          <>
+            <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
+              <span style={{ fontSize: 12, color: 'var(--muted)' }}>Send at</span>
+              <input value={amt} onChange={e => setAmt(e.target.value.replace(/[^0-9.]/g, ''))} placeholder={String(fe.pricing.recommendedUsd)} inputMode="decimal"
+                style={{ width: 100, fontSize: 13, padding: '6px 9px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--bg)', color: 'var(--text)' }} />
+              <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>blank = recommended</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" disabled={busy === 'approve-final'} onClick={() => run('approve-final', { ...approveBody(), send: true }, 'Approve this estimate and SEND the quote to the customer now (email/text)?')}
+                style={{ fontSize: 12.5, fontWeight: 800, padding: '9px 14px', borderRadius: 10, border: 'none', background: '#16a34a', color: '#fff', cursor: 'pointer' }}>
+                {busy === 'approve-final' ? 'Sending…' : '✓ Approve & Send Quote'}
+              </button>
+              <button type="button" disabled={busy === 'approve-final'} onClick={() => run('approve-final', { ...approveBody(), send: false }, 'Set the quote from this estimate WITHOUT sending it yet?')}
+                style={{ fontSize: 12.5, fontWeight: 700, padding: '9px 14px', borderRadius: 10, border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--text)', cursor: 'pointer' }}>
+                Approve only (don’t send)
+              </button>
+              <button type="button" disabled={busy === 'final-manual-review'} onClick={() => run('final-manual-review', {}, 'Send this to manual review instead of quoting?')}
+                style={{ fontSize: 12.5, fontWeight: 700, padding: '9px 14px', borderRadius: 10, border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--muted)', cursor: 'pointer' }}>
+                Send to Manual Review
+              </button>
+            </div>
+          </>
+        ) : <p style={{ fontSize: 12.5, color: 'var(--muted)' }}>An owner/admin can approve and send this quote.</p>
+      ) : (
+        <p style={{ fontSize: 12.5, color: tone }}>
+          {fe.finalDecision === 'site_visit_required' ? 'This job needs an on-site estimate — price it by hand and set the invoice below.' : 'Flagged for manual review — price it by hand and set the invoice below.'}
+          {fe.sensitiveItems.length > 0 && ` ⚠ Sensitive items: ${fe.sensitiveItems.join(', ')}.`}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function AiEstimatePanel({ est, busy, run }: { est: StoredAiEstimate; busy: string; run: (action: string, body?: Record<string, unknown>) => void }) {
   const a = est.analysis
   const p = est.pricing
@@ -1067,6 +1128,12 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
       )}
 
       {b.aiEstimate && <AiEstimatePanel est={b.aiEstimate} busy={busy} run={run} />}
+
+      {/* Guided-confirmation FINAL estimate — the customer confirmed their inventory
+          and the second analysis produced a governed number awaiting your approval.
+          Approve & Send sets the quote, texts/emails the customer, and advances to
+          Quote Sent. Review outcomes route to manual review / an on-site visit. */}
+      {b.finalAiEstimate && <GuidedApprovalPanel booking={b} busy={busy} run={run} isOwner={!!isOwner} />}
 
       {/* Governed intake workflow: live stepper + event stream */}
       <WorkflowTimeline booking={b} />

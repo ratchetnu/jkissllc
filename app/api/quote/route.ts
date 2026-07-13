@@ -10,6 +10,7 @@ import { persistQuoteRequest } from '../../lib/booking-requests'
 import { unitsForLoad } from '../../lib/availability'
 import { SERVICE_TYPES, getBookingByToken, type ServiceType } from '../../lib/bookings'
 import { submitConfirmation, processFinalAiJob } from '../../lib/book-now-confirmation'
+import { notifyOwnerAiOutcome } from '../../lib/booking-notify'
 import { projectCustomerFinalState, type CustomerFinalState } from '../../lib/ai/confirmation-ui'
 import { recordFunnelEvent } from '../../lib/analytics-events'
 import { filterPhotoUrls } from '../../lib/photo-url'
@@ -268,7 +269,17 @@ export async function POST(request: NextRequest) {
             else if (res.finalDecision === 'awaiting_owner_approval') await recordFunnelEvent('final_routed_owner_approval', nowIso)
             else if (res.finalDecision === 'manual_review') await recordFunnelEvent('final_routed_manual_review', nowIso)
             const after = await getBookingByToken(persisted.token)
-            if (after) final = projectCustomerFinalState(after)
+            if (after) {
+              final = projectCustomerFinalState(after)
+              // Notify the OWNER the moment a guided estimate lands (parity with the
+              // cron path). The final job parks at 'completed' for quote_ready /
+              // owner_approval and 'manual_review' for review/site-visit — without
+              // this the owner is never told there's an estimate awaiting approval.
+              const jobStatus = after.finalAiJob?.status
+              if (jobStatus === 'completed' || jobStatus === 'manual_review') {
+                try { await notifyOwnerAiOutcome(after, jobStatus) } catch (e) { console.error('[quote] owner notify', e) }
+              }
+            }
           }
         } catch (e) { console.error('[quote] final analysis', e); /* cron recovers */ }
       }
