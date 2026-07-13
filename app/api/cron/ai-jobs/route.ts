@@ -4,6 +4,7 @@ import { runDueFinalAiJobs } from '../../../lib/book-now-confirmation'
 import { notifyOwnerAiOutcome } from '../../../lib/booking-notify'
 import { getBookingByToken } from '../../../lib/bookings'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
+import { alert } from '../../../lib/alerts'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -36,8 +37,10 @@ export async function GET(req: NextRequest) {
             if (b) await notifyOwnerAiOutcome(b, r.status)
           } catch (e) { console.error('[cron/ai-jobs] notify', e) }
         }
+        // Retry exhaustion / terminal AI failure → operational alert.
+        if (r.status === 'failed') await alert({ type: 'ai_analysis_failed', severity: 'ERROR', worker: 'runDueAiJobs', booking: r.token.slice(0, 8), errorClass: 'retry_exhausted' })
       }
-    } catch (e) { console.error('[cron/ai-jobs] run', e) }
+    } catch (e) { console.error('[cron/ai-jobs] run', e); await alert({ type: 'cron_job_failed', severity: 'CRITICAL', route: '/api/cron/ai-jobs', worker: 'runDueAiJobs', errorClass: e instanceof Error ? e.name : 'unknown' }) }
 
     // Second (final) analysis recovery: process due FINAL jobs the same way, so a
     // customer who confirms then closes the browser still gets a durable result.
@@ -50,8 +53,9 @@ export async function GET(req: NextRequest) {
             if (b) await notifyOwnerAiOutcome(b, r.status)
           } catch (e) { console.error('[cron/ai-jobs] final notify', e) }
         }
+        if (r.status === 'failed') await alert({ type: 'final_analysis_failed', severity: 'ERROR', worker: 'runDueFinalAiJobs', booking: r.token.slice(0, 8), errorClass: 'retry_exhausted' })
       }
-    } catch (e) { console.error('[cron/ai-jobs] final run', e) }
+    } catch (e) { console.error('[cron/ai-jobs] final run', e); await alert({ type: 'cron_job_failed', severity: 'CRITICAL', route: '/api/cron/ai-jobs', worker: 'runDueFinalAiJobs', errorClass: e instanceof Error ? e.name : 'unknown' }) }
   })
   return NextResponse.json({ ok: true, ...summary, final: finalSummary, at: Date.now() })
 }

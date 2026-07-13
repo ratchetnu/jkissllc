@@ -26,6 +26,7 @@ import { getCalibration } from '../../../../lib/job-learning'
 import { decideQuote } from '../../../../lib/pricing/quote-decision'
 import { onEstimateModified } from '../../../../lib/intake-workflow'
 import { validateEstimateModification } from '../../../../lib/estimate-modify'
+import { alert } from '../../../../lib/alerts'
 
 export const runtime = 'nodejs'
 
@@ -635,6 +636,7 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
         }
       } catch (e) {
         console.error('[refund]', e)
+        await alert({ type: 'refund_failed', severity: 'CRITICAL', route: '/api/admin/bookings/[id]', booking: b.bookingNumber, errorClass: e instanceof Error ? e.name : 'stripe_refund_failed' })
         return NextResponse.json({ error: 'Stripe refund failed — check the dashboard and try again.' }, { status: 502 })
       }
       const stamp = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })

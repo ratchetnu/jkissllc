@@ -2,6 +2,7 @@ import { COMPANY } from './company'
 import { sendSmsDetailed, toE164 } from './sms'
 import { emailRaw } from './booking-emails'
 import { getOwnerAlertConfig } from './owner-alerts'
+import { alert } from './alerts'
 import {
   saveBooking, fmtUSD, balanceDueCents, effectiveServiceDate,
   pushBookingEvent, recordNotificationAttempt, lastNotification,
@@ -85,6 +86,9 @@ async function sendOwnerNotification(
     meta: { kind },
   })
   await saveBooking(b)
+  // A totally-undelivered owner notification is a missed lead / missed action →
+  // alert (deduped per booking+kind so a broken channel can't storm).
+  if (!anySent) await alert({ type: 'notification_failed', severity: 'WARNING', worker: 'sendOwnerNotification', booking: b.bookingNumber, meta: { kind } })
   return { sent: anySent, deduped: false }
 }
 

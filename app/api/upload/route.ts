@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { put } from '@vercel/blob'
 import { rateLimit } from '../../lib/rate-limit'
 import { isBlockedBot } from '../../lib/botcheck'
+import { alert } from '../../lib/alerts'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -27,6 +28,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, url: blob.url })
   } catch (e) {
     console.error('[upload]', e)
+    await alert({ type: 'upload_failed', severity: 'ERROR', route: '/api/upload', errorClass: e instanceof Error ? e.name : 'blob_put_failed' })
     return NextResponse.json({ error: 'Upload failed — please try again.' }, { status: 500 })
   }
 }
