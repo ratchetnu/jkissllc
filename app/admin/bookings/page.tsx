@@ -7,6 +7,7 @@ import AdminGate from '../AdminGate'
 import AiFeedback from '../AiFeedback'
 import { SkeletonList } from '../../components/Skeleton'
 import { ConversationThread, type ThreadMessage } from '../messaging'
+import WorkflowTimeline from './WorkflowTimeline'
 import type { Booking, Payment, InvoicePhoto } from '../../lib/bookings'
 import type { StoredAiEstimate } from '../../lib/ai/estimate-store'
 
@@ -1005,6 +1006,9 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
       )}
 
       {b.aiEstimate && <AiEstimatePanel est={b.aiEstimate} busy={busy} run={run} />}
+
+      {/* Governed intake workflow: live stepper + event stream */}
+      <WorkflowTimeline booking={b} />
 
       {/* Tabs */}
       <div className="flex gap-1.5 mb-4 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>

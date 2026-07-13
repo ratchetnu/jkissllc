@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { filterServicesByPack } from '../lib/pack-services'
 import { COMPANY, CREDENTIALS_DOT } from '../lib/company';
 import Link from 'next/link'
 import {
@@ -149,6 +150,24 @@ export default function QuotePage() {
   const [svcId, setSvcId] = useState('')
   const svc = SERVICES.find(s => s.id === svcId)
   const singleSite = !!svc && (svc.jobBased || svc.id === 'other')
+
+  // Industry-pack intake config (the universal-engine seam). The service grid comes
+  // from the active pack when it defines matching service templates; junk removal
+  // (the reference/default pack) and any load/parse failure fall back to the full
+  // local catalog — i.e. today's experience is preserved unless a pack replaces it.
+  const [intakeCfg, setIntakeCfg] = useState<{ packId: string; serviceTemplates: { id: string }[]; intakeQuestions: string[] } | null>(null)
+  useEffect(() => {
+    let alive = true
+    fetch('/api/intake/config', { credentials: 'same-origin' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (alive && d?.config) setIntakeCfg(d.config) })
+      .catch(() => { /* fall back to the local catalog */ })
+    return () => { alive = false }
+  }, [])
+  const displayServices = useMemo(
+    () => filterServicesByPack(SERVICES, intakeCfg?.serviceTemplates.map(t => t.id) ?? []),
+    [intakeCfg],
+  )
 
   // Step 1 — the job
   const [pickupText, setPickupText] = useState('')
@@ -483,7 +502,7 @@ export default function QuotePage() {
 
                   <div className="px-5 sm:px-8 py-7">
                     <div key={step} className="wiz-reveal">
-                      {step === 0 && <StepService svcId={svcId} onPick={setSvcId} />}
+                      {step === 0 && <StepService svcId={svcId} onPick={setSvcId} services={displayServices} />}
                       {step === 1 && (
                         <StepJob
                           svc={svc!} singleSite={singleSite}
@@ -646,12 +665,12 @@ function ProgressBar({ step, setStep }: { step: number; setStep: (n: number) => 
 }
 
 // ── Step 1: Service ──────────────────────────────────────────────────────────
-function StepService({ svcId, onPick }: { svcId: string; onPick: (id: string) => void }) {
+function StepService({ svcId, onPick, services }: { svcId: string; onPick: (id: string) => void; services: Svc[] }) {
   return (
     <>
       <StepHeading kicker="What can we handle for you?" title="What do you need moved?" sub="Pick the closest fit — you can add details next." />
       <div className="grid sm:grid-cols-2 gap-3">
-        {SERVICES.map(s => {
+        {services.map(s => {
           const active = svcId === s.id
           const Icon = s.icon
           return (
