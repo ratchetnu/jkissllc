@@ -1,0 +1,101 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Junk-photo vision analysis — the provider-abstracted AI layer (Phase 2/4).
+//
+// Runs entirely server-side through the existing LLMOps chokepoint (runAiTask →
+// Vercel AI Gateway): RBAC-free (public feature), cost-governed, retried on
+// transient failure, model/latency/cost recorded to the AI audit log under the
+// feature `ops.junkAnalysis` (so it auto-appears in the AI analytics dashboards).
+//
+// The model returns OBSERVATIONS ONLY as JSON. We validate/normalize it with the
+// dependency-free normalizer (analysis-schema.ts) — never trusting raw output —
+// and NEVER let it set a price. On any failure we return a review-required
+// analysis so the booking is preserved and a human prices it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { ModelMessage } from 'ai'
+import { runAiTask } from './service'
+import {
+  normalizeAnalysis, reviewFallbackAnalysis,
+  type JunkPhotoAnalysis, type NormalizeCtx,
+} from './analysis-schema'
+
+export type AnalyzeJunkPhotosInput = {
+  analysisId: string
+  bookingId: string
+  photoUrls: string[]        // Vercel Blob public URLs (server-fetched by the model)
+  serviceLabel?: string
+  nowIso: string             // caller supplies the timestamp
+}
+
+export type AnalyzeJunkPhotosResult = {
+  analysis: JunkPhotoAnalysis
+  ok: boolean                // true only if the AI produced a usable read
+  callId?: string
+  model?: string
+  latencyMs?: number
+  outcome: string            // telemetry outcome or a local reason
+}
+
+const providerOf = (model: string): string => (model.includes('/') ? model.split('/')[0] : 'vercel-ai-gateway')
+
+export interface VisionAnalysisProvider {
+  analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<AnalyzeJunkPhotosResult>
+}
+
+export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<AnalyzeJunkPhotosResult> {
+  const photos = input.photoUrls.filter(u => /^https?:\/\/\S+$/i.test(u)).slice(0, 8)
+  const ctx: NormalizeCtx = {
+    analysisId: input.analysisId, bookingId: input.bookingId, photoUrls: photos,
+    modelProvider: 'vercel-ai-gateway', modelName: '', analyzedAt: input.nowIso,
+  }
+
+  if (photos.length === 0) {
+    return { analysis: reviewFallbackAnalysis(ctx, ['No photos were provided for analysis.']), ok: false, outcome: 'no_photos' }
+  }
+
+  const content: Array<{ type: 'text'; text: string } | { type: 'image'; image: string }> = [
+    {
+      type: 'text',
+      text:
+        `Analyze this SET of ${photos.length} photo(s) as ONE job for a junk-removal estimate.` +
+        (input.serviceLabel ? ` The customer selected: ${input.serviceLabel}.` : '') +
+        ` Photos are ordered; some may show the same pile from different angles — do not double-count. Return ONLY the JSON object described in your instructions.`,
+    },
+    ...photos.map((url) => ({ type: 'image' as const, image: url })),
+  ]
+  const messages: ModelMessage[] = [{ role: 'user', content }]
+
+  const res = await runAiTask({
+    taskId: 'ops.junkAnalysis',
+    feature: 'ops.junkAnalysis',
+    vars: {},
+    messages,
+    maxOutputTokens: 1600,
+    temperature: 0.2,
+    requestChars: photos.join(',').length,
+  })
+
+  if (!res.ok) {
+    // Provider error / budget / invalid — preserve the booking as review-required.
+    return {
+      analysis: reviewFallbackAnalysis(ctx, [`Automated analysis was unavailable (${res.outcome}). A team member will review your photos.`]),
+      ok: false, callId: res.callId, outcome: res.outcome,
+    }
+  }
+
+  // runAiTask ran without the flat schema (the shape is nested), so parse here and
+  // hand the raw object to the robust normalizer.
+  let raw: unknown
+  try { const m = res.text.match(/\{[\s\S]*\}/); if (m) raw = JSON.parse(m[0]) } catch { raw = undefined }
+
+  const analysis = normalizeAnalysis(raw, { ...ctx, modelName: res.model, modelProvider: providerOf(res.model) })
+  const usable = analysis.normalizedItems.length > 0
+  return {
+    analysis,
+    ok: usable,
+    callId: res.callId,
+    model: res.model,
+    latencyMs: res.latencyMs,
+    outcome: usable ? 'success' : 'no_items',
+  }
+}

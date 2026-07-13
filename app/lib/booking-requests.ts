@@ -4,6 +4,7 @@ import {
   type Booking, type ServiceType,
 } from './bookings'
 import { SERVICE_TYPES } from './bookings'
+import { getDraftEstimate } from './ai/estimate-store'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public "Book Now" quote requests → persisted OpsPilot bookings.
@@ -42,6 +43,7 @@ export type QuoteRequestInput = {
   marketingSource?: string
   referralSource?: string
   idempotencyKey?: string
+  analysisId?: string               // draft AI estimate to attach (from /api/quote/analyze)
 }
 
 const REQ_IDEM_TTL_MS = 24 * 60 * 60_000
@@ -137,6 +139,25 @@ export async function persistQuoteRequest(input: QuoteRequestInput): Promise<Boo
 
     createdAt: now,
     updatedAt: now,
+  }
+
+  // Attach the AI estimate (analysis + deterministic pricing + decision) if one was
+  // produced during the flow. Loaded server-side from the draft store so we never
+  // trust a client-sent price. Its disposal number backfills disposalEstimateCents.
+  if (input.analysisId) {
+    try {
+      const draft = await getDraftEstimate(input.analysisId)
+      if (draft) {
+        draft.analysis.bookingId = booking.token
+        booking.aiEstimate = draft
+        booking.disposalEstimateCents = draft.pricing.breakdown.disposalCents
+        pushBookingEvent(booking, {
+          actor: 'system', action: 'booking.created',
+          result: `ai:${draft.decision}`,
+          meta: { model: draft.model, recommendedUsd: draft.pricing.recommendedUsd, confidence: draft.analysis.confidence.overall, reviewReasons: draft.reviewReasons.length },
+        })
+      }
+    } catch (e) { console.error('[booking-requests] attach estimate', e) }
   }
 
   pushBookingEvent(booking, {

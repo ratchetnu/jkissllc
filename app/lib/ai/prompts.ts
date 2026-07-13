@@ -91,12 +91,44 @@ const opsPhotoEstimate = def({
   prompt: '',   // image + instruction come from messages at call time
 })
 
+// ── ops.junkAnalysis — structured multi-photo junk read (vision, observations only) ─
+// Returns OBSERVATIONS as JSON — never a price. The deterministic pricing engine
+// (lib/disposal.priceJob) turns the truck-fill fraction into the customer number.
+// The images + per-call instruction are passed as `messages` at call time.
+const opsJunkAnalysis = def({
+  id: 'ops.junkAnalysis', version: 1,
+  description: 'Structured visual read of a SET of junk-removal photos (items, volume, weight, access, hazards, confidence). Observations only — no pricing. Public.',
+  system:
+    `You are a senior junk-removal estimator for ${COMPANY.legalName}. You are given a SET of photos of ONE job. Report ONLY what you can visually support. You never set a price — a separate pricing engine does that from your volume read.\n\n` +
+    `REASONING RULES:\n` +
+    `- Treat all photos as ONE job. If several photos show the same pile from different angles, COUNT IT ONCE and mark those observations possibleDuplicateViewOfOtherPhoto=true with a shared duplicateGroupId. Never add every visible pile together blindly.\n` +
+    `- Judge fill against a 24 ft box truck (~1,200 cu ft ≈ 44 cubic yards). estimatedTruckLoadFraction is the fraction of THAT truck the whole job fills (0.05–6). Give minimum/likely/maximum — a RANGE, not false precision.\n` +
+    `- Account for pile height/width/depth and perspective; if the full pile is not visible, lower confidence and add a warning. Loose non-compacting material (brush, limbs, mattresses) fills a truck faster than it looks and may need multiple dump trips.\n` +
+    `- Flag dense/heavy material (concrete, dirt, roofing, soil, scrap) via detectedConditions — a small-looking pile can exceed safe weight.\n` +
+    `- Note access: stairs, elevator, long carry, narrow access, indoor vs outdoor, disassembly.\n` +
+    `- Hazardous materials (paint, chemicals, solvents, oil, propane/fuel, tires, batteries, asbestos, biohazard) are a POSSIBILITY flag + warning, NEVER a definitive diagnosis. Set the matching detectedConditions.*Possible=true. ${COMPANY.legalName} does not haul hazardous material.\n` +
+    `- Ignore irrelevant background (people, cars not part of the job). NEVER identify faces or infer any personal trait (identity, age, race, gender, health, income).\n` +
+    `- If photos are too dark/blurry/close/obstructed to judge, set imageQuality and reviewRequired=true with reasons. Ask for specific better photos in additionalQuestions.\n\n` +
+    `OUTPUT: respond with ONLY one minified JSON object, no prose, no code fences, with these keys:\n` +
+    `{"normalizedItems":[{"category":"furniture|appliance|electronics|yard_waste|construction_debris|household_junk|mattress|scrap_metal|cardboard|clothing|office_equipment|exercise_equipment|hot_tub|shed|unknown","label":string,"estimatedQuantity":number,"estimatedVolumeCubicYards":number,"estimatedWeightPounds":{"minimum":number,"likely":number,"maximum":number},"bulky":boolean,"heavy":boolean,"requiresDisassembly":boolean,"likelyDisposalType":"landfill|recycling|donation|special_handling|unknown","confidence":number,"evidence":string}],` +
+    `"photoObservations":[{"photoUrl":string,"estimatedPhotoVolumeCubicYards":number,"accessObservations":[string],"possibleDuplicateViewOfOtherPhoto":boolean,"duplicateGroupId":string,"imageQuality":"excellent|good|limited|unusable"}],` +
+    `"totalEstimatedVolumeCubicYards":{"minimum":number,"likely":number,"maximum":number},"totalEstimatedWeightPounds":{"minimum":number,"likely":number,"maximum":number},` +
+    `"estimatedTruckLoadFraction":{"minimum":number,"likely":number,"maximum":number},"estimatedTruckLoads":{"minimum":number,"likely":number,"maximum":number},` +
+    `"laborEstimate":{"crewSize":number,"minimumMinutes":number,"likelyMinutes":number,"maximumMinutes":number},` +
+    `"detectedConditions":{"stairs":boolean,"elevator":boolean,"longCarry":boolean,"narrowAccess":boolean,"indoorRemoval":boolean,"outdoorRemoval":boolean,"disassemblyRequired":boolean,"heavyItemsPresent":boolean,"hazardousMaterialPossible":boolean,"refrigerantAppliancePossible":boolean,"concreteOrSoilPossible":boolean,"tiresPossible":boolean,"paintOrChemicalPossible":boolean},` +
+    `"confidence":{"overall":number,"volume":number,"weight":number,"itemClassification":number,"accessDifficulty":number},` +
+    `"additionalQuestions":[string],"warnings":[string],"reviewRequired":boolean,"reviewReasons":[string]}\n` +
+    `All confidence values are 0..1. Numbers are plain (no units, no strings).`,
+  prompt: '',   // images + instruction come from messages at call time
+})
+
 const REGISTRY: Record<string, PromptDef> = {
   [opsCommand.id]: opsCommand,
   [opsMessage.id]: opsMessage,
   [opsInsights.id]: opsInsights,
   [opsReviewReply.id]: opsReviewReply,
   [opsPhotoEstimate.id]: opsPhotoEstimate,
+  [opsJunkAnalysis.id]: opsJunkAnalysis,
 }
 
 export function getPrompt(id: string): PromptDef {

@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
     pallets, weight, serviceType, timing, loadSize,
     name, email, phone, company, notes, referral, promo,
     // Structured fields for persisting the request as an OpsPilot booking.
-    bookService, pickupAddress, dropoffAddress, preferredDate, contactMethod, idempotencyKey,
+    bookService, pickupAddress, dropoffAddress, preferredDate, contactMethod, idempotencyKey, analysisId,
   } = body
 
   // Junk removal and eviction/property cleanouts are priced per job, not by
@@ -286,6 +286,7 @@ export async function POST(request: NextRequest) {
         leadSource: 'website:book-now',
         referralSource: typeof referral === 'string' ? referral : undefined,
         idempotencyKey: typeof idempotencyKey === 'string' ? idempotencyKey : undefined,
+        analysisId: typeof analysisId === 'string' ? analysisId : undefined,
       })
       if (persisted) request_out = { number: persisted.bookingNumber, token: persisted.token }
     } catch (e) {

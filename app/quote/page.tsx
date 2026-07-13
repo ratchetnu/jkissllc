@@ -35,6 +35,22 @@ type PhotoItem = {
   url?: string                    // Vercel Blob URL once uploaded
 }
 
+// Customer-safe AI estimate returned by /api/quote/analyze (no cost basis/margin).
+type QuoteEstimate = {
+  analysisId: string
+  decision: 'instant_quote' | 'estimate_range' | 'manual_review'
+  recommendedUsd: number
+  lowUsd: number
+  highUsd: number
+  photoCount: number
+  confidence: number
+  items: { label: string; quantity: number }[]
+  estimatedTruckLoads: number
+  questions: string[]
+  reviewReasons: string[]
+  note: string
+}
+
 type Svc = {
   id: string
   label: string
@@ -151,6 +167,12 @@ export default function QuotePage() {
   const uploadedUrls = photos.filter(p => p.status === 'done' && p.url).map(p => p.url as string)
   const anyUploading = photos.some(p => p.status === 'uploading' || p.status === 'processing')
 
+  // AI estimate (job-based services only). Produced when the customer leaves the
+  // Photos step; the analysisId is sent on submit so the booking carries it.
+  const [analyzing, setAnalyzing] = useState(false)
+  const [estimate, setEstimate] = useState<QuoteEstimate | null>(null)
+  const analysisIdRef = useRef('')
+
   // Step 3 — upgrades
   const [upgrades, setUpgrades] = useState<string[]>([])
 
@@ -229,8 +251,10 @@ export default function QuotePage() {
   // their photos at once; downscale + upload run in the background per tile. We
   // don't pre-filter by MIME type (some phones report HEIC as an empty type) —
   // the input already restricts to images and the server validates each upload.
+  function invalidateEstimate() { setEstimate(null); analysisIdRef.current = '' }
+
   function addPhotos(files: FileList) {
-    setErr('')
+    setErr(''); invalidateEstimate()   // new photos → any prior estimate is stale
     const room = Math.max(0, MAX_PHOTOS - photos.length)
     if (room <= 0) { setErr(`You can attach up to ${MAX_PHOTOS} photos.`); return }
     const chosen = Array.from(files).slice(0, room)
@@ -243,15 +267,33 @@ export default function QuotePage() {
     items.forEach(it => void processItem(it))
   }
   function retryPhoto(id: string) {
+    invalidateEstimate()
     const it = photos.find(p => p.id === id)
     if (it) void processItem(it)
   }
   function removePhoto(id: string) {
+    invalidateEstimate()
     setPhotos(ps => {
       const it = ps.find(p => p.id === id)
       if (it) { try { URL.revokeObjectURL(it.previewUrl) } catch { /* noop */ } }
       return ps.filter(p => p.id !== id)
     })
+  }
+
+  // AI analysis of the uploaded photo set (job-based services). Fail-soft: on any
+  // error the customer simply continues to a hand-priced quote — never blocked.
+  async function runAnalysis(): Promise<void> {
+    if (!svc || !svc.jobBased || uploadedUrls.length === 0) return
+    setAnalyzing(true); setErr('')
+    try {
+      const res = await fetch('/api/quote/analyze', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photos: uploadedUrls, service: svc.bookType, debris: svc.debris }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (res.ok && j.estimate) { setEstimate(j.estimate as QuoteEstimate); analysisIdRef.current = j.estimate.analysisId }
+    } catch { /* non-blocking — proceed without an instant estimate */ }
+    finally { setAnalyzing(false) }
   }
 
   // Instant, email-free price/deposit preview once service + size are known.
@@ -278,11 +320,15 @@ export default function QuotePage() {
     return ''
   }
 
-  function next() {
+  async function next() {
     const v = validate()
     if (v) { setErr(v); return }
     setErr('')
     if (step === 1) loadEstimate()          // fetch as we leave the job-details step
+    // Leaving the Photos step: analyze the uploaded set for an instant AI estimate.
+    if (step === 2 && svc?.jobBased && uploadedUrls.length > 0 && !estimate && !analyzing) {
+      await runAnalysis()
+    }
     setStep(s => Math.min(5, s + 1))        // scroll handled by the [step] effect
   }
   function back() {
@@ -330,6 +376,7 @@ export default function QuotePage() {
           preferredDate: prefDate,
           contactMethod,
           idempotencyKey: quoteIdemRef.current,
+          analysisId: analysisIdRef.current || undefined,
         }),
       })
       const j = await res.json()
@@ -409,7 +456,7 @@ export default function QuotePage() {
                 photoCount: uploadedUrls.length,
                 contactMethod,
               }}
-              onReset={() => { setSent(null); quoteIdemRef.current = ''; setStep(0); setSvcId(''); setPickupText(''); setDeliveryText(''); setSizeId(''); setHeavy(null); setStairs(null); setElevator(null); setPrefDate(''); setPhotos([]); setUpgrades([]); setName(''); setCompany(''); setPhone(''); setEmail(''); setPromo(''); setEst(null); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
+              onReset={() => { setSent(null); quoteIdemRef.current = ''; setEstimate(null); analysisIdRef.current = ''; setStep(0); setSvcId(''); setPickupText(''); setDeliveryText(''); setSizeId(''); setHeavy(null); setStairs(null); setElevator(null); setPrefDate(''); setPhotos([]); setUpgrades([]); setName(''); setCompany(''); setPhone(''); setEmail(''); setPromo(''); setEst(null); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
           ) : (
             <>
               {/* Intro */}
@@ -470,6 +517,7 @@ export default function QuotePage() {
                           bookMethod={bookMethod} setBookMethod={setBookMethod}
                           bookProof={bookProof} onBookProof={onBookProof} proofReading={proofReading}
                           zelleAddress={COMPANY.zelle}
+                          estimate={estimate}
                         />
                       )}
                     </div>
@@ -484,8 +532,14 @@ export default function QuotePage() {
                         </button>
                       )}
                       {step < 5 ? (
-                        <button type="button" onClick={next} disabled={step === 2 && anyUploading} className="btn wiz-ease" style={{ flex: 1, justifyContent: 'center', padding: '15px 24px', fontSize: 15, opacity: step === 2 && anyUploading ? 0.6 : 1 }}>
-                          {step === 2 && anyUploading ? <><Loader2 size={16} className="animate-spin" /> Uploading photos…</> : <>{step === 2 && photos.length === 0 ? 'Skip for now' : 'Continue'} <ArrowRight size={16} /></>}
+                        <button type="button" onClick={next} disabled={step === 2 && (anyUploading || analyzing)} className="btn wiz-ease" style={{ flex: 1, justifyContent: 'center', padding: '15px 24px', fontSize: 15, opacity: step === 2 && (anyUploading || analyzing) ? 0.6 : 1 }}>
+                          {step === 2 ? (
+                            anyUploading ? <><Loader2 size={16} className="animate-spin" /> Uploading photos…</>
+                            : analyzing ? <><Loader2 size={16} className="animate-spin" /> Analyzing your photos…</>
+                            : photos.length === 0 ? <>Skip photos for now <ArrowRight size={16} /></>
+                            : (svc?.jobBased && !estimate) ? <>Analyze {uploadedUrls.length} photo{uploadedUrls.length === 1 ? '' : 's'} <ArrowRight size={16} /></>
+                            : <>Continue with {uploadedUrls.length} photo{uploadedUrls.length === 1 ? '' : 's'} <ArrowRight size={16} /></>
+                          ) : <>Continue <ArrowRight size={16} /></>}
                         </button>
                       ) : (
                         <button type="button" onClick={submitLead} disabled={busy || anyUploading} className="btn wiz-ease" style={{ flex: 1, justifyContent: 'center', padding: '16px 24px', fontSize: 16, opacity: busy || anyUploading ? 0.6 : 1 }}>
@@ -748,6 +802,16 @@ function StepPhotos(props: {
         <input type="file" accept="image/*" multiple onChange={e => { const fs = e.target.files; e.target.value = ''; if (fs?.length) props.onAdd(fs) }} style={{ display: 'none' }} />
       </label>
 
+      {/* How to take useful photos (helps the estimate). */}
+      <ul className="mt-3 text-xs" style={{ color: 'var(--muted)', lineHeight: 1.7, listStyle: 'none', padding: 0 }}>
+        <li>• One wide shot of the whole pile, then a few from different angles</li>
+        <li>• Include something for scale, and don’t crop out the top or bottom</li>
+        <li>• Snap stairs, gates, or a long carry — and heavy items on their own</li>
+      </ul>
+      <p className="mt-2 text-xs" style={{ color: 'rgba(255,255,255,.4)', lineHeight: 1.5 }}>
+        Uploaded photos may be analyzed using automated tools to estimate item type, volume, labor, and disposal needs. Final pricing may change if the actual items, quantity, weight, or access differ from the photos.
+      </p>
+
       {status && (
         <p className="mt-3 text-sm font-semibold flex items-center gap-2" style={{ color: failed > 0 ? '#ffb3c0' : uploading > 0 ? 'var(--muted)' : '#34d399' }}>
           {uploading > 0 ? <Loader2 size={15} className="animate-spin" /> : failed > 0 ? <X size={15} /> : <Check size={15} />}
@@ -866,7 +930,9 @@ function StepReview(props: {
   onOpenReserve: () => void; onReserve: () => void; jobBased: boolean; busy: boolean
   bookMethod: 'stripe' | 'zelle'; setBookMethod: (m: 'stripe' | 'zelle') => void
   bookProof: string; onBookProof: (f: File) => void; proofReading: boolean; zelleAddress: string
+  estimate?: QuoteEstimate | null
 }) {
+  const est = props.estimate
   const rows: [string, string][] = [
     ['Service', props.svc.label],
     [props.singleSite ? 'Job location' : 'Pickup', props.pickupText || '—'],
@@ -883,6 +949,43 @@ function StepReview(props: {
   return (
     <>
       <StepHeading kicker="One last look" title="Review & request." sub="Confirm the details below — then we'll get to work on your number." />
+
+      {est && (
+        <div className="rounded-2xl overflow-hidden mb-5" style={{ border: `1px solid ${est.decision === 'manual_review' ? 'rgba(255,255,255,.14)' : 'rgba(224,0,42,.3)'}` }}>
+          <div className="px-5 py-4 text-center" style={{ background: est.decision === 'manual_review' ? 'rgba(255,255,255,.03)' : 'rgba(224,0,42,.07)' }}>
+            <p className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>
+              {est.decision === 'instant_quote' ? 'Your instant estimate' : est.decision === 'estimate_range' ? 'Your estimated range' : 'Photo review'}
+            </p>
+            {est.decision === 'instant_quote' ? (
+              <p className="text-4xl font-black tabular-nums mt-1" style={{ color: RED, letterSpacing: '-0.03em', fontFamily: 'var(--font-display)' }}>${est.recommendedUsd.toLocaleString()}</p>
+            ) : est.decision === 'estimate_range' ? (
+              <p className="text-3xl font-black tabular-nums mt-1" style={{ color: RED, letterSpacing: '-0.03em', fontFamily: 'var(--font-display)' }}>${est.lowUsd.toLocaleString()}–${est.highUsd.toLocaleString()}</p>
+            ) : (
+              <p className="text-lg font-black mt-1 text-white">We’ll confirm your price shortly</p>
+            )}
+            <p className="text-xs mt-1.5" style={{ color: 'rgba(255,255,255,.55)', lineHeight: 1.5 }}>{est.note}</p>
+          </div>
+          <div className="px-5 py-3" style={{ borderTop: '1px solid var(--line)' }}>
+            {est.items.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {est.items.slice(0, 8).map((it, i) => (
+                  <span key={i} className="text-xs" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', borderRadius: 999, padding: '3px 9px', color: 'var(--muted)' }}>
+                    {it.quantity > 1 ? `${it.quantity}× ` : ''}{it.label}
+                  </span>
+                ))}
+              </div>
+            )}
+            {est.reviewReasons.length > 0 && (
+              <ul className="text-xs" style={{ color: 'var(--muted)', lineHeight: 1.6, listStyle: 'none', padding: 0, margin: 0 }}>
+                {est.reviewReasons.slice(0, 3).map((r, i) => <li key={i}>• {r}</li>)}
+              </ul>
+            )}
+            <p className="text-[11px] mt-2" style={{ color: 'rgba(255,255,255,.35)' }}>
+              Estimated from your photos · confirmed on site. Photos were reviewed by an automated tool; a person makes the final call.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--line)' }}>
         {props.showLow != null && (

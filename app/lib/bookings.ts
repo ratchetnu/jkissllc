@@ -1,4 +1,5 @@
 import { redis } from './redis'
+import type { StoredAiEstimate } from './ai/estimate-store'
 
 // ── Service types ────────────────────────────────────────────────────────────
 // Reusable across every line of business J Kiss runs (and future ones).
@@ -131,6 +132,7 @@ export type BookingEventAction =
   | 'zelle.uploaded' | 'zelle.replacement_uploaded' | 'zelle.approved' | 'zelle.rejected'
   | 'notification.sent' | 'notification.failed' | 'notification.resent'
   | 'customer.confirmation'
+  | 'ai.override' | 'ai.reprice'
 
 export type BookingEvent = {
   at: number
@@ -256,6 +258,7 @@ export type Booking = {
   assignedHelper?: string      // helper / second rep (shown to customer)
   disposalEstimateCents?: number // estimated dump/disposal cost (from the quote)
   disposalActualCents?: number   // actual disposal cost entered after the job
+  aiEstimate?: StoredAiEstimate  // AI photo analysis + deterministic pricing + decision (internal)
   loyaltyCode?: string         // 10% off code issued when paid in full (reuse/referral)
   archived?: boolean           // hidden from the default list (soft delete)
   archivedAt?: number
@@ -552,7 +555,7 @@ export function dollarsToCents(v: string | number): number {
 // a booking to the browser.
 export type CustomerBooking = Omit<Booking,
   'internalNotes' | 'agreementIp' | 'agreementUserAgent' | 'payments' | 'disposalEstimateCents' | 'disposalActualCents'
-  | 'events' | 'notifications' | 'replacementUpload' | 'idempotencyKey'> & {
+  | 'aiEstimate' | 'events' | 'notifications' | 'replacementUpload' | 'idempotencyKey'> & {
   balanceDueCents: number
   paymentSummary: PaymentSummaryStatus
   payments: Array<Pick<Payment, 'type' | 'method' | 'status' | 'amountCents' | 'feeCents' | 'totalChargedCents' | 'createdAt' | 'confirmedAt'> & { hasProof: boolean }>
@@ -563,10 +566,10 @@ export function customerView(b: Booking): CustomerBooking {
   // paths), the owner-notification ledger, and the disposal cost / margin numbers.
   const {
     internalNotes: _i, agreementIp: _ip, agreementUserAgent: _ua, payments,
-    disposalEstimateCents: _de, disposalActualCents: _da,
+    disposalEstimateCents: _de, disposalActualCents: _da, aiEstimate: _ai,
     events: _ev, notifications: _no, replacementUpload: _ru, idempotencyKey: _ik, ...rest
   } = b
-  void _i; void _ip; void _ua; void _de; void _da; void _ev; void _no; void _ru; void _ik
+  void _i; void _ip; void _ua; void _de; void _da; void _ai; void _ev; void _no; void _ru; void _ik
   return {
     ...rest,
     balanceDueCents: balanceDueCents(b),

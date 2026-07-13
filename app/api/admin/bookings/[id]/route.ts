@@ -16,6 +16,9 @@ import { sendSmsDetailed, getSmsStatus, toE164 } from '../../../../lib/sms'
 import { recordMessage } from '../../../../lib/messages'
 import { ensureLoyaltyCode } from '../../../../lib/promo'
 import { getStripe, stripeConfigured } from '../../../../lib/stripe'
+import { getDisposalSettings } from '../../../../lib/disposal'
+import { getCalibration } from '../../../../lib/job-learning'
+import { decideQuote } from '../../../../lib/pricing/quote-decision'
 
 export const runtime = 'nodejs'
 
@@ -432,6 +435,32 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[${stamp}] Refunded $${((refundCents - remaining) / 100).toFixed(2)} via Stripe (${ids.join(', ')})`
       extra = { refundIds: ids }
       refundedNowCents = refundCents - remaining
+      break
+    }
+    // ── AI estimate: admin price override (recorded, never silent) ───────────
+    case 'ai-override': {
+      if (!b.aiEstimate) return NextResponse.json({ error: 'No AI estimate on this booking.' }, { status: 400 })
+      const overriddenUsd = Math.round(num(body.overriddenUsd) ?? 0)
+      const reason = str(body.reason, 500)
+      if (overriddenUsd <= 0) return NextResponse.json({ error: 'Enter an override price.' }, { status: 400 })
+      if (!reason) return NextResponse.json({ error: 'A reason is required for an override.' }, { status: 400 })
+      const originalUsd = b.aiEstimate.override?.overriddenUsd ?? b.aiEstimate.pricing.recommendedUsd
+      b.aiEstimate.override = { overriddenUsd, reason, by: actor, at: new Date().toISOString() }
+      pushBookingEvent(b, { actor, action: 'ai.override', result: `$${originalUsd}→$${overriddenUsd}`, meta: { originalUsd, overriddenUsd, reason } })
+      b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[AI price override by ${actor}] $${originalUsd} → $${overriddenUsd}: ${reason}`
+      break
+    }
+    // ── AI estimate: re-run the deterministic pricing on the stored analysis ──
+    // (no new AI call — cheap; picks up pricing-config changes).
+    case 'ai-reprice': {
+      if (!b.aiEstimate?.analysis) return NextResponse.json({ error: 'No stored analysis to re-price.' }, { status: 400 })
+      const [settings, calibration] = await Promise.all([getDisposalSettings(), getCalibration()])
+      const d = decideQuote({ analysis: b.aiEstimate.analysis, settings, calibration, serviceType: b.serviceType })
+      b.aiEstimate.decision = d.decision
+      b.aiEstimate.reviewReasons = d.reviewReasons
+      b.aiEstimate.pricing = { recommendedUsd: d.recommendedUsd, lowUsd: d.rangeUsd.low, highUsd: d.rangeUsd.high, breakdown: d.breakdown }
+      b.disposalEstimateCents = d.breakdown.disposalCents
+      pushBookingEvent(b, { actor, action: 'ai.reprice', result: d.decision, meta: { recommendedUsd: d.recommendedUsd } })
       break
     }
     default:

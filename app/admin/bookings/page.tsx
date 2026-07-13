@@ -8,6 +8,7 @@ import AiFeedback from '../AiFeedback'
 import { SkeletonList } from '../../components/Skeleton'
 import { ConversationThread, type ThreadMessage } from '../messaging'
 import type { Booking, Payment, InvoicePhoto } from '../../lib/bookings'
+import type { StoredAiEstimate } from '../../lib/ai/estimate-store'
 
 // ── Local label maps + helpers (avoid bundling server lib runtime) ───────────
 const SERVICE_LABELS: Record<string, string> = {
@@ -350,6 +351,95 @@ function Dashboard() {
 
 function StatusBadge({ s }: { s: string }) {
   return <span className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ background: 'rgba(255,255,255,.06)', color: statusColor(s) }}>{STATUS_LABEL[s] ?? s}</span>
+}
+
+// ── AI Estimate panel (Phase 11) ─────────────────────────────────────────────
+// Clearly separates the four layers: AI OBSERVATION → PRICING CALCULATION →
+// ADMIN ADJUSTMENT → FINAL QUOTE. The vision model never sets the price.
+function AiEstimatePanel({ est, busy, run }: { est: StoredAiEstimate; busy: string; run: (action: string, body?: Record<string, unknown>) => void }) {
+  const a = est.analysis
+  const p = est.pricing
+  const [ovr, setOvr] = useState(String(est.override?.overriddenUsd ?? ''))
+  const [reason, setReason] = useState('')
+  const decisionColor = est.decision === 'instant_quote' ? '#34d399' : est.decision === 'estimate_range' ? '#fbbf24' : '#f87171'
+  const decisionLabel = est.decision === 'instant_quote' ? 'Instant Quote' : est.decision === 'estimate_range' ? 'Estimate Range' : 'Manual Review'
+  const finalUsd = est.override?.overriddenUsd ?? p.recommendedUsd
+  const cond = a.detectedConditions
+  const activeConds = Object.entries(cond).filter(([, v]) => v).map(([k]) => k.replace(/([A-Z])/g, ' $1').replace(/Possible$/, ' (possible)').toLowerCase())
+  const Row = ({ k, v }: { k: string; v: string }) => (
+    <div className="flex justify-between gap-3 py-1 text-sm"><span style={{ color: 'var(--muted)' }}>{k}</span><span className="text-white text-right">{v}</span></div>
+  )
+  return (
+    <div className="glass-card mt-4" style={{ borderRadius: 14, border: '1px solid rgba(224,0,42,.25)', overflow: 'hidden' }}>
+      <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2" style={{ background: 'rgba(224,0,42,.06)', borderBottom: '1px solid var(--line)' }}>
+        <p className="font-black text-white flex items-center gap-2">🤖 AI Estimate
+          <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,.08)', color: decisionColor }}>{decisionLabel}</span>
+        </p>
+        <span className="text-xs" style={{ color: 'var(--muted)' }}>{est.model || 'model n/a'} · {Math.round(a.confidence.overall * 100)}% conf · {new Date(est.createdAt).toLocaleDateString()}</span>
+      </div>
+
+      <div className="px-4 py-3 grid gap-3 sm:grid-cols-2">
+        {/* AI OBSERVATION */}
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-wide mb-1" style={{ color: 'var(--muted)' }}>AI observation</p>
+          {a.normalizedItems.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {a.normalizedItems.slice(0, 14).map((it, i) => (
+                <span key={i} className="text-xs" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', borderRadius: 999, padding: '2px 8px', color: 'var(--muted)' }}>
+                  {it.estimatedQuantity > 1 ? `${it.estimatedQuantity}× ` : ''}{it.label}{it.heavy ? ' ⚓' : ''}
+                </span>
+              ))}
+            </div>
+          ) : <p className="text-sm mb-2" style={{ color: 'var(--muted)' }}>No items identified.</p>}
+          <Row k="Volume (cu yd)" v={`${a.totalEstimatedVolumeCubicYards.likely.toFixed(1)}`} />
+          <Row k="Weight (lb)" v={`${Math.round(a.totalEstimatedWeightPounds.likely).toLocaleString()}`} />
+          <Row k="Truck fill" v={`${Math.round(a.estimatedTruckLoadFraction.likely * 100)}% · ${a.estimatedTruckLoads.likely} load(s)`} />
+          <Row k="Crew · labor" v={`${a.laborEstimate.crewSize} · ~${Math.round(a.laborEstimate.likelyMinutes)} min`} />
+          {activeConds.length > 0 && <p className="text-xs mt-1" style={{ color: '#fbbf24' }}>⚠ {activeConds.join(', ')}</p>}
+        </div>
+
+        {/* PRICING CALCULATION */}
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-wide mb-1" style={{ color: 'var(--muted)' }}>Pricing calculation ({p.breakdown.pricingVersion})</p>
+          {p.breakdown.costLines.map((l, i) => <Row key={i} k={l.label} v={usd(l.cents)} />)}
+          <div className="mt-1 pt-1" style={{ borderTop: '1px solid var(--line)' }}>
+            <Row k="Disposal trips" v={`${p.breakdown.disposalTrips} × $${Math.round((p.breakdown.disposalCents / Math.max(1, p.breakdown.disposalTrips)) / 100)}`} />
+            <Row k="Recommended" v={`$${p.recommendedUsd.toLocaleString()}`} />
+            <Row k="Range" v={`$${p.lowUsd.toLocaleString()}–$${p.highUsd.toLocaleString()}`} />
+          </div>
+        </div>
+      </div>
+
+      {est.reviewReasons.length > 0 && (
+        <div className="px-4 pb-2">
+          <p className="text-xs font-bold" style={{ color: '#fbbf24' }}>Review reasons</p>
+          <ul className="text-xs" style={{ color: 'var(--muted)', listStyle: 'none', padding: 0, margin: 0 }}>{est.reviewReasons.map((r, i) => <li key={i}>• {r}</li>)}</ul>
+        </div>
+      )}
+
+      {/* ADMIN ADJUSTMENT → FINAL QUOTE */}
+      <div className="px-4 py-3" style={{ borderTop: '1px solid var(--line)', background: 'rgba(255,255,255,.02)' }}>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Final quote</span>
+          <span className="text-lg font-black" style={{ color: '#fff' }}>${finalUsd.toLocaleString()}{est.override ? ' (overridden)' : ''}</span>
+        </div>
+        {est.override && <p className="text-xs mb-2" style={{ color: 'var(--muted)' }}>Overridden by {est.override.by}: {est.override.reason}</p>}
+        <div className="flex items-end gap-2 flex-wrap">
+          <div>
+            <label className="text-[11px]" style={{ color: 'var(--muted)' }}>Override $</label>
+            <input value={ovr} onChange={e => setOvr(e.target.value.replace(/[^0-9.]/g, ''))} inputMode="decimal" placeholder="0"
+              style={{ display: 'block', width: 90, background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', borderRadius: 8, color: '#fff', padding: '7px 10px', fontSize: 14 }} />
+          </div>
+          <input value={reason} onChange={e => setReason(e.target.value)} placeholder="Reason (required)"
+            style={{ flex: 1, minWidth: 140, background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', borderRadius: 8, color: '#fff', padding: '7px 10px', fontSize: 14 }} />
+          <button type="button" disabled={busy === 'ai-override' || !ovr || !reason.trim()} onClick={() => run('ai-override', { overriddenUsd: parseFloat(ovr), reason: reason.trim() })}
+            className="text-xs font-bold px-3 py-2 rounded-lg" style={{ background: 'var(--red)', color: '#fff', opacity: (!ovr || !reason.trim()) ? 0.5 : 1 }}>{busy === 'ai-override' ? '…' : 'Save override'}</button>
+          <button type="button" disabled={busy === 'ai-reprice'} onClick={() => run('ai-reprice')}
+            className="text-xs font-semibold px-3 py-2 rounded-lg" style={{ background: 'rgba(255,255,255,.08)', color: 'var(--muted)' }}>{busy === 'ai-reprice' ? '…' : 'Re-price'}</button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // ── Full-screen photo lightbox ───────────────────────────────────────────────
@@ -884,6 +974,8 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate }: { b: Booki
       {b.invoicePhotos && lightbox !== null && (
         <PhotoLightbox photos={b.invoicePhotos} index={lightbox} onClose={() => setLightbox(null)} onIndex={setLightbox} />
       )}
+
+      {b.aiEstimate && <AiEstimatePanel est={b.aiEstimate} busy={busy} run={run} />}
 
       {/* Tabs */}
       <div className="flex gap-1.5 mb-4 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
