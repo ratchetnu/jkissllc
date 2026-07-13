@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSession } from '../_lib/session'
+import { requireSession, getPrincipal } from '../_lib/session'
 import {
   listBookings, saveBooking, generateToken, nextBookingNumber, nextInvoiceNumber, dollarsToCents, sanitizePhotos,
   SERVICE_TYPES, type Booking, type ServiceType,
@@ -30,6 +30,11 @@ export async function POST(req: NextRequest) {
 
   const serviceType = (SERVICE_TYPES.includes(body.serviceType) ? body.serviceType : 'other') as ServiceType
   const now = Date.now()
+
+  // Owner-only "Create Test Booking": a sandbox record from the start, so it never
+  // sends the ops-created email or auto customer confirmation link below.
+  const who = await getPrincipal(req)
+  const isTest = body.isTest === true && who?.role === 'admin'
 
   try {
     const booking: Booking = {
@@ -65,11 +70,15 @@ export async function POST(req: NextRequest) {
       source: 'admin',
       status: 'booking_created',
       payments: [],
+      isTest: isTest || undefined,
+      testMarkedBy: isTest ? (who?.sub || 'admin') : undefined,
+      testMarkedAt: isTest ? now : undefined,
       createdAt: now,
       updatedAt: now,
     }
     await saveBooking(booking)
-    await emailOpsBookingCreated(booking)
+    // Sandbox records never trigger the ops-created email or auto customer link.
+    if (!isTest) await emailOpsBookingCreated(booking)
 
     // Auto-send the customer their confirmation link the moment a real booking is
     // created (default on; the form can opt out with sendLinkNow:false). Only fires
@@ -78,7 +87,7 @@ export async function POST(req: NextRequest) {
     const wantLink = body.sendLinkNow !== false && body.sendLinkNow !== 'false'
     const reachable = Boolean(booking.customerEmail || booking.customerPhone)
     let linkChannels: { email: boolean; sms: boolean } | null = null
-    if (wantLink && reachable && booking.invoiceAmountCents > 0) {
+    if (!isTest && wantLink && reachable && booking.invoiceAmountCents > 0) {
       try {
         linkChannels = await sendConfirmationLink(booking)
         booking.confirmationLinkSentAt = Date.now()
