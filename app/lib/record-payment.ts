@@ -1,6 +1,6 @@
 import type Stripe from 'stripe'
 import {
-  getBookingByToken, saveBooking, recompute, paymentSummaryStatus, pushBookingEvent,
+  getBookingByToken, saveBooking, recompute, paymentSummaryStatus, pushBookingEvent, withBookingWriteLock,
   type Booking, type Payment, type PaymentType,
 } from './bookings'
 import { emailOpsPaymentReceived, emailPaymentReceiptCustomer } from './booking-emails'
@@ -15,6 +15,14 @@ import { onPaymentCaptured } from './intake-workflow'
 export async function recordStripeSessionPayment(session: Stripe.Checkout.Session): Promise<Booking | null> {
   const token = session.metadata?.bookingToken
   if (!token) return null
+  // Serialize on the per-booking write lease so the webhook + success-URL return
+  // path can't double-apply / clobber; dedup by session id makes the loser a no-op.
+  return withBookingWriteLock(token, () => applyStripePayment(session, token), {
+    onBusy: () => getBookingByToken(token), ttlMs: 30_000,
+  })
+}
+
+async function applyStripePayment(session: Stripe.Checkout.Session, token: string): Promise<Booking | null> {
   const b = await getBookingByToken(token)
   if (!b) return null
 

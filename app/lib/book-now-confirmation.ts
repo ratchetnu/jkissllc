@@ -1,6 +1,5 @@
-import { redis } from './redis'
 import {
-  getBookingByToken, saveBooking, listBookings, pushBookingEvent,
+  getBookingByToken, saveBooking, listBookings, pushBookingEvent, withBookingWriteLock,
   type Booking, type AiJob, type AiJobErrorCode, type AiJobStatus,
 } from './bookings'
 import {
@@ -11,17 +10,10 @@ import { detectPhotoTextConflicts } from './ai/photo-text-consistency'
 import { buildConfirmedPhotoEstimate } from './ai/confirmed-analysis'
 import { supportsPhotoAi } from './book-now-ai'
 
-// Per-booking leases (setNxPx — the only atomic primitive the KV exposes). They
-// SERIALIZE the two concurrency hazards on the confirmation workflow: two submits
-// racing to the same confirmation version, and the inline + cron final-analysis
-// runners double-executing. A missed lease is fail-soft (the caller returns the
-// current state; the cron retries later), never a lost request.
-async function withBookingLock<T>(key: string, ttlMs: number, fn: () => Promise<T>, onBusy: () => T): Promise<T> {
-  let got = false
-  try { got = await redis.setNxPx(key, '1', ttlMs) } catch { got = true /* KV hiccup: don't block the customer */ }
-  if (!got) return onBusy()
-  try { return await fn() } finally { try { await redis.del(key) } catch { /* lease expires on its own */ } }
-}
+// The confirmation + final-analysis writers serialize on the UNIFIED per-booking
+// write lease (bk:wlock) shared with the admin handler and the initial-AI worker,
+// so no two side-effecting operations touch the same booking at once. `lockHeld`
+// lets an admin-triggered call skip re-acquiring a lease its caller already holds.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Durable customer inventory-confirmation + SECOND (final) analysis worker.
@@ -68,7 +60,7 @@ export type SubmitConfirmationResult = {
 export async function submitConfirmation(
   token: string,
   rawConfirmation: unknown,
-  opts: { submittedBy?: 'customer' | 'owner'; tenantId?: string; initiatedBy?: string; nowIso?: string } = {},
+  opts: { submittedBy?: 'customer' | 'owner'; tenantId?: string; initiatedBy?: string; nowIso?: string; lockHeld?: boolean } = {},
 ): Promise<SubmitConfirmationResult> {
   const incomingKey = typeof (rawConfirmation as { idempotencyKey?: unknown })?.idempotencyKey === 'string'
     ? (rawConfirmation as { idempotencyKey: string }).idempotencyKey
@@ -76,7 +68,7 @@ export async function submitConfirmation(
 
   // Serialize concurrent submits for the SAME booking so two racing submits can't
   // land the same confirmation version (which would collide on the final-job key).
-  return withBookingLock(`bk:conflock:${token}`, 15_000, async () => {
+  return withBookingWriteLock(token, async () => {
   const b = await getBookingByToken(token)
   if (!b) return { ok: false, status: 'rejected', reason: 'not_found' }
   if (b.isTest || b.archived) return { ok: false, status: 'rejected', reason: 'ineligible' }
@@ -124,7 +116,7 @@ export async function submitConfirmation(
   await saveBooking(b)
 
   return { ok: true, confirmation, status: b.finalAiJob?.status ?? 'queued' }
-  }, () => ({ ok: false as const, status: 'rejected' as const, reason: 'busy' }))
+  }, { onBusy: () => ({ ok: false as const, status: 'rejected' as const, reason: 'busy' }), ttlMs: 15_000, lockHeld: opts.lockHeld })
 }
 
 /**
@@ -183,12 +175,12 @@ export type ProcessFinalResult = {
  */
 export async function processFinalAiJob(
   token: string,
-  opts: { initiatedBy?: string; tenantId?: string } = {},
+  opts: { initiatedBy?: string; tenantId?: string; lockHeld?: boolean } = {},
 ): Promise<ProcessFinalResult> {
-  return withBookingLock(
-    `bk:finallock:${token}`, 90_000,
+  return withBookingWriteLock(
+    token,
     () => processFinalAiJobInner(token, opts),
-    () => ({ ok: false, status: 'processing', reason: 'locked' }),
+    { onBusy: () => ({ ok: false, status: 'processing', reason: 'locked' }), ttlMs: 90_000, lockHeld: opts.lockHeld },
   )
 }
 
@@ -197,7 +189,7 @@ export async function processFinalAiJob(
 // bounded retry on error. Idempotent (hasFinalEstimate guard).
 async function processFinalAiJobInner(
   token: string,
-  opts: { initiatedBy?: string; tenantId?: string } = {},
+  opts: { initiatedBy?: string; tenantId?: string; lockHeld?: boolean } = {},
 ): Promise<ProcessFinalResult> {
   const b = await getBookingByToken(token)
   if (!b) return { ok: false, status: 'failed', reason: 'not_found' }

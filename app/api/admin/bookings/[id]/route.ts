@@ -4,6 +4,7 @@ import { can } from '../../../../lib/rbac'
 import {
   getBookingByToken, saveBooking, deleteBooking, recompute, balanceDueCents, dollarsToCents,
   paymentSummaryStatus, sanitizePhotos, pushBookingEvent, generateToken, setInfoRequestToken,
+  withBookingWriteLock,
   SERVICE_TYPES, type Booking, type ServiceType, type Payment, type PaymentMethod, type PaymentType,
   type BookingStatus,
 } from '../../../../lib/bookings'
@@ -66,6 +67,14 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { id } = await params
+  // Serialize every admin write to this booking with background workers + customer
+  // writes on the unified per-booking lease (bk:wlock) — no last-write-wins clobber.
+  return withBookingWriteLock(id, () => patchBooking(req, id), {
+    onBusy: () => NextResponse.json({ error: 'This booking is being updated — please retry in a moment.' }, { status: 409 }),
+  })
+}
+
+async function patchBooking(req: NextRequest, id: string): Promise<NextResponse> {
   const b = await getBookingByToken(id)
   if (!b) return NextResponse.json({ error: 'not_found' }, { status: 404 })
 
@@ -214,7 +223,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       enqueueAiJob(b, { force: true, initiatedBy: actor, tenantId })
       if (b.aiJob) b.aiJob.attempts = 0
       await saveBooking(b)
-      const result = await processAiJob(id, { initiatedBy: actor, tenantId })
+      const result = await processAiJob(id, { initiatedBy: actor, tenantId, lockHeld: true })
       const nb = await getBookingByToken(id)
       if (nb && (result.status === 'completed' || result.status === 'manual_review' || result.status === 'failed')) {
         try { await notifyOwnerAiOutcome(nb, result.status) } catch (e) { console.error('[run-ai notify]', e) }
@@ -256,7 +265,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       enqueueFinalAiJob(b, { force: true, initiatedBy: actor, tenantId })
       if (b.finalAiJob) b.finalAiJob.attempts = 0
       await saveBooking(b)
-      const result = await processFinalAiJob(id, { initiatedBy: actor, tenantId })
+      const result = await processFinalAiJob(id, { initiatedBy: actor, tenantId, lockHeld: true })
       const nb = await getBookingByToken(id)
       if (nb && (result.status === 'completed' || result.status === 'manual_review' || result.status === 'failed')) {
         try { await notifyOwnerAiOutcome(nb, result.status) } catch (e) { console.error('[run-final-ai notify]', e) }
@@ -301,9 +310,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
       let tenantId: string | undefined
       try { tenantId = currentTenantId() } catch { /* ignore */ }
-      const sub = await submitConfirmation(id, raw, { submittedBy: 'owner', initiatedBy: actor, tenantId })
+      const sub = await submitConfirmation(id, raw, { submittedBy: 'owner', initiatedBy: actor, tenantId, lockHeld: true })
       if (!sub.ok) return NextResponse.json({ error: 'Could not save the edited inventory.' }, { status: 400 })
-      const result = await processFinalAiJob(id, { initiatedBy: actor, tenantId })
+      const result = await processFinalAiJob(id, { initiatedBy: actor, tenantId, lockHeld: true })
       const nb = await getBookingByToken(id)
       return NextResponse.json({ ok: true, booking: nb ?? b, result })
     }

@@ -1,4 +1,5 @@
 import { redis } from './redis'
+import { optimisticUpdate, type Mutate, type UpdateOutcome } from './booking-concurrency'
 import type { StoredAiEstimate } from './ai/estimate-store'
 import type { CustomerConfirmation } from './ai/confirmation-schema'
 import type { FinalAnalysisResult } from './ai/confirmed-analysis'
@@ -418,6 +419,12 @@ export type Booking = {
     notes?: string
   }
 
+  // Optimistic-concurrency token — advances on every persisted write. The CAS
+  // write path (updateBooking) rejects a save whose expected version is stale, so
+  // a concurrent writer can never be silently clobbered. Absent on legacy records
+  // (treated as 0) until their first save under the new path.
+  version?: number
+
   // Lifecycle timestamps
   createdAt: number
   updatedAt: number
@@ -495,9 +502,79 @@ export const isTestBooking = (b: Pick<Booking, 'isTest'>): boolean => !!b.isTest
 
 export async function saveBooking(b: Booking): Promise<void> {
   b.updatedAt = Date.now()
+  b.version = (b.version ?? 0) + 1   // advance the concurrency token on every write
   await redis.set(`${KEY_PREFIX}${b.token}`, JSON.stringify(b))
   await redis.set(`${KEY_NUM}${b.bookingNumber.toUpperCase()}`, b.token)
   await redis.zadd(KEY_INDEX, b.updatedAt, b.token)
+}
+
+// ── Protected write paths (per-booking concurrency control) ──────────────────
+// Lua compare-and-swap: write the booking JSON ONLY if the stored copy's version
+// still equals `expected`. Atomic on the single booking key (the KV's eval).
+const CAS_SCRIPT = `
+local raw = redis.call('GET', KEYS[1])
+local expected = tonumber(ARGV[2])
+local curv = 0
+if raw and raw ~= false then
+  local ok, obj = pcall(cjson.decode, raw)
+  if ok and type(obj) == 'table' and obj.version then curv = tonumber(obj.version) or 0 end
+end
+if curv == expected then
+  redis.call('SET', KEYS[1], ARGV[1])
+  return 1
+else
+  return 0
+end`
+
+/**
+ * CAS-protected, retrying booking update for PURE-DATA mutations. `mutate` runs on
+ * the freshest copy and re-runs on a version conflict, so no concurrent write is
+ * lost and audit events are never duplicated. Do NOT use for mutations with
+ * external side effects (Stripe/model/SMS) — a retry would repeat them; use
+ * withBookingWriteLock for those. `mutate` may return `{ abort: reason }` to stop
+ * non-retryably (controlled 409-style outcome).
+ */
+export async function updateBooking(
+  token: string,
+  mutate: Mutate<Booking>,
+  opts: { maxAttempts?: number } = {},
+): Promise<UpdateOutcome<Booking>> {
+  return optimisticUpdate<Booking>({
+    load: () => getBookingByToken(token),
+    versionOf: (b) => b.version ?? 0,
+    save: async (b, expected) => {
+      b.version = expected + 1
+      b.updatedAt = Date.now()
+      const r = await redis.eval(CAS_SCRIPT, [`${KEY_PREFIX}${token}`], [JSON.stringify(b), String(expected)])
+      if (r === 1 || r === '1') {
+        // Secondary indexes are idempotent — safe to refresh after the CAS win.
+        await redis.set(`${KEY_NUM}${b.bookingNumber.toUpperCase()}`, b.token)
+        await redis.zadd(KEY_INDEX, b.updatedAt, b.token)
+        return 'ok'
+      }
+      return 'conflict'
+    },
+  }, mutate, opts)
+}
+
+/**
+ * Short, self-expiring per-booking write LEASE. SERIALIZES a multi-step operation
+ * that has external side effects (where a CAS re-run would double them). A missed
+ * lease is fail-soft: the caller decides via `onBusy` (a durable job retries; an
+ * interactive request returns a controlled 409). `lockHeld` lets a nested call
+ * skip re-acquiring a lease its caller already holds (prevents self-deadlock).
+ */
+export async function withBookingWriteLock<T>(
+  token: string,
+  fn: () => Promise<T>,
+  opts: { onBusy: () => T | Promise<T>; ttlMs?: number; lockHeld?: boolean },
+): Promise<T> {
+  if (opts.lockHeld) return fn()
+  const key = `bk:wlock:${token}`
+  let got = false
+  try { got = await redis.setNxPx(key, '1', opts.ttlMs ?? 20_000) } catch { got = true /* KV hiccup: don't block the write */ }
+  if (!got) return await opts.onBusy()
+  try { return await fn() } finally { try { await redis.del(key) } catch { /* lease self-expires */ } }
 }
 
 export async function deleteBooking(token: string): Promise<void> {
