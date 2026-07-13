@@ -26,6 +26,17 @@ export const SERVICE_LABELS: Record<ServiceType, string> = {
 
 export const SERVICE_TYPES = Object.keys(SERVICE_LABELS) as ServiceType[]
 
+// Service families — group the raw service types into the two intake lines the
+// business runs, so the admin can tab/filter/report "Junk Removal" vs "Moving".
+export const JUNK_SERVICE_TYPES: ServiceType[] = ['junk-removal', 'estate-cleanout', 'garage-cleanout', 'eviction']
+export const MOVING_SERVICE_TYPES: ServiceType[] = ['moving', 'appliance-delivery', 'freight']
+export type ServiceFamily = 'junk' | 'moving' | 'other'
+export function serviceFamily(t: ServiceType): ServiceFamily {
+  if (JUNK_SERVICE_TYPES.includes(t)) return 'junk'
+  if (MOVING_SERVICE_TYPES.includes(t)) return 'moving'
+  return 'other'
+}
+
 // ── Booking lifecycle ────────────────────────────────────────────────────────
 export type BookingStatus =
   | 'quote_received'
@@ -145,6 +156,7 @@ export type BookingEvent = {
 
 // ── Owner-notification ledger (request Part 7) ───────────────────────────────
 export type NotificationKind =
+  | 'new_submission'           // NEW BOOK NOW REQUEST → owner (ledgered, was fire-and-forget)
   | 'zelle_review'             // ZELLE PAYMENT REVIEW REQUIRED → owner
   | 'new_confirmed_booking'    // NEW CONFIRMED BOOKING → owner (after Stripe verify)
   | 'zelle_rejected_customer'  // proof rejected → customer, with replacement link
@@ -268,6 +280,21 @@ export type Booking = {
   isTest?: boolean
   testMarkedBy?: string        // who flagged it as test
   testMarkedAt?: number
+
+  // ── Structured "Book Now" submission detail (public /quote wizard) ──────────
+  // These are the discrete choices the customer made in the online wizard, kept as
+  // first-class fields (NOT crammed into a notes string) so the admin can display,
+  // filter, and report on them. Present only on source:'online' Book Now records.
+  bookNow?: {
+    loadSize?: string              // raw key, e.g. 'half_truck'
+    loadSizeLabel?: string         // human label, e.g. 'Half Truck'
+    timing?: string                // requested timing (e.g. 'asap', 'flexible', a window)
+    addOns?: string[]              // human add-on labels the customer selected
+    contactMethod?: string         // 'phone' | 'email' | 'text'
+    requestedDate?: string         // yyyy-mm-dd the customer preferred
+    shownEstimateLowCents?: number // the instant range the customer was shown (audit)
+    shownEstimateHighCents?: number
+  }
 
   // Status + payments
   status: BookingStatus

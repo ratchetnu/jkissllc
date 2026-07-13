@@ -66,13 +66,16 @@ async function sendOwnerNotification(
   }
 
   if (wantEmail) {
-    try {
-      await emailRaw({ to: [emailTo], subject: msg.emailSubject, html: msg.emailHtml })
-      recordNotificationAttempt(b, { kind, channel: 'email', to: emailTo, status: 'sent', retryCount: retryBase })
-      anySent = true
-    } catch (e) {
-      recordNotificationAttempt(b, { kind, channel: 'email', to: emailTo, status: 'failed', error: e instanceof Error ? e.message : 'email failed', retryCount: retryBase })
-    }
+    // emailRaw now returns the provider result — a Resend `.error` (unverified
+    // domain, bad key, rate limit) is a FAILURE recorded in the ledger, not a
+    // silent success.
+    const r = await emailRaw({ to: [emailTo], subject: msg.emailSubject, html: msg.emailHtml })
+    recordNotificationAttempt(b, {
+      kind, channel: 'email', to: emailTo,
+      status: r.ok ? 'sent' : 'failed', providerId: r.ok ? r.id : undefined,
+      error: r.ok ? undefined : r.error, retryCount: retryBase,
+    })
+    if (r.ok) anySent = true
   }
 
   pushBookingEvent(b, {
@@ -86,6 +89,40 @@ async function sendOwnerNotification(
 }
 
 // ── Templates ────────────────────────────────────────────────────────────────
+
+/**
+ * A new Book Now request came in (status quote_received) — alert the owner on the
+ * durable ledger (email + optional SMS), NOT the old fire-and-forget email. Skipped
+ * for sandbox test records. Idempotent per booking (dedup by kind).
+ */
+export async function notifyOwnerNewSubmission(b: Booking, opts: { force?: boolean; resend?: boolean } = {}) {
+  if (b.isTest) return { sent: false, deduped: false } // sandbox records never alert
+  const url = ownerBookingUrl(b)
+  const est = (b.aiEstimate && !b.aiEstimate.override)
+    ? `$${b.aiEstimate.pricing.lowUsd}–$${b.aiEstimate.pricing.highUsd}`
+    : (b.invoiceAmountCents > 0 ? fmtUSD(b.invoiceAmountCents) : 'to be priced')
+  const sms =
+    `${COMPANY.legalNameUpper}: NEW BOOK NOW REQUEST\n` +
+    `Booking: ${b.bookingNumber}\n` +
+    `Customer: ${b.customerName}\n` +
+    `Service: ${SERVICE_LABELS[b.serviceType]}\n` +
+    `Location: ${locationLabel(b)}\n` +
+    `Est: ${est}\n` +
+    `Review: ${url}`
+  const emailHtml =
+    `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif">` +
+    `<h2 style="margin:0 0 8px">New Book Now request</h2>` +
+    `<p style="margin:0 0 12px;color:#333">A customer submitted a request on your site. Review, price, and send a quote.</p>` +
+    `<table style="font-size:14px;color:#222">` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Booking</td><td><strong>${b.bookingNumber}</strong></td></tr>` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Customer</td><td>${b.customerName}</td></tr>` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Service</td><td>${SERVICE_LABELS[b.serviceType]}</td></tr>` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Location</td><td>${locationLabel(b)}</td></tr>` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Photos</td><td>${b.invoicePhotos?.length ?? 0}</td></tr>` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Estimate</td><td>${est}</td></tr></table>` +
+    `<p style="margin:16px 0 0"><a href="${url}" style="background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px;display:inline-block">Review in OpsPilot</a></p></div>`
+  return sendOwnerNotification(b, 'new_submission', { sms, emailSubject: `New Book Now request — ${b.bookingNumber}`, emailHtml }, opts)
+}
 
 /** Immediately after a Zelle proof is uploaded — owner must review it. */
 export async function notifyOwnerZelleReview(b: Booking, payment: Payment, opts: { force?: boolean; resend?: boolean } = {}) {
@@ -140,6 +177,7 @@ export async function notifyOwnerNewConfirmedBooking(b: Booking, payment: Paymen
 
 /** Owner-initiated resend of the most relevant pending owner notification. */
 export async function resendOwnerNotification(b: Booking, kind: NotificationKind, payment?: Payment): Promise<{ sent: boolean }> {
+  if (kind === 'new_submission') return notifyOwnerNewSubmission(b, { resend: true })
   if (kind === 'zelle_review' && payment) return notifyOwnerZelleReview(b, payment, { resend: true })
   if (kind === 'new_confirmed_booking' && payment) return notifyOwnerNewConfirmedBooking(b, payment, { resend: true })
   return { sent: false }

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { Resend } from 'resend'
 import { rateLimit } from '../../lib/rate-limit'
-import { escapeHtml, isValidEmail } from '../../lib/validators'
+import { isValidEmail } from '../../lib/validators'
 import { isBlockedBot } from '../../lib/botcheck'
 import { getPromo, validatePromo, normalizeCode } from '../../lib/promo'
 import { getDisposalSettings, priceJob, categoryFor, type DisposalQuote } from '../../lib/disposal'
@@ -112,7 +111,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json()
   const {
     pickupZip, deliveryZip,
-    pallets, weight, serviceType, timing, loadSize,
+    pallets, serviceType, timing, loadSize,
     name, email, phone, company, notes, referral, promo,
     // Structured fields for persisting the request as an OpsPilot booking.
     bookService, pickupAddress, dropoffAddress, preferredDate, contactMethod, idempotencyKey, analysisId,
@@ -124,7 +123,6 @@ export async function POST(request: NextRequest) {
   const isJunk = serviceType === 'junk-removal'
   const isEviction = serviceType === 'eviction'
   const isJobBased = isJunk || isEviction
-  const jobLabel = isEviction ? 'Property Cleanout' : 'Junk Removal'
   const LOAD_LABELS: Record<string, string> = {
     'few-items': 'A few items',
     quarter: 'About a quarter truck',
@@ -142,7 +140,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Both ZIP codes must be 5 digits.' }, { status: 400 })
   }
   const palletCount = Math.max(0, Math.min(20, parseInt(pallets, 10) || 0))
-  const lbs = Math.max(0, Math.min(20000, parseInt(weight, 10) || 0))
 
   // ZIP → lat/lon
   const [from, to] = await Promise.all([lookupZip(pickupZip), lookupZip(deliveryZip)])
@@ -188,7 +185,6 @@ export async function POST(request: NextRequest) {
     low = disposal.low + addOnTotal
     high = disposal.high + addOnTotal
   }
-  const distanceLabel = `${Math.round(miles)} mi (${Math.round(miles * 2)} mi round trip)`
 
   // Promo code: validate it, preview the discount on a delivery estimate, and
   // carry the code into the lead + booking prefill so it can be applied for real.
@@ -213,54 +209,13 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const safe = {
-    pickupZip:    escapeHtml(pickupZip),
-    deliveryZip:  escapeHtml(deliveryZip),
-    pickupLabel:  `${from.city}, ${from.state} ${pickupZip}`,
-    deliveryLabel:`${to.city}, ${to.state} ${deliveryZip}`,
-    pallets:      String(palletCount),
-    weight:       String(lbs),
-    serviceType:  escapeHtml(serviceType),
-    timing:       escapeHtml(timing),
-    loadSize:     escapeHtml(LOAD_LABELS[loadSize] ?? loadSize) || '—',
-    name:         escapeHtml(name),
-    email:        escapeHtml(email),
-    phone:        escapeHtml(phone) || '—',
-    company:      escapeHtml(company) || '—',
-    notes:        escapeHtml(notes) || '—',
-    referral:     escapeHtml(referral) || '—',
-  }
 
-  const resend = new Resend(process.env.RESEND_API_KEY)
 
   try {
     // Junk-removal leads carry a job location + load-size hint; delivery quotes
     // carry the full route + the price range the customer was shown.
-    const jobRows = isJobBased
-      ? `
-            <tr><td style="padding:6px 0;color:#999;width:140px">Job Location</td><td style="padding:6px 0;font-weight:600">${safe.pickupLabel}</td></tr>
-            <tr><td style="padding:6px 0;color:#999">Est. Load Size</td><td style="padding:6px 0">${safe.loadSize}</td></tr>
-            <tr><td style="padding:6px 0;color:#999">Timing</td><td style="padding:6px 0">${safe.timing}</td></tr>`
-      : `
-            <tr><td style="padding:6px 0;color:#999;width:140px">Pickup</td><td style="padding:6px 0;font-weight:600">${safe.pickupLabel}</td></tr>
-            <tr><td style="padding:6px 0;color:#999">Delivery</td><td style="padding:6px 0;font-weight:600">${safe.deliveryLabel}</td></tr>
-            <tr><td style="padding:6px 0;color:#999">Distance</td><td style="padding:6px 0;font-weight:600">${distanceLabel}</td></tr>
-            <tr><td style="padding:6px 0;color:#999">Pallets</td><td style="padding:6px 0">${safe.pallets}</td></tr>
-            <tr><td style="padding:6px 0;color:#999">Weight</td><td style="padding:6px 0">${safe.weight} lbs</td></tr>
-            <tr><td style="padding:6px 0;color:#999">Service Type</td><td style="padding:6px 0">${safe.serviceType}</td></tr>
-            <tr><td style="padding:6px 0;color:#999">Timing</td><td style="padding:6px 0">${safe.timing}</td></tr>
-            ${fuelCharge > 0 ? `<tr><td style="padding:6px 0;color:#999">Fuel Charge</td><td style="padding:6px 0">$${fuelCharge} (${Math.round(miles * 2)} mi round trip)</td></tr>` : ''}
-            ${addOnLabels.length ? `<tr><td style="padding:6px 0;color:#999">Add-ons</td><td style="padding:6px 0">${escapeHtml(addOnLabels.join(', '))}</td></tr>` : ''}`
-
-    // One-tap "Create Booking" deep link: opens the admin new-booking form
-    // pre-filled with this customer's details (?new=1&…).
-    const bookingParams = new URLSearchParams({ new: '1', name: name || '', email: email || '', phone: phone || '', service: isJunk ? 'junk-removal' : isEviction ? 'eviction' : 'freight' })
-    if (isJobBased) bookingParams.set('jobSite', `${from.city}, ${from.state} ${pickupZip}`)
-    else { bookingParams.set('pickup', `${from.city}, ${from.state} ${pickupZip}`); bookingParams.set('dropoff', `${to.city}, ${to.state} ${deliveryZip}`) }
-    if (disposal) bookingParams.set('disposalEst', String(Math.round(disposal.disposalCents / 100)))
+    // A compact description carried onto the persisted booking's internal notes.
     const desc = [notes, isJobBased ? `Est. load: ${LOAD_LABELS[loadSize] ?? loadSize}` : '', timing ? `Timing: ${timing}` : '', addOnLabels.length ? `Add-ons: ${addOnLabels.join(', ')}` : '', promoCode ? `Promo: ${promoCode}` : '', disposal ? `Disposal est $${Math.round(disposal.disposalCents / 100)} · ${disposal.confidence} confidence` : ''].filter(Boolean).join(' · ')
-    if (desc) bookingParams.set('desc', desc)
-    const createUrl = `${COMPANY.siteUrl}/admin/bookings?${bookingParams.toString()}`
 
     // ── Persist the request as a booking so it appears in OpsPilot ──────────
     // Done BEFORE the ops email so the email can link straight to the real record
@@ -279,6 +234,10 @@ export async function POST(request: NextRequest) {
         description: desc || notes || undefined,
         photos: photoUrls,
         jobUnits: unitsForLoad(loadSize),
+        loadSize: isJobBased && loadSize ? String(loadSize) : undefined,
+        loadSizeLabel: isJobBased && loadSize ? (LOAD_LABELS[loadSize] ?? String(loadSize)) : undefined,
+        timing: timing ? String(timing) : undefined,
+        addOnLabels: addOnLabels.length ? addOnLabels : undefined,
         preferredDate,
         contactMethod,
         promoCode: promoCode || undefined,
@@ -292,67 +251,6 @@ export async function POST(request: NextRequest) {
     } catch (e) {
       console.error('[quote] persist request', e)
     }
-
-    // Ops CTA: open the persisted booking's detail when we have it; otherwise fall
-    // back to the pre-filled create form (only reached if persistence failed).
-    const ctaUrl = request_out ? `${COMPANY.siteUrl}/admin/bookings?b=${encodeURIComponent(request_out.number)}` : createUrl
-    const ctaLabel = request_out ? `Review Request ${request_out.number} →` : 'Create Booking →'
-    const ctaHint = request_out
-      ? 'Opens this request in your admin — photos, details, and quote/message/schedule actions are ready. (Sign in if prompted.)'
-      : 'Opens your admin with a new booking pre-filled from this request. (Sign in if prompted.)'
-
-    // Notify ops
-    await resend.emails.send({
-      from: COMPANY.emailFrom,
-      to: [COMPANY.email, COMPANY.ownerEmail],
-      replyTo: email as string,
-      subject: isJobBased
-        ? `${jobLabel} Request — ${safe.pickupLabel} (${safe.loadSize})`
-        : `Quote Request — ${safe.pickupLabel} → ${safe.deliveryLabel} (${distanceLabel})`,
-      html: `
-        <div style="font-family:sans-serif;max-width:640px;margin:0 auto">
-          <h2 style="color:${COMPANY.brand.red};margin-bottom:4px">${isJobBased ? `${jobLabel} Request` : 'Instant Quote Request'}</h2>
-          <p style="color:#666;margin-top:0">Submitted via ${COMPANY.domain}/quote · Customer was shown $${low.toLocaleString()}–$${high.toLocaleString()}</p>
-          ${disposal ? `<table style="width:100%;border-collapse:collapse;background:#fafafa;border-radius:8px;margin:8px 0"><tr><td colspan="2" style="padding:8px 10px;font-weight:700;color:${COMPANY.brand.red}">Pricing intelligence (internal)</td></tr>
-            <tr><td style="padding:4px 10px;color:#999;width:200px">Truck fill / loads / trips</td><td style="padding:4px 10px;font-weight:600">${disposal.fillPct}% · ${disposal.truckLoads} load${disposal.truckLoads > 1 ? 's' : ''} · ${disposal.landfillTrips} trip${disposal.landfillTrips > 1 ? 's' : ''}</td></tr>
-            <tr><td style="padding:4px 10px;color:#999">Disposal estimate</td><td style="padding:4px 10px;font-weight:600">$${Math.round(disposal.disposalCents / 100)} ${disposal.requiresReview ? '⚠ review' : ''}</td></tr>
-            <tr><td style="padding:4px 10px;color:#999">Labor estimate</td><td style="padding:4px 10px">$${Math.round(disposal.laborCents / 100)}</td></tr>
-            <tr><td style="padding:4px 10px;color:#999">Cost basis</td><td style="padding:4px 10px">$${Math.round(disposal.costBasisCents / 100)}</td></tr>
-            <tr><td style="padding:4px 10px;color:#999">Est. profit (at low)</td><td style="padding:4px 10px;font-weight:600">$${Math.round(disposal.profitLowCents / 100)}</td></tr>
-            <tr><td style="padding:4px 10px;color:#999">Confidence</td><td style="padding:4px 10px;font-weight:600;text-transform:uppercase">${disposal.confidence}</td></tr>
-            <tr><td style="padding:4px 10px;color:#999">Category</td><td style="padding:4px 10px">${disposal.category}</td></tr>
-            </table>` : ''}
-
-          <div style="margin:18px 0">
-            <a href="${ctaUrl}" style="display:inline-block;background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;font-size:15px;padding:13px 24px;border-radius:8px">${ctaLabel}</a>
-            <p style="color:#999;font-size:12px;margin:8px 0 0">${ctaHint}</p>
-          </div>
-
-          <h3 style="margin-bottom:8px">${isJobBased ? 'Job' : 'Route'}</h3>
-          <table style="width:100%;border-collapse:collapse">${jobRows}
-          </table>
-
-          <h3 style="margin-top:20px;margin-bottom:8px">Customer</h3>
-          <table style="width:100%;border-collapse:collapse">
-            <tr><td style="padding:6px 0;color:#999;width:140px">Name</td><td style="padding:6px 0;font-weight:600">${safe.name}</td></tr>
-            <tr><td style="padding:6px 0;color:#999">Company</td><td style="padding:6px 0">${safe.company}</td></tr>
-            <tr><td style="padding:6px 0;color:#999">Email</td><td style="padding:6px 0"><a href="mailto:${safe.email}">${safe.email}</a></td></tr>
-            <tr><td style="padding:6px 0;color:#999">Phone</td><td style="padding:6px 0">${safe.phone}</td></tr>
-            ${safe.referral !== '—' ? `<tr><td style="padding:6px 0;color:#999">Heard via</td><td style="padding:6px 0;font-weight:600">${safe.referral}</td></tr>` : ''}
-            ${promoCode ? `<tr><td style="padding:6px 0;color:#999">Promo</td><td style="padding:6px 0;font-weight:600">${escapeHtml(promoCode)}${promoPct ? ` (${promoPct}% off)` : ''}</td></tr>` : ''}
-          </table>
-
-          <p style="color:#999;margin:18px 0 6px 0">${isJobBased ? 'What needs to go' : 'Notes'}</p>
-          <p style="background:#f9f9f9;padding:14px;border-radius:8px;margin:0;white-space:pre-wrap">${safe.notes}</p>
-
-          ${photoUrls.length ? `
-          <p style="color:#999;margin:18px 0 6px 0">Photos (${photoUrls.length})</p>
-          <div style="display:flex;flex-wrap:wrap;gap:8px">
-            ${photoUrls.map(u => `<a href="${u}" style="display:inline-block"><img src="${u}" alt="Job photo" width="92" height="92" style="width:92px;height:92px;object-fit:cover;border-radius:8px;border:1px solid #eee" /></a>`).join('')}
-          </div>` : ''}
-        </div>
-      `,
-    })
 
     // Job-based services now get an instant, disposal-protected price range.
     if (isJobBased) {

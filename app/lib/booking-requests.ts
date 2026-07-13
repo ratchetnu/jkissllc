@@ -6,6 +6,7 @@ import {
 import { SERVICE_TYPES } from './bookings'
 import { getDraftEstimate } from './ai/estimate-store'
 import { onLeadPersisted } from './intake-workflow'
+import { notifyOwnerNewSubmission } from './booking-notify'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public "Book Now" quote requests → persisted OpsPilot bookings.
@@ -45,6 +46,13 @@ export type QuoteRequestInput = {
   referralSource?: string
   idempotencyKey?: string
   analysisId?: string               // draft AI estimate to attach (from /api/quote/analyze)
+
+  // Discrete wizard selections — stored as structured fields on the booking (see
+  // Booking.bookNow) so the admin renders them as usable columns, not a notes blob.
+  loadSize?: string
+  loadSizeLabel?: string
+  timing?: string
+  addOnLabels?: string[]
 }
 
 const REQ_IDEM_TTL_MS = 24 * 60 * 60_000
@@ -65,6 +73,24 @@ function buildInternalNote(input: QuoteRequestInput): string {
     'Needs review → send a firm quote, then set the invoice + arrival window.',
   ]
   return parts.filter(Boolean).join(' ')
+}
+
+// Build the structured Book Now detail block from a public submission — a pure
+// mapping (no I/O) so it can be unit-tested directly. Returns undefined only when
+// there is nothing worth recording, keeping legacy records clean.
+export function buildBookNowDetail(input: QuoteRequestInput): NonNullable<Booking['bookNow']> | undefined {
+  const requestedDate = isoDate(input.preferredDate)
+  const detail: NonNullable<Booking['bookNow']> = {
+    loadSize: input.loadSize || undefined,
+    loadSizeLabel: input.loadSizeLabel || undefined,
+    timing: input.timing || undefined,
+    addOns: input.addOnLabels?.length ? input.addOnLabels : undefined,
+    contactMethod: input.contactMethod || undefined,
+    requestedDate,
+    shownEstimateLowCents: input.estimateLow && input.estimateLow > 0 ? Math.round(input.estimateLow * 100) : undefined,
+    shownEstimateHighCents: input.estimateHigh && input.estimateHigh > 0 ? Math.round(input.estimateHigh * 100) : undefined,
+  }
+  return Object.values(detail).some(v => v !== undefined) ? detail : undefined
 }
 
 /**
@@ -133,6 +159,9 @@ export async function persistQuoteRequest(input: QuoteRequestInput): Promise<Boo
     referralSource: input.referralSource,
     idempotencyKey: idem,
 
+    // Structured Book Now selections (first-class, not a notes blob) — see Booking.bookNow.
+    bookNow: buildBookNowDetail(input),
+
     status: 'quote_received',
     payments: [],
     events: [],
@@ -171,6 +200,11 @@ export async function persistQuoteRequest(input: QuoteRequestInput): Promise<Boo
   // Governed intake: upsert Customer, project Lead, publish LeadCreated/QuoteRequested
   // (+ QuoteGenerated). Flag-gated + fail-soft — a no-op today, never blocks the save.
   await onLeadPersisted(booking)
+
+  // Durable, ledgered owner notification for the new Book Now request (email + optional
+  // SMS, recorded on the booking with provider id / status / error). This REPLACES the
+  // old fire-and-forget /api/quote ops email so a delivery failure can never be silent.
+  try { await notifyOwnerNewSubmission(booking) } catch (e) { console.error('[booking-requests] owner notify', e) }
 
   if (idem) {
     await redis.set(`bk:idem:${idem}`, booking.token)

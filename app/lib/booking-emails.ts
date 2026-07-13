@@ -81,18 +81,33 @@ function locationBlock(b: Booking): string {
   ])
 }
 
-async function send(args: { to: string[]; subject: string; html: string; replyTo?: string }): Promise<void> {
+export type EmailResult = { ok: boolean; id?: string; error?: string }
+
+async function send(args: { to: string[]; subject: string; html: string; replyTo?: string }): Promise<EmailResult> {
   const client = resend()
-  if (!client) return
+  if (!client) {
+    console.error('[booking-emails] not sent — RESEND_API_KEY missing:', args.subject)
+    return { ok: false, error: 'email provider not configured (RESEND_API_KEY missing)' }
+  }
   try {
-    await client.emails.send({ from: FROM, to: args.to, replyTo: args.replyTo, subject: args.subject, html: args.html })
+    // Resend returns { data, error } — a provider rejection (unverified domain,
+    // invalid key, rate limit, bad recipient) sets `error` WITHOUT throwing, so it
+    // MUST be inspected or the failure is silent. (This was the root cause of the
+    // missing owner notification.)
+    const { data, error } = await client.emails.send({ from: FROM, to: args.to, replyTo: args.replyTo, subject: args.subject, html: args.html })
+    if (error) {
+      console.error('[booking-emails] provider error:', args.subject, error.message)
+      return { ok: false, error: error.message || 'email provider error' }
+    }
+    return { ok: true, id: data?.id }
   } catch (err) {
     console.error('[booking-emails]', args.subject, err)
+    return { ok: false, error: err instanceof Error ? err.message : 'email failed' }
   }
 }
 
 // Generic raw send (no booking shell) — used by owner-alert notifications & internal ops.
-export async function emailRaw(args: { to: string[]; subject: string; html: string; replyTo?: string }): Promise<void> {
+export async function emailRaw(args: { to: string[]; subject: string; html: string; replyTo?: string }): Promise<EmailResult> {
   return send(args)
 }
 

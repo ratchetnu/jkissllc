@@ -10,6 +10,7 @@ import { ConversationThread, type ThreadMessage } from '../messaging'
 import WorkflowTimeline from './WorkflowTimeline'
 import ModifyEstimate from './ModifyEstimate'
 import type { Booking, Payment, InvoicePhoto } from '../../lib/bookings'
+import { serviceFamily } from '../../lib/bookings'
 import type { StoredAiEstimate } from '../../lib/ai/estimate-store'
 
 // ── Local label maps + helpers (avoid bundling server lib runtime) ───────────
@@ -150,6 +151,8 @@ function isNewRequest(b: Booking): boolean {
 function matchesStatusFilter(b: Booking, f: string): boolean {
   if (f === 'all') return true
   if (f === 'requests') return b.source === 'online'
+  if (f === 'junk') return serviceFamily(b.serviceType) === 'junk'
+  if (f === 'moving') return serviceFamily(b.serviceType) === 'moving'
   if (f === 'zelle') return b.status === 'pending_zelle_verification'
   if (f === 'cancelled') return b.status === 'cancelled'
   if (f === 'completed') return b.status === 'completed'
@@ -170,7 +173,7 @@ function Dashboard() {
   const [showNew, setShowNew] = useState(false)
   const [editing, setEditing] = useState(false)
   const [prefill, setPrefill] = useState<Prefill | null>(null)
-  const [statusFilter, setStatusFilter] = useState<'active' | 'requests' | 'zelle' | 'all' | 'unpaid' | 'unscheduled' | 'completed' | 'cancelled'>('active')
+  const [statusFilter, setStatusFilter] = useState<'active' | 'requests' | 'junk' | 'moving' | 'zelle' | 'all' | 'unpaid' | 'unscheduled' | 'completed' | 'cancelled'>('active')
   const [showArchived, setShowArchived] = useState(false)
   const [showTest, setShowTest] = useState(false)
   const [isOwner, setIsOwner] = useState(false)
@@ -263,7 +266,7 @@ function Dashboard() {
     setChecked(prev => { const n = new Set(prev); n.has(token) ? n.delete(token) : n.add(token); return n })
   }
 
-  const STATUS_FILTERS = ['active', 'requests', 'zelle', 'unpaid', 'unscheduled', 'completed', 'cancelled', 'all'] as const
+  const STATUS_FILTERS = ['active', 'requests', 'junk', 'moving', 'zelle', 'unpaid', 'unscheduled', 'completed', 'cancelled', 'all'] as const
   // New online "Book Now" submissions awaiting the owner's first action.
   const newRequestCount = useMemo(() => items.filter(isNewRequest).length, [items])
 
@@ -305,7 +308,7 @@ function Dashboard() {
               {STATUS_FILTERS.map(f => (
                 <button key={f} onClick={() => setStatusFilter(f)} className="text-xs font-semibold px-3 py-1.5 rounded-lg capitalize inline-flex items-center gap-1.5"
                   style={{ background: statusFilter === f && !showArchived ? 'var(--red)' : 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: statusFilter === f && !showArchived ? '#fff' : 'var(--muted)' }}>
-                  {f === 'requests' ? 'Requests' : f}
+                  {f === 'requests' ? 'Requests' : f === 'junk' ? 'Junk Removal' : f === 'moving' ? 'Moving' : f}
                   {f === 'requests' && newRequestCount > 0 && (
                     <span style={{ background: statusFilter === f && !showArchived ? '#fff' : 'var(--red)', color: statusFilter === f && !showArchived ? 'var(--red)' : '#fff', borderRadius: 999, fontSize: 10, fontWeight: 800, minWidth: 16, height: 16, padding: '0 4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{newRequestCount}</span>
                   )}
@@ -564,7 +567,7 @@ function BookingCard({ b, onClick, checked, onCheck }: { b: Booking; onClick: ()
             <p className="text-xs mt-0.5 flex items-center gap-1.5 flex-wrap" style={{ color: 'var(--muted)' }}>
               <span className="font-mono">{b.bookingNumber}</span>
               <span>· {SERVICE_LABELS[b.serviceType] ?? b.serviceType}</span>
-              {b.source === 'online' && <span style={{ background: 'rgba(255,255,255,.06)', color: '#9ca3af', borderRadius: 6, fontSize: 10, fontWeight: 700, padding: '1px 6px' }}>🌐 Website Book Now</span>}
+              {b.source === 'online' && <span style={{ background: 'var(--red)', color: '#fff', borderRadius: 6, fontSize: 10, fontWeight: 800, padding: '2px 7px', letterSpacing: '.04em' }}>⚡ BOOK NOW</span>}
               {b.invoicePhotos && b.invoicePhotos.length > 0 && <span style={{ color: '#9ca3af' }}>· 📷 {b.invoicePhotos.length}</span>}
               {b.assignedTo ? <span>· 👷 {b.assignedTo}</span> : null}
             </p>
@@ -966,6 +969,14 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
         </div>
       )}
 
+      {b.source === 'online' && (
+        <div className="mb-3 px-3 py-2 flex items-center gap-2 flex-wrap" style={{ borderRadius: 12, background: 'rgba(224,0,42,.12)', border: '1px solid var(--red)' }}>
+          <span className="text-xs font-black px-2 py-0.5 rounded" style={{ background: 'var(--red)', color: '#fff', letterSpacing: '.05em' }}>⚡ BOOK NOW</span>
+          <span className="text-sm font-bold text-white">Online customer submission</span>
+          {!!b.createdAt && <span className="text-xs" style={{ color: 'var(--muted)' }}>· {new Date(b.createdAt).toLocaleString()}</span>}
+        </div>
+      )}
+
       <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
         <div className="flex items-start justify-between gap-3 mb-3">
           <div>
@@ -1030,6 +1041,21 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
 
       {b.invoicePhotos && lightbox !== null && (
         <PhotoLightbox photos={b.invoicePhotos} index={lightbox} onClose={() => setLightbox(null)} onIndex={setLightbox} />
+      )}
+
+      {/* Structured Book Now selections — first-class fields, not a notes blob. */}
+      {b.bookNow && (b.bookNow.loadSizeLabel || b.bookNow.timing || b.bookNow.requestedDate || b.bookNow.contactMethod || b.bookNow.addOns?.length || (b.bookNow.shownEstimateHighCents ?? 0) > 0) && (
+        <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
+          <p className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: 'var(--muted)' }}>📥 Book Now Request Detail</p>
+          <KV k="Load size" v={b.bookNow.loadSizeLabel} />
+          <KV k="Requested timing" v={b.bookNow.timing} />
+          <KV k="Requested date" v={b.bookNow.requestedDate} />
+          <KV k="Preferred contact" v={b.bookNow.contactMethod} />
+          <KV k="Add-ons" v={b.bookNow.addOns?.length ? b.bookNow.addOns.join(', ') : undefined} />
+          {(b.bookNow.shownEstimateHighCents ?? 0) > 0 && (
+            <KV k="Instant estimate shown" v={`${usd(b.bookNow.shownEstimateLowCents ?? 0)} – ${usd(b.bookNow.shownEstimateHighCents ?? 0)}`} />
+          )}
+        </div>
       )}
 
       {b.aiEstimate && <AiEstimatePanel est={b.aiEstimate} busy={busy} run={run} />}
