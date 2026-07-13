@@ -8,7 +8,10 @@ import { getCalibration } from '../../lib/job-learning'
 import { COMPANY } from '../../lib/company'
 import { persistQuoteRequest } from '../../lib/booking-requests'
 import { unitsForLoad } from '../../lib/availability'
-import { SERVICE_TYPES, type ServiceType } from '../../lib/bookings'
+import { SERVICE_TYPES, getBookingByToken, type ServiceType } from '../../lib/bookings'
+import { submitConfirmation, processFinalAiJob } from '../../lib/book-now-confirmation'
+import { projectCustomerFinalState, type CustomerFinalState } from '../../lib/ai/confirmation-ui'
+import { recordFunnelEvent } from '../../lib/analytics-events'
 
 // Look up a US ZIP via zippopotam.us (free, no key required).
 async function lookupZip(zip: string): Promise<{ lat: number; lon: number; city: string; state: string } | null> {
@@ -223,6 +226,7 @@ export async function POST(request: NextRequest) {
     // otherwise create a DUPLICATE. Best-effort: a storage hiccup must not deny the
     // customer their estimate or block the ops email.
     let request_out: { number: string; token: string } | undefined
+    let final: CustomerFinalState | undefined
     try {
       const svcType: ServiceType = SERVICE_TYPES.includes(bookService) ? bookService : 'other'
       const persisted = await persistQuoteRequest({
@@ -248,6 +252,26 @@ export async function POST(request: NextRequest) {
         analysisId: typeof analysisId === 'string' ? analysisId : undefined,
       })
       if (persisted) request_out = { number: persisted.bookingNumber, token: persisted.token }
+
+      // ── Guided confirmation: run the SECOND (final) governed analysis on the
+      // SERVER (never the browser). Idempotent + durable — if this inline attempt
+      // fails or times out, the cron worker recovers the queued finalAiJob. ──
+      if (persisted && isJobBased && body.confirmation && typeof body.confirmation === 'object') {
+        try {
+          const nowIso = new Date().toISOString()
+          await recordFunnelEvent('confirmation_submitted', nowIso)
+          const sub = await submitConfirmation(persisted.token, body.confirmation, { submittedBy: 'customer' })
+          if (sub.ok) {
+            await recordFunnelEvent('final_analysis_started', nowIso)
+            const res = await processFinalAiJob(persisted.token, { initiatedBy: 'customer' })
+            if (res.finalDecision === 'quote_ready') await recordFunnelEvent('final_analysis_completed', nowIso)
+            else if (res.finalDecision === 'awaiting_owner_approval') await recordFunnelEvent('final_routed_owner_approval', nowIso)
+            else if (res.finalDecision === 'manual_review') await recordFunnelEvent('final_routed_manual_review', nowIso)
+            const after = await getBookingByToken(persisted.token)
+            if (after) final = projectCustomerFinalState(after)
+          }
+        } catch (e) { console.error('[quote] final analysis', e); /* cron recovers */ }
+      }
     } catch (e) {
       console.error('[quote] persist request', e)
     }
@@ -257,6 +281,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         ok: true,
         request: request_out,
+        final,
         estimate: {
           low, high, miles: 0, promoCode, promoPct,
           confidence: disposal?.confidence ?? 'medium',

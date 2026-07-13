@@ -3,6 +3,7 @@ import type { JunkPhotoAnalysis } from './analysis-schema'
 import type { MonitorReport } from './analysis-monitor'
 import type { CriticVerdict } from './junk-critic'
 import type { QuoteDecision, PricingBreakdown } from '../pricing/quote-decision'
+import { inventoryCategoryForJunk } from './inventory-taxonomy'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stored AI estimate — the auditable record that links a photo analysis to the
@@ -75,6 +76,12 @@ export async function getDraftEstimate(id: string): Promise<StoredAiEstimate | n
 // item list, confidence, questions, and public assumptions — never the internal
 // cost basis, margin, or disposal build-up.
 export function customerEstimateView(e: StoredAiEstimate) {
+  // A source-photo reference per detected item, where practical: the first photo
+  // whose visibleItems include a matching label; else the first input photo.
+  const photoFor = (label: string): string | undefined => {
+    const obs = e.analysis.photoObservations.find(p => p.visibleItems.some(v => v.label === label))
+    return obs?.photoUrl || e.inputPhotoUrls[0]
+  }
   return {
     analysisId: e.id,
     decision: e.decision,
@@ -83,7 +90,16 @@ export function customerEstimateView(e: StoredAiEstimate) {
     highUsd: e.pricing.highUsd,
     photoCount: e.inputPhotoUrls.length,
     confidence: e.analysis.confidence.overall,
-    items: e.analysis.normalizedItems.slice(0, 12).map(i => ({ label: i.label, quantity: i.estimatedQuantity })),
+    // Richer per-item shape for the guided confirmation review (governed category,
+    // per-item confidence, and a source-photo reference). Still customer-safe.
+    items: e.analysis.normalizedItems.slice(0, 20).map((i, n) => ({
+      id: `ai-${n}`,
+      label: i.label,
+      quantity: i.estimatedQuantity,
+      category: inventoryCategoryForJunk(i.category),
+      confidence: i.confidence,
+      photoUrl: photoFor(i.label),
+    })),
     estimatedTruckLoads: e.analysis.estimatedTruckLoads.likely,
     questions: e.analysis.additionalQuestions.slice(0, 6),
     reviewReasons: e.reviewReasons.slice(0, 6),

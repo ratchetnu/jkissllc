@@ -3,8 +3,9 @@ import { rateLimit } from '../../../lib/rate-limit'
 import { isBlockedBot } from '../../../lib/botcheck'
 import { buildPhotoEstimate } from '../../../lib/ai/photo-estimate'
 import { saveDraftEstimate, customerEstimateView } from '../../../lib/ai/estimate-store'
+import { selectFollowUpQuestions } from '../../../lib/ai/followup-questions'
 import { recordFunnelEvent } from '../../../lib/analytics-events'
-import { SERVICE_TYPES, type ServiceType } from '../../../lib/bookings'
+import { SERVICE_TYPES, serviceFamily, type ServiceType } from '../../../lib/bookings'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -52,5 +53,8 @@ export async function POST(req: NextRequest) {
   // Persist the draft estimate so /api/quote can attach it on submit.
   try { await saveDraftEstimate(stored) } catch (e) { console.error('[quote/analyze] save draft', e) }
 
-  return NextResponse.json({ ok: true, estimate: customerEstimateView(stored) })
+  // Governed follow-up question selection (server-side; the client only renders).
+  const followUps = selectFollowUpQuestions({ serviceFamily: serviceFamily(serviceType), analysis: stored.analysis })
+
+  return NextResponse.json({ ok: true, estimate: customerEstimateView(stored), followUps })
 }

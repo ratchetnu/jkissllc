@@ -16,7 +16,7 @@
 // before it can influence pricing.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { JunkCategory, DisposalType } from './analysis-schema'
+import type { JunkCategory } from './analysis-schema'
 import type { DebrisCategory } from '../disposal'
 
 // The governed customer-facing categories (request Part 4). Ordered as shown in UI.

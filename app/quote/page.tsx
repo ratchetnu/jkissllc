@@ -7,9 +7,15 @@ import Link from 'next/link'
 import {
   Trash2, Truck, Refrigerator, Sofa, Boxes, Trees, HardHat, Building2, KeyRound, HelpCircle,
   Zap, DoorOpen, PlugZap, Wrench, Users, Recycle, CalendarClock, ShieldCheck,
-  Camera, Check, ArrowLeft, ArrowRight, X, MapPin, Loader2, Star,
+  Camera, Check, ArrowLeft, ArrowRight, X, MapPin, Loader2, Star, Lightbulb, ChevronDown, Clock,
   type LucideIcon,
 } from 'lucide-react'
+import StepConfirm, { EMPTY_ATTEST, type AttestState, type DetectedItem } from './StepConfirm'
+import {
+  seedDraftItems, buildConfirmationPayload,
+  type DraftItem, type IsEverythingAnswer, type FollowUpValue, type CustomerFinalState,
+} from '../lib/ai/confirmation-ui'
+import type { FollowUpQuestion } from '../lib/ai/followup-questions'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // A guided, concierge-style quote experience for the company. Same premium
@@ -20,7 +26,6 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const RED = '#E0002A'
-const STEP_LABELS = ['Service', 'The job', 'Photos', 'Upgrades', 'Your info', 'Review']
 const WINDOWS = ['8am–10am', '10am–12pm', '12pm–2pm', '2pm–4pm', '4pm–6pm']
 const MAX_PHOTOS = 8
 
@@ -45,11 +50,19 @@ type QuoteEstimate = {
   highUsd: number
   photoCount: number
   confidence: number
-  items: { label: string; quantity: number }[]
+  items: DetectedItem[]
   estimatedTruckLoads: number
   questions: string[]
   reviewReasons: string[]
   note: string
+}
+
+// Step keys — dynamic so the guided-confirmation step slots in for job-based
+// (junk-family) services WITHOUT hardcoded index math anywhere.
+type StepKey = 'service' | 'job' | 'photos' | 'confirm' | 'upgrades' | 'contact' | 'review'
+const STEP_LABEL_BY_KEY: Record<StepKey, string> = {
+  service: 'Service', job: 'The job', photos: 'Photos', confirm: 'Confirm',
+  upgrades: 'Upgrades', contact: 'Your info', review: 'Review',
 }
 
 type Svc = {
@@ -151,6 +164,17 @@ export default function QuotePage() {
   const svc = SERVICES.find(s => s.id === svcId)
   const singleSite = !!svc && (svc.jobBased || svc.id === 'other')
 
+  // The guided confirmation step appears only for job-based (junk-family) services.
+  const stepKeys = useMemo<StepKey[]>(
+    () => (svc?.jobBased
+      ? ['service', 'job', 'photos', 'confirm', 'upgrades', 'contact', 'review']
+      : ['service', 'job', 'photos', 'upgrades', 'contact', 'review']),
+    [svc?.jobBased],
+  )
+  const stepKey: StepKey = stepKeys[step] ?? 'service'
+  const lastStep = stepKeys.length - 1
+  const stepLabels = stepKeys.map(k => STEP_LABEL_BY_KEY[k])
+
   // Industry-pack intake config (the universal-engine seam). The service grid comes
   // from the active pack when it defines matching service templates; junk removal
   // (the reference/default pack) and any load/parse failure fall back to the full
@@ -191,6 +215,17 @@ export default function QuotePage() {
   const [analyzing, setAnalyzing] = useState(false)
   const [estimate, setEstimate] = useState<QuoteEstimate | null>(null)
   const analysisIdRef = useRef('')
+
+  // Guided confirmation (job-based services). The confirmation draft is lifted here
+  // so it survives step navigation and is sent to the durable server-side workflow.
+  const [followUps, setFollowUps] = useState<FollowUpQuestion[]>([])
+  const [confItems, setConfItems] = useState<DraftItem[]>([])
+  const [confAnswers, setConfAnswers] = useState<Record<string, FollowUpValue>>({})
+  const [isEverything, setIsEverything] = useState<IsEverythingAnswer | ''>('')
+  const [everythingPictured, setEverythingPictured] = useState<boolean | null>(null)
+  const [attest, setAttest] = useState<AttestState>(EMPTY_ATTEST)
+  const [finalState, setFinalState] = useState<CustomerFinalState | null>(null)
+  const confIdemRef = useRef('')
 
   // Step 3 — upgrades
   const [upgrades, setUpgrades] = useState<string[]>([])
@@ -234,11 +269,20 @@ export default function QuotePage() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [step])
 
+  // Funnel: the customer reached the guided confirmation step.
+  useEffect(() => {
+    if (stepKey === 'confirm' && estimate) recordClientEvent('confirmation_started')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepKey])
+
   // Any change to the service, size, or the uploaded photo set invalidates a prior
   // AI estimate so it is always recomputed from the CURRENT inputs (fixes a stale
   // estimate lingering after Back → remove a photo or change the job).
   const uploadedKey = uploadedUrls.join('|')
-  useEffect(() => { setEstimate(null); analysisIdRef.current = '' }, [svcId, sizeId, uploadedKey])
+  useEffect(() => {
+    setEstimate(null); analysisIdRef.current = ''
+    setFollowUps([]); setConfItems([]); setConfAnswers({}); setIsEverything(''); setAttest(EMPTY_ATTEST)
+  }, [svcId, sizeId, uploadedKey])
 
   const size = SIZES.find(s => s.id === sizeId)
   const upgradeTotal = UPGRADES.filter(u => upgrades.includes(u.id)).reduce((s, u) => s + u.price, 0)
@@ -276,7 +320,10 @@ export default function QuotePage() {
   // their photos at once; downscale + upload run in the background per tile. We
   // don't pre-filter by MIME type (some phones report HEIC as an empty type) —
   // the input already restricts to images and the server validates each upload.
-  function invalidateEstimate() { setEstimate(null); analysisIdRef.current = '' }
+  function invalidateEstimate() {
+    setEstimate(null); analysisIdRef.current = ''
+    setFollowUps([]); setConfItems([]); setConfAnswers({}); setIsEverything(''); setAttest(EMPTY_ATTEST)
+  }
 
   function addPhotos(files: FileList | File[]) {
     setErr(''); invalidateEstimate()   // new photos → any prior estimate is stale
@@ -316,9 +363,21 @@ export default function QuotePage() {
         body: JSON.stringify({ photos: uploadedUrls, service: svc.bookType, debris: svc.debris }),
       })
       const j = await res.json().catch(() => ({}))
-      if (res.ok && j.estimate) { setEstimate(j.estimate as QuoteEstimate); analysisIdRef.current = j.estimate.analysisId }
+      if (res.ok && j.estimate) {
+        setEstimate(j.estimate as QuoteEstimate)
+        analysisIdRef.current = j.estimate.analysisId
+        setFollowUps(Array.isArray(j.followUps) ? j.followUps : [])
+        setConfItems(seedDraftItems((j.estimate.items ?? []) as DetectedItem[]))
+      }
     } catch { /* non-blocking — proceed without an instant estimate */ }
     finally { setAnalyzing(false) }
+  }
+
+  // Fire-and-forget client funnel beacon (durable server-side counter). Never blocks.
+  function recordClientEvent(event: string) {
+    try {
+      fetch('/api/quote/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event }), keepalive: true }).catch(() => {})
+    } catch { /* best-effort */ }
   }
 
   // Instant, email-free price/deposit preview once service + size are known.
@@ -332,13 +391,17 @@ export default function QuotePage() {
   }
 
   function validate(): string {
-    if (step === 0 && !svcId) return 'Choose the service you need to continue.'
-    if (step === 1) {
+    if (stepKey === 'service' && !svcId) return 'Choose the service you need to continue.'
+    if (stepKey === 'job') {
       if (!parseZip(pickupText)) return singleSite ? 'Add the job address or ZIP so we can price it.' : 'Add the pickup address or ZIP so we can price the route.'
       if (!singleSite && !parseZip(deliveryText)) return 'Add the delivery address or ZIP.'
       if (!sizeId) return 'Tell us roughly how much there is.'
     }
-    if (step === 4) {
+    if (stepKey === 'confirm' && estimate) {
+      if (!isEverything) return 'Let us know if this is everything included in the job.'
+      if (!attest.representsEverything) return 'Please confirm the short list before we finalize your estimate.'
+    }
+    if (stepKey === 'contact') {
       if (!name.trim()) return 'Please add your name.'
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Please add a valid email so we can send your quote.'
     }
@@ -349,12 +412,13 @@ export default function QuotePage() {
     const v = validate()
     if (v) { setErr(v); return }
     setErr('')
-    if (step === 1) loadEstimate()          // fetch as we leave the job-details step
+    if (stepKey === 'job') loadEstimate()          // fetch as we leave the job-details step
     // Leaving the Photos step: analyze the uploaded set for an instant AI estimate.
-    if (step === 2 && svc?.jobBased && uploadedUrls.length > 0 && !estimate && !analyzing) {
+    if (stepKey === 'photos' && svc?.jobBased && uploadedUrls.length > 0 && !estimate && !analyzing) {
       await runAnalysis()
     }
-    setStep(s => Math.min(5, s + 1))        // scroll handled by the [step] effect
+    if (stepKey === 'confirm') recordClientEvent('confirmation_attested')
+    setStep(s => Math.min(lastStep, s + 1))        // scroll handled by the [step] effect
   }
   function back() {
     setErr(''); setReserveOpen(false)
@@ -382,6 +446,24 @@ export default function QuotePage() {
     if (!quoteIdemRef.current) quoteIdemRef.current = crypto.randomUUID()
     const pickupZip = parseZip(pickupText)
     const deliveryZip = singleSite ? pickupZip : parseZip(deliveryText)
+
+    // Build the structured customer confirmation (job-based services only). The
+    // SERVER runs the durable second analysis — the browser only sends the answers.
+    let confirmation: unknown
+    if (svc.jobBased && estimate && confItems.length >= 0) {
+      if (!confIdemRef.current) confIdemRef.current = crypto.randomUUID()
+      const answers = followUps
+        .map(q => ({ question: q, value: confAnswers[q.id] }))
+        .filter((a): a is { question: FollowUpQuestion; value: FollowUpValue } => a.value !== undefined)
+      confirmation = buildConfirmationPayload({
+        items: confItems, answers,
+        isEverything: (isEverything || 'unsure') as IsEverythingAnswer,
+        everythingPictured: everythingPictured === true,
+        attestation: attest,
+        idempotencyKey: confIdemRef.current,
+      })
+    }
+
     try {
       const res = await fetch('/api/quote', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -402,13 +484,39 @@ export default function QuotePage() {
           contactMethod,
           idempotencyKey: quoteIdemRef.current,
           analysisId: analysisIdRef.current || undefined,
+          confirmation,
         }),
       })
       const j = await res.json()
-      if (res.ok) { setSent({ estimate: j.estimate, request: j.request }); window.scrollTo({ top: 0, behavior: 'smooth' }) }
-      else setErr(j.error ?? 'Could not submit your request. Please try again.')
+      if (res.ok) {
+        if (j.final) setFinalState(j.final as CustomerFinalState)
+        setSent({ estimate: j.estimate, request: j.request })
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+        // Durable: if the server's inline final analysis is still processing, poll
+        // the customer-safe status (the cron worker is the real source of truth).
+        if (j.request?.token && (!j.final || j.final.stage === 'processing')) {
+          void pollFinalState(j.request.token)
+        }
+      } else setErr(j.error ?? 'Could not submit your request. Please try again.')
     } catch { setErr(`Connection error — please try again or email ${COMPANY.email}.`) }
     setBusy(false)
+  }
+
+  // Poll the durable final state until it settles (or we give up and leave the
+  // reassuring "received" state showing). Never throws, never blocks the UI.
+  async function pollFinalState(token: string) {
+    for (let i = 0; i < 8; i++) {
+      await new Promise(r => setTimeout(r, 2500))
+      try {
+        const res = await fetch(`/api/quote/status/${encodeURIComponent(token)}`)
+        if (!res.ok) continue
+        const j = await res.json()
+        if (j.final) {
+          setFinalState(j.final as CustomerFinalState)
+          if (j.final.stage !== 'processing') return
+        }
+      } catch { /* keep the current state; the customer already sees "received" */ }
+    }
   }
 
   // Secondary CTA — lock a real open date + pay the deposit via /api/book.
@@ -472,7 +580,7 @@ export default function QuotePage() {
         <div className="max-w-6xl mx-auto">
           {sent ? (
             <SuccessView
-              sent={sent} deposit={deposit}
+              sent={sent} deposit={deposit} final={finalState}
               summary={{
                 name,
                 service: svc?.label ?? 'Service',
@@ -481,7 +589,7 @@ export default function QuotePage() {
                 photoCount: uploadedUrls.length,
                 contactMethod,
               }}
-              onReset={() => { setSent(null); quoteIdemRef.current = ''; setEstimate(null); analysisIdRef.current = ''; setStep(0); setSvcId(''); setPickupText(''); setDeliveryText(''); setSizeId(''); setHeavy(null); setStairs(null); setElevator(null); setPrefDate(''); setPhotos([]); setUpgrades([]); setName(''); setCompany(''); setPhone(''); setEmail(''); setPromo(''); setEst(null); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
+              onReset={() => { setSent(null); setFinalState(null); quoteIdemRef.current = ''; confIdemRef.current = ''; setEstimate(null); analysisIdRef.current = ''; setFollowUps([]); setConfItems([]); setConfAnswers({}); setIsEverything(''); setEverythingPictured(null); setAttest(EMPTY_ATTEST); setStep(0); setSvcId(''); setPickupText(''); setDeliveryText(''); setSizeId(''); setHeavy(null); setStairs(null); setElevator(null); setPrefDate(''); setPhotos([]); setUpgrades([]); setName(''); setCompany(''); setPhone(''); setEmail(''); setPromo(''); setEst(null); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
           ) : (
             <>
               {/* Intro */}
@@ -498,12 +606,12 @@ export default function QuotePage() {
               <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] items-start">
                 {/* ── Wizard column ── */}
                 <div className="glass-card wiz-fade" style={{ border: '1px solid rgba(224,0,42,.22)', borderRadius: 24, overflow: 'hidden' }}>
-                  <ProgressBar step={step} setStep={setStep} />
+                  <ProgressBar step={step} setStep={setStep} labels={stepLabels} />
 
                   <div className="px-5 sm:px-8 py-7">
                     <div key={step} className="wiz-reveal">
-                      {step === 0 && <StepService svcId={svcId} onPick={setSvcId} services={displayServices} />}
-                      {step === 1 && (
+                      {stepKey === 'service' && <StepService svcId={svcId} onPick={setSvcId} services={displayServices} />}
+                      {stepKey === 'job' && (
                         <StepJob
                           svc={svc!} singleSite={singleSite}
                           pickupText={pickupText} setPickupText={setPickupText}
@@ -515,14 +623,34 @@ export default function QuotePage() {
                           prefDate={prefDate} setPrefDate={setPrefDate}
                         />
                       )}
-                      {step === 2 && (
+                      {stepKey === 'photos' && (
                         <StepPhotos
                           photos={photos} dragOver={dragOver} setDragOver={setDragOver}
                           onAdd={addPhotos} onRemove={removePhoto} onRetry={retryPhoto}
+                          jobBased={!!svc?.jobBased}
+                          everythingPictured={everythingPictured} setEverythingPictured={setEverythingPictured}
                         />
                       )}
-                      {step === 3 && <StepUpgrades selected={upgrades} onToggle={toggleUpgrade} />}
-                      {step === 4 && (
+                      {stepKey === 'confirm' && (
+                        estimate ? (
+                          <StepConfirm
+                            estimate={{ items: estimate.items, confidence: estimate.confidence, reviewReasons: estimate.reviewReasons }}
+                            followUps={followUps}
+                            items={confItems} setItems={setConfItems}
+                            answers={confAnswers} setAnswers={setConfAnswers}
+                            isEverything={isEverything} setIsEverything={setIsEverything}
+                            attest={attest} setAttest={setAttest}
+                            onAddMorePhotos={() => setStep(stepKeys.indexOf('photos'))}
+                            onItemCorrected={() => recordClientEvent('confirmation_item_corrected')}
+                          />
+                        ) : analyzing ? (
+                          <AnalyzingView />
+                        ) : (
+                          <ConfirmUnavailable />
+                        )
+                      )}
+                      {stepKey === 'upgrades' && <StepUpgrades selected={upgrades} onToggle={toggleUpgrade} />}
+                      {stepKey === 'contact' && (
                         <StepContact
                           name={name} setName={setName} company={company} setCompany={setCompany}
                           phone={phone} setPhone={setPhone} email={email} setEmail={setEmail}
@@ -530,7 +658,7 @@ export default function QuotePage() {
                           promo={promo} setPromo={setPromo}
                         />
                       )}
-                      {step === 5 && svc && (
+                      {stepKey === 'review' && svc && (
                         <StepReview
                           svc={svc} singleSite={singleSite} pickupText={pickupText} deliveryText={deliveryText}
                           size={size} photoCount={uploadedUrls.length} upgrades={upgrades} prefDate={prefDate}
@@ -556,15 +684,16 @@ export default function QuotePage() {
                           <ArrowLeft size={16} /> Back
                         </button>
                       )}
-                      {step < 5 ? (
-                        <button type="button" onClick={next} disabled={step === 2 && (anyUploading || analyzing)} className="btn wiz-ease" style={{ flex: 1, justifyContent: 'center', padding: '15px 24px', fontSize: 15, opacity: step === 2 && (anyUploading || analyzing) ? 0.6 : 1 }}>
-                          {step === 2 ? (
+                      {step < lastStep ? (
+                        <button type="button" onClick={next} disabled={stepKey === 'photos' && (anyUploading || analyzing)} className="btn wiz-ease" style={{ flex: 1, justifyContent: 'center', padding: '15px 24px', fontSize: 15, opacity: stepKey === 'photos' && (anyUploading || analyzing) ? 0.6 : 1 }}>
+                          {stepKey === 'photos' ? (
                             anyUploading ? <><Loader2 size={16} className="animate-spin" /> Uploading photos…</>
                             : analyzing ? <><Loader2 size={16} className="animate-spin" /> Analyzing your photos…</>
                             : photos.length === 0 ? <>Skip photos for now <ArrowRight size={16} /></>
                             : (svc?.jobBased && !estimate) ? <>Analyze {uploadedUrls.length} photo{uploadedUrls.length === 1 ? '' : 's'} <ArrowRight size={16} /></>
                             : <>Continue with {uploadedUrls.length} photo{uploadedUrls.length === 1 ? '' : 's'} <ArrowRight size={16} /></>
-                          ) : <>Continue <ArrowRight size={16} /></>}
+                          ) : stepKey === 'confirm' ? <>Get my estimate <ArrowRight size={16} /></>
+                          : <>Continue <ArrowRight size={16} /></>}
                         </button>
                       ) : (
                         <button type="button" onClick={submitLead} disabled={busy || anyUploading} className="btn wiz-ease" style={{ flex: 1, justifyContent: 'center', padding: '16px 24px', fontSize: 16, opacity: busy || anyUploading ? 0.6 : 1 }}>
@@ -594,7 +723,7 @@ export default function QuotePage() {
         <div className="lg:hidden fixed inset-x-0 bottom-0 z-40 px-4 py-3" style={{ background: 'rgba(11,11,12,0.96)', backdropFilter: 'blur(14px)', borderTop: '1px solid var(--line)' }}>
           <div className="flex items-center justify-between gap-3">
             <div style={{ minWidth: 0 }}>
-              <p className="text-xs" style={{ color: 'var(--muted)' }}>Step {step + 1} of 6 · {STEP_LABELS[step]}</p>
+              <p className="text-xs" style={{ color: 'var(--muted)' }}>Step {step + 1} of {stepKeys.length} · {stepLabels[step]}</p>
               <p className="text-sm font-bold text-white truncate">{svc.label}{size ? ` · ${size.label}` : ''}</p>
             </div>
             <div className="text-right" style={{ flexShrink: 0 }}>
@@ -619,22 +748,22 @@ export default function QuotePage() {
 type Estimate = { low: number; high: number; miles: number; fuelCharge?: number; promoCode?: string; promoPct?: number; confidence?: string; jobBased?: boolean; pickupLabel?: string; deliveryLabel?: string }
 
 // ── Progress indicator ───────────────────────────────────────────────────────
-function ProgressBar({ step, setStep }: { step: number; setStep: (n: number) => void }) {
+function ProgressBar({ step, setStep, labels }: { step: number; setStep: (n: number) => void; labels: string[] }) {
   return (
     <div className="px-5 sm:px-8 pt-6 pb-5" style={{ borderBottom: '1px solid var(--line)' }}>
       {/* Mobile: label + fill bar */}
       <div className="sm:hidden">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Step {step + 1} of 6</span>
-          <span className="text-xs font-bold" style={{ color: RED }}>{STEP_LABELS[step]}</span>
+          <span className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Step {step + 1} of {labels.length}</span>
+          <span className="text-xs font-bold" style={{ color: RED }}>{labels[step]}</span>
         </div>
         <div style={{ height: 6, borderRadius: 999, background: 'rgba(255,255,255,.08)', overflow: 'hidden' }}>
-          <div style={{ height: '100%', width: `${((step + 1) / 6) * 100}%`, borderRadius: 999, background: `linear-gradient(90deg, ${RED}, #ff6680)`, transition: 'width .5s cubic-bezier(.16,1,.3,1)' }} />
+          <div style={{ height: '100%', width: `${((step + 1) / labels.length) * 100}%`, borderRadius: 999, background: `linear-gradient(90deg, ${RED}, #ff6680)`, transition: 'width .5s cubic-bezier(.16,1,.3,1)' }} />
         </div>
       </div>
       {/* Desktop: clickable step chips */}
       <ol className="hidden sm:flex gap-2">
-        {STEP_LABELS.map((label, i) => {
+        {labels.map((label, i) => {
           const state = i === step ? 'current' : i < step ? 'done' : 'future'
           return (
             <li key={label} className="flex-1">
@@ -793,10 +922,20 @@ function YesNo({ label, value, onChange }: { label: string; value: boolean | nul
 }
 
 // ── Step 3: Photos ───────────────────────────────────────────────────────────
+const PHOTO_TIPS: { icon: LucideIcon; text: string }[] = [
+  { icon: Camera, text: 'One wide shot showing the whole area or pile.' },
+  { icon: Boxes, text: 'Include everything that needs to be removed.' },
+  { icon: Truck, text: 'Extra angles when items overlap or hide each other.' },
+  { icon: HardHat, text: 'Close-ups of unusually heavy or unclear objects.' },
+  { icon: DoorOpen, text: 'Show stairs, elevators, gates, or a long carry when relevant.' },
+  { icon: Lightbulb, text: 'Avoid dark, blurry, cropped, or blocked photos.' },
+]
 function StepPhotos(props: {
   photos: PhotoItem[]; dragOver: boolean; setDragOver: (v: boolean) => void
   onAdd: (f: FileList | File[]) => void; onRemove: (id: string) => void; onRetry: (id: string) => void
+  jobBased: boolean; everythingPictured: boolean | null; setEverythingPictured: (v: boolean) => void
 }) {
+  const [tipsOpen, setTipsOpen] = useState(false)
   const total = props.photos.length
   const done = props.photos.filter(p => p.status === 'done').length
   const uploading = props.photos.filter(p => p.status === 'uploading' || p.status === 'processing').length
@@ -812,6 +951,29 @@ function StepPhotos(props: {
   return (
     <>
       <StepHeading kicker="Help us see the job" title="Upload photos of the items, junk, debris, rooms, or property." sub="The more photos you provide, the more accurate your quote will be. This step is optional — but it really helps." />
+
+      {/* Compact, expandable photo guidance (Part 3). */}
+      <div className="mb-4 rounded-2xl" style={{ border: '1px solid rgba(255,255,255,.1)', background: 'rgba(255,255,255,.02)', overflow: 'hidden' }}>
+        <button type="button" onClick={() => setTipsOpen(o => !o)} aria-expanded={tipsOpen} className="w-full flex items-center gap-2.5 px-4" style={{ minHeight: 48, background: 'none', border: 'none', cursor: 'pointer' }}>
+          <Lightbulb size={16} style={{ color: RED, flexShrink: 0 }} />
+          <span className="font-bold text-white text-sm" style={{ flex: 1, textAlign: 'left' }}>How to take photos that get you an accurate quote</span>
+          <ChevronDown size={16} style={{ color: 'var(--muted)', transform: tipsOpen ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+        </button>
+        {tipsOpen && (
+          <div className="px-4 pb-4 grid gap-2 sm:grid-cols-2">
+            {PHOTO_TIPS.map((t, i) => {
+              const Icon = t.icon
+              return (
+                <div key={i} className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl" style={{ background: 'rgba(255,255,255,.02)', border: '1px solid rgba(255,255,255,.07)' }}>
+                  <Icon size={15} style={{ color: RED, flexShrink: 0, marginTop: 1 }} />
+                  <span className="text-xs" style={{ color: 'var(--muted)', lineHeight: 1.5 }}>{t.text}</span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
       <label
         onDragOver={e => { e.preventDefault(); props.setDragOver(true) }}
         onDragLeave={() => props.setDragOver(false)}
@@ -873,6 +1035,29 @@ function StepPhotos(props: {
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* "Is everything being removed shown?" — persisted with the request (Part 3). */}
+      {props.jobBased && done > 0 && (
+        <div className="mt-4 px-4 py-3.5 rounded-2xl" style={{ border: '1px solid rgba(255,255,255,.1)', background: 'rgba(255,255,255,.02)' }}>
+          <p className="font-bold text-white text-sm mb-2.5">Is everything being removed shown in these photos?</p>
+          <div className="flex gap-2">
+            {[['Yes', true], ['Not all of it', false]].map(([t, v]) => {
+              const active = props.everythingPictured === v
+              return (
+                <button key={String(v)} type="button" onClick={() => props.setEverythingPictured(v as boolean)} aria-pressed={active} className="flex-1 rounded-xl text-sm font-bold wiz-ease"
+                  style={{ minHeight: 44, border: `1px solid ${active ? RED : 'rgba(255,255,255,.12)'}`, background: active ? 'rgba(224,0,42,.10)' : 'rgba(255,255,255,.02)', color: active ? '#fff' : 'var(--muted)' }}>
+                  {t as string}
+                </button>
+              )
+            })}
+          </div>
+          {props.everythingPictured === false && (
+            <p className="text-xs mt-2.5" style={{ color: '#fcd34d', lineHeight: 1.5 }}>
+              No problem — add more photos above, or you’ll be able to add the missing items in the next step.
+            </p>
+          )}
         </div>
       )}
     </>
@@ -1118,18 +1303,20 @@ function StepReview(props: {
 }
 
 // ── Sticky summary card ──────────────────────────────────────────────────────
+function SummaryRow({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex justify-between gap-3 py-1.5 text-sm">
+      <span style={{ color: 'var(--muted)', flexShrink: 0 }}>{k}</span>
+      <span className="text-white text-right" style={{ minWidth: 0 }}>{v}</span>
+    </div>
+  )
+}
 function SummaryCard(props: {
   svc?: Svc; size?: { label: string }; singleSite: boolean; pickupText: string; deliveryText: string
   photoCount: number; upgrades: string[]; prefDate: string
   showLow: number | null; showHigh: number | null; deposit: string; est: { hasPrice: boolean } | null
 }) {
   const { svc } = props
-  const Row = ({ k, v }: { k: string; v: string }) => (
-    <div className="flex justify-between gap-3 py-1.5 text-sm">
-      <span style={{ color: 'var(--muted)', flexShrink: 0 }}>{k}</span>
-      <span className="text-white text-right" style={{ minWidth: 0 }}>{v}</span>
-    </div>
-  )
   return (
     <div className="glass-card" style={{ borderRadius: 20, overflow: 'hidden' }}>
       <div className="px-5 py-4" style={{ background: 'linear-gradient(135deg, rgba(224,0,42,.12), rgba(255,255,255,.02))', borderBottom: '1px solid var(--line)' }}>
@@ -1141,12 +1328,12 @@ function SummaryCard(props: {
           <p className="text-sm" style={{ color: 'var(--muted)', lineHeight: 1.5 }}>Pick a service to see your quote take shape here.</p>
         ) : (
           <>
-            {props.size && <Row k="Size" v={props.size.label} />}
-            {props.pickupText && <Row k={props.singleSite ? 'Location' : 'Pickup'} v={props.pickupText} />}
-            {!props.singleSite && props.deliveryText && <Row k="Delivery" v={props.deliveryText} />}
-            {props.photoCount > 0 && <Row k="Photos" v={`${props.photoCount} attached`} />}
-            {props.upgrades.length > 0 && <Row k="Upgrades" v={`${props.upgrades.length} selected`} />}
-            {props.prefDate && <Row k="Preferred" v={fmtDateLabel(props.prefDate)} />}
+            {props.size && <SummaryRow k="Size" v={props.size.label} />}
+            {props.pickupText && <SummaryRow k={props.singleSite ? 'Location' : 'Pickup'} v={props.pickupText} />}
+            {!props.singleSite && props.deliveryText && <SummaryRow k="Delivery" v={props.deliveryText} />}
+            {props.photoCount > 0 && <SummaryRow k="Photos" v={`${props.photoCount} attached`} />}
+            {props.upgrades.length > 0 && <SummaryRow k="Upgrades" v={`${props.upgrades.length} selected`} />}
+            {props.prefDate && <SummaryRow k="Preferred" v={fmtDateLabel(props.prefDate)} />}
 
             <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--line)' }}>
               {props.showLow != null ? (
@@ -1168,9 +1355,9 @@ function SummaryCard(props: {
 
 // ── Success ──────────────────────────────────────────────────────────────────
 type SuccessSummary = { name: string; service: string; address: string; prefDate: string; photoCount: number; contactMethod: string }
-function SuccessView({ sent, deposit, summary, onReset }: {
+function SuccessView({ sent, deposit, summary, onReset, final }: {
   sent: { estimate?: Estimate; request?: { number: string; token: string } }
-  deposit: string; summary: SuccessSummary; onReset: () => void
+  deposit: string; summary: SuccessSummary; onReset: () => void; final?: CustomerFinalState | null
 }) {
   void deposit
   const e = sent.estimate
@@ -1189,17 +1376,24 @@ function SuccessView({ sent, deposit, summary, onReset }: {
         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 64, height: 64, borderRadius: 999, background: 'rgba(224,0,42,.12)', color: RED, marginBottom: 18 }}>
           <Check size={32} />
         </span>
-        <h1 className="text-3xl md:text-4xl font-black text-white mb-2" style={{ letterSpacing: '-0.03em', fontFamily: 'var(--font-display)' }}>Request received.</h1>
+        <h1 className="text-3xl md:text-4xl font-black text-white mb-2" style={{ letterSpacing: '-0.03em', fontFamily: 'var(--font-display)' }}>
+          {final ? final.headline : 'Request received.'}
+        </h1>
         {reqNo && (
           <p className="text-sm font-bold mb-3" style={{ color: RED }}>
             Your request number is <span className="font-mono">{reqNo}</span> — keep it for your records.
           </p>
         )}
 
-        {/* Honest status — pending review, NOT a confirmed booking. */}
-        <p className="text-base mb-5" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>
-          Thanks{summary.name ? `, ${summary.name.split(' ')[0]}` : ''} — we&apos;ve got your details{summary.photoCount ? ` and your ${summary.photoCount} photo${summary.photoCount === 1 ? '' : 's'}` : ''}. Your request is <strong className="text-white">pending review</strong>; our team will send a firm quote by your preferred method — most come back within one business hour during operating hours.
-        </p>
+        {/* Guided-confirmation result state (Part 13). Falls back to the generic
+            pending-review copy when there was no confirmation flow. */}
+        {final ? (
+          <FinalResultCard final={final} firstName={summary.name ? summary.name.split(' ')[0] : ''} />
+        ) : (
+          <p className="text-base mb-5" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>
+            Thanks{summary.name ? `, ${summary.name.split(' ')[0]}` : ''} — we&apos;ve got your details{summary.photoCount ? ` and your ${summary.photoCount} photo${summary.photoCount === 1 ? '' : 's'}` : ''}. Your request is <strong className="text-white">pending review</strong>; our team will send a firm quote by your preferred method — most come back within one business hour during operating hours.
+          </p>
+        )}
 
         {e && e.low > 0 && (
           <div className="inline-block rounded-2xl px-8 py-4 mb-5" style={{ background: 'rgba(224,0,42,.07)', border: '1px solid rgba(224,0,42,.25)' }}>
@@ -1234,6 +1428,83 @@ function SuccessView({ sent, deposit, summary, onReset }: {
           <button onClick={onReset} className="btn-ghost wiz-ease">Request Another Quote</button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── Analyzing state (guided confirmation) ────────────────────────────────────
+function AnalyzingView() {
+  const stages = ['Uploading your photos', 'Identifying items', 'Estimating job size', 'Preparing your review']
+  return (
+    <div className="py-6 text-center wiz-reveal">
+      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 60, height: 60, borderRadius: 999, background: 'rgba(224,0,42,.12)', color: RED, marginBottom: 16 }}>
+        <Loader2 size={28} className="animate-spin" />
+      </span>
+      <h2 className="text-2xl font-black text-white" style={{ letterSpacing: '-0.02em', fontFamily: 'var(--font-display)' }}>Analyzing your photos</h2>
+      <p className="text-sm mt-2 mb-5" style={{ color: 'var(--muted)', lineHeight: 1.5 }}>
+        We’re identifying the items and estimating the size of the job. This usually takes just a few seconds.
+      </p>
+      <div className="grid gap-2 max-w-sm mx-auto text-left">
+        {stages.map((s, i) => (
+          <div key={s} className="flex items-center gap-2.5 px-3 py-2 rounded-xl" style={{ border: '1px solid var(--line)', background: 'rgba(255,255,255,.02)' }}>
+            <Loader2 size={14} className="animate-spin" style={{ color: i === 0 ? RED : 'rgba(255,255,255,.3)', flexShrink: 0 }} />
+            <span className="text-sm" style={{ color: 'var(--muted)' }}>{s}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// Graceful fallback when the automatic photo read didn't produce items — the
+// customer is never trapped; the durable server worker + team still handle it.
+function ConfirmUnavailable() {
+  return (
+    <div className="py-6 text-center wiz-reveal">
+      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 56, height: 56, borderRadius: 999, background: 'rgba(255,255,255,.05)', color: RED, marginBottom: 14 }}>
+        <Clock size={26} />
+      </span>
+      <h2 className="text-2xl font-black text-white" style={{ letterSpacing: '-0.02em', fontFamily: 'var(--font-display)' }}>We’ll review your photos</h2>
+      <p className="text-sm mt-2" style={{ color: 'var(--muted)', lineHeight: 1.55, maxWidth: 420, margin: '8px auto 0' }}>
+        We couldn’t read every detail automatically, so a team member will review your photos and confirm your quote. Continue and we’ll take it from here.
+      </p>
+    </div>
+  )
+}
+
+// ── Guided-confirmation result card (Part 13) ────────────────────────────────
+function FinalResultCard({ final, firstName }: { final: CustomerFinalState; firstName: string }) {
+  const tone = final.stage === 'quote_ready' ? RED
+    : final.stage === 'failed' ? '#f87171'
+    : final.stage === 'owner_review' || final.stage === 'more_info' ? '#fbbf24'
+    : 'var(--muted)'
+  return (
+    <div className="mb-5">
+      {final.stage === 'processing' ? (
+        <div className="inline-flex items-center gap-2 rounded-full px-4 py-2 mb-3" style={{ background: 'rgba(224,0,42,.08)', border: '1px solid rgba(224,0,42,.25)' }}>
+          <Loader2 size={15} className="animate-spin" style={{ color: RED }} />
+          <span className="text-sm font-bold text-white">Finalizing your estimate…</span>
+        </div>
+      ) : null}
+
+      {final.stage === 'quote_ready' && final.lowUsd != null && (
+        <div className="inline-block rounded-2xl px-8 py-4 mb-4" style={{ background: 'rgba(224,0,42,.07)', border: '1px solid rgba(224,0,42,.25)' }}>
+          <p className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Your estimate</p>
+          <p className="text-4xl font-black tabular-nums mt-1" style={{ color: RED, letterSpacing: '-0.04em', fontFamily: 'var(--font-display)' }}>
+            ${final.lowUsd.toLocaleString()}{final.highUsd != null && final.highUsd !== final.lowUsd ? `–$${final.highUsd.toLocaleString()}` : ''}
+          </p>
+        </div>
+      )}
+
+      <p className="text-base mb-3" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>
+        {firstName ? `Thanks, ${firstName} — ` : ''}{final.message}
+      </p>
+
+      {final.moreInfo && final.moreInfo.length > 0 && (
+        <ul className="text-sm text-left inline-block" style={{ color: tone, lineHeight: 1.7, listStyle: 'none', padding: 0, margin: '0 auto' }}>
+          {final.moreInfo.map((m, i) => <li key={i}>• {m}</li>)}
+        </ul>
+      )}
     </div>
   )
 }
