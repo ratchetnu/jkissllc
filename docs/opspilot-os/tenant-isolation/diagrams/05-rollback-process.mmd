@@ -1,0 +1,9 @@
+%% Rollback process. See 12-rollback-plan.md
+flowchart TB
+  Trigger[need to roll back] --> Which{what stage}
+  Which -- reads/writes enabled --> Flag[TENANCY_ENABLED=false -> revert to legacy keys, data intact]
+  Which -- copy made --> Manifest[rollback-plan -> manifest of scoped targets]
+  Manifest --> DelTargets[delete ONLY scoped targets under separate approved change]
+  DelTargets --> LegacyIntact[legacy keys untouched throughout]
+  Flag --> LegacyIntact
+  LegacyIntact --> Safe[source of truth = legacy, no data loss]

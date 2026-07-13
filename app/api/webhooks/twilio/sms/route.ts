@@ -15,6 +15,7 @@ import { listBookings, saveBooking, type Booking } from '../../../../lib/booking
 import { recordMessage, seenProviderMessage } from '../../../../lib/messages'
 import { notifyOwnerOfReply } from '../../../../lib/owner-alerts'
 import { redis } from '../../../../lib/redis'
+import { withBackgroundTenant } from '../../../../lib/platform/tenancy/request-context'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -79,6 +80,9 @@ export async function POST(req: NextRequest) {
   }
   if (!authed) return new NextResponse('forbidden', { status: 403 })
 
+  // Tenant-owned work runs inside the resolved tenant context (off → reference
+  // tenant, no key change; on → scoped + fail-closed).
+  return withBackgroundTenant('webhook', async () => {
   const messageSid = params.MessageSid || params.SmsSid || ''
   const fromRaw = params.From || ''
   const from = toE164(fromRaw) || fromRaw
@@ -145,4 +149,5 @@ export async function POST(req: NextRequest) {
   } catch (e) { console.error('[twilio-sms] owner alert failed', e) }
 
   return twiml()
+  })
 }

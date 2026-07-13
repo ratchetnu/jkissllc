@@ -15,6 +15,8 @@
 
 export type FeatureFlag =
   | 'TENANCY_ENABLED'
+  | 'TENANCY_DARK_LAUNCH'
+  | 'TENANCY_DUAL_WRITE'
   | 'AI_WORKFORCE_ENABLED'
   | 'CAPABILITY_REGISTRY_ENABLED'
   | 'APPROVAL_QUEUE_ENABLED'
@@ -24,6 +26,12 @@ export type FeatureFlag =
 
 export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   TENANCY_ENABLED: false,
+  // Dark-launch: shadow-read the tenant-scoped key alongside the legacy key and
+  // report mismatches, WITHOUT changing the live response. Preview only.
+  TENANCY_DARK_LAUNCH: false,
+  // Migration validation: mirror writes to the tenant-scoped key as well as the
+  // legacy key. Never on in production without an approved rollout stage.
+  TENANCY_DUAL_WRITE: false,
   AI_WORKFORCE_ENABLED: false,
   CAPABILITY_REGISTRY_ENABLED: true, // registry is inert data; enabling it alters no behavior
   APPROVAL_QUEUE_ENABLED: false,

@@ -1,0 +1,12 @@
+%% Background-job tenant resolution. See 08-background-and-storage-isolation.md
+flowchart TB
+  Cron[cron / webhook fires] --> Auth[auth: CRON_SECRET / signature - fail closed]
+  Auth --> Resolve[resolveBackgroundTenant kind, explicit?]
+  Resolve --> Off{TENANCY_ENABLED?}
+  Off -- false --> Ref[reference tenant jkiss - no key change]
+  Off -- true --> Explicit{explicit tenant named?}
+  Explicit -- no --> FailClosed[THROW + telemetry - background-tenant-resolution]
+  Explicit -- yes --> Norm[normalizeTenantId]
+  Ref --> Wrap[withBackgroundTenant -> runWithTenant]
+  Norm --> Wrap
+  Wrap --> Work[sweep/handler: redis keys scope to tenant]

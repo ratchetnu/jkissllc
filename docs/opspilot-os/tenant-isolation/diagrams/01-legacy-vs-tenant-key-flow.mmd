@@ -1,0 +1,10 @@
+%% Legacy vs tenant key flow. See 02-key-api.md / 03-access-chokepoint.md
+flowchart TB
+  Call[lib module -> redis.method key] --> Scope[scopeKey key]
+  Scope --> Off{TENANCY_ENABLED?}
+  Off -- false --> Legacy[return key UNCHANGED -> legacy Redis key]
+  Off -- true --> Global{platform-global or already scoped?}
+  Global -- yes --> Passthru[return key unchanged]
+  Global -- no --> Ctx{tenant resolvable?}
+  Ctx -- no --> Fail[THROW - fail closed]
+  Ctx -- yes --> Prefixed[t:tenantId:key]

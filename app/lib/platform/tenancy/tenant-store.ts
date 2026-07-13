@@ -11,6 +11,7 @@
 // namespace (no fail-open on the security boundary).
 
 import { isEnabled } from '../flags'
+import { requireTenantKey } from './keys'
 import { DEFAULT_TENANT_ID } from './types'
 
 export function assertTenant(tenantId: string | undefined | null): asserts tenantId is string {
@@ -32,7 +33,9 @@ export function tenantKey(
   const enabled = opts?.enabled ?? isEnabled('TENANCY_ENABLED')
   if (!enabled) return key
   assertTenant(tenantId)
-  return `t:${tenantId}:${key}`
+  // Delegate prefix construction to the key API — the single source of truth
+  // (enforced by scripts/bypass-detection.test.ts).
+  return requireTenantKey(tenantId, key)
 }
 
 /**

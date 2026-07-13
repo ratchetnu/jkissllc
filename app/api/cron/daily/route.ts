@@ -9,6 +9,7 @@ import { listTemplates, materializeTemplate } from '../../../lib/route-templates
 import { accrueAllClaims } from '../../../lib/claim-accrual'
 import { sendSms, withSmsSuppressed } from '../../../lib/sms'
 import { getAutomationSettings } from '../../../lib/automation-settings'
+import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -218,7 +219,10 @@ export async function GET(req: NextRequest) {
     // Automated TEXTS are permanently disabled for the 9am run: everything below still
     // runs (email reminders, route generation, claim deductions, hold cleanup), but any
     // outbound SMS it would send is suppressed at the send layer. See withSmsSuppressed.
-    return await withSmsSuppressed(async () => {
+    // Establish tenant context for the whole sweep. Off → reference tenant (no
+    // key change); on → keys scope to this tenant. Fails closed if tenancy is on
+    // and no tenant can be resolved.
+    return await withBackgroundTenant('cron', () => withSmsSuppressed(async () => {
     const counts = dryRun ? { skipped: 'reminders (dry-run)' } : await run()
     // Template generation is isolated: nextRouteNumber() now throws rather than
     // minting a possibly-duplicate number when Redis is unreachable, and a throw
@@ -235,7 +239,7 @@ export async function GET(req: NextRequest) {
     // (contractor, week), and capped at what they actually earned.
     const claims = dryRun ? { skipped: 'claim deductions (dry-run)' } : await runClaims(Date.now())
     return NextResponse.json({ ok: true, dryRun, smsSuppressed: true, ...counts, templates, routes, cleanup, claims })
-    })
+    }))
   } catch (e) {
     console.error('[cron/daily] fatal', e)
     return NextResponse.json({ error: 'failed' }, { status: 500 })

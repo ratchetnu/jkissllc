@@ -1,25 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireSession } from '../_lib/session'
+import { redis } from '../../../lib/redis'
 
-async function redis(url: string, token: string, ...args: string[]) {
-  const res = await fetch(`${url}/${args.map(encodeURIComponent).join('/')}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    cache: 'no-store',
-  })
-  return res.json()
+// Site analytics read. Previously used its own inline Upstash client (bypassing
+// the tenant-isolation chokepoint); it now reads through app/lib/redis.ts so the
+// pv:*/uv:* keys resolve through the same boundary as every tenant-owned key.
+
+function parseHash(arr: string[]): { key: string; total: number }[] {
+  const out: { key: string; total: number }[] = []
+  for (let i = 0; i < arr.length; i += 2) {
+    out.push({ key: arr[i], total: parseInt(arr[i + 1]) || 0 })
+  }
+  return out.sort((a, b) => b.total - a.total)
 }
 
 export async function GET(req: NextRequest) {
   if (!(await requireSession(req))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const url = process.env.KV_REST_API_URL
-  const token = process.env.KV_REST_API_TOKEN
-
-  if (!url || !token) {
-    return NextResponse.json({ error: 'KV_REST_API_URL and KV_REST_API_TOKEN must be set' }, { status: 500 })
   }
 
   const { searchParams } = req.nextUrl
@@ -34,58 +31,37 @@ export async function GET(req: NextRequest) {
     dailyKeys.push(d.toISOString().slice(0, 10))
   }
 
-  const [
-    totalPvResult,
-    pathsResult,
-    referrersResult,
-    totalUvResult,
-    ...dailyPvResults
-  ] = await Promise.all([
-    redis(url, token, 'GET', 'pv:total'),
-    redis(url, token, 'HGETALL', 'pv:paths'),
-    redis(url, token, 'HGETALL', 'pv:referrers'),
-    redis(url, token, 'PFCOUNT', 'uv:total'),
-    ...dailyKeys.map(d => redis(url, token, 'GET', `pv:day:${d}`)),
-  ])
+  try {
+    const [totalPv, pathsArr, referrersArr, totalUv, ...dailyPv] = await Promise.all([
+      redis.get('pv:total'),
+      redis.hgetall('pv:paths'),
+      redis.hgetall('pv:referrers'),
+      redis.pfcount('uv:total'),
+      ...dailyKeys.map((d) => redis.get(`pv:day:${d}`)),
+    ])
 
-  // Sum pageviews for range
-  const rangePageviews = dailyPvResults.reduce((sum: number, r: { result: string | null }) => {
-    return sum + (parseInt(r?.result ?? '0') || 0)
-  }, 0)
+    const dailyUv = await Promise.all(dailyKeys.map((d) => redis.pfcount(`uv:day:${d}`)))
 
-  // Count unique visitors in range using individual day HyperLogLog counts
-  const dailyUvResults = await Promise.all(
-    dailyKeys.map(d => redis(url, token, 'PFCOUNT', `uv:day:${d}`))
-  )
-  const rangeVisitors = dailyUvResults.reduce((sum: number, r: { result: number }) => {
-    return sum + (r?.result ?? 0)
-  }, 0)
+    const rangePageviews = (dailyPv as (string | null)[]).reduce((sum, r) => sum + (parseInt(r ?? '0') || 0), 0)
+    const rangeVisitors = dailyUv.reduce((sum, n) => sum + (n ?? 0), 0)
 
-  // Parse HGETALL into sorted array
-  function parseHash(result: { result: string[] | null }): { key: string; total: number }[] {
-    const arr = result?.result ?? []
-    const out: { key: string; total: number }[] = []
-    for (let i = 0; i < arr.length; i += 2) {
-      out.push({ key: arr[i], total: parseInt(arr[i + 1]) || 0 })
-    }
-    return out.sort((a, b) => b.total - a.total)
+    const daily = dailyKeys.map((date, i) => ({
+      date,
+      pageviews: parseInt((dailyPv as (string | null)[])[i] ?? '0') || 0,
+      visitors: dailyUv[i] ?? 0,
+    })).reverse()
+
+    return NextResponse.json({
+      totalPageviews: totalPv ? parseInt(totalPv) : 0,
+      totalVisitors: totalUv ?? 0,
+      rangePageviews,
+      rangeVisitors,
+      paths: parseHash(pathsArr).slice(0, 10),
+      referrers: parseHash(referrersArr).slice(0, 10),
+      daily,
+      range,
+    })
+  } catch {
+    return NextResponse.json({ error: 'analytics unavailable' }, { status: 500 })
   }
-
-  // Daily chart data
-  const daily = dailyKeys.map((date, i) => ({
-    date,
-    pageviews: parseInt(dailyPvResults[i]?.result ?? '0') || 0,
-    visitors: dailyUvResults[i]?.result ?? 0,
-  })).reverse()
-
-  return NextResponse.json({
-    totalPageviews: totalPvResult?.result ? parseInt(totalPvResult.result) : 0,
-    totalVisitors: totalUvResult?.result ?? 0,
-    rangePageviews,
-    rangeVisitors,
-    paths: parseHash(pathsResult).slice(0, 10),
-    referrers: parseHash(referrersResult).slice(0, 10),
-    daily,
-    range,
-  })
 }

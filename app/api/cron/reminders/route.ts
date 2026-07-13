@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runDueReminders, runEscalations } from '../../../lib/reminder-engine'
 import { withSmsSuppressed } from '../../../lib/sms'
+import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -25,9 +26,9 @@ export async function GET(req: NextRequest) {
   // fire over in-app + email, and escalations still email the owner, but any outbound
   // SMS is suppressed at the send layer. Wraps only the cron passes — admin-initiated
   // dispatch/bulk sends (sendImmediate) run on their own request and still text.
-  await withSmsSuppressed(async () => {
+  await withBackgroundTenant('cron', () => withSmsSuppressed(async () => {
     try { due = await runDueReminders(now) } catch (e) { console.error('[cron/reminders] due', e) }
     try { esc = await runEscalations(now) } catch (e) { console.error('[cron/reminders] escalations', e) }
-  })
+  }))
   return NextResponse.json({ ok: true, smsSuppressed: true, ...due, ...esc, at: now })
 }

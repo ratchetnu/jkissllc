@@ -1,25 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { COMPANY } from '../../lib/company'
+import { redis } from '../../lib/redis'
 
-// TODO(opspilot/tenancy): this route BYPASSES app/lib/redis.ts with its own inline
-// client, so prefixing keys in that shared wrapper will silently miss the pv:*/uv:*
-// analytics keys written below — pageview and visitor data would stay commingled
-// across tenants. Hand-migrate this file (and app/api/admin/analytics/route.ts,
-// which bypasses the wrapper the same way).
-// See docs/opspilot-multi-tenant-roadmap.md §2.2.
-async function redis(url: string, token: string, ...args: string[]) {
-  const res = await fetch(`${url}/${args.map(encodeURIComponent).join('/')}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  return res.json()
-}
-
+// Pageview/visitor tracking. Previously used its own inline Upstash client, which
+// bypassed the tenant-isolation chokepoint; it now goes through app/lib/redis.ts
+// so the pv:*/uv:* keys are namespaced identically to every other tenant-owned
+// key (unchanged while TENANCY_ENABLED=false). No cookies, no PII stored.
 export async function POST(req: NextRequest) {
-  const url = process.env.KV_REST_API_URL
-  const token = process.env.KV_REST_API_TOKEN
-  if (!url || !token) return NextResponse.json({ ok: false }, { status: 500 })
-
   try {
     const { path, referrer } = await req.json()
     const page = path || '/'
@@ -31,22 +18,17 @@ export async function POST(req: NextRequest) {
     const fingerprint = Buffer.from(`${today}:${ip}:${ua}`).toString('base64').slice(0, 32)
 
     await Promise.all([
-      // Total pageviews
-      redis(url, token, 'INCR', 'pv:total'),
-      // Daily pageviews
-      redis(url, token, 'INCR', `pv:day:${today}`),
-      // Per-path counts
-      redis(url, token, 'HINCRBY', 'pv:paths', page, '1'),
-      // Unique visitors via HyperLogLog
-      redis(url, token, 'PFADD', `uv:day:${today}`, fingerprint),
-      redis(url, token, 'PFADD', 'uv:total', fingerprint),
-      // Referrer counts (skip self and empty)
+      redis.incr('pv:total'),
+      redis.incr(`pv:day:${today}`),
+      redis.hincrby('pv:paths', page, 1),
+      redis.pfadd(`uv:day:${today}`, fingerprint),
+      redis.pfadd('uv:total', fingerprint),
       ...(referrer && !referrer.includes(COMPANY.domain)
-        ? [redis(url, token, 'HINCRBY', 'pv:referrers', new URL(referrer).hostname, '1')]
+        ? [redis.hincrby('pv:referrers', new URL(referrer).hostname, 1)]
         : []),
-      // Set 90-day expiry on daily keys
-      redis(url, token, 'EXPIRE', `pv:day:${today}`, '7776000'),
-      redis(url, token, 'EXPIRE', `uv:day:${today}`, '7776000'),
+      // 90-day expiry on the daily keys
+      redis.expire(`pv:day:${today}`, 7776000),
+      redis.expire(`uv:day:${today}`, 7776000),
     ])
 
     return NextResponse.json({ ok: true })

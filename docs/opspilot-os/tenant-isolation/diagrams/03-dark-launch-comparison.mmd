@@ -1,0 +1,12 @@
+%% Dark-launch comparison. See 06-dark-launch-strategy.md
+flowchart TB
+  Get[redis.get key] --> DL{TENANCY_DARK_LAUNCH?}
+  DL -- off --> Normal[return scopeKey read]
+  DL -- on --> Pair[compareLegacyAndTenantKey]
+  Pair --> Both[read legacy AND tenant values]
+  Both --> Classify[classifyMismatch]
+  Classify --> Type{mismatch?}
+  Type -- none --> OkTally[summary.ok++]
+  Type -- missing/stale/serialization/value --> Report[recordTenantEvent dark-launch-mismatch - keyFamily + tenant + type, NO values]
+  OkTally --> Ret[RETURN legacy value - response unchanged]
+  Report --> Ret

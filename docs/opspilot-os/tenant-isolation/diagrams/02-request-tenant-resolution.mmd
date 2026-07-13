@@ -1,0 +1,12 @@
+%% Request tenant resolution. See 08-background-and-storage-isolation.md
+flowchart TB
+  Req[request] --> Proxy[proxy.ts strips x-tenant-id header]
+  Proxy --> Kind{entry point}
+  Kind -- admin/portal --> Sess[getPrincipal - signed cookie ONLY]
+  Sess --> TidS[principal.tenantId]
+  Kind -- cron/webhook --> Bg[resolveBackgroundTenant]
+  Bg --> TidB[explicit tenant or reference tenant]
+  TidS --> Run[runWithTenant -> AsyncLocalStorage]
+  TidB --> Run
+  Run --> Handler[handler + redis chokepoint use ctx tenant]
+  Sess -. forged header .-> Ignored[header ignored - not authoritative]

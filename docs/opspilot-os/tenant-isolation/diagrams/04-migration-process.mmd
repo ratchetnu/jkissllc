@@ -1,0 +1,14 @@
+%% Migration process. See 05-jkiss-migration-plan.md
+flowchart TB
+  Scan[inventory: SCAN + classifyKeys] --> Owned[tenant-owned keys]
+  Owned --> Loop[for each key in bounded batches]
+  Loop --> Exists{target t:jkiss:key exists?}
+  Exists -- no --> Copy[dry-run? count : SET target = legacy value]
+  Exists -- yes --> Eq{checksum equal?}
+  Eq -- yes --> Skip[skip - idempotent]
+  Eq -- no --> Conflict[record CONFLICT - never overwrite]
+  Copy --> Next[next key]
+  Skip --> Next
+  Conflict --> Next
+  Next --> Verify[verify: every owned key has matching copy]
+  Verify --> Done[legacy keys NEVER deleted]

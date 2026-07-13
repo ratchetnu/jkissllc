@@ -12,6 +12,7 @@ import crypto from 'crypto'
 import { listBookings, saveBooking, getBookingByNumber, type Booking } from '../../../lib/bookings'
 import { recordMessage, seenProviderMessage } from '../../../lib/messages'
 import { notifyOwnerOfReply } from '../../../lib/owner-alerts'
+import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -39,6 +40,9 @@ export async function POST(req: NextRequest) {
     return new NextResponse('webhook not configured', { status: 503 })
   }
 
+  // Tenant-owned work runs inside the resolved tenant context (off → reference
+  // tenant, no key change; on → scoped + fail-closed).
+  return withBackgroundTenant('webhook', async () => {
   // Accept JSON (Apps Script) or form-encoded (parse services).
   let p: Record<string, string> = {}
   try {
@@ -101,4 +105,5 @@ export async function POST(req: NextRequest) {
   } catch (e) { console.error('[email-webhook] owner alert failed', e) }
 
   return NextResponse.json({ ok: true, matched: !!booking })
+  })
 }
