@@ -124,6 +124,43 @@ export async function notifyOwnerNewSubmission(b: Booking, opts: { force?: boole
   return sendOwnerNotification(b, 'new_submission', { sms, emailSubject: `New Book Now request — ${b.bookingNumber}`, emailHtml }, opts)
 }
 
+/**
+ * The durable server-side AI worker reached a terminal outcome for a Book Now
+ * request — tell the owner. 'completed' → estimate ready to approve; 'manual_review'
+ * → needs a human look; 'failed' → processing failed after retries (price by hand).
+ * Ledgered + deduped per kind. Skipped for sandbox test records + customer never told.
+ */
+export async function notifyOwnerAiOutcome(b: Booking, status: 'completed' | 'manual_review' | 'failed', opts: { force?: boolean; resend?: boolean } = {}) {
+  if (b.isTest) return { sent: false, deduped: false }
+  const url = ownerBookingUrl(b)
+  const kind = status === 'completed' ? 'ai_ready' : status === 'manual_review' ? 'ai_manual_review' : 'ai_failed'
+  const headline =
+    status === 'completed' ? 'AI estimate ready for approval'
+      : status === 'manual_review' ? 'AI flagged this request for manual review'
+        : 'AI processing failed — price this request by hand'
+  const est = b.aiEstimate?.pricing ? `$${b.aiEstimate.pricing.lowUsd}–$${b.aiEstimate.pricing.highUsd}` : '—'
+  const errLine = status === 'failed' && b.aiJob?.errorCode ? `\nReason: ${b.aiJob.errorCode}` : ''
+  const sms =
+    `${COMPANY.legalNameUpper}: ${headline.toUpperCase()}\n` +
+    `Booking: ${b.bookingNumber}\n` +
+    `Service: ${SERVICE_LABELS[b.serviceType]}\n` +
+    (status === 'failed' ? '' : `Est: ${est}\n`) +
+    `${errLine ? errLine.trim() + '\n' : ''}` +
+    `Open: ${url}`
+  const emailHtml =
+    `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif">` +
+    `<h2 style="margin:0 0 8px">${headline}</h2>` +
+    `<table style="font-size:14px;color:#222">` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Booking</td><td><strong>${b.bookingNumber}</strong></td></tr>` +
+    `<tr><td style="padding:2px 10px 2px 0;color:#666">Service</td><td>${SERVICE_LABELS[b.serviceType]}</td></tr>` +
+    (status === 'failed'
+      ? `<tr><td style="padding:2px 10px 2px 0;color:#666">Reason</td><td>${b.aiJob?.errorCode ?? 'unknown'}${b.aiJob?.attempts ? ` (after ${b.aiJob.attempts} attempts)` : ''}</td></tr>`
+      : `<tr><td style="padding:2px 10px 2px 0;color:#666">Estimate</td><td>${est}</td></tr>`) +
+    `</table>` +
+    `<p style="margin:16px 0 0"><a href="${url}" style="background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px;display:inline-block">Open in OpsPilot</a></p></div>`
+  return sendOwnerNotification(b, kind, { sms, emailSubject: `${headline} — ${b.bookingNumber}`, emailHtml }, opts)
+}
+
 /** Immediately after a Zelle proof is uploaded — owner must review it. */
 export async function notifyOwnerZelleReview(b: Booking, payment: Payment, opts: { force?: boolean; resend?: boolean } = {}) {
   const url = ownerBookingUrl(b)

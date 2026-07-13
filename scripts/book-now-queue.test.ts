@@ -49,7 +49,7 @@ test('junk with no photos is Awaiting Photos; moving/delivery with no photos is 
 })
 
 test('stage advances with the workflow', () => {
-  assert.equal(bookNowStage(mk({ aiEstimate: { decision: 'manual_review', pricing: {} } as Booking['aiEstimate'] })), 'awaiting_approval')
+  assert.equal(bookNowStage(mk({ aiEstimate: { decision: 'manual_review', pricing: {} } as Booking['aiEstimate'] })), 'manual_review')
   assert.equal(bookNowStage(mk({ aiEstimate: { decision: 'estimate_range', pricing: { lowUsd: 1, highUsd: 2 } } as Booking['aiEstimate'] })), 'quote_ready')
   assert.equal(bookNowStage(mk({ invoiceAmountCents: 20000 })), 'quote_sent')
   assert.equal(bookNowStage(mk({ status: 'pending_payment' })), 'payment_pending')
@@ -67,9 +67,21 @@ test('filters select the right requests', () => {
   assert.equal(matchesBookNowFilter(junk, 'junk'), true)
   assert.equal(matchesBookNowFilter(moving, 'moving'), true)
   assert.equal(matchesBookNowFilter(delivery, 'delivery'), true)
-  assert.equal(matchesBookNowFilter(junk, 'awaiting_ai'), true)
   assert.equal(matchesBookNowFilter(paid, 'paid'), true)
   assert.equal(matchesBookNowFilter(paid, 'new'), false)
+})
+
+test('durable AI job states drive the queue stage (real, not overlapping with Awaiting AI)', () => {
+  const withPhotos = { serviceType: 'junk-removal' as const, invoicePhotos: [{ url: 'https://x/p.jpg' }] }
+  assert.equal(bookNowStage(mk({ ...withPhotos, aiJob: { status: 'queued', idempotencyKey: 'k', photoVersion: 1, attempts: 0, updatedAt: 1 } })), 'ai_queued')
+  assert.equal(bookNowStage(mk({ ...withPhotos, aiJob: { status: 'processing', idempotencyKey: 'k', photoVersion: 1, attempts: 1, updatedAt: 1 } })), 'ai_processing')
+  assert.equal(bookNowStage(mk({ ...withPhotos, aiJob: { status: 'retrying', idempotencyKey: 'k', photoVersion: 1, attempts: 2, updatedAt: 1 } })), 'ai_processing')
+  assert.equal(bookNowStage(mk({ ...withPhotos, aiJob: { status: 'failed', idempotencyKey: 'k', photoVersion: 1, attempts: 5, errorCode: 'retry_exhausted', updatedAt: 1 } })), 'ai_failed')
+  assert.equal(bookNowStage(mk({ ...withPhotos, aiJob: { status: 'manual_review', idempotencyKey: 'k', photoVersion: 1, attempts: 1, updatedAt: 1 } })), 'manual_review')
+  // AI Failed filter matches the real persisted status, distinct from Awaiting AI.
+  const failed = mk({ ...withPhotos, aiJob: { status: 'failed', idempotencyKey: 'k', photoVersion: 1, attempts: 5, errorCode: 'retry_exhausted', updatedAt: 1 } })
+  assert.equal(matchesBookNowFilter(failed, 'ai_failed'), true)
+  assert.equal(matchesBookNowFilter(failed, 'ai_queued'), false)
 })
 
 test('summary counts online submissions by stage', () => {
@@ -88,7 +100,9 @@ test('owner-alert status reflects the ledger; sub-statuses read the booking', ()
   assert.equal(ownerAlertStatus(mk({})), 'none')
   assert.equal(ownerAlertStatus(mk({ notifications: [{ id: '1', kind: 'new_submission', channel: 'email', status: 'sent', at: 1, retryCount: 0 }] })), 'sent')
   assert.equal(ownerAlertStatus(mk({ notifications: [{ id: '1', kind: 'new_submission', channel: 'email', status: 'failed', at: 1, retryCount: 0 }] })), 'failed')
-  assert.equal(aiStatus(mk({ invoicePhotos: [{ url: 'https://x/p.jpg' }] })), 'analyzing')
+  assert.equal(aiStatus(mk({ invoicePhotos: [{ url: 'https://x/p.jpg' }] })), 'processing')
+  assert.equal(aiStatus(mk({ aiJob: { status: 'queued', idempotencyKey: 'k', photoVersion: 1, attempts: 0, updatedAt: 1 } })), 'queued')
+  assert.equal(aiStatus(mk({ aiJob: { status: 'failed', idempotencyKey: 'k', photoVersion: 1, attempts: 5, updatedAt: 1 } })), 'failed')
   assert.equal(quoteStatus(mk({ invoiceAmountCents: 100 })), 'sent')
   assert.equal(paymentStatus(mk({ invoiceAmountCents: 100, amountPaidCents: 100 })), 'paid')
 })

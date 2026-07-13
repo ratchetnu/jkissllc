@@ -18,8 +18,9 @@ const SEEN_KEY = 'jkos-booknow-seen'
 const GROUP_LABEL: Record<string, string> = { junk: 'Junk Removal', moving: 'Moving', delivery: 'Delivery', other: 'Service' }
 
 const STAGE_TONE: Record<BookNowStage, string> = {
-  new: '#f87171', awaiting_photos: '#fbbf24', awaiting_ai: '#fbbf24', quote_ready: '#60a5fa',
-  awaiting_approval: '#c084fc', quote_sent: '#60a5fa', payment_pending: '#fbbf24',
+  new: '#f87171', awaiting_photos: '#fbbf24', awaiting_ai: '#fbbf24',
+  ai_queued: '#fbbf24', ai_processing: '#60a5fa', ai_failed: '#f87171',
+  quote_ready: '#60a5fa', manual_review: '#c084fc', quote_sent: '#60a5fa', payment_pending: '#fbbf24',
   paid: '#34d399', booked: '#34d399', failed: '#f87171',
 }
 
@@ -27,8 +28,8 @@ const STAGE_TONE: Record<BookNowStage, string> = {
 const FILTERS: [BookNowFilter, string][] = [
   ['all', 'All'], ['new', 'New'],
   ['junk', 'Junk Removal'], ['moving', 'Moving'], ['delivery', 'Delivery'],
-  ['awaiting_photos', 'Awaiting Photos'], ['awaiting_ai', 'Awaiting AI'], ['ai_failed', 'AI Failed'],
-  ['awaiting_approval', 'Awaiting Approval'], ['quote_ready', 'Quote Ready'], ['quote_sent', 'Quote Sent'],
+  ['awaiting_photos', 'Awaiting Photos'], ['ai_queued', 'AI Queued'], ['ai_processing', 'AI Processing'], ['ai_failed', 'AI Failed'],
+  ['manual_review', 'Manual Review'], ['awaiting_approval', 'Awaiting Approval'], ['quote_ready', 'Quote Ready'], ['quote_sent', 'Quote Sent'],
   ['accepted', 'Accepted'], ['payment_pending', 'Payment Pending'], ['paid', 'Paid'], ['booked', 'Booked'], ['failed', 'Failed'],
 ]
 
@@ -84,6 +85,18 @@ function Queue() {
     finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
+
+  // Short-poll while any request is actively moving through AI processing, so the
+  // queue advances on its own without the owner refreshing.
+  const hasActive = useMemo(() => items.some(b => {
+    const s = bookNowStage(b)
+    return s === 'ai_queued' || s === 'ai_processing'
+  }), [items])
+  useEffect(() => {
+    if (!hasActive) return
+    const t = setInterval(() => { load() }, 15000)
+    return () => clearInterval(t)
+  }, [hasActive, load])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()

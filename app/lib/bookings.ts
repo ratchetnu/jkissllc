@@ -144,6 +144,7 @@ export type BookingEventAction =
   | 'notification.sent' | 'notification.failed' | 'notification.resent'
   | 'customer.confirmation'
   | 'ai.override' | 'ai.reprice' | 'ai.modify'
+  | 'ai.queued' | 'ai.analyzed' | 'ai.failed' | 'ai.manual_review'
   | 'test.marked' | 'test.unmarked'
 
 export type BookingEvent = {
@@ -161,6 +162,9 @@ export type NotificationKind =
   | 'new_confirmed_booking'    // NEW CONFIRMED BOOKING → owner (after Stripe verify)
   | 'zelle_rejected_customer'  // proof rejected → customer, with replacement link
   | 'confirmation_customer'    // booking confirmed → customer
+  | 'ai_ready'                 // server AI estimate ready for owner approval
+  | 'ai_manual_review'         // server AI flagged the request for manual review
+  | 'ai_failed'                // server AI processing failed after retries → owner
 
 export type NotificationAttempt = {
   id: string
@@ -172,6 +176,34 @@ export type NotificationAttempt = {
   error?: string
   at: number
   retryCount: number
+}
+
+// ── Durable server-side Book Now AI processing job ───────────────────────────
+// The recovery path for the customer-side instant estimate: when a Book Now
+// request lands with photos but no valid AI estimate (analysis failed, was
+// blocked/rate-limited, timed out, or the booking was submitted without an
+// analysisId), a durable job is recorded ON THE BOOKING and advanced by a cron
+// worker + owner controls — never a fire-and-forget promise. See app/lib/book-now-ai.ts.
+export type AiJobStatus = 'not_started' | 'queued' | 'processing' | 'completed' | 'retrying' | 'failed' | 'manual_review'
+export type AiJobErrorCode =
+  | 'rate_limited' | 'bot_blocked' | 'provider_unavailable' | 'unsupported_image'
+  | 'image_access_failed' | 'invalid_schema' | 'pricing_validation_failed'
+  | 'persistence_failed' | 'retry_exhausted' | 'unknown'
+export type AiJob = {
+  status: AiJobStatus
+  idempotencyKey: string       // book-now-ai:{tenantId}:{bookingId}:{photoVersion}
+  photoVersion: number         // # of photos analyzed — re-triggers if the set changes
+  attempts: number
+  lastAttemptAt?: number
+  nextRetryAt?: number         // when the cron may next pick it up (backoff)
+  errorCode?: AiJobErrorCode
+  errorSummary?: string        // safe, non-PII
+  providerTraceId?: string     // model callId
+  provider?: string
+  model?: string
+  completedAt?: number
+  initiatedBy?: string         // 'system' | principal.sub (manual run/retry)
+  updatedAt: number
 }
 
 // ── Derived payment status (for display + bookkeeping) ───────────────────────
@@ -272,6 +304,7 @@ export type Booking = {
   disposalEstimateCents?: number // estimated dump/disposal cost (from the quote)
   disposalActualCents?: number   // actual disposal cost entered after the job
   aiEstimate?: StoredAiEstimate  // AI photo analysis + deterministic pricing + decision (internal)
+  aiJob?: AiJob                  // durable server-side AI processing job (recovery + retry)
   loyaltyCode?: string         // 10% off code issued when paid in full (reuse/referral)
   archived?: boolean           // hidden from the default list (soft delete)
   archivedAt?: number

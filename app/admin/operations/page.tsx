@@ -215,8 +215,10 @@ function SkeletonHome() {
 const BOOK_NOW_TILES: { stage: BookNowStage; label: string }[] = [
   { stage: 'new', label: 'New' },
   { stage: 'awaiting_photos', label: 'Awaiting Photos' },
-  { stage: 'awaiting_ai', label: 'Awaiting AI' },
-  { stage: 'awaiting_approval', label: 'Awaiting Approval' },
+  { stage: 'ai_queued', label: 'AI Queued' },
+  { stage: 'ai_processing', label: 'AI Processing' },
+  { stage: 'ai_failed', label: 'AI Failed' },
+  { stage: 'manual_review', label: 'Manual Review' },
   { stage: 'quote_ready', label: 'Quote Ready' },
   { stage: 'quote_sent', label: 'Quote Sent' },
   { stage: 'payment_pending', label: 'Payment Pending' },
@@ -236,7 +238,7 @@ function BookNowOverview() {
   }, [])
   if (failed) return null
   const total = counts ? Object.values(counts).reduce((s, n) => s + n, 0) : 0
-  const active = counts ? (counts.new + counts.awaiting_photos + counts.awaiting_ai + counts.awaiting_approval + counts.quote_ready) : 0
+  const active = counts ? (counts.new + counts.awaiting_photos + counts.ai_queued + counts.ai_processing + counts.ai_failed + counts.manual_review + counts.quote_ready) : 0
 
   return (
     <div className="os-card os-rise" style={{ padding: 16, marginBottom: 12 }}>

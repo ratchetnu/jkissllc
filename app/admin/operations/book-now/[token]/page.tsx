@@ -34,6 +34,12 @@ function Detail({ token }: { token: string }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
   const [lightbox, setLightbox] = useState<number | null>(null)
+  const [isOwner, setIsOwner] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/admin/session', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null).then(d => setIsOwner(d?.role === 'admin')).catch(() => {})
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true); setError('')
@@ -49,6 +55,15 @@ function Detail({ token }: { token: string }) {
     finally { setLoading(false) }
   }, [token])
   useEffect(() => { load() }, [load])
+
+  // Short-poll while the AI job is actively moving so the owner watches it advance
+  // without refreshing. Stops as soon as it reaches a terminal state.
+  const jobStatus = b?.aiJob?.status
+  useEffect(() => {
+    if (jobStatus !== 'queued' && jobStatus !== 'processing' && jobStatus !== 'retrying') return
+    const t = setInterval(() => { load() }, 6000)
+    return () => clearInterval(t)
+  }, [jobStatus, load])
 
   const run = async (action: string, body: Record<string, unknown> = {}) => {
     setBusy(action)
@@ -171,6 +186,35 @@ function Detail({ token }: { token: string }) {
         ) : (
           <p style={{ fontSize: 12.5, color: 'var(--muted)' }}>No AI estimate yet{(b.invoicePhotos?.length ?? 0) > 0 ? ' — analysis pending.' : ' — no photos to analyze.'}</p>
         )}
+
+        {/* Durable server-side processing job — real, persisted status + owner controls. */}
+        {b.aiJob && (
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+            <p style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--muted)', marginBottom: 8 }}>Server AI Processing Job</p>
+            <KV k="AI status" v={b.aiJob.status} />
+            <KV k="Attempts" v={b.aiJob.attempts} />
+            <KV k="Last attempt" v={b.aiJob.lastAttemptAt ? fmtTs(b.aiJob.lastAttemptAt) : undefined} />
+            <KV k="Next retry" v={b.aiJob.nextRetryAt && (b.aiJob.status === 'queued' || b.aiJob.status === 'retrying') ? fmtTs(b.aiJob.nextRetryAt) : undefined} />
+            <KV k="Error" v={b.aiJob.errorCode ? `${b.aiJob.errorCode}${b.aiJob.errorSummary ? ` — ${b.aiJob.errorSummary}` : ''}` : undefined} />
+            <KV k="Provider" v={b.aiJob.provider} />
+            <KV k="Model" v={b.aiJob.model} />
+            <KV k="Trace" v={b.aiJob.providerTraceId} />
+          </div>
+        )}
+
+        {isOwner && (
+          <div className="flex flex-wrap gap-2" style={{ marginTop: 12 }}>
+            {(!b.aiJob || b.aiJob.status === 'not_started' || b.aiJob.status === 'failed') && (b.invoicePhotos?.length ?? 0) > 0 &&
+              <button onClick={() => run(b.aiJob?.status === 'failed' ? 'retry-ai' : 'run-ai')} disabled={busy === 'run-ai' || busy === 'retry-ai'} style={{ ...btn, borderColor: 'var(--red)', color: '#fff', background: 'var(--red)' }}>
+                {busy === 'run-ai' || busy === 'retry-ai' ? 'Running…' : b.aiJob?.status === 'failed' ? 'Retry AI Analysis' : 'Run AI Analysis'}
+              </button>}
+            {(b.aiJob?.status === 'queued' || b.aiJob?.status === 'retrying') &&
+              <button onClick={() => run('cancel-ai')} disabled={busy === 'cancel-ai'} style={btn}>Cancel Pending Analysis</button>}
+            {b.aiJob?.status !== 'manual_review' &&
+              <button onClick={() => run('send-manual-review')} disabled={busy === 'send-manual-review'} style={btn}>Send to Manual Review</button>}
+          </div>
+        )}
+
         <Link href={`/admin/bookings?b=${encodeURIComponent(b.bookingNumber)}`} style={{ ...btn, marginTop: 10 }}>
           <ExternalLink size={13} /> Open full estimate editor (modify / approve / send quote)
         </Link>

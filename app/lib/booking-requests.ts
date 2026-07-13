@@ -7,6 +7,8 @@ import { SERVICE_TYPES } from './bookings'
 import { getDraftEstimate } from './ai/estimate-store'
 import { onLeadPersisted } from './intake-workflow'
 import { notifyOwnerNewSubmission } from './booking-notify'
+import { enqueueAiJob } from './book-now-ai'
+import { currentTenantId } from './platform/tenancy/context'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public "Book Now" quote requests → persisted OpsPilot bookings.
@@ -194,6 +196,16 @@ export async function persistQuoteRequest(input: QuoteRequestInput): Promise<Boo
     actor: 'customer', action: 'booking.created', result: 'quote_request',
     meta: { source: 'online', photos: booking.invoicePhotos?.length ?? 0 },
   })
+
+  // Durable server-side AI recovery: if this request has photos but no valid AI
+  // estimate got attached (customer-side analysis failed, was blocked/rate-limited,
+  // or was submitted without an analysisId), queue a job the cron worker processes —
+  // so it never strands at "Awaiting AI". Idempotent + fail-soft.
+  try {
+    let tenantId: string | undefined
+    try { tenantId = currentTenantId() } catch { /* no request context */ }
+    enqueueAiJob(booking, { tenantId, initiatedBy: 'system' })
+  } catch (e) { console.error('[booking-requests] enqueue ai job', e) }
 
   await saveBooking(booking)
 

@@ -11,6 +11,10 @@ import {
 // booking confirmation. This module is the single, pure (no-I/O) source of truth for
 // which bookings belong in the queue and what workflow stage each is in, so the
 // Operations UI, the counters, and the tests all agree. Keep it hermetic + testable.
+//
+// The AI-phase stages (queued / processing / failed / manual review) come from the
+// DURABLE server-side job (`booking.aiJob`, see book-now-ai.ts), so "AI Failed" is a
+// real persisted status — never an overlap with "Awaiting AI".
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A submission belongs in the Book Now queue iff it came from the public wizard. */
@@ -28,6 +32,11 @@ export function bookNowServiceGroup(t: ServiceType): BookNowServiceGroup {
   return 'other'
 }
 
+// A genuine, usable AI estimate is attached (not a failed shell).
+function hasValidEstimate(b: Booking): boolean {
+  return !!b.aiEstimate && b.aiEstimate.status !== 'failed' && !!b.aiEstimate.pricing
+}
+
 // Canonical workflow stage — the single furthest-along state of a request. Ordered
 // terminal-first so the most advanced fact wins (a paid request is 'paid', not 'new').
 export type BookNowStage =
@@ -36,8 +45,11 @@ export type BookNowStage =
   | 'paid'
   | 'payment_pending'
   | 'quote_sent'
-  | 'awaiting_approval'
+  | 'manual_review'
   | 'quote_ready'
+  | 'ai_failed'
+  | 'ai_processing'
+  | 'ai_queued'
   | 'awaiting_ai'
   | 'awaiting_photos'
   | 'new'
@@ -48,8 +60,11 @@ export const BOOK_NOW_STAGE_LABEL: Record<BookNowStage, string> = {
   paid: 'Paid',
   payment_pending: 'Payment Pending',
   quote_sent: 'Quote Sent',
-  awaiting_approval: 'Awaiting Approval',
+  manual_review: 'Manual Review',
   quote_ready: 'Quote Ready',
+  ai_failed: 'AI Failed',
+  ai_processing: 'AI Processing',
+  ai_queued: 'AI Queued',
   awaiting_ai: 'Awaiting AI',
   awaiting_photos: 'Awaiting Photos',
   new: 'New',
@@ -64,30 +79,44 @@ const FAILED_STATUSES = new Set(['cancelled', 'refunded', 'could_not_complete'])
 const PAYMENT_PENDING_STATUSES = new Set(['pending_payment', 'pending_zelle_verification'])
 
 /** The furthest-along stage this request has reached. Derived from the booking alone
- *  (no events required) so it works with the governed-intake flag off. */
+ *  (no external events required) so it works with the governed-intake flag off. */
 export function bookNowStage(b: Booking): BookNowStage {
   if (FAILED_STATUSES.has(b.status)) return 'failed'
   if (BOOKED_STATUSES.has(b.status)) return 'booked'
   if ((b.amountPaidCents ?? 0) > 0) return 'paid'
   if (PAYMENT_PENDING_STATUSES.has(b.status)) return 'payment_pending'
-  if ((b.invoiceAmountCents ?? 0) > 0) return 'quote_sent'          // priced → quote is out
-  if (b.aiEstimate?.decision === 'manual_review') return 'awaiting_approval'
-  if (b.aiEstimate?.pricing) return 'quote_ready'                   // AI priced, owner can send
+  if ((b.invoiceAmountCents ?? 0) > 0) return 'quote_sent'                     // priced → quote is out
+  if (b.aiJob?.status === 'manual_review' || b.aiEstimate?.decision === 'manual_review') return 'manual_review'
+  if (hasValidEstimate(b)) return 'quote_ready'                               // AI priced, owner can send
+  // ── AI recovery phase (real, persisted job states) ──
+  if (b.aiJob?.status === 'failed') return 'ai_failed'
+  if (b.aiJob?.status === 'processing' || b.aiJob?.status === 'retrying') return 'ai_processing'
+  if (b.aiJob?.status === 'queued') return 'ai_queued'
   const isJobBased = bookNowServiceGroup(b.serviceType) === 'junk'
   if ((b.invoicePhotos?.length ?? 0) === 0 && isJobBased) return 'awaiting_photos'
-  if ((b.invoicePhotos?.length ?? 0) > 0 && !b.aiEstimate) return 'awaiting_ai'
+  if ((b.invoicePhotos?.length ?? 0) > 0 && !b.aiEstimate) return 'awaiting_ai'  // legacy: photos, never enqueued
   return 'new'
 }
 
 // ── Sub-status read-outs shown on each row (independent of the canonical stage) ──
-export function aiStatus(b: Booking): 'none' | 'analyzing' | 'review' | 'priced' {
-  if (!b.aiEstimate) return (b.invoicePhotos?.length ?? 0) > 0 ? 'analyzing' : 'none'
-  if (b.aiEstimate.decision === 'manual_review') return 'review'
-  return 'priced'
+export type AiStatusRead = 'none' | 'queued' | 'processing' | 'failed' | 'review' | 'priced'
+export function aiStatus(b: Booking): AiStatusRead {
+  if (b.aiEstimate && b.aiEstimate.status !== 'failed' && b.aiEstimate.pricing) {
+    return b.aiEstimate.decision === 'manual_review' ? 'review' : 'priced'
+  }
+  switch (b.aiJob?.status) {
+    case 'queued': return 'queued'
+    case 'processing':
+    case 'retrying': return 'processing'
+    case 'failed': return 'failed'
+    case 'manual_review': return 'review'
+    default: break
+  }
+  return (b.invoicePhotos?.length ?? 0) > 0 ? 'processing' : 'none'
 }
 export function quoteStatus(b: Booking): 'none' | 'ready' | 'sent' {
   if ((b.invoiceAmountCents ?? 0) > 0) return 'sent'
-  if (b.aiEstimate?.pricing) return 'ready'
+  if (hasValidEstimate(b)) return 'ready'
   return 'none'
 }
 export function paymentStatus(b: Booking): 'unpaid' | 'partial' | 'paid' {
@@ -108,8 +137,8 @@ export function ownerAlertStatus(b: Booking): 'sent' | 'failed' | 'none' {
 export type BookNowFilter =
   | 'all' | 'new'
   | 'junk' | 'moving' | 'delivery'
-  | 'awaiting_photos' | 'awaiting_ai' | 'ai_failed'
-  | 'awaiting_approval' | 'quote_ready' | 'quote_sent'
+  | 'awaiting_photos' | 'ai_queued' | 'ai_processing' | 'ai_failed'
+  | 'awaiting_approval' | 'quote_ready' | 'manual_review' | 'quote_sent'
   | 'accepted' | 'payment_pending' | 'paid' | 'booked' | 'failed'
 
 export function matchesBookNowFilter(b: Booking, f: BookNowFilter): boolean {
@@ -121,12 +150,14 @@ export function matchesBookNowFilter(b: Booking, f: BookNowFilter): boolean {
     case 'moving': return bookNowServiceGroup(b.serviceType) === 'moving'
     case 'delivery': return bookNowServiceGroup(b.serviceType) === 'delivery'
     case 'awaiting_photos': return stage === 'awaiting_photos'
-    case 'awaiting_ai': return stage === 'awaiting_ai'
-    case 'ai_failed': return aiStatus(b) === 'analyzing' && (b.invoicePhotos?.length ?? 0) > 0 && !b.aiEstimate
-    case 'awaiting_approval': return stage === 'awaiting_approval'
+    case 'ai_queued': return stage === 'ai_queued'
+    case 'ai_processing': return stage === 'ai_processing'
+    case 'ai_failed': return stage === 'ai_failed'                 // REAL persisted status
+    case 'awaiting_approval': return stage === 'quote_ready'       // an estimate awaiting the owner's send
     case 'quote_ready': return stage === 'quote_ready'
+    case 'manual_review': return stage === 'manual_review'
     case 'quote_sent': return stage === 'quote_sent'
-    case 'accepted': return stage === 'payment_pending'   // accepted-but-unpaid == awaiting payment
+    case 'accepted': return stage === 'payment_pending'            // accepted-but-unpaid == awaiting payment
     case 'payment_pending': return stage === 'payment_pending'
     case 'paid': return stage === 'paid'
     case 'booked': return stage === 'booked'
@@ -138,8 +169,8 @@ export function matchesBookNowFilter(b: Booking, f: BookNowFilter): boolean {
 /** Counts per stage across a set of online bookings — drives the overview counters. */
 export function summarizeBookNow(bookings: Booking[]): Record<BookNowStage, number> {
   const out: Record<BookNowStage, number> = {
-    failed: 0, booked: 0, paid: 0, payment_pending: 0, quote_sent: 0,
-    awaiting_approval: 0, quote_ready: 0, awaiting_ai: 0, awaiting_photos: 0, new: 0,
+    failed: 0, booked: 0, paid: 0, payment_pending: 0, quote_sent: 0, manual_review: 0,
+    quote_ready: 0, ai_failed: 0, ai_processing: 0, ai_queued: 0, awaiting_ai: 0, awaiting_photos: 0, new: 0,
   }
   for (const b of bookings) if (isBookNow(b)) out[bookNowStage(b)]++
   return out

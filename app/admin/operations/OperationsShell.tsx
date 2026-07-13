@@ -43,7 +43,7 @@ export default function OperationsShell({ children }: { children: React.ReactNod
     let live = true
     fetch('/api/admin/book-now', { credentials: 'same-origin' })
       .then(r => (r.ok ? r.json() : null))
-      .then(j => { if (live && j?.counts) { const c = j.counts; setBookNowNew(c.new + c.awaiting_photos + c.awaiting_ai + c.awaiting_approval + c.quote_ready) } })
+      .then(j => { if (live && j?.counts) { const c = j.counts; setBookNowNew(c.new + c.awaiting_photos + c.ai_queued + c.ai_processing + c.ai_failed + c.manual_review + c.quote_ready) } })
       .catch(() => {})
     return () => { live = false }
   }, [pathname])

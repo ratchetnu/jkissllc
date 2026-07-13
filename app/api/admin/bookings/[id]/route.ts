@@ -7,7 +7,9 @@ import {
   SERVICE_TYPES, type Booking, type ServiceType, type Payment, type PaymentMethod, type PaymentType,
   type BookingStatus,
 } from '../../../../lib/bookings'
-import { notifyCustomerZelleRejected, resendOwnerNotification } from '../../../../lib/booking-notify'
+import { notifyCustomerZelleRejected, resendOwnerNotification, notifyOwnerAiOutcome } from '../../../../lib/booking-notify'
+import { processAiJob, enqueueAiJob, supportsPhotoAi, photoVersion } from '../../../../lib/book-now-ai'
+import { currentTenantId } from '../../../../lib/platform/tenancy/context'
 import { getPolicyVersion, getCurrentPolicy } from '../../../../lib/policy'
 import { sendConfirmationLink, notifyJobCompleted, notifyBookingConfirmed, notifyPaidInFull, notifyContinuation, notifyCustomerMessage } from '../../../../lib/notify'
 import { emailOpsPaymentReceived, emailPaymentReceiptCustomer, emailRefundCustomer, bookingLink, siteUrl } from '../../../../lib/booking-emails'
@@ -191,6 +193,53 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       const r = await resendOwnerNotification(b, kind, p)
       pushBookingEvent(b, { actor, action: 'notification.resent', result: r.sent ? 'sent' : 'failed', meta: { kind } })
       extra = { resent: r.sent }
+      break
+    }
+
+    // ── Durable server-side AI processing controls (owner-only) ──────────────
+    // run-ai / retry-ai run the analysis→pricing chain on the STORED photos (no
+    // customer resubmit). They call processAiJob, which loads+saves its own copy,
+    // so we RETURN here rather than fall through to the trailing save (which would
+    // clobber the attached estimate with this stale record).
+    case 'run-ai':
+    case 'retry-ai': {
+      if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
+      if (!supportsPhotoAi(b)) return NextResponse.json({ error: 'This service is not photo-estimated.' }, { status: 400 })
+      if (photoVersion(b) === 0) return NextResponse.json({ error: 'No stored photos to analyze.' }, { status: 400 })
+      let tenantId: string | undefined
+      try { tenantId = currentTenantId() } catch { /* ignore */ }
+      // Force a fresh, full-budget attempt from the stored photos.
+      enqueueAiJob(b, { force: true, initiatedBy: actor, tenantId })
+      if (b.aiJob) b.aiJob.attempts = 0
+      await saveBooking(b)
+      const result = await processAiJob(id, { initiatedBy: actor, tenantId })
+      const nb = await getBookingByToken(id)
+      if (nb && (result.status === 'completed' || result.status === 'manual_review' || result.status === 'failed')) {
+        try { await notifyOwnerAiOutcome(nb, result.status) } catch (e) { console.error('[run-ai notify]', e) }
+      }
+      return NextResponse.json({ ok: true, booking: nb ?? b, aiJob: nb?.aiJob, result })
+    }
+
+    case 'cancel-ai': {
+      if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
+      if (!b.aiJob || (b.aiJob.status !== 'queued' && b.aiJob.status !== 'retrying')) {
+        return NextResponse.json({ error: 'No pending AI job to cancel.' }, { status: 400 })
+      }
+      b.aiJob = { ...b.aiJob, status: 'not_started', nextRetryAt: undefined, updatedAt: Date.now() }
+      pushBookingEvent(b, { actor, action: 'ai.failed', result: 'cancelled', meta: { by: actor } })
+      break
+    }
+
+    case 'send-manual-review': {
+      if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
+      const pv = photoVersion(b)
+      b.aiJob = {
+        status: 'manual_review',
+        idempotencyKey: b.aiJob?.idempotencyKey ?? `book-now-ai:manual:${b.token}:${pv}`,
+        photoVersion: pv, attempts: b.aiJob?.attempts ?? 0,
+        initiatedBy: actor, updatedAt: Date.now(),
+      }
+      pushBookingEvent(b, { actor, action: 'ai.manual_review', result: 'owner', meta: { by: actor } })
       break
     }
     case 'void-payment': {
