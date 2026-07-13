@@ -38,8 +38,22 @@ export type StoredAiEstimate = {
   // reviewer (both auditable, shown in OpsPilot).
   monitor?: MonitorReport
   critic?: CriticVerdict
-  // Admin adjustment (Phase 11) — recorded, never silently overwriting the AI number.
-  override?: { overriddenUsd: number; reason: string; by: string; at: string }
+  // Owner adjustment — recorded, never silently overwriting the AI number. The
+  // original `analysis`, `critic`, and `pricing` are always preserved; this is a
+  // separate, additive record of the owner's Modify Estimate changes.
+  override?: {
+    overriddenUsd: number       // final quote amount (dollars)
+    reason: string              // required override reason
+    by: string                  // who made the change (principal sub)
+    at: string                  // ISO timestamp
+    loadMin?: number            // owner-set truck-load range (fraction of a 24ft truck)
+    loadMax?: number
+    laborUsd?: number           // owner-set labor amount (dollars)
+    disposalUsd?: number        // owner-set disposal cost (dollars)
+    trips?: number              // owner-set expected dump-trip count (whole number)
+    itemNotes?: string          // owner note on item classifications
+    customerExplanation?: string // customer-facing explanation shown with the quote
+  }
 }
 
 const DRAFT_TTL_MS = 24 * 60 * 60 * 1000

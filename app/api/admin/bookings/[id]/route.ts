@@ -19,6 +19,8 @@ import { getStripe, stripeConfigured } from '../../../../lib/stripe'
 import { getDisposalSettings } from '../../../../lib/disposal'
 import { getCalibration } from '../../../../lib/job-learning'
 import { decideQuote } from '../../../../lib/pricing/quote-decision'
+import { onEstimateModified } from '../../../../lib/intake-workflow'
+import { validateEstimateModification } from '../../../../lib/estimate-modify'
 
 export const runtime = 'nodejs'
 
@@ -461,6 +463,35 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       b.aiEstimate.pricing = { recommendedUsd: d.recommendedUsd, lowUsd: d.rangeUsd.low, highUsd: d.rangeUsd.high, breakdown: d.breakdown }
       b.disposalEstimateCents = d.breakdown.disposalCents
       pushBookingEvent(b, { actor, action: 'ai.reprice', result: d.decision, meta: { recommendedUsd: d.recommendedUsd } })
+      break
+    }
+    // ── AI estimate: owner "Modify Estimate" (rich, recorded, never auto-sends) ─
+    // Preserves the original analysis + reviewer output; stores the owner's changes
+    // as an additive override with a required reason + who/when + an immutable
+    // ai.modify timeline event. Does NOT send the quote — that's a separate approve.
+    case 'ai-modify': {
+      if (!b.aiEstimate) return NextResponse.json({ error: 'No AI estimate on this booking.' }, { status: 400 })
+      const reason = str(body.reason, 500) ?? ''
+      const overriddenUsd = Math.round(num(body.overriddenUsd) ?? 0)
+      const loadMin = num(body.loadMin), loadMax = num(body.loadMax)
+      const laborUsd = num(body.laborUsd), disposalUsd = num(body.disposalUsd), trips = num(body.trips)
+      const valid = validateEstimateModification({ overriddenUsd, loadMin, loadMax, laborUsd, disposalUsd, trips, reason })
+      if (!valid.ok) return NextResponse.json({ error: valid.error }, { status: 400 })
+      const itemNotes = str(body.itemNotes, 1000) || undefined
+      const customerExplanation = str(body.customerExplanation, 1200) || undefined
+      const originalUsd = b.aiEstimate.override?.overriddenUsd ?? b.aiEstimate.pricing.recommendedUsd
+      b.aiEstimate.override = {
+        overriddenUsd, reason, by: actor, at: new Date().toISOString(),
+        loadMin, loadMax, laborUsd, disposalUsd,
+        trips: trips !== undefined ? Math.round(trips) : undefined,
+        itemNotes, customerExplanation,
+      }
+      pushBookingEvent(b, {
+        actor, action: 'ai.modify', result: `$${originalUsd}→$${overriddenUsd}`,
+        meta: { originalUsd, overriddenUsd, loadMin, loadMax, laborUsd, disposalUsd, trips, reason },
+      })
+      b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[Estimate modified by ${actor}] final $${originalUsd} → $${overriddenUsd}: ${reason}`
+      try { await onEstimateModified(b, { by: actor, originalUsd, overriddenUsd }) } catch { /* fail-soft */ }
       break
     }
     default:

@@ -8,6 +8,7 @@ import AiFeedback from '../AiFeedback'
 import { SkeletonList } from '../../components/Skeleton'
 import { ConversationThread, type ThreadMessage } from '../messaging'
 import WorkflowTimeline from './WorkflowTimeline'
+import ModifyEstimate from './ModifyEstimate'
 import type { Booking, Payment, InvoicePhoto } from '../../lib/bookings'
 import type { StoredAiEstimate } from '../../lib/ai/estimate-store'
 
@@ -362,6 +363,7 @@ function AiEstimatePanel({ est, busy, run }: { est: StoredAiEstimate; busy: stri
   const p = est.pricing
   const [ovr, setOvr] = useState(String(est.override?.overriddenUsd ?? ''))
   const [reason, setReason] = useState('')
+  const [modifying, setModifying] = useState(false)
   const decisionColor = est.decision === 'instant_quote' ? '#34d399' : est.decision === 'estimate_range' ? '#fbbf24' : '#f87171'
   const decisionLabel = est.decision === 'instant_quote' ? 'Instant Quote' : est.decision === 'estimate_range' ? 'Estimate Range' : 'Manual Review'
   const finalUsd = est.override?.overriddenUsd ?? p.recommendedUsd
@@ -466,7 +468,10 @@ function AiEstimatePanel({ est, busy, run }: { est: StoredAiEstimate; busy: stri
             className="text-xs font-bold px-3 py-2 rounded-lg" style={{ background: 'var(--red)', color: '#fff', opacity: (!ovr || !reason.trim()) ? 0.5 : 1 }}>{busy === 'ai-override' ? '…' : 'Save override'}</button>
           <button type="button" disabled={busy === 'ai-reprice'} onClick={() => run('ai-reprice')}
             className="text-xs font-semibold px-3 py-2 rounded-lg" style={{ background: 'rgba(255,255,255,.08)', color: 'var(--muted)' }}>{busy === 'ai-reprice' ? '…' : 'Re-price'}</button>
+          <button type="button" onClick={() => setModifying(v => !v)}
+            className="text-xs font-semibold px-3 py-2 rounded-lg" style={{ background: 'rgba(255,255,255,.08)', color: 'var(--muted)' }}>{modifying ? 'Close editor' : 'Modify estimate'}</button>
         </div>
+        {modifying && <ModifyEstimate est={est} busy={busy} run={run} onClose={() => setModifying(false)} />}
       </div>
     </div>
   )

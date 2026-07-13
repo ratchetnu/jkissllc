@@ -132,7 +132,7 @@ export type BookingEventAction =
   | 'zelle.uploaded' | 'zelle.replacement_uploaded' | 'zelle.approved' | 'zelle.rejected'
   | 'notification.sent' | 'notification.failed' | 'notification.resent'
   | 'customer.confirmation'
-  | 'ai.override' | 'ai.reprice'
+  | 'ai.override' | 'ai.reprice' | 'ai.modify'
 
 export type BookingEvent = {
   at: number

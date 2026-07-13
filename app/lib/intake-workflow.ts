@@ -145,6 +145,29 @@ export async function onPaymentCaptured(
   }
 }
 
+/**
+ * The owner modified the AI estimate (Modify Estimate). Publishes a governed
+ * event so the change shows on the workflow timeline. Fail-soft + flag-gated.
+ * The immutable per-booking record is the `ai.modify` BookingEvent written by the
+ * caller; this adds it to the platform event stream too.
+ */
+export async function onEstimateModified(
+  booking: Booking,
+  opts: { by: string; originalUsd: number; overriddenUsd: number },
+): Promise<void> {
+  if (!isEnabled('INTAKE_WORKFLOW_ENABLED')) return
+  try {
+    await publishEvent({
+      eventType: 'AIActionDrafted', entityId: booking.token, actor: { type: 'user', id: opts.by },
+      payload: {
+        workerId: 'owner', modified: true,
+        originalAmountCents: Math.round(opts.originalUsd * 100),
+        amountCents: Math.round(opts.overriddenUsd * 100),
+      },
+    })
+  } catch (e) { console.warn('[intake] onEstimateModified (soft):', e instanceof Error ? e.message : e) }
+}
+
 // ── Approval assessment + orchestration ──────────────────────────────────────
 
 export type QuoteAssessment = { needsApproval: boolean; reasons: string[]; risk: RiskClass }
