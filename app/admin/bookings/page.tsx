@@ -969,13 +969,21 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
         </div>
       )}
 
-      {b.source === 'online' && (
-        <div className="mb-3 px-3 py-2 flex items-center gap-2 flex-wrap" style={{ borderRadius: 12, background: 'rgba(224,0,42,.12)', border: '1px solid var(--red)' }}>
-          <span className="text-xs font-black px-2 py-0.5 rounded" style={{ background: 'var(--red)', color: '#fff', letterSpacing: '.05em' }}>⚡ BOOK NOW</span>
-          <span className="text-sm font-bold text-white">Online customer submission</span>
-          {!!b.createdAt && <span className="text-xs" style={{ color: 'var(--muted)' }}>· {new Date(b.createdAt).toLocaleString()}</span>}
-        </div>
-      )}
+      {b.source === 'online' && (() => {
+        const lastAlert = [...(b.notifications ?? [])].reverse().find(n => n.kind === 'new_submission')
+        const alerted = lastAlert?.status === 'sent'
+        return (
+          <div className="mb-3 px-3 py-2 flex items-center gap-2 flex-wrap" style={{ borderRadius: 12, background: 'rgba(224,0,42,.12)', border: '1px solid var(--red)' }}>
+            <span className="text-xs font-black px-2 py-0.5 rounded" style={{ background: 'var(--red)', color: '#fff', letterSpacing: '.05em' }}>⚡ BOOK NOW</span>
+            <span className="text-sm font-bold text-white">Online customer submission</span>
+            {!!b.createdAt && <span className="text-xs" style={{ color: 'var(--muted)' }}>· {new Date(b.createdAt).toLocaleString()}</span>}
+            <span className="text-xs font-semibold ml-auto" style={{ color: alerted ? '#34d399' : '#f87171' }}>
+              {alerted ? '✓ Owner alerted' : lastAlert ? '⚠ Alert failed' : '⚠ No owner alert on record'}
+            </span>
+            <ActBtn label={alerted ? 'Re-send Alert' : 'Send Owner Alert'} busy={busy === 'resend-notification'} onClick={() => run('resend-notification', { kind: 'new_submission' })} />
+          </div>
+        )
+      })()}
 
       <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
         <div className="flex items-start justify-between gap-3 mb-3">

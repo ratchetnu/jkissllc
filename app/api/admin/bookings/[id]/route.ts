@@ -177,10 +177,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       break
     }
     case 'resend-notification': {
-      const kind = body.kind === 'new_confirmed_booking' ? 'new_confirmed_booking' : 'zelle_review'
+      // Owner-triggered re-alert. 'new_submission' re-sends the Book Now request
+      // alert (no payment needed) — the recovery path for a silently-missed lead.
+      const kind =
+        body.kind === 'new_confirmed_booking' ? 'new_confirmed_booking'
+        : body.kind === 'new_submission' ? 'new_submission'
+        : 'zelle_review'
       const p = kind === 'zelle_review'
         ? b.payments.find(x => x.method === 'zelle' && x.status === 'sent_by_customer')
-        : [...b.payments].reverse().find(x => x.status === 'confirmed')
+        : kind === 'new_confirmed_booking'
+        ? [...b.payments].reverse().find(x => x.status === 'confirmed')
+        : undefined
       const r = await resendOwnerNotification(b, kind, p)
       pushBookingEvent(b, { actor, action: 'notification.resent', result: r.sent ? 'sent' : 'failed', meta: { kind } })
       extra = { resent: r.sent }
