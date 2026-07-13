@@ -23,13 +23,15 @@ const STEP_LABELS = ['Service', 'The job', 'Photos', 'Upgrades', 'Your info', 'R
 const WINDOWS = ['8am–10am', '10am–12pm', '12pm–2pm', '2pm–4pm', '4pm–6pm']
 const MAX_PHOTOS = 8
 
-// A single selected photo, tracked from selection → upload → done/error so the UI
-// can show real per-file status (and a retry) instead of a lone spinner.
+// A single selected photo, tracked from selection → processing → upload →
+// done/error. The tile appears the instant the file is picked (previewUrl), so
+// the customer sees their photos immediately — downscale + upload happen after.
 type PhotoItem = {
   id: string
   name: string
-  dataUrl: string                 // downscaled image, kept so a failed upload can retry
-  status: 'uploading' | 'done' | 'error'
+  file: File                      // kept so processing/upload can retry
+  previewUrl: string              // instant local preview (object URL)
+  status: 'processing' | 'uploading' | 'done' | 'error'
   url?: string                    // Vercel Blob URL once uploaded
 }
 
@@ -147,7 +149,7 @@ export default function QuotePage() {
   const [photos, setPhotos] = useState<PhotoItem[]>([])
   const [dragOver, setDragOver] = useState(false)
   const uploadedUrls = photos.filter(p => p.status === 'done' && p.url).map(p => p.url as string)
-  const anyUploading = photos.some(p => p.status === 'uploading')
+  const anyUploading = photos.some(p => p.status === 'uploading' || p.status === 'processing')
 
   // Step 3 — upgrades
   const [upgrades, setUpgrades] = useState<string[]>([])
@@ -201,11 +203,17 @@ export default function QuotePage() {
     setUpgrades(u => u.includes(id) ? u.filter(x => x !== id) : [...u, id])
   }
 
-  // Upload (or re-upload) a single tracked photo, updating just that item's status.
-  async function uploadItem(item: PhotoItem) {
+  // Downscale + upload a single tracked photo, updating just that item's status.
+  // The tile is already on screen (added by addPhotos) — this only advances it
+  // through processing → uploading → done/error.
+  async function processItem(item: PhotoItem) {
+    setPhotos(ps => ps.map(p => p.id === item.id ? { ...p, status: 'processing' } : p))
+    let dataUrl = ''
+    try { dataUrl = await downscaleToDataUrl(item.file) }
+    catch { setPhotos(ps => ps.map(p => p.id === item.id ? { ...p, status: 'error' } : p)); return }
     setPhotos(ps => ps.map(p => p.id === item.id ? { ...p, status: 'uploading' } : p))
     try {
-      const res = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: item.dataUrl }) })
+      const res = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }) })
       const j = await res.json().catch(() => ({}))
       if (res.ok && j.url) {
         setPhotos(ps => ps.map(p => p.id === item.id ? { ...p, status: 'done', url: j.url } : p))
@@ -217,26 +225,33 @@ export default function QuotePage() {
     }
   }
 
-  async function addPhotos(files: FileList) {
+  // Add tiles IMMEDIATELY on selection (with a local preview) so the customer sees
+  // their photos at once; downscale + upload run in the background per tile. We
+  // don't pre-filter by MIME type (some phones report HEIC as an empty type) —
+  // the input already restricts to images and the server validates each upload.
+  function addPhotos(files: FileList) {
     setErr('')
-    const imgs = Array.from(files).filter(f => f.type.startsWith('image/'))
     const room = Math.max(0, MAX_PHOTOS - photos.length)
     if (room <= 0) { setErr(`You can attach up to ${MAX_PHOTOS} photos.`); return }
-    if (imgs.length === 0) { setErr('Please choose image files (JPG, PNG, or HEIC).'); return }
-    for (const file of imgs.slice(0, room)) {
-      let dataUrl = ''
-      try { dataUrl = await downscaleToDataUrl(file) } catch { continue }
-      const item: PhotoItem = { id: crypto.randomUUID(), name: file.name || 'photo', dataUrl, status: 'uploading' }
-      setPhotos(ps => [...ps, item].slice(0, MAX_PHOTOS))
-      void uploadItem(item)   // fire-and-forget; per-item state tracks the result
-    }
+    const chosen = Array.from(files).slice(0, room)
+    if (chosen.length === 0) return
+    const items: PhotoItem[] = chosen.map(file => ({
+      id: crypto.randomUUID(), name: file.name || 'photo', file,
+      previewUrl: URL.createObjectURL(file), status: 'processing',
+    }))
+    setPhotos(ps => [...ps, ...items].slice(0, MAX_PHOTOS))
+    items.forEach(it => void processItem(it))
   }
   function retryPhoto(id: string) {
     const it = photos.find(p => p.id === id)
-    if (it) void uploadItem(it)
+    if (it) void processItem(it)
   }
   function removePhoto(id: string) {
-    setPhotos(ps => ps.filter(p => p.id !== id))
+    setPhotos(ps => {
+      const it = ps.find(p => p.id === id)
+      if (it) { try { URL.revokeObjectURL(it.previewUrl) } catch { /* noop */ } }
+      return ps.filter(p => p.id !== id)
+    })
   }
 
   // Instant, email-free price/deposit preview once service + size are known.
@@ -705,7 +720,7 @@ function StepPhotos(props: {
 }) {
   const total = props.photos.length
   const done = props.photos.filter(p => p.status === 'done').length
-  const uploading = props.photos.filter(p => p.status === 'uploading').length
+  const uploading = props.photos.filter(p => p.status === 'uploading' || p.status === 'processing').length
   const failed = props.photos.filter(p => p.status === 'error').length
 
   // One clear, human status line — not a fleeting toast.
@@ -745,10 +760,10 @@ function StepPhotos(props: {
           {props.photos.map(p => (
             <div key={p.id} style={{ position: 'relative', aspectRatio: '1 / 1', borderRadius: 12, overflow: 'hidden', border: `1px solid ${p.status === 'error' ? 'rgba(224,0,42,.5)' : 'rgba(255,255,255,.1)'}` }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={p.url || p.dataUrl} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: p.status === 'done' ? 1 : 0.55 }} />
+              <img src={p.url || p.previewUrl} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: p.status === 'done' ? 1 : 0.55 }} />
 
               {/* Per-photo status overlay */}
-              {p.status === 'uploading' && (
+              {(p.status === 'uploading' || p.status === 'processing') && (
                 <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,.35)' }}>
                   <Loader2 size={20} className="animate-spin" style={{ color: '#fff' }} />
                 </div>
