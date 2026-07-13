@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Analytics } from '@vercel/analytics/react'
 import { BotIdClient } from 'botid/client'
 import { Inter, Space_Grotesk, JetBrains_Mono } from 'next/font/google'
@@ -51,6 +51,16 @@ export const metadata: Metadata = {
   alternates: {
     canonical: SITE_URL,
   },
+}
+
+// viewport-fit=cover is what makes env(safe-area-inset-*) resolve to real, non-zero
+// values on notched / rounded devices. Without it the whole app's safe-area handling
+// (fixed docks, floating buttons, sheet padding) silently collapses to 0.
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: '#0b0b0c',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

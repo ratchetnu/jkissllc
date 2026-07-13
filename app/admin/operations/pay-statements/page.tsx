@@ -125,7 +125,7 @@ function PayStatements() {
         <>
           <div className="os-card os-rise" style={{ padding: 20 }}>
             <div style={{ ...osLabel, marginBottom: 12 }}>Generate a statement</div>
-            <div style={{ display: 'grid', gap: 12, gridTemplateColumns: '1.4fr 1fr 1fr auto', alignItems: 'end' }}>
+            <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'minmax(0,1.4fr) minmax(0,1fr) minmax(0,1fr) auto', alignItems: 'end' }}>
               <div>
                 <label style={osLabel}>Crew member</label>
                 <select value={staffId} onChange={e => setStaffId(e.target.value)} style={{ ...field, marginTop: 6 }}>

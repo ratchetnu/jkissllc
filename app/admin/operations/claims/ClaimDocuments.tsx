@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { FileText, Copy, Printer, Download, X, Check, Users } from 'lucide-react'
 import { COMPANY } from '../../../lib/company'
 import type { ClaimType } from '../../../lib/claim-types'
@@ -93,8 +94,44 @@ export default function ClaimDocuments({ claim }: { claim: Claim }) {
   )
 }
 
+// The generated document renders through a PORTAL attached to document.body — NOT
+// inline in the Claims tree — so it can never be trapped behind a transformed /
+// filtered / overflow-clipping ancestor (the .os-rise animation, .os-expand
+// overflow:hidden, or the .os-glass backdrop-filter docks) and always sits on the
+// top overlay layer (--z-overlay) above every header, card, FAB and bottom dock.
+// Full-screen fixed inset:0, opaque scrim, safe-area insets, background scroll
+// locked, internal scroll, Escape to close, focus trapped + restored.
 function DocModal({ title, text, onClose }: { title: string; text: string; onClose: () => void }) {
   const [copied, setCopied] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden' // lock background scroll
+
+    const focusables = () => Array.from(
+      panelRef.current?.querySelectorAll<HTMLElement>('button,a[href],input,textarea,select,[tabindex]:not([tabindex="-1"])') ?? [],
+    ).filter(el => el.offsetParent !== null)
+
+    const t = setTimeout(() => (focusables()[0] ?? panelRef.current)?.focus(), 0)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.stopPropagation(); onClose(); return }
+      if (e.key !== 'Tab') return
+      const els = focusables()
+      if (!els.length) { e.preventDefault(); return }
+      const first = els[0], last = els[els.length - 1], active = document.activeElement
+      if (e.shiftKey && active === first) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', onKey, true)
+    return () => {
+      clearTimeout(t)
+      document.removeEventListener('keydown', onKey, true)
+      document.body.style.overflow = prevOverflow
+      opener?.focus?.() // restore focus to the opener
+    }
+  }, [onClose])
 
   async function copy() {
     try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1800) } catch { /* clipboard blocked */ }
@@ -114,24 +151,38 @@ function DocModal({ title, text, onClose }: { title: string; text: string; onClo
     a.click(); URL.revokeObjectURL(url)
   }
 
-  return (
-    <div role="dialog" aria-modal aria-label={title} onClick={onClose}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', backdropFilter: 'blur(6px)', zIndex: 60, display: 'grid', placeItems: 'center', padding: 16 }}>
-      <div onClick={e => e.stopPropagation()} className="os-card os-expand"
-        style={{ width: '100%', maxWidth: 640, maxHeight: '88vh', display: 'flex', flexDirection: 'column', padding: 0 }}>
+  return createPortal(
+    <div role="dialog" aria-modal="true" aria-label={title} onMouseDown={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 'var(--z-overlay, 1000)',
+        background: 'rgba(4,4,6,.82)', WebkitBackdropFilter: 'blur(4px)', backdropFilter: 'blur(4px)',
+        display: 'grid', placeItems: 'center',
+        // Full safe-area inset padding so the letter never sits under the notch or home bar.
+        paddingTop: 'max(14px, env(safe-area-inset-top))', paddingRight: 'max(14px, env(safe-area-inset-right))',
+        paddingBottom: 'max(14px, env(safe-area-inset-bottom))', paddingLeft: 'max(14px, env(safe-area-inset-left))',
+      }}>
+      <div ref={panelRef} tabIndex={-1} onMouseDown={e => e.stopPropagation()}
+        style={{
+          width: '100%', maxWidth: 640, maxHeight: '88dvh', minWidth: 0, display: 'flex', flexDirection: 'column',
+          // Solid card so the claim behind never bleeds through the letter. Fallbacks
+          // because this renders on document.body, outside the .jkos var scope.
+          background: 'var(--card)', border: '1px solid var(--line)',
+          borderRadius: 'var(--os-radius, 18px)', boxShadow: 'var(--os-shadow, 0 24px 70px rgba(0,0,0,.55))', overflow: 'hidden',
+        }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '16px 18px', borderBottom: '1px solid var(--line)' }}>
-          <span className="jkos-h" style={{ fontSize: 16 }}>{title}</span>
-          <button onClick={onClose} aria-label="Close" className="os-tap" style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={19} /></button>
+          <span className="jkos-h" style={{ fontSize: 16, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
+          <button onClick={onClose} aria-label="Close" className="os-tap" style={{ flexShrink: 0, background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={19} /></button>
         </div>
-        <pre style={{ margin: 0, padding: 18, overflowY: 'auto', flex: 1, whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12.5, lineHeight: 1.55, color: 'var(--text)' }}>{text}</pre>
+        <pre style={{ margin: 0, padding: 18, overflowY: 'auto', flex: 1, minWidth: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word', fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12.5, lineHeight: 1.55, color: 'var(--text)' }}>{text}</pre>
         <div style={{ display: 'flex', gap: 9, padding: '13px 18px', borderTop: '1px solid var(--line)' }}>
-          <button onClick={copy} className="btn os-tap" style={{ borderRadius: 10, height: 40, flex: 1, justifyContent: 'center', gap: 7 }}>
+          <button onClick={copy} className="btn os-tap" style={{ borderRadius: 10, height: 40, flex: 1, minWidth: 0, justifyContent: 'center', gap: 7 }}>
             {copied ? <><Check size={15} /> Copied</> : <><Copy size={15} /> Copy</>}
           </button>
-          <button onClick={print} className="btn-ghost os-tap" style={{ borderRadius: 10, height: 40, flex: 1, justifyContent: 'center', gap: 7 }}><Printer size={15} /> Print</button>
-          <button onClick={download} className="btn-ghost os-tap" style={{ borderRadius: 10, height: 40, justifyContent: 'center', gap: 7, padding: '0 14px' }}><Download size={15} /></button>
+          <button onClick={print} className="btn-ghost os-tap" style={{ borderRadius: 10, height: 40, flex: 1, minWidth: 0, justifyContent: 'center', gap: 7 }}><Printer size={15} /> Print</button>
+          <button onClick={download} aria-label="Download" className="btn-ghost os-tap" style={{ borderRadius: 10, height: 40, flexShrink: 0, justifyContent: 'center', gap: 7, padding: '0 14px' }}><Download size={15} /></button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

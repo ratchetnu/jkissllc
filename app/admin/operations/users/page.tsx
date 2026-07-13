@@ -153,7 +153,7 @@ function TeamAccess() {
               {staffNeedingLogin.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 6 }}>Every active crew member already has a login.</p>}
             </div>
           )}
-          <div style={{ display: 'grid', gap: 12, gridTemplateColumns: '1fr 1fr' }}>
+          <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)' }}>
             <div>
               <label style={osLabel}>Name</label>
               <input value={fName} onChange={e => setFName(e.target.value)} style={{ ...field, marginTop: 6 }} placeholder="Full name" required />

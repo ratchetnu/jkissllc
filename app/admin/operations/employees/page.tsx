@@ -186,7 +186,7 @@ function EmployeeCard({ s, st, scoreData, isAdmin, businesses, upcoming, comp, o
             {s.role && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{s.role}</span>}
             {!s.active && <span style={{ fontSize: 10.5, fontWeight: 800, padding: '1px 8px', borderRadius: 99, background: 'rgba(255,255,255,.08)', color: 'var(--muted)' }}>Inactive</span>}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 13, marginTop: 4, fontSize: 12.5, color: 'var(--muted)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 13, rowGap: 4, marginTop: 4, fontSize: 12.5, color: 'var(--muted)' }}>
             <span>Reliability <b style={{ color: scoreColor(score) }}>{score == null ? 'new' : score}</b></span>
             <span>{upcoming.length} upcoming</span>
             {s.defaultPayCents != null && s.payActive !== false && <span className="tabular-nums" style={{ color: '#86efac', fontWeight: 700 }}>{money(s.defaultPayCents)}/route</span>}
@@ -361,7 +361,7 @@ function CrewEarnings({ comp, s }: { comp: CrewCompSummary; s: Staff }) {
   return (
     <div style={{ marginBottom: 16 }}>
       <div style={{ ...osLabel, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 7 }}><Wallet size={13} /> Earnings</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))', gap: 8, marginBottom: 10 }}>
         <MoneyTile label="This pay week" value={money(comp.periodEarningsCents)} />
         <MoneyTile label="Year to date" value={money(comp.ytdEarningsCents)} tone="#86efac" />
         <MoneyTile label="Lifetime" value={money(comp.lifetimeEarningsCents)} />
@@ -539,7 +539,7 @@ function PaySettings({ s, businesses, onChanged, setMsg }: { s: Staff; businesse
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10 }}>
             <div>
               <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>Default route pay</div>
               <MoneyInput value={defaultPay} onChange={setDefaultPay} invalid={defaultInvalid} aria-label="Default route pay" disabled={busy} />
@@ -647,7 +647,7 @@ function EmployeeForm({ existing, onDone, onCancel }: { existing?: Staff; onDone
           <input type="file" accept="image/*" onChange={pickPhoto} style={{ display: 'none' }} disabled={uploading} />
         </label>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10 }}>
         <input placeholder="Name" value={name} onChange={e => setName(e.target.value)} style={field} />
         <input placeholder="Phone" value={phone} onChange={e => setPhone(e.target.value)} style={field} />
       </div>

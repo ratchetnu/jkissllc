@@ -91,15 +91,15 @@ export default function OperationsShell({ children }: { children: React.ReactNod
     <div className="jkos">
       <CommandPalette />
       <button onClick={() => window.dispatchEvent(new Event('jkos-open-search'))} aria-label="Search" className="os-tap"
-        style={{ position: 'fixed', top: 16, left: 16, zIndex: 60, display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)', cursor: 'pointer' }}>
+        style={{ position: 'fixed', top: 'calc(14px + env(safe-area-inset-top))', left: 'calc(14px + env(safe-area-inset-left))', zIndex: 60, display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', background: 'var(--card)', border: '1px solid var(--line)', cursor: 'pointer', maxWidth: 'calc(50vw - 20px)' }}>
         <Search size={14} /> Search <kbd className="hidden sm:inline" style={{ fontSize: 10.5, fontWeight: 700, border: '1px solid var(--line)', borderRadius: 5, padding: '1px 5px', marginLeft: 2 }}>⌘K</kbd>
       </button>
       <button onClick={signOut} aria-label="Sign out" className="os-tap"
-        style={{ position: 'fixed', top: 16, right: 16, zIndex: 60, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)', cursor: 'pointer' }}>
+        style={{ position: 'fixed', top: 'calc(14px + env(safe-area-inset-top))', right: 'calc(14px + env(safe-area-inset-right))', zIndex: 60, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', background: 'var(--card)', border: '1px solid var(--line)', cursor: 'pointer', maxWidth: 'calc(50vw - 20px)', whiteSpace: 'nowrap' }}>
         <LogOut size={14} /> Sign out
       </button>
 
-      <main style={{ maxWidth: 940, margin: '0 auto', padding: '64px 18px 132px' }}>
+      <main style={{ maxWidth: 940, margin: '0 auto', padding: 'calc(64px + env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) calc(120px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left))' }}>
         <LastLogin record={lastLogin} />
         {children}
       </main>
@@ -108,7 +108,7 @@ export default function OperationsShell({ children }: { children: React.ReactNod
           clear of both docks. Same destination as every "New assignment" button. */}
       {!onBuilder && (
         <Link href="/admin/operations/new" aria-label="New assignment" title="New assignment" data-fab
-          style={{ position: 'fixed', right: 18, bottom: 'calc(84px + env(safe-area-inset-bottom))', zIndex: 55, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 58, height: 58, borderRadius: 999, background: 'var(--red)', color: '#fff', boxShadow: 'var(--os-shadow)', textDecoration: 'none' }}
+          style={{ position: 'fixed', right: 'calc(18px + env(safe-area-inset-right))', bottom: 'calc(84px + env(safe-area-inset-bottom))', zIndex: 55, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 58, height: 58, borderRadius: 999, background: 'var(--red)', color: '#fff', boxShadow: 'var(--os-shadow)', textDecoration: 'none' }}
           className="os-tap">
           <Plus size={26} strokeWidth={2.4} />
         </Link>
@@ -140,7 +140,10 @@ export default function OperationsShell({ children }: { children: React.ReactNod
       </nav>
 
       <style>{`
-        @media (min-width: 768px) { nav[data-dock="desktop"] { display: flex !important; } nav[data-dock="mobile"] { display: none !important; } [data-fab] { right: 26px !important; bottom: 26px !important; } }
+        /* 900px, not 768: the desktop dock is a fixed row of up to 8 pills (~800px)
+           and clipped at both edges on a 768px tablet-portrait screen. Below 900 the
+           full-width mobile bottom nav (space-around, always fits) is used instead. */
+        @media (min-width: 900px) { nav[data-dock="desktop"] { display: flex !important; } nav[data-dock="mobile"] { display: none !important; } [data-fab] { right: 26px !important; bottom: 26px !important; } }
       `}</style>
     </div>
   )

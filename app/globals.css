@@ -28,10 +28,47 @@
   --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-display: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+
+  /* Top-level overlay layer — dialogs and generated documents render through a
+     portal on document.body ABOVE all app chrome (docks=50, FAB=55, chrome=60,
+     comms sheets=70/71). Defined on :root so it resolves for portaled nodes. */
+  --z-overlay: 1000;
 }
 
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   GLOBAL MOBILE VIEWPORT CONTRACT
+   A hard barrier no UI element may cross: the page never scrolls horizontally.
+   `overflow-x: clip` contains any stray overflow WITHOUT creating a scroll
+   container (unlike overflow-x: hidden), so position: sticky keeps working.
+   Intentional horizontal scrollers (e.g. .cc-subnav) opt back in locally with
+   their own overflow-x: auto — the clip here only stops the *page* from scrolling.
+   ═══════════════════════════════════════════════════════════════════════════ */
+html, body { max-width: 100%; overflow-x: clip; }
+
+/* Replaced elements never force a column (or the page) wider than themselves. */
+img, svg, video, canvas, iframe, embed, object { max-width: 100%; }
+
+/* Long unbreakable tokens — URLs, IDs, emails, phone numbers, claim numbers —
+   wrap instead of pushing the layout wide. Add `break-anywhere` to any container
+   that renders user/data strings inline. */
+.break-anywhere { overflow-wrap: anywhere; word-break: break-word; }
+
+/* Reusable safe-viewport container. Full width, never wider than the screen,
+   consistent 16px gutters that also honour the notch on landscape / edge devices.
+   Wrap a page's content in `.safe-x` to inherit the mobile contract automatically. */
+.safe-x {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+}
+/* Any direct flex/grid child that holds truncatable text needs min-width:0 to
+   actually shrink; `.min0` is the shorthand for that recurring fix. */
+.min0 { min-width: 0; }
 
 /* Visible keyboard-focus ring for accessibility (mouse clicks stay clean). */
 :focus-visible {
@@ -618,8 +655,12 @@ h1, h2, h3, .display { font-family: var(--font-display); font-feature-settings: 
 .cc-seg-badge { font-size: 11px; font-weight: 800; padding: 1px 7px; border-radius: 999px; background: rgba(255,255,255,.08); color: var(--muted); }
 
 /* Split view: single column on mobile, list + detail on desktop */
-.cc-split { display: grid; grid-template-columns: 1fr; gap: 14px; }
-@media (min-width: 900px) { .cc-split { grid-template-columns: minmax(300px, 380px) 1fr; align-items: start; } }
+/* minmax(0, …) not a bare 1fr: a `1fr` track is `minmax(auto,1fr)`, which refuses
+   to shrink below its content's min-content — so a conversation row with nowrap text
+   blew the column out to the text's full width and clipped at the viewport edge.
+   minmax(0,1fr) lets the column shrink so the row's own ellipsis truncation works. */
+.cc-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+@media (min-width: 900px) { .cc-split { grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); align-items: start; } }
 .cc-split-detail-desktop { display: none; }
 @media (min-width: 900px) { .cc-split-detail-desktop { display: block; position: sticky; top: 66px; } }
 

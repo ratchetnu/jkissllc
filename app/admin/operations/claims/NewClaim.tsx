@@ -112,7 +112,7 @@ export default function NewClaim({
             </div>
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 12 }}>
             <div>
               <label htmlFor="nc-type" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Type</label>
               <select id="nc-type" value={claimType} onChange={e => setClaimType(e.target.value)} style={{ ...osField, cursor: 'pointer' }}>
@@ -141,7 +141,7 @@ export default function NewClaim({
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 12 }}>
             <div>
               <label htmlFor="nc-cd" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Date it happened</label>
               <input id="nc-cd" type="date" value={claimDate} onChange={e => setClaimDate(e.target.value)} style={osField} />
@@ -152,7 +152,7 @@ export default function NewClaim({
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 12 }}>
             <div>
               <label htmlFor="nc-by" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Who reported it</label>
               <input id="nc-by" value={reportedBy} onChange={e => setReportedBy(e.target.value)} placeholder="Driver, client contact, broker…" style={osField} />

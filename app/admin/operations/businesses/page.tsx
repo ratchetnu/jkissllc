@@ -152,7 +152,7 @@ function BusinessForm({ b, onDone, onCancel }: { b: Biz; onDone: () => void; onC
     <div>
       <p style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 4 }}>Edit {b.name}</p>
       <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>Saved contact details show here and can prefill future work.</p>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10 }}>
         <input placeholder="Contact name" value={contactName} onChange={e => setContactName(e.target.value)} style={bf} />
         <input placeholder="Contact phone" value={contactPhone} onChange={e => setContactPhone(e.target.value)} style={bf} />
       </div>
@@ -277,7 +277,7 @@ function RoutePricing({ b, onReload, setMsg }: { b: Biz; onReload: () => void; s
         </>
       ) : (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10 }}>
             <div>
               <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>Charge per route</div>
               <MoneyInput value={rate} onChange={setRate} invalid={rateInvalid} aria-label="Charge per route" disabled={busy} />
@@ -403,7 +403,7 @@ function ScheduleEditor({ mode, biz, tmpl, staff, onDone, onCancel, setMsg }: {
       </div>
 
       {/* Report time + address (shared by every generated route) */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 8, marginBottom: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1.4fr)', gap: 8, marginBottom: 14 }}>
         <div>
           <div style={osLabel as React.CSSProperties}>Report time</div>
           <input value={reportTime} onChange={e => setReportTime(e.target.value)} placeholder="8:00 AM" style={{ ...bf, marginTop: 5 }} />

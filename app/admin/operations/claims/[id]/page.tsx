@@ -103,7 +103,7 @@ function Detail({ id }: { id: string }) {
           {claim.responseDeadline && <span style={{ color: '#fcd34d', fontWeight: 600 }}>Response due {fmtDay(claim.responseDeadline)}</span>}
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 10, marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
           <Fig label="Recovered" value={money(collected)} tone={collected ? '#86efac' : undefined} />
           <Fig label="Still owed" value={money(owed)} tone={owed ? '#fca5a5' : undefined} />
           <Fig label="J KISS absorbs" value={money(absorbed)} tone={profitColor(absorbed ? -absorbed : 0)} />
@@ -468,7 +468,7 @@ function ClaimEditor({ claim, busy, onSave, onDone }: {
     <div className="os-card os-expand" style={{ padding: 20, marginBottom: 14 }}>
       <div style={{ ...osLabel, marginBottom: 12 }}>Edit claim details</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 12 }}>
           <div>
             <label htmlFor="ce-type" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Type</label>
             <select id="ce-type" value={claimType} onChange={e => setClaimType(e.target.value as Claim['claimType'])} style={{ ...osField, cursor: 'pointer' }}>
@@ -497,7 +497,7 @@ function ClaimEditor({ claim, busy, onSave, onDone }: {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 12 }}>
           <div>
             <label htmlFor="ce-cd" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Date it happened</label>
             <input id="ce-cd" type="date" value={claimDate} onChange={e => setClaimDate(e.target.value)} style={osField} />
@@ -508,7 +508,7 @@ function ClaimEditor({ claim, busy, onSave, onDone }: {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 12 }}>
           <div>
             <label htmlFor="ce-by" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Who reported it</label>
             <input id="ce-by" value={reportedBy} onChange={e => setReportedBy(e.target.value)} placeholder="Driver, client contact, broker…" style={osField} />
