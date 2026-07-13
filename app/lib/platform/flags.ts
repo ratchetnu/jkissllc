@@ -23,6 +23,7 @@ export type FeatureFlag =
   | 'INDUSTRY_PACKS_ENABLED'
   | 'INSIGHTS_UI_ENABLED'
   | 'DESIGN_SYSTEM_REFERENCE_ENABLED'
+  | 'INTAKE_WORKFLOW_ENABLED'
 
 export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   TENANCY_ENABLED: false,
@@ -38,6 +39,10 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   INDUSTRY_PACKS_ENABLED: false,
   INSIGHTS_UI_ENABLED: false,
   DESIGN_SYSTEM_REFERENCE_ENABLED: false,
+  // Governed "Book Now" intake workflow: publish business events, project CRM
+  // entities, and run the approval/AI-worker/timeline wiring as fail-soft
+  // side-effects of the existing booking flow. OFF = byte-identical to today.
+  INTAKE_WORKFLOW_ENABLED: false,
 }
 
 export const ALL_FLAGS = Object.keys(FLAG_DEFAULTS) as FeatureFlag[]

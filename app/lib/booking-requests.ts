@@ -5,6 +5,7 @@ import {
 } from './bookings'
 import { SERVICE_TYPES } from './bookings'
 import { getDraftEstimate } from './ai/estimate-store'
+import { onLeadPersisted } from './intake-workflow'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public "Book Now" quote requests → persisted OpsPilot bookings.
@@ -166,6 +167,10 @@ export async function persistQuoteRequest(input: QuoteRequestInput): Promise<Boo
   })
 
   await saveBooking(booking)
+
+  // Governed intake: upsert Customer, project Lead, publish LeadCreated/QuoteRequested
+  // (+ QuoteGenerated). Flag-gated + fail-soft — a no-op today, never blocks the save.
+  await onLeadPersisted(booking)
 
   if (idem) {
     await redis.set(`bk:idem:${idem}`, booking.token)

@@ -108,3 +108,47 @@ export function overdueReminders(reminders: OverdueReminder[], now: number): Ins
       }
     })
 }
+
+// ── 4. Pricing calibration drift ─────────────────────────────────────────────
+// Feeds off the learning loop (job-learning.accuracyStats) + quote acceptance
+// (intake-metrics): flags when the AI's recommended price systematically misses
+// the final price, or when acceptance is very low.
+export type PricingAccuracySnapshot = {
+  jobs: number
+  priceMapePct: number | null // AI recommended vs final paid, % (null until measurable)
+  quotesGenerated: number
+  quotesAccepted: number
+}
+
+export function pricingCalibrationDrift(snap: PricingAccuracySnapshot, now: number): Insight[] {
+  const out: Insight[] = []
+  if (snap.jobs >= 5 && snap.priceMapePct != null && snap.priceMapePct >= 25) {
+    const severity: InsightSeverity = snap.priceMapePct >= 40 ? 'high' : 'medium'
+    out.push({
+      id: 'insight:pricing-drift', category: 'profitability', severity, tenantId: '',
+      title: `AI quote accuracy drifting (${snap.priceMapePct}% off)`,
+      explanation: `Across ${snap.jobs} completed jobs the AI-recommended price differed from the final price by ${snap.priceMapePct}% on average.`,
+      evidence: [`${snap.priceMapePct}% mean price error`, `${snap.jobs} jobs`],
+      confidence: 0.8,
+      operationalImpact: 'Estimates may be systematically over- or under-pricing jobs.',
+      recommendedAction: 'Review recent overrides and recalibrate the pricing assumptions.',
+      eligibleWorkerId: 'ai-sales', approvalRequired: false, dismissed: false, resolved: false, generatedAt: now,
+    })
+  }
+  if (snap.quotesGenerated >= 10) {
+    const rate = snap.quotesAccepted / snap.quotesGenerated
+    if (rate < 0.2) {
+      out.push({
+        id: 'insight:low-acceptance', category: 'revenue', severity: 'medium', tenantId: '',
+        title: `Low quote acceptance (${Math.round(rate * 100)}%)`,
+        explanation: `Only ${snap.quotesAccepted} of ${snap.quotesGenerated} AI quotes were accepted.`,
+        evidence: [`${snap.quotesAccepted}/${snap.quotesGenerated} accepted`, `${Math.round(rate * 100)}% rate`],
+        confidence: 0.75,
+        operationalImpact: 'Pricing or presentation may be losing winnable jobs.',
+        recommendedAction: 'Review quote ranges and follow-up timing.',
+        eligibleWorkerId: 'ai-sales', approvalRequired: false, dismissed: false, resolved: false, generatedAt: now,
+      })
+    }
+  }
+  return out
+}

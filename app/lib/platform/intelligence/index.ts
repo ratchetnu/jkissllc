@@ -10,8 +10,8 @@ import { isEnabled } from '../flags'
 import type { Insight } from './types'
 import { SEVERITY_RANK } from './types'
 import {
-  unconfirmedUpcomingAssignments, aiCostBudgetWarning, overdueReminders,
-  type UpcomingRoute, type AiBudgetSnapshot, type OverdueReminder,
+  unconfirmedUpcomingAssignments, aiCostBudgetWarning, overdueReminders, pricingCalibrationDrift,
+  type UpcomingRoute, type AiBudgetSnapshot, type OverdueReminder, type PricingAccuracySnapshot,
 } from './generators'
 
 export * from './types'
@@ -23,6 +23,7 @@ export type InsightSnapshot = {
   routes?: UpcomingRoute[]
   aiBudget?: AiBudgetSnapshot
   overdueReminders?: OverdueReminder[]
+  pricingAccuracy?: PricingAccuracySnapshot
 }
 
 /** Highest severity first, then confidence, then financial impact. */
@@ -44,6 +45,7 @@ export function runInsightGenerators(snap: InsightSnapshot): Insight[] {
     ...(snap.routes ? unconfirmedUpcomingAssignments(snap.routes, snap.now) : []),
     ...(snap.aiBudget ? aiCostBudgetWarning(snap.aiBudget, snap.now) : []),
     ...(snap.overdueReminders ? overdueReminders(snap.overdueReminders, snap.now) : []),
+    ...(snap.pricingAccuracy ? pricingCalibrationDrift(snap.pricingAccuracy, snap.now) : []),
   ].map((i) => ({ ...i, tenantId: snap.tenantId }))
   return prioritizeInsights(all)
 }
@@ -57,6 +59,7 @@ export function computeInsights(snap: InsightSnapshot): Insight[] {
     ...(snap.routes ? unconfirmedUpcomingAssignments(snap.routes, snap.now) : []),
     ...(snap.aiBudget ? aiCostBudgetWarning(snap.aiBudget, snap.now) : []),
     ...(snap.overdueReminders ? overdueReminders(snap.overdueReminders, snap.now) : []),
+    ...(snap.pricingAccuracy ? pricingCalibrationDrift(snap.pricingAccuracy, snap.now) : []),
   ].map((i) => ({ ...i, tenantId: snap.tenantId }))
   return prioritizeInsights(all)
 }

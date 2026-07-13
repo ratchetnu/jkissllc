@@ -76,6 +76,25 @@ export const FIXTURES: FeatureFixture[] = [
       { name: 'malformed', response: 'about half a truck, maybe $500', minScore: 0, expectFlags: ['not_json'], schemaValid: false },
     ],
   },
+  {
+    // Observations-only vision read; validated at runtime by normalizeAnalysis (a
+    // nested schema), so no flat ObjectSchema here — coverage proves the prompt
+    // renders its output contract and a plausible analysis clears the gate.
+    taskId: 'ops.junkAnalysis',
+    renderVars: {},
+    renderMustInclude: ['normalizedItems', 'estimatedTruckLoadFraction'],
+    cases: [
+      { name: 'plausible analysis', response: '{"normalizedItems":[{"category":"furniture","label":"couch","estimatedQuantity":1}],"estimatedTruckLoadFraction":{"minimum":0.2,"likely":0.3,"maximum":0.4},"confidence":{"overall":0.7}}', minScore: 60 },
+    ],
+  },
+  {
+    taskId: 'ops.junkAnalysisReview',
+    renderVars: {},
+    renderMustInclude: ['quality reviewer', 'adjustedTruckLoadFraction'],
+    cases: [
+      { name: 'accept verdict', response: '{"agrees":true,"recommend":"accept","adjustedTruckLoadFraction":0.3,"confidence":0.7,"concerns":[]}', minScore: 60 },
+    ],
+  },
 ]
 
 export type CaseResult = { name: string; score: number; flags: string[]; pass: boolean; reason?: string }

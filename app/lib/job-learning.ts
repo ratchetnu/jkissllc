@@ -29,6 +29,8 @@ export type JobOutcome = {
   actualLaborCents: number
   actualProfitCents: number
   finalPriceCents: number      // what the customer actually paid
+  aiRecommendedCents?: number  // the AI's recommended price at quote time (Booking.aiEstimate)
+  overridden?: boolean         // an admin manually overrode the AI number before quoting
   notes?: string
 }
 
@@ -96,12 +98,20 @@ export function accuracyStats(outcomes: JobOutcome[]) {
   const n = outcomes.length
   const absPct = (a: number, b: number) => (b === 0 ? 0 : Math.abs(a - b) / b)
   const avg = (f: (o: JobOutcome) => number) => outcomes.reduce((s, o) => s + f(o), 0) / n
+  // AI-estimate-vs-final: |AI recommended − final paid| ÷ final, over jobs that
+  // carried an AI recommendation. Null until there is at least one such job.
+  const priced = outcomes.filter(o => (o.aiRecommendedCents ?? 0) > 0)
+  const priceMape = priced.length
+    ? Math.round(priced.reduce((s, o) => s + absPct(o.aiRecommendedCents!, o.finalPriceCents), 0) / priced.length * 100)
+    : null
   return {
     jobs: n,
     fillMape: Math.round(avg(o => absPct(o.estFillPct, o.actualFillPct)) * 100),
     tripMape: Math.round(avg(o => absPct(o.estTrips, o.actualTrips)) * 100),
     disposalMape: Math.round(avg(o => absPct(o.estDisposalCents, o.actualDisposalCents)) * 100),
+    priceMape,
     avgProfitCents: Math.round(avg(o => o.actualProfitCents)),
     underpriced: outcomes.filter(o => o.actualProfitCents < o.estProfitCents).length,
+    overrideRate: Math.round(outcomes.filter(o => o.overridden).length / n * 100),
   }
 }

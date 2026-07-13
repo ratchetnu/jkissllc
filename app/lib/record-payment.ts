@@ -7,6 +7,7 @@ import { emailOpsPaymentReceived, emailPaymentReceiptCustomer } from './booking-
 import { notifyBookingConfirmed, notifyPaidInFull } from './notify'
 import { notifyOwnerNewConfirmedBooking } from './booking-notify'
 import { ensureLoyaltyCode } from './promo'
+import { onPaymentCaptured } from './intake-workflow'
 
 // Record a paid Stripe Checkout Session against its booking. Idempotent: a
 // session is only ever applied once (deduped by session id), so the webhook and
@@ -50,6 +51,10 @@ export async function recordStripeSessionPayment(session: Stripe.Checkout.Sessio
     try { b.loyaltyCode = await ensureLoyaltyCode(b.token, b.bookingNumber, Date.now()) } catch (e) { console.error('[loyalty]', e) }
   }
   await saveBooking(b)
+
+  // Governed intake: publish PaymentReceived (+ DepositPaid/BookingCreated on first
+  // confirm). Flag-gated + fail-soft — never affects payment capture or emails.
+  await onPaymentCaptured(b, { amountCents, method: 'stripe', justConfirmed })
 
   await emailOpsPaymentReceived(b, payment)
   await emailPaymentReceiptCustomer(b, payment)

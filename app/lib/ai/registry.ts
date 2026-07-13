@@ -58,6 +58,18 @@ export const AI_FEATURES: AiFeatureDef[] = [
     surface: 'Public quote page', owner: 'Growth',
     access: 'public', input: 'multimodal', structured: true, writes: false, status: 'ga',
   },
+  {
+    taskId: 'ops.junkAnalysis', name: 'Junk Photo Analysis',
+    description: 'Primary vision pass: itemizes a junk-removal job from photos (volume, truck fill, labor) as observations only — never a price. Feeds the deterministic pricing engine.',
+    surface: 'Public quote page (Book Now)', owner: 'Growth',
+    access: 'public', input: 'multimodal', structured: true, writes: false, status: 'ga',
+  },
+  {
+    taskId: 'ops.junkAnalysisReview', name: 'Junk Analysis Reviewer',
+    description: 'Independent second-opinion vision pass that critiques the primary analysis before an instant quote (accept / range / review). Conservative — never sets a price.',
+    surface: 'Public quote page (Book Now)', owner: 'Growth',
+    access: 'public', input: 'multimodal', structured: true, writes: false, status: 'ga',
+  },
 ]
 
 export type AiFeatureView = AiFeatureDef & {
