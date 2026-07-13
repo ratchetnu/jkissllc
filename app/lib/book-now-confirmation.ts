@@ -211,7 +211,10 @@ export async function processFinalAiJob(
   // Attach the final estimate (never overwrites `aiEstimate`) + advance by routing.
   b.finalAiEstimate = result
   b.disposalEstimateCents = result.disposalUsd * 100
-  const status: AiJobStatus = result.finalDecision === 'manual_review' ? 'manual_review' : 'completed'
+  // Manual-review AND site-visit both require a human before any quote — the durable
+  // job parks at 'manual_review'; the finalDecision retains the precise outcome.
+  const needsHuman = result.finalDecision === 'manual_review' || result.finalDecision === 'site_visit_required'
+  const status: AiJobStatus = needsHuman ? 'manual_review' : 'completed'
   b.finalAiJob = {
     status, idempotencyKey, photoVersion: b.invoicePhotos?.length ?? 0, attempts,
     lastAttemptAt: now(), completedAt: now(),

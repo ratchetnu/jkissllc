@@ -34,6 +34,8 @@ export const JKISS_PACK: IndustryPack = {
     { id: 'appliance-delivery', label: 'Appliance / Final-Mile Delivery', pricingMethod: 'flat', jobBased: false },
     { id: 'box-truck-delivery', label: 'Box-Truck Delivery', pricingMethod: 'flat', jobBased: false },
     { id: 'junk-removal', label: 'Junk Removal / Cleanout', pricingMethod: 'truck-utilization', jobBased: true },
+    { id: 'estate-cleanout', label: 'Estate & Property Cleanout', pricingMethod: 'truck-utilization', jobBased: true },
+    { id: 'eviction', label: 'Eviction / Foreclosure Cleanout', pricingMethod: 'truck-utilization', jobBased: true },
     { id: 'hauling', label: 'Hauling', pricingMethod: 'truck-utilization', jobBased: true },
     { id: 'moving', label: 'Moving', pricingMethod: 'hourly', jobBased: true },
   ],

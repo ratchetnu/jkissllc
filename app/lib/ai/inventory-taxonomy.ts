@@ -38,6 +38,13 @@ export type InventoryCategory =
   | 'piano'
   | 'dense_material'          // dirt, concrete, brick, rock, roofing
   | 'hazardous'              // paint, chemicals, fuel, batteries, hazmat
+  // ── Estate/cleanout SENSITIVE categories — never ordinary disposal; always
+  // routed to owner review (Part: Estate Cleanout safeguards). ──
+  | 'valuables'             // jewelry, cash, suspected valuables, collectibles
+  | 'documents'             // legal papers, records, personal documents
+  | 'medications'           // prescription + OTC medications
+  | 'firearms'              // firearms + ammunition
+  | 'personal_keepsakes'    // photos, ashes/urns, sentimental items
   | 'other'
 
 export type WeightClass = 'light' | 'medium' | 'heavy' | 'very_heavy'
@@ -59,6 +66,9 @@ export type TaxonomyEntry = {
   hazardous: boolean                // prohibited/special disposal → always manual review
   specialHandling: boolean          // piano/hot-tub/safe → specialty crew/charge
   requiresDisassembly: boolean
+  // Estate/cleanout: personal/valuable/sensitive property — NEVER auto-classified
+  // as ordinary disposal; always routed to owner review before pricing.
+  sensitive?: boolean
 }
 
 // One 24 ft box truck ≈ 44 cu yd (mirrors analysis-schema TRUCK_CUBIC_YARDS).
@@ -166,7 +176,37 @@ export const INVENTORY_TAXONOMY: Record<InventoryCategory, TaxonomyEntry> = {
     key: 'hazardous', label: 'Paint, Chemicals, Fuel, Batteries, or Hazardous Materials', short: 'Hazardous',
     debrisCategory: 'general', junkCategory: 'household_junk',
     perUnitVolumeCubicYards: 0.2, weightClass: 'light', disposalClass: 'hazardous',
-    heavy: false, denseDebris: false, hazardous: true, specialHandling: true, requiresDisassembly: false,
+    heavy: false, denseDebris: false, hazardous: true, specialHandling: true, requiresDisassembly: false, sensitive: true,
+  },
+  valuables: {
+    key: 'valuables', label: 'Jewelry, Cash, or Valuables', short: 'Valuables',
+    debrisCategory: 'general', junkCategory: 'household_junk',
+    perUnitVolumeCubicYards: 0.1, weightClass: 'light', disposalClass: 'special_handling',
+    heavy: false, denseDebris: false, hazardous: false, specialHandling: true, requiresDisassembly: false, sensitive: true,
+  },
+  documents: {
+    key: 'documents', label: 'Legal Papers or Personal Documents', short: 'Documents',
+    debrisCategory: 'general', junkCategory: 'household_junk',
+    perUnitVolumeCubicYards: 0.2, weightClass: 'light', disposalClass: 'special_handling',
+    heavy: false, denseDebris: false, hazardous: false, specialHandling: true, requiresDisassembly: false, sensitive: true,
+  },
+  medications: {
+    key: 'medications', label: 'Medications', short: 'Medications',
+    debrisCategory: 'general', junkCategory: 'household_junk',
+    perUnitVolumeCubicYards: 0.1, weightClass: 'light', disposalClass: 'hazardous',
+    heavy: false, denseDebris: false, hazardous: true, specialHandling: true, requiresDisassembly: false, sensitive: true,
+  },
+  firearms: {
+    key: 'firearms', label: 'Firearms or Ammunition', short: 'Firearms',
+    debrisCategory: 'general', junkCategory: 'household_junk',
+    perUnitVolumeCubicYards: 0.2, weightClass: 'medium', disposalClass: 'special_handling',
+    heavy: false, denseDebris: false, hazardous: true, specialHandling: true, requiresDisassembly: false, sensitive: true,
+  },
+  personal_keepsakes: {
+    key: 'personal_keepsakes', label: 'Photos, Ashes, or Sentimental Items', short: 'Keepsakes',
+    debrisCategory: 'general', junkCategory: 'household_junk',
+    perUnitVolumeCubicYards: 0.2, weightClass: 'light', disposalClass: 'special_handling',
+    heavy: false, denseDebris: false, hazardous: false, specialHandling: true, requiresDisassembly: false, sensitive: true,
   },
   other: {
     key: 'other', label: 'Other', short: 'Other',
@@ -223,7 +263,13 @@ export function normalizeToInventoryCategory(raw: unknown, freeText?: string): I
 // Keyword classifier for "Other" free text → governed category, so a typed
 // description still normalizes before it can influence pricing (Part 4).
 const FREE_TEXT_RULES: Array<{ re: RegExp; cat: InventoryCategory }> = [
-  { re: /paint|chemical|fuel|gasoline|propane|battery|batteries|hazard|solvent|oil|asbestos/, cat: 'hazardous' },
+  // Sensitive/estate categories first so they are never mis-classified as junk.
+  { re: /firearm|rifle|pistol|\bammo\b|ammunition|shotgun|handgun|\bguns?\b(?!\s*(safe|cabinet))/, cat: 'firearms' },
+  { re: /medication|prescription|\bpills?\b|pharmacy|medicine|opioid/, cat: 'medications' },
+  { re: /ashes|urn|cremat|keepsake|sentimental|memento|family photo/, cat: 'personal_keepsakes' },
+  { re: /jewelry|jewellery|\bcash\b|coin collection|collectible|valuable|antique|heirloom|gold|silver\b/, cat: 'valuables' },
+  { re: /legal (paper|doc)|will\b|deed|title\b|passport|social security|tax (record|return)|birth certificate|document/, cat: 'documents' },
+  { re: /paint|chemical|fuel|gasoline|propane|battery|batteries|hazard|solvent|asbestos/, cat: 'hazardous' },
   { re: /concrete|brick|rock|dirt|soil|roofing|shingle|gravel|stone|tile\b/, cat: 'dense_material' },
   { re: /hot ?tub|spa|jacuzzi/, cat: 'hot_tub' },
   { re: /piano|organ/, cat: 'piano' },

@@ -35,6 +35,8 @@ export type QuestionSelectionContext = {
   customerAddedItemCount?: number
   customerRemovedItemCount?: number
   hasUncertainItems?: boolean
+  // Estate / property-cleanout family — selects the extra estate questions.
+  estate?: boolean
 }
 
 // The full governed catalog, keyed by id. Selection picks a subset from here.
@@ -133,6 +135,39 @@ export const QUESTION_CATALOG: Record<string, FollowUpQuestion> = {
     prompt: 'Please describe the hazardous or special-disposal items.',
     path: 'disclosures.hazardousDetail',
   },
+  // ── Estate / property cleanout ──
+  estate_sensitive_possible: {
+    id: 'estate_sensitive_possible', group: 'disclosure', kind: 'boolean',
+    prompt: 'Might there be valuables, documents, medications, firearms, ashes, or important papers on site?',
+    path: 'estate.sensitivePossible',
+    helpText: 'We set these aside for you — never thrown out.',
+  },
+  estate_sorting_required: {
+    id: 'estate_sorting_required', group: 'inventory', kind: 'boolean',
+    prompt: 'Do you need items sorted (keep / donate / recycle / dispose) rather than everything removed?',
+    path: 'estate.sortingRequired',
+  },
+  estate_utilities_active: {
+    id: 'estate_utilities_active', group: 'access', kind: 'boolean',
+    prompt: 'Are the utilities (power/water) still on at the property?',
+    path: 'estate.utilitiesActive',
+  },
+  estate_cleaning_requested: {
+    id: 'estate_cleaning_requested', group: 'inventory', kind: 'boolean',
+    prompt: 'Would you like the space cleaned after everything is removed?',
+    path: 'estate.cleaningRequested',
+  },
+  estate_dumpster: {
+    id: 'estate_dumpster', group: 'logistics', kind: 'boolean',
+    prompt: 'Is there room for a dumpster, or should we haul everything by truck?',
+    path: 'estate.dumpsterNeeded',
+  },
+  estate_multi_day: {
+    id: 'estate_multi_day', group: 'logistics', kind: 'boolean',
+    prompt: 'Might this take more than one day?',
+    path: 'estate.multipleDays',
+  },
+
   // ── Moving / delivery ──
   pickup_address: {
     id: 'pickup_address', group: 'logistics', kind: 'text',
@@ -206,6 +241,17 @@ export function selectFollowUpQuestions(ctx: QuestionSelectionContext): FollowUp
 
   // Junk / cleanout (and 'other', which we treat like junk for questioning).
   JUNK_BASE.forEach(add)
+
+  // Estate/cleanout jobs get the extra estate questions up front (Estate Cleanout).
+  if (ctx.estate) {
+    add('estate_sensitive_possible')
+    add('estate_sorting_required')
+    add('estate_utilities_active')
+    add('estate_cleaning_requested')
+    add('estate_multi_day')
+    add('estate_dumpster')
+    add('property_occupied')
+  }
 
   const a = ctx.analysis
   const cond = a?.detectedConditions

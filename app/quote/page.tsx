@@ -76,6 +76,7 @@ type Svc = {
   bookType: string        // → /api/book service (booking enum)
   jobBased: boolean       // single-site, disposal-priced
   debris?: string
+  estate?: boolean        // Estate/property-cleanout family — shows estate intake
 }
 
 // Card catalog. Each card carries BOTH vocabularies so pricing (quoteType) and
@@ -89,8 +90,20 @@ const SERVICES: Svc[] = [
   { id: 'brush-debris', label: 'Brush & Debris Removal', icon: Trees, desc: 'Yard waste, branches, and storm debris cleared out.', turnaround: 'Same / next-day', starting: 'from $99', quoteType: 'junk-removal', bookType: 'junk-removal', jobBased: true, debris: 'yard-waste' },
   { id: 'construction-hauling', label: 'Construction Material Hauling', icon: HardHat, desc: 'Building materials delivered — or jobsite debris hauled off.', turnaround: '1–3 days', quoteType: 'last-mile-curbside', bookType: 'freight', jobBased: false },
   { id: 'commercial-delivery', label: 'Commercial Delivery', icon: Building2, desc: 'Retail replenishment and B2B box-truck runs.', turnaround: 'Scheduled', quoteType: 'dock-to-dock', bookType: 'freight', jobBased: false },
-  { id: 'eviction', label: 'Property Cleanout', icon: KeyRound, desc: 'Eviction, foreclosure, and estate clear-outs, start to finish.', turnaround: '1–2 days', quoteType: 'eviction', bookType: 'eviction', jobBased: true, debris: 'eviction-cleanout' },
+  { id: 'estate-cleanout', label: 'Estate & Property Cleanout', icon: KeyRound, desc: 'Whole homes, apartments, garages, and storage — sorted, hauled, and cleaned.', turnaround: '1–3 days', quoteType: 'eviction', bookType: 'estate-cleanout', jobBased: true, debris: 'eviction-cleanout', estate: true },
+  { id: 'eviction', label: 'Eviction / Foreclosure Cleanout', icon: Building2, desc: 'Turnovers, evictions, and foreclosures cleared, start to finish.', turnaround: '1–2 days', quoteType: 'eviction', bookType: 'eviction', jobBased: true, debris: 'eviction-cleanout', estate: true },
   { id: 'other', label: 'Something Else', icon: HelpCircle, desc: "Not sure which fits? Tell us the job and we'll advise.", turnaround: "We'll advise", quoteType: 'other', bookType: 'other', jobBased: false },
+]
+
+// Estate/cleanout subtypes (customer picks one when an estate service is chosen).
+const CLEANOUT_SUBTYPES: { id: string; label: string }[] = [
+  { id: 'estate', label: 'Estate Cleanout' }, { id: 'whole_home', label: 'Whole-Home' }, { id: 'apartment', label: 'Apartment' },
+  { id: 'garage', label: 'Garage' }, { id: 'storage', label: 'Storage Unit' }, { id: 'hoarding', label: 'Hoarding Cleanup' },
+  { id: 'turnover', label: 'Property Turnover' }, { id: 'eviction', label: 'Eviction' }, { id: 'foreclosure', label: 'Foreclosure' },
+]
+const ESTATE_RELATIONSHIPS: { id: string; label: string }[] = [
+  { id: 'owner', label: 'Owner' }, { id: 'family', label: 'Family' }, { id: 'executor', label: 'Executor' },
+  { id: 'property_manager', label: 'Property Mgr' }, { id: 'realtor', label: 'Realtor' }, { id: 'attorney', label: 'Attorney' }, { id: 'tenant', label: 'Tenant' },
 ]
 
 // Shared load-size scale. `pallets` feeds distance pricing for delivery services;
@@ -224,6 +237,7 @@ export default function QuotePage() {
   const [isEverything, setIsEverything] = useState<IsEverythingAnswer | ''>('')
   const [everythingPictured, setEverythingPictured] = useState<boolean | null>(null)
   const [attest, setAttest] = useState<AttestState>(EMPTY_ATTEST)
+  const [estate, setEstate] = useState<{ subtype?: string; relationship?: string; occupancy?: string; deadlineType?: string; deadlineDate?: string }>({})
   const [finalState, setFinalState] = useState<CustomerFinalState | null>(null)
   const confIdemRef = useRef('')
 
@@ -460,6 +474,7 @@ export default function QuotePage() {
         isEverything: (isEverything || 'unsure') as IsEverythingAnswer,
         everythingPictured: everythingPictured === true,
         attestation: attest,
+        estate: svc.estate ? estate : undefined,
         idempotencyKey: confIdemRef.current,
       })
     }
@@ -589,7 +604,7 @@ export default function QuotePage() {
                 photoCount: uploadedUrls.length,
                 contactMethod,
               }}
-              onReset={() => { setSent(null); setFinalState(null); quoteIdemRef.current = ''; confIdemRef.current = ''; setEstimate(null); analysisIdRef.current = ''; setFollowUps([]); setConfItems([]); setConfAnswers({}); setIsEverything(''); setEverythingPictured(null); setAttest(EMPTY_ATTEST); setStep(0); setSvcId(''); setPickupText(''); setDeliveryText(''); setSizeId(''); setHeavy(null); setStairs(null); setElevator(null); setPrefDate(''); setPhotos([]); setUpgrades([]); setName(''); setCompany(''); setPhone(''); setEmail(''); setPromo(''); setEst(null); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
+              onReset={() => { setSent(null); setFinalState(null); quoteIdemRef.current = ''; confIdemRef.current = ''; setEstimate(null); analysisIdRef.current = ''; setFollowUps([]); setConfItems([]); setConfAnswers({}); setIsEverything(''); setEverythingPictured(null); setAttest(EMPTY_ATTEST); setEstate({}); setStep(0); setSvcId(''); setPickupText(''); setDeliveryText(''); setSizeId(''); setHeavy(null); setStairs(null); setElevator(null); setPrefDate(''); setPhotos([]); setUpgrades([]); setName(''); setCompany(''); setPhone(''); setEmail(''); setPromo(''); setEst(null); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
           ) : (
             <>
               {/* Intro */}
@@ -612,16 +627,19 @@ export default function QuotePage() {
                     <div key={step} className="wiz-reveal">
                       {stepKey === 'service' && <StepService svcId={svcId} onPick={setSvcId} services={displayServices} />}
                       {stepKey === 'job' && (
-                        <StepJob
-                          svc={svc!} singleSite={singleSite}
-                          pickupText={pickupText} setPickupText={setPickupText}
-                          deliveryText={deliveryText} setDeliveryText={setDeliveryText}
-                          sizeId={sizeId} setSizeId={setSizeId}
-                          heavy={heavy} setHeavy={setHeavy}
-                          stairs={stairs} setStairs={setStairs}
-                          elevator={elevator} setElevator={setElevator}
-                          prefDate={prefDate} setPrefDate={setPrefDate}
-                        />
+                        <>
+                          <StepJob
+                            svc={svc!} singleSite={singleSite}
+                            pickupText={pickupText} setPickupText={setPickupText}
+                            deliveryText={deliveryText} setDeliveryText={setDeliveryText}
+                            sizeId={sizeId} setSizeId={setSizeId}
+                            heavy={heavy} setHeavy={setHeavy}
+                            stairs={stairs} setStairs={setStairs}
+                            elevator={elevator} setElevator={setElevator}
+                            prefDate={prefDate} setPrefDate={setPrefDate}
+                          />
+                          {svc?.estate && <EstateIntakeBlock estate={estate} setEstate={setEstate} />}
+                        </>
                       )}
                       {stepKey === 'photos' && (
                         <StepPhotos
@@ -640,6 +658,7 @@ export default function QuotePage() {
                             answers={confAnswers} setAnswers={setConfAnswers}
                             isEverything={isEverything} setIsEverything={setIsEverything}
                             attest={attest} setAttest={setAttest}
+                            estate={!!svc?.estate}
                             onAddMorePhotos={() => setStep(stepKeys.indexOf('photos'))}
                             onItemCorrected={() => recordClientEvent('confirmation_item_corrected')}
                           />
@@ -899,6 +918,47 @@ function StepJob(props: {
         </div>
       </div>
     </>
+  )
+}
+
+// Estate/cleanout intake — the service-specific structured detail. Shown only for
+// the Estate Cleanout family. Chip selectors keep typing to a minimum (premium feel).
+type EstateState = { subtype?: string; relationship?: string; occupancy?: string; deadlineType?: string; deadlineDate?: string }
+function EstateChips({ label, options, active, onPick }: { label: string; options: { id: string; label: string }[]; active?: string; onPick: (id: string) => void }) {
+  return (
+    <div>
+      <label style={lbl}>{label}</label>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map(o => {
+          const on = active === o.id
+          return <button key={o.id} type="button" onClick={() => onPick(o.id)} aria-pressed={on} className="rounded-xl wiz-ease"
+            style={{ minHeight: 40, padding: '8px 12px', fontSize: 13, fontWeight: 700, border: `1px solid ${on ? RED : 'rgba(255,255,255,.12)'}`, background: on ? 'rgba(224,0,42,.1)' : 'rgba(255,255,255,.02)', color: on ? '#fff' : 'var(--muted)', cursor: 'pointer' }}>{o.label}</button>
+        })}
+      </div>
+    </div>
+  )
+}
+function EstateIntakeBlock({ estate, setEstate }: { estate: EstateState; setEstate: (u: EstateState) => void }) {
+  const set = (k: keyof EstateState, v: string) => setEstate({ ...estate, [k]: estate[k] === v ? undefined : v })
+  return (
+    <div className="grid gap-4 mt-5 pt-5" style={{ borderTop: '1px solid var(--line)' }}>
+      <p className="text-xs font-bold uppercase tracking-widest" style={{ color: RED }}>Estate & cleanout details</p>
+      <EstateChips label="What kind of cleanout?" options={CLEANOUT_SUBTYPES} active={estate.subtype} onPick={v => set('subtype', v)} />
+      <EstateChips label="Your relationship to the property" options={ESTATE_RELATIONSHIPS} active={estate.relationship} onPick={v => set('relationship', v)} />
+      <EstateChips label="Is the property occupied?" options={[{ id: 'vacant', label: 'Vacant' }, { id: 'partial', label: 'Partially' }, { id: 'occupied', label: 'Occupied' }]} active={estate.occupancy} onPick={v => set('occupancy', v)} />
+      <div>
+        <label style={lbl}>Is there a deadline? <span style={{ textTransform: 'none', fontWeight: 400 }}>(optional)</span></label>
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {[{ id: 'none', label: 'No deadline' }, { id: 'closing', label: 'Closing' }, { id: 'listing', label: 'Listing' }, { id: 'probate', label: 'Probate' }, { id: 'eviction', label: 'Eviction' }, { id: 'turnover', label: 'Turnover' }].map(o => {
+            const active = estate.deadlineType === o.id
+            return <button key={o.id} type="button" onClick={() => set('deadlineType', o.id)} aria-pressed={active} className="rounded-xl wiz-ease" style={{ minHeight: 40, padding: '8px 12px', fontSize: 13, fontWeight: 700, border: `1px solid ${active ? RED : 'rgba(255,255,255,.12)'}`, background: active ? 'rgba(224,0,42,.1)' : 'rgba(255,255,255,.02)', color: active ? '#fff' : 'var(--muted)', cursor: 'pointer' }}>{o.label}</button>
+          })}
+        </div>
+        {estate.deadlineType && estate.deadlineType !== 'none' && (
+          <input type="date" value={estate.deadlineDate ?? ''} onChange={e => setEstate({ ...estate, deadlineDate: e.target.value })} style={{ ...inp, colorScheme: 'dark', cursor: 'pointer' }} />
+        )}
+      </div>
+    </div>
   )
 }
 

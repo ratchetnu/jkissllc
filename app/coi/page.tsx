@@ -135,6 +135,9 @@ export default function CoiPage() {
               <p className="text-xs text-center" style={{ color: 'rgba(255,255,255,.4)' }}>
                 We don&apos;t store this data — it&apos;s forwarded directly to our insurance broker.
               </p>
+              <p className="text-xs text-center" style={{ color: 'rgba(255,255,255,.4)', lineHeight: 1.5 }}>
+                By providing your phone number, you agree to receive text messages about your COI request from {COMPANY.legalName} at the number provided. Message &amp; data rates may apply. Reply STOP to opt out, HELP for help.
+              </p>
             </form>
           )}
         </div>

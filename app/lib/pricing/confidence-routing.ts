@@ -16,11 +16,14 @@ import type { QuoteDecisionResult } from './quote-decision'
 import { hasMaterialConflict } from '../ai/photo-text-consistency'
 import {
   activeItems, customerAddedItems, hasHardDisclosure, attestationComplete,
+  hasSensitiveItems, estateNeedsSiteVisit, isEstateConfirmation,
   type CustomerConfirmation, type ConflictFlag,
 } from '../ai/confirmation-schema'
 
 export type ConfidenceTier = 'high' | 'medium' | 'low'
-export type FinalWorkflowDecision = 'quote_ready' | 'awaiting_owner_approval' | 'manual_review'
+// 'site_visit_required' — an estate/cleanout job too large / sensitive / multi-day
+// to price from photos; not a fabricated quote, an on-site estimate instead.
+export type FinalWorkflowDecision = 'quote_ready' | 'awaiting_owner_approval' | 'manual_review' | 'site_visit_required'
 
 export type ConfidenceRoutingConfig = {
   autoQuoteMaxUsd: number            // above this, never auto-quote (→ approval)
@@ -63,6 +66,21 @@ export function routeByConfidence(opts: {
   const { decision, conflicts, confirmation, config } = opts
   const reasons: string[] = []
 
+  // ── SITE VISIT — estate/cleanout jobs that must be seen, never auto-quoted. ──
+  // Highest-priority route: sensitive property, hoarding, whole-home, multi-day/
+  // multi-truck, or dumpster jobs get an on-site estimate rather than a photo price.
+  if (isEstateConfirmation(confirmation) && estateNeedsSiteVisit(confirmation)) {
+    const why: string[] = []
+    if (hasSensitiveItems(confirmation)) why.push('Sensitive or valuable property is involved.')
+    const e = confirmation.estate!
+    if (e.subtype === 'hoarding') why.push('Hoarding cleanup needs an on-site assessment.')
+    if (e.subtype === 'whole_home') why.push('A whole-home cleanout needs an on-site walkthrough.')
+    if (e.multipleDays || e.multipleCrews) why.push('This looks like a multi-day / multi-crew job.')
+    if (e.dumpsterNeeded) why.push('A dumpster may be required.')
+    if ((e.expectedTruckloads ?? 0) >= 3) why.push('This looks like a large, multi-truck job.')
+    return { tier: 'low', finalDecision: 'site_visit_required', reasons: why.length ? why : ['This estate job needs an on-site estimate.'] }
+  }
+
   // ── LOW — hard routes to manual review (no fabricated estimate). ────────────
   const lowSignals: Array<[boolean, string]> = [
     [decision.decision === 'manual_review', 'Pricing decision requires human review.'],
@@ -84,6 +102,7 @@ export function routeByConfidence(opts: {
     [decision.recommendedUsd > config.autoQuoteMaxUsd, 'Estimate is above the automatic-quote limit.'],
     [!config.allowInstantQuote, 'Instant quoting is off for this service.'],
     [config.requireAttestationForAuto && !attestationComplete(confirmation), 'Attestation is incomplete.'],
+    [isEstateConfirmation(confirmation) && (confirmation.estate?.sortingRequired === true || confirmation.estate?.cleaningRequested === true), 'Estate sorting / cleaning add-on needs owner pricing.'],
   ]
   const medium = mediumSignals.filter(([hit]) => hit)
   if (medium.length > 0) {

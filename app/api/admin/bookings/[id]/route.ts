@@ -3,12 +3,14 @@ import { requireSession, getPrincipal } from '../../_lib/session'
 import { can } from '../../../../lib/rbac'
 import {
   getBookingByToken, saveBooking, deleteBooking, recompute, balanceDueCents, dollarsToCents,
-  paymentSummaryStatus, sanitizePhotos, pushBookingEvent, generateToken,
+  paymentSummaryStatus, sanitizePhotos, pushBookingEvent, generateToken, setInfoRequestToken,
   SERVICE_TYPES, type Booking, type ServiceType, type Payment, type PaymentMethod, type PaymentType,
   type BookingStatus,
 } from '../../../../lib/bookings'
 import { notifyCustomerZelleRejected, resendOwnerNotification, notifyOwnerAiOutcome } from '../../../../lib/booking-notify'
 import { processAiJob, enqueueAiJob, supportsPhotoAi, photoVersion } from '../../../../lib/book-now-ai'
+import { submitConfirmation, processFinalAiJob, enqueueFinalAiJob } from '../../../../lib/book-now-confirmation'
+import { INFO_REQUEST_FIELD_LABEL, type InfoRequest, type InfoRequestField } from '../../../../lib/bookings'
 import { currentTenantId } from '../../../../lib/platform/tenancy/context'
 import { getPolicyVersion, getCurrentPolicy } from '../../../../lib/policy'
 import { sendConfirmationLink, notifyJobCompleted, notifyBookingConfirmed, notifyPaidInFull, notifyContinuation, notifyCustomerMessage } from '../../../../lib/notify'
@@ -240,6 +242,113 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         initiatedBy: actor, updatedAt: Date.now(),
       }
       pushBookingEvent(b, { actor, action: 'ai.manual_review', result: 'owner', meta: { by: actor } })
+      break
+    }
+
+    // ── Guided-confirmation FINAL analysis controls (owner-only). Like run-ai,
+    // these load+save their own copy via processFinalAiJob, so RETURN early. ────
+    case 'run-final-ai':
+    case 'retry-final-ai': {
+      if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
+      if (!b.confirmation) return NextResponse.json({ error: 'No customer confirmation to analyze. Request or enter the confirmation first.' }, { status: 400 })
+      let tenantId: string | undefined
+      try { tenantId = currentTenantId() } catch { /* ignore */ }
+      enqueueFinalAiJob(b, { force: true, initiatedBy: actor, tenantId })
+      if (b.finalAiJob) b.finalAiJob.attempts = 0
+      await saveBooking(b)
+      const result = await processFinalAiJob(id, { initiatedBy: actor, tenantId })
+      const nb = await getBookingByToken(id)
+      if (nb && (result.status === 'completed' || result.status === 'manual_review' || result.status === 'failed')) {
+        try { await notifyOwnerAiOutcome(nb, result.status) } catch (e) { console.error('[run-final-ai notify]', e) }
+      }
+      return NextResponse.json({ ok: true, booking: nb ?? b, finalAiJob: nb?.finalAiJob, result })
+    }
+
+    case 'final-manual-review': {
+      if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
+      b.finalAiJob = {
+        status: 'manual_review',
+        idempotencyKey: b.finalAiJob?.idempotencyKey ?? `book-now-final:manual:${b.token}:${b.confirmation?.confirmationVersion ?? 0}`,
+        photoVersion: b.invoicePhotos?.length ?? 0, attempts: b.finalAiJob?.attempts ?? 0,
+        initiatedBy: actor, updatedAt: Date.now(),
+      }
+      pushBookingEvent(b, { actor, action: 'ai.final_manual_review', result: 'owner', meta: { by: actor } })
+      break
+    }
+
+    // ── Owner edits the confirmed inventory. Creates a NEW confirmation version
+    // (submittedBy owner) so the original customer read is preserved in history +
+    // item-level provenance, then re-runs the durable final analysis. Returns early. ─
+    case 'edit-confirmed-inventory': {
+      if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
+      if (!Array.isArray(body.items)) return NextResponse.json({ error: 'items[] required.' }, { status: 400 })
+      const existing = b.confirmation
+      const raw = {
+        items: body.items,
+        accessConditions: existing?.accessConditions ?? {},
+        disclosures: existing?.disclosures ?? {},
+        photoQuality: existing?.photoQuality ?? {},
+        followUpAnswers: existing?.followUpAnswers ?? [],
+        attestation: existing?.attestation,
+      }
+      let tenantId: string | undefined
+      try { tenantId = currentTenantId() } catch { /* ignore */ }
+      const sub = await submitConfirmation(id, raw, { submittedBy: 'owner', initiatedBy: actor, tenantId })
+      if (!sub.ok) return NextResponse.json({ error: 'Could not save the edited inventory.' }, { status: 400 })
+      const result = await processFinalAiJob(id, { initiatedBy: actor, tenantId })
+      const nb = await getBookingByToken(id)
+      return NextResponse.json({ ok: true, booking: nb ?? b, result })
+    }
+
+    // ── Approve the FINAL estimate and set the quote from it (owner approval,
+    // recorded). Optionally sends the customer their confirmation link. ─────────
+    case 'approve-final': {
+      if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
+      if (!b.finalAiEstimate) return NextResponse.json({ error: 'No final estimate to approve.' }, { status: 400 })
+      const overrideUsd = Math.round(num(body.amount) ?? 0)
+      const approvedUsd = overrideUsd > 0 ? overrideUsd : b.finalAiEstimate.pricing.recommendedUsd
+      b.invoiceAmountCents = approvedUsd * 100
+      if (b.depositAmountCents <= 0) b.depositAmountCents = Math.min(approvedUsd * 100, Math.max(5000, Math.round(approvedUsd * 100 * 0.2)))
+      pushBookingEvent(b, { actor, action: 'ai.owner_approved', result: `$${approvedUsd}`, meta: { approvedUsd, tier: b.finalAiEstimate.routingTier, override: overrideUsd > 0 } })
+      b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[Final estimate approved by ${actor}] $${approvedUsd}${overrideUsd > 0 ? ' (owner-set)' : ''}`
+      if (body.send === true) {
+        const channels = await sendConfirmationLink(b)
+        if (['quote_received', 'pending_payment', 'payment_received', 'booking_created'].includes(b.status)) b.status = 'confirmation_link_sent'
+        extra = { channels }
+      } else {
+        extra = { confirmLink: bookingLink(b.token) }
+      }
+      break
+    }
+
+    // ── Request more information (Part 13): a secure, single-step clarification.
+    // The customer returns via /quote/resume/<token> that opens ONLY the step. ──
+    case 'request-info': {
+      if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
+      const rawFields: unknown[] = Array.isArray(body.fields) ? body.fields : []
+      const fields = rawFields
+        .filter((f): f is InfoRequestField => typeof f === 'string' && f in INFO_REQUEST_FIELD_LABEL)
+      if (fields.length === 0) return NextResponse.json({ error: 'Choose at least one thing to request.' }, { status: 400 })
+      const reason = str(body.reason, 300) || 'We need a couple more details to finish your quote.'
+      const note = str(body.message, 500)
+      const rtoken = generateToken()
+      const req: InfoRequest = {
+        token: rtoken, reason, message: note, fields, requestedBy: actor, sentAt: Date.now(), completed: false,
+      }
+      // Compose a friendly customer message with the secure resume link.
+      const link = `${siteUrl()}/quote/resume/${rtoken}`
+      const asked = fields.map(f => INFO_REQUEST_FIELD_LABEL[f]).join(', ')
+      const text = `${note || reason} To finish your quote, please add: ${asked}. Continue here (no need to start over): ${link}`
+      const channel: 'sms' | 'email' | 'both' = b.customerPhone && b.customerEmail ? 'both' : b.customerPhone ? 'sms' : 'email'
+      let channels = { sms: false, email: false }
+      if (b.customerPhone || b.customerEmail) {
+        try { channels = await notifyCustomerMessage(b, text, channel) } catch (e) { console.error('[request-info notify]', e) }
+      }
+      req.channels = channels
+      b.infoRequest = req
+      await setInfoRequestToken(rtoken, b.token)
+      pushBookingEvent(b, { actor, action: 'confirmation.requested', result: fields.join(','), meta: { fields, reason, sent: channels.sms || channels.email } })
+      extra = { infoRequest: { token: rtoken, link, channels } }
       break
     }
     case 'void-payment': {

@@ -212,6 +212,32 @@ export type AiJob = {
   updatedAt: number
 }
 
+// ── Owner "request more information" workflow (Part 13) ──────────────────────
+export type InfoRequestField =
+  | 'more_photos' | 'wide_photo' | 'closeup_photo' | 'item_quantity'
+  | 'access_details' | 'heavy_item' | 'confirm_inventory'
+export const INFO_REQUEST_FIELD_LABEL: Record<InfoRequestField, string> = {
+  more_photos: 'Additional photos',
+  wide_photo: 'A better wide-angle photo',
+  closeup_photo: 'A close-up photo',
+  item_quantity: 'A missing quantity',
+  access_details: 'Access details',
+  heavy_item: 'Heavy-item clarification',
+  confirm_inventory: 'Confirm the item list',
+}
+export type InfoRequest = {
+  token: string                // secure random resume token (unguessable, tenant-scoped)
+  reason: string               // owner-facing reason
+  message?: string             // custom note shown to the customer
+  fields: InfoRequestField[]
+  requestedBy: string          // principal.sub
+  sentAt: number
+  channels?: { sms: boolean; email: boolean }
+  viewedAt?: number
+  respondedAt?: number
+  completed: boolean
+}
+
 // ── Derived payment status (for display + bookkeeping) ───────────────────────
 export type PaymentSummaryStatus = 'unpaid' | 'deposit_paid' | 'partially_paid' | 'paid_in_full'
 
@@ -319,6 +345,12 @@ export type Booking = {
   confirmation?: CustomerConfirmation      // customer-confirmed inventory + answers + attestation
   finalAiEstimate?: FinalAnalysisResult    // second (confirmed) analysis + governed pricing (internal)
   finalAiJob?: AiJob                        // durable server-side FINAL-analysis job (recovery + retry)
+  // ── Owner "request more information" workflow (Part 13) ──────────────────────
+  // A secure, single-step clarification request the owner sends; the customer
+  // returns through a continuation link that opens ONLY the requested step. The
+  // ACTIVE request lives here; completed ones move to history for the timeline.
+  infoRequest?: InfoRequest
+  infoRequestHistory?: InfoRequest[]
   loyaltyCode?: string         // 10% off code issued when paid in full (reuse/referral)
   archived?: boolean           // hidden from the default list (soft delete)
   archivedAt?: number
@@ -438,6 +470,24 @@ export async function getBookingByNumber(bookingNumber: string): Promise<Booking
   const token = await redis.get(`${KEY_NUM}${num}`)
   if (!token) return null
   return getBookingByToken(token)
+}
+
+// ── "Request more information" resume-token index (Part 13) ──────────────────
+// Maps a secure info-request token → the owning booking so the customer's
+// continuation link resolves without a scan. 30-day TTL (matches typical intake).
+const KEY_INFOREQ = 'bk:inforeq:'
+export async function setInfoRequestToken(reqToken: string, bookingToken: string): Promise<void> {
+  await redis.set(`${KEY_INFOREQ}${reqToken}`, bookingToken)
+  await redis.pexpire(`${KEY_INFOREQ}${reqToken}`, 30 * 24 * 60 * 60 * 1000)
+}
+export async function getBookingByInfoRequest(reqToken: string): Promise<Booking | null> {
+  if (!reqToken || !/^[a-f0-9]{16,}$/i.test(reqToken)) return null
+  const token = await redis.get(`${KEY_INFOREQ}${reqToken}`)
+  if (!token) return null
+  const b = await getBookingByToken(token)
+  // Guard: the ACTIVE request must still match this token (revoked/rotated → 404).
+  if (!b || b.infoRequest?.token !== reqToken) return null
+  return b
 }
 
 /** Owner-controlled sandbox record — excluded from all business analytics/comms. */

@@ -23,6 +23,10 @@ export const ATTESTATION_VERSION = 1
 // Where a confirmed value came from — so AI vs customer vs owner is always distinguishable.
 export type ItemSource = 'ai' | 'customer' | 'owner' | 'combined'
 
+// Estate/cleanout sorting decision. 'sell' == "sell/review" (routes to owner).
+export type Disposition = 'keep' | 'donate' | 'recycle' | 'sell' | 'dispose'
+export const DISPOSITIONS: Disposition[] = ['keep', 'donate', 'recycle', 'sell', 'dispose']
+
 export type ConfirmedItem = {
   id: string
   category: InventoryCategory        // governed, normalized
@@ -31,6 +35,8 @@ export type ConfirmedItem = {
   uncertain: boolean                 // customer marked "not sure"
   removed: boolean                   // customer removed this AI detection (false positive)
   source: ItemSource
+  // Estate/cleanout sorting — keep / donate / recycle / sell / dispose (default dispose).
+  disposition?: Disposition
   // Preserved original AI read (never overwritten) when this row came from the model:
   aiDetected: boolean
   aiCategory?: InventoryCategory
@@ -102,6 +108,48 @@ export type Attestation = {
   mayRequireOwnerReview: boolean
 }
 
+// ── Estate / property-cleanout structured intake (Estate Cleanout service family)
+// Captured once, alongside the confirmation, so estate jobs reuse the SAME workflow
+// but carry the extra facts pricing + routing need. All optional (non-estate jobs
+// simply omit it) — backward compatible.
+export type CleanoutSubtype =
+  | 'estate' | 'whole_home' | 'apartment' | 'garage' | 'storage'
+  | 'hoarding' | 'turnover' | 'eviction' | 'foreclosure'
+export const CLEANOUT_SUBTYPES: CleanoutSubtype[] = ['estate', 'whole_home', 'apartment', 'garage', 'storage', 'hoarding', 'turnover', 'eviction', 'foreclosure']
+export const CLEANOUT_SUBTYPE_LABEL: Record<CleanoutSubtype, string> = {
+  estate: 'Estate Cleanout', whole_home: 'Whole-Home Cleanout', apartment: 'Apartment Cleanout',
+  garage: 'Garage Cleanout', storage: 'Storage Unit Cleanout', hoarding: 'Hoarding Cleanup',
+  turnover: 'Property Turnover Cleanout', eviction: 'Eviction Cleanout', foreclosure: 'Foreclosure Cleanout',
+}
+export type EstateRelationship = 'owner' | 'family' | 'executor' | 'property_manager' | 'realtor' | 'attorney' | 'tenant' | 'other'
+export type EstateDeadlineType = 'none' | 'closing' | 'listing' | 'probate' | 'eviction' | 'turnover'
+
+export type EstateIntake = {
+  subtype?: CleanoutSubtype
+  propertyType?: string
+  approxSizeSqft?: number
+  occupancy?: 'occupied' | 'vacant' | 'partial'
+  relationship?: EstateRelationship
+  repOnsite?: boolean               // customer / authorized rep will be onsite
+  accessMethod?: string             // present / lockbox / key / code / agent
+  expectedTruckloads?: number
+  sortingRequired?: boolean
+  sortingInstructions?: string
+  sensitivePossible?: boolean       // valuables/documents/meds/firearms/ashes may be present
+  utilitiesActive?: boolean
+  cleaningRequested?: boolean
+  dumpsterNeeded?: boolean
+  multipleCrews?: boolean
+  multipleDays?: boolean
+  desiredCompletionDate?: string    // yyyy-mm-dd
+  deadlineType?: EstateDeadlineType
+  deadlineDate?: string             // yyyy-mm-dd
+  contactName?: string
+  contactRole?: string
+  contactPhone?: string
+  contactEmail?: string
+}
+
 // A generic structured follow-up answer (Part 5) — the selector may pose questions
 // beyond the fixed AccessConditions shape; those land here as typed key/values.
 export type FollowUpAnswer = {
@@ -135,6 +183,7 @@ export type CustomerConfirmation = {
   followUpAnswers: FollowUpAnswer[]
   attestation?: Attestation         // required for a customer submit; optional for an owner draft
   conflicts: ConflictFlag[]
+  estate?: EstateIntake             // present only for the Estate Cleanout service family
   notes?: string                    // optional free notes (never the primary input)
   idempotencyKey?: string
 }
@@ -168,6 +217,8 @@ function normalizeItem(v: unknown, i: number): ConfirmedItem | null {
     if (s === 'ai' || s === 'customer' || s === 'owner' || s === 'combined') return s
     return aiDetected ? 'combined' : 'customer'
   })()
+  const dispRaw = String(v.disposition ?? '').toLowerCase()
+  const disposition = (DISPOSITIONS as string[]).includes(dispRaw) ? (dispRaw as Disposition) : undefined
   return {
     id: strOr(v.id, `item-${i}`, 64) || `item-${i}`,
     category,
@@ -176,6 +227,7 @@ function normalizeItem(v: unknown, i: number): ConfirmedItem | null {
     uncertain: boolOr(v.uncertain),
     removed,
     source,
+    disposition,
     aiDetected,
     aiCategory: aiDetected ? normalizeToInventoryCategory(v.aiCategory ?? v.category) : undefined,
     aiName: aiDetected ? strOpt(v.aiName, 120) : undefined,
@@ -246,6 +298,42 @@ function normalizeAttestation(v: unknown, at: string): Attestation | undefined {
   }
 }
 
+const isoDate = (v: unknown): string | undefined => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined)
+
+function normalizeEstate(v: unknown): EstateIntake | undefined {
+  if (!isObj(v)) return undefined
+  const subRaw = String(v.subtype ?? '').toLowerCase()
+  const relRaw = String(v.relationship ?? '').toLowerCase()
+  const occRaw = String(v.occupancy ?? '').toLowerCase()
+  const dlRaw = String(v.deadlineType ?? '').toLowerCase()
+  const e: EstateIntake = {
+    subtype: (CLEANOUT_SUBTYPES as string[]).includes(subRaw) ? (subRaw as CleanoutSubtype) : undefined,
+    propertyType: strOpt(v.propertyType, 60),
+    approxSizeSqft: v.approxSizeSqft != null ? clampInt(v.approxSizeSqft, 0, 100000, 0) : undefined,
+    occupancy: (['occupied', 'vacant', 'partial'] as string[]).includes(occRaw) ? (occRaw as EstateIntake['occupancy']) : undefined,
+    relationship: (['owner', 'family', 'executor', 'property_manager', 'realtor', 'attorney', 'tenant', 'other'] as string[]).includes(relRaw) ? (relRaw as EstateRelationship) : undefined,
+    repOnsite: boolOpt(v.repOnsite),
+    accessMethod: strOpt(v.accessMethod, 80),
+    expectedTruckloads: v.expectedTruckloads != null ? clampInt(v.expectedTruckloads, 0, 40, 0) : undefined,
+    sortingRequired: boolOpt(v.sortingRequired),
+    sortingInstructions: strOpt(v.sortingInstructions, 500),
+    sensitivePossible: boolOpt(v.sensitivePossible),
+    utilitiesActive: boolOpt(v.utilitiesActive),
+    cleaningRequested: boolOpt(v.cleaningRequested),
+    dumpsterNeeded: boolOpt(v.dumpsterNeeded),
+    multipleCrews: boolOpt(v.multipleCrews),
+    multipleDays: boolOpt(v.multipleDays),
+    desiredCompletionDate: isoDate(v.desiredCompletionDate),
+    deadlineType: (['none', 'closing', 'listing', 'probate', 'eviction', 'turnover'] as string[]).includes(dlRaw) ? (dlRaw as EstateDeadlineType) : undefined,
+    deadlineDate: isoDate(v.deadlineDate),
+    contactName: strOpt(v.contactName, 120),
+    contactRole: strOpt(v.contactRole, 60),
+    contactPhone: strOpt(v.contactPhone, 40),
+    contactEmail: strOpt(v.contactEmail, 200),
+  }
+  return Object.values(e).some(val => val !== undefined) ? e : undefined
+}
+
 function normalizeFollowUps(v: unknown): FollowUpAnswer[] {
   if (!Array.isArray(v)) return []
   const out: FollowUpAnswer[] = []
@@ -297,6 +385,7 @@ export function normalizeConfirmation(raw: unknown, ctx: NormalizeConfirmationCt
     followUpAnswers: normalizeFollowUps(root.followUpAnswers),
     attestation: normalizeAttestation(root.attestation, ctx.now),
     conflicts: [],                  // computed server-side (photo-text-consistency), never client-trusted
+    estate: normalizeEstate(root.estate),
     notes: strOpt(root.notes, 500),
     idempotencyKey: strOpt(root.idempotencyKey, 120),
   }
@@ -329,4 +418,32 @@ export function hasHardDisclosure(c: CustomerConfirmation): boolean {
 export function attestationComplete(c: CustomerConfirmation): boolean {
   const a = c.attestation
   return !!a && a.representsEverything && a.hazardousDisclosed && a.accessDisclosed
+}
+
+// ── Estate / cleanout helpers (governance) ───────────────────────────────────
+/** Active items whose governed category is sensitive (valuables/docs/meds/etc.). */
+export function sensitiveItems(c: CustomerConfirmation): ConfirmedItem[] {
+  return activeItems(c).filter(i => taxonomyEntry(i.category).sensitive === true)
+}
+export function hasSensitiveItems(c: CustomerConfirmation): boolean {
+  return sensitiveItems(c).length > 0 || c.estate?.sensitivePossible === true
+}
+/** This is an estate/property-cleanout job (carries the estate intake block). */
+export function isEstateConfirmation(c: CustomerConfirmation): boolean {
+  return !!c.estate
+}
+/**
+ * Estate jobs that must NOT be auto-quoted — route to a Site Visit / owner review:
+ * hoarding, whole-home, multi-day/multi-truck, dumpster jobs, or sensitive property.
+ */
+export function estateNeedsSiteVisit(c: CustomerConfirmation): boolean {
+  const e = c.estate
+  if (!e) return false
+  return e.subtype === 'hoarding'
+    || e.subtype === 'whole_home'
+    || e.multipleDays === true
+    || e.multipleCrews === true
+    || e.dumpsterNeeded === true
+    || (e.expectedTruckloads ?? 0) >= 3
+    || hasSensitiveItems(c)
 }

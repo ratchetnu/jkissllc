@@ -37,6 +37,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ token: stri
     final,
     // For resume: the customer-safe initial detections (no cost basis / margin).
     estimate: b.aiEstimate ? customerEstimateView(b.aiEstimate) : null,
-    followUps: b.aiEstimate ? selectFollowUpQuestions({ serviceFamily: serviceFamily(b.serviceType), analysis: b.aiEstimate.analysis }) : [],
+    followUps: b.aiEstimate ? selectFollowUpQuestions({ serviceFamily: serviceFamily(b.serviceType), analysis: b.aiEstimate.analysis, estate: b.serviceType === 'estate-cleanout' || b.serviceType === 'garage-cleanout' || b.serviceType === 'eviction' }) : [],
   })
 }

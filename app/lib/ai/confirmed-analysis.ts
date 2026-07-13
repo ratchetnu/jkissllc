@@ -28,7 +28,7 @@ import {
   type WeightClass, type DisposalClass,
 } from './inventory-taxonomy'
 import {
-  activeItems, type CustomerConfirmation,
+  activeItems, hasSensitiveItems, estateNeedsSiteVisit, sensitiveItems, type CustomerConfirmation,
 } from './confirmation-schema'
 import { detectPhotoTextConflicts } from './photo-text-consistency'
 import {
@@ -106,7 +106,7 @@ export function mergeConfirmedInventory(
     outdoorRemoval: !!base?.outdoorRemoval,
     disassemblyRequired: !!base?.disassemblyRequired || ac.requiresDisassembly === true || ac.assemblyDisassembly === true || anyItemDisassembly,
     heavyItemsPresent: !!base?.heavyItemsPresent || d.excessivelyHeavyItems === true || ac.excessivelyHeavy === true || anyItemHeavy,
-    hazardousMaterialPossible: !!base?.hazardousMaterialPossible || d.containsHazardous === true,
+    hazardousMaterialPossible: !!base?.hazardousMaterialPossible || d.containsHazardous === true || rows.some(r => taxonomyEntry(r.category).hazardous),
     refrigerantAppliancePossible: !!base?.refrigerantAppliancePossible || (ac.appliancesConnected === true && items.some(i => i.category === 'appliance')),
     concreteOrSoilPossible: !!base?.concreteOrSoilPossible || d.containsDenseDebris === true || items.some(i => i.category === 'construction_debris'),
     tiresPossible: !!base?.tiresPossible || rows.some(r => r.category === 'tires'),
@@ -179,6 +179,9 @@ export type FinalAnalysisResult = {
   disposalUsd: number
   expectedTrips: number
   specialHandling: boolean
+  // Estate/cleanout: sensitive property names + estate subtype (for OpsPilot warnings).
+  sensitiveItems: string[]
+  estateSubtype?: string
 }
 
 function buildEvidenceSummary(a: JunkPhotoAnalysis, c: CustomerConfirmation): string[] {
@@ -230,8 +233,12 @@ export function buildConfirmedEstimate(opts: {
 
   // Photo-text consistency BEFORE pricing so a material conflict forces review.
   const conflicts = detectPhotoTextConflicts(opts.initial, opts.confirmation)
+  // Sensitive/estate property + material conflicts + hazards all force a human —
+  // the deterministic engine never auto-prices these (Estate Cleanout safeguards).
   const forceReview = conflicts.some(f => f.severity === 'material')
     || merged.detectedConditions.hazardousMaterialPossible
+    || hasSensitiveItems(opts.confirmation)
+    || estateNeedsSiteVisit(opts.confirmation)
 
   const decision = decideQuote({
     analysis: merged,
@@ -272,6 +279,8 @@ export function buildConfirmedEstimate(opts: {
     disposalUsd: Math.round(q.disposalCents / 100),
     expectedTrips: q.landfillTrips,
     specialHandling: activeItems(opts.confirmation).some(i => taxonomyEntry(i.category).specialHandling),
+    sensitiveItems: sensitiveItems(opts.confirmation).map(i => i.name),
+    estateSubtype: opts.confirmation.estate?.subtype,
   }
 }
 

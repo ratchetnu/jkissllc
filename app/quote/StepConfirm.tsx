@@ -54,10 +54,15 @@ export default function StepConfirm(props: {
   answers: Record<string, FollowUpValue>; setAnswers: (updater: (prev: Record<string, FollowUpValue>) => Record<string, FollowUpValue>) => void
   isEverything: IsEverythingAnswer | ''; setIsEverything: (v: IsEverythingAnswer) => void
   attest: AttestState; setAttest: (v: AttestState) => void
+  estate?: boolean
   onAddMorePhotos: () => void
   onItemCorrected?: () => void
 }) {
   const { items, setItems, answers, followUps } = props
+  const DISPOSITIONS: { id: 'keep' | 'donate' | 'recycle' | 'sell' | 'dispose'; label: string }[] = [
+    { id: 'keep', label: 'Keep' }, { id: 'donate', label: 'Donate' }, { id: 'recycle', label: 'Recycle' }, { id: 'sell', label: 'Sell' }, { id: 'dispose', label: 'Dispose' },
+  ]
+  const setDisposition = (id: string, d: 'keep' | 'donate' | 'recycle' | 'sell' | 'dispose') => { setItems(prev => prev.map(i => i.id === id ? { ...i, disposition: i.disposition === d ? undefined : d } : i)); correct() }
   const [addOpen, setAddOpen] = useState(false)
   const [addCat, setAddCat] = useState<InventoryCategory>('furniture')
   const [addName, setAddName] = useState('')
@@ -170,6 +175,17 @@ export default function StepConfirm(props: {
                 </div>
               </div>
 
+              {props.estate && !it.removed && (
+                <div className="flex flex-wrap gap-1.5 mt-2.5" role="group" aria-label={`What to do with ${it.name}`}>
+                  {DISPOSITIONS.map(d => (
+                    <button key={d.id} type="button" onClick={() => setDisposition(it.id, d.id)} aria-pressed={it.disposition === d.id}
+                      style={{ minHeight: 36, padding: '6px 11px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
+                        border: `1px solid ${it.disposition === d.id ? '#a78bfa' : 'rgba(255,255,255,.14)'}`,
+                        background: it.disposition === d.id ? 'rgba(167,139,250,.15)' : 'rgba(255,255,255,.02)',
+                        color: it.disposition === d.id ? '#c4b5fd' : 'var(--muted)' }}>{d.label}</button>
+                  ))}
+                </div>
+              )}
               <div className="flex items-center justify-between mt-3 gap-2">
                 <div className="flex items-center gap-2" role="group" aria-label={`Quantity of ${it.name}`}>
                   <button type="button" onClick={() => setQty(it.id, -1)} aria-label="Decrease quantity" style={stepBtn} disabled={it.quantity <= 1}><Minus size={16} /></button>

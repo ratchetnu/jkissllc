@@ -54,7 +54,8 @@ export async function POST(req: NextRequest) {
   try { await saveDraftEstimate(stored) } catch (e) { console.error('[quote/analyze] save draft', e) }
 
   // Governed follow-up question selection (server-side; the client only renders).
-  const followUps = selectFollowUpQuestions({ serviceFamily: serviceFamily(serviceType), analysis: stored.analysis })
+  const estate = serviceType === 'estate-cleanout' || serviceType === 'garage-cleanout' || serviceType === 'eviction'
+  const followUps = selectFollowUpQuestions({ serviceFamily: serviceFamily(serviceType), analysis: stored.analysis, estate })
 
   return NextResponse.json({ ok: true, estimate: customerEstimateView(stored), followUps })
 }

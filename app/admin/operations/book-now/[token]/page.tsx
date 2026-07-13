@@ -3,15 +3,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import { ArrowLeft, Camera, ExternalLink } from 'lucide-react'
+import { ArrowLeft, Camera, ExternalLink, Send, RefreshCw, CheckCircle2, MessageSquarePlus, AlertTriangle } from 'lucide-react'
 import OperationsShell from '../../OperationsShell'
 import WorkflowTimeline from '../../../bookings/WorkflowTimeline'
 import { fmtTs, money } from '../../ui'
-import { SERVICE_LABELS, type Booking } from '../../../../lib/bookings'
+import { SERVICE_LABELS, INFO_REQUEST_FIELD_LABEL, type Booking, type InfoRequestField } from '../../../../lib/bookings'
 import {
   bookNowStage, bookNowServiceGroup, aiStatus, quoteStatus, paymentStatus, ownerAlertStatus,
-  BOOK_NOW_STAGE_LABEL,
+  confirmationStatus, BOOK_NOW_STAGE_LABEL,
 } from '../../../../lib/book-now-queue'
+import { buildOwnerReviewModel } from '../../../../lib/ai/confirmation-review'
 
 const GROUP_LABEL: Record<string, string> = { junk: 'Junk Removal', moving: 'Moving', delivery: 'Delivery', other: 'Service' }
 
@@ -27,6 +28,16 @@ function KV({ k, v }: { k: string; v?: string | number | null }) {
   if (v === undefined || v === null || v === '') return null
   return <div className="flex justify-between gap-3" style={{ padding: '4px 0' }}><span style={{ fontSize: 12.5, color: 'var(--muted)', flexShrink: 0 }}>{k}</span><span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)', textAlign: 'right', wordBreak: 'break-word' }}>{v}</span></div>
 }
+function CountBadge({ label, n, tone }: { label: string; n: number; tone: string }) {
+  if (n <= 0) return null
+  return <span style={{ fontSize: 11, fontWeight: 700, color: tone, border: `1px solid ${tone}`, borderRadius: 999, padding: '2px 9px', background: `${tone}14` }}>{n} {label}</span>
+}
+const PROV_TONE: Record<string, string> = { ai: '#60a5fa', customer: '#34d399', owner: '#c084fc', combined: '#34d399', removed: '#f87171' }
+const PROV_LABEL: Record<string, string> = { ai: 'AI', customer: 'Cust', owner: 'Owner', combined: 'Conf', removed: 'Rem' }
+function ProvBadge({ p }: { p: string }) {
+  const tone = PROV_TONE[p] ?? 'var(--muted)'
+  return <span style={{ fontSize: 9.5, fontWeight: 800, color: tone, border: `1px solid ${tone}`, borderRadius: 5, padding: '2px 5px', flexShrink: 0, minWidth: 38, textAlign: 'center' }}>{PROV_LABEL[p] ?? p}</span>
+}
 
 function Detail({ token }: { token: string }) {
   const [b, setB] = useState<Booking | null>(null)
@@ -35,6 +46,9 @@ function Detail({ token }: { token: string }) {
   const [busy, setBusy] = useState('')
   const [lightbox, setLightbox] = useState<number | null>(null)
   const [isOwner, setIsOwner] = useState(false)
+  const [showInfoForm, setShowInfoForm] = useState(false)
+  const [infoFields, setInfoFields] = useState<InfoRequestField[]>([])
+  const [infoReason, setInfoReason] = useState('')
 
   useEffect(() => {
     fetch('/api/admin/session', { credentials: 'same-origin' })
@@ -58,12 +72,12 @@ function Detail({ token }: { token: string }) {
 
   // Short-poll while the AI job is actively moving so the owner watches it advance
   // without refreshing. Stops as soon as it reaches a terminal state.
-  const jobStatus = b?.aiJob?.status
+  const activeJob = [b?.aiJob?.status, b?.finalAiJob?.status].some(s => s === 'queued' || s === 'processing' || s === 'retrying')
   useEffect(() => {
-    if (jobStatus !== 'queued' && jobStatus !== 'processing' && jobStatus !== 'retrying') return
+    if (!activeJob) return
     const t = setInterval(() => { load() }, 6000)
     return () => clearInterval(t)
-  }, [jobStatus, load])
+  }, [activeJob, load])
 
   const run = async (action: string, body: Record<string, unknown> = {}) => {
     setBusy(action)
@@ -90,6 +104,10 @@ function Detail({ token }: { token: string }) {
   const alert = ownerAlertStatus(b)
   const est = b.aiEstimate
   const bn = b.bookNow
+  const review = b.confirmation || b.finalAiEstimate ? buildOwnerReviewModel(b) : null
+  const confStatus = confirmationStatus(b)
+  const fj = b.finalAiJob
+  const toggleInfoField = (f: InfoRequestField) => setInfoFields(prev => prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f])
   const mailto = b.customerEmail ? `mailto:${b.customerEmail}` : undefined
   const tel = b.customerPhone ? `tel:${b.customerPhone.replace(/[^\d+]/g, '')}` : undefined
   const btn: React.CSSProperties = { fontSize: 12.5, fontWeight: 700, padding: '8px 13px', borderRadius: 10, border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--text)', cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }
@@ -219,6 +237,216 @@ function Detail({ token }: { token: string }) {
           <ExternalLink size={13} /> Open full estimate editor (modify / approve / send quote)
         </Link>
       </Section>
+
+      {/* ── Estate / property cleanout (Estate Cleanout edition) ───────────── */}
+      {review?.isEstate && review.estate && (
+        <Section title={`Estate Cleanout${review.estateSubtypeLabel ? ` · ${review.estateSubtypeLabel}` : ''}`}>
+          {(review.sensitiveItemNames.length > 0 || review.siteVisit) && (
+            <div style={{ marginBottom: 10, padding: '9px 11px', borderRadius: 8, border: '1px solid #f87171', background: 'rgba(248,113,113,.07)' }}>
+              {review.siteVisit && <p style={{ fontSize: 12, fontWeight: 800, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 5 }}><AlertTriangle size={13} /> Site visit required — not auto-quoted.</p>}
+              {review.sensitiveItemNames.length > 0 && <p style={{ fontSize: 12, color: '#f87171', marginTop: review.siteVisit ? 4 : 0 }}>⚠ Sensitive property flagged: {review.sensitiveItemNames.join(', ')} — route to owner before disposal.</p>}
+            </div>
+          )}
+          <KV k="Property type" v={review.estate.propertyType} />
+          <KV k="Approx. size" v={review.estate.approxSizeSqft ? `${review.estate.approxSizeSqft.toLocaleString()} sq ft` : undefined} />
+          <KV k="Occupancy" v={review.estate.occupancy} />
+          <KV k="Customer relationship" v={review.estate.relationship?.replace(/_/g, ' ')} />
+          <KV k="Rep onsite" v={review.estate.repOnsite === undefined ? undefined : review.estate.repOnsite ? 'Yes' : 'No'} />
+          <KV k="Access method" v={review.estate.accessMethod} />
+          <KV k="Utilities active" v={review.estate.utilitiesActive === undefined ? undefined : review.estate.utilitiesActive ? 'Yes' : 'No'} />
+          <KV k="Expected truckloads" v={review.estate.expectedTruckloads} />
+          <KV k="Sorting required" v={review.estate.sortingRequired ? 'Yes' : review.estate.sortingRequired === false ? 'No' : undefined} />
+          <KV k="Sorting instructions" v={review.estate.sortingInstructions} />
+          <KV k="Cleaning requested" v={review.estate.cleaningRequested ? 'Yes' : undefined} />
+          <KV k="Dumpster needed" v={review.estate.dumpsterNeeded ? 'Yes' : undefined} />
+          <KV k="Multi-day / multi-crew" v={[review.estate.multipleDays && 'multi-day', review.estate.multipleCrews && 'multi-crew'].filter(Boolean).join(' · ') || undefined} />
+          <KV k="Desired completion" v={review.estate.desiredCompletionDate} />
+          <KV k="Deadline" v={review.estate.deadlineType && review.estate.deadlineType !== 'none' ? `${review.estate.deadlineType}${review.estate.deadlineDate ? ` · ${review.estate.deadlineDate}` : ''}` : undefined} />
+          <KV k="Contact" v={[review.estate.contactName, review.estate.contactRole, review.estate.contactPhone, review.estate.contactEmail].filter(Boolean).join(' · ') || undefined} />
+          {(review.dispositionCounts.keep + review.dispositionCounts.donate + review.dispositionCounts.recycle + review.dispositionCounts.sell + review.dispositionCounts.dispose) > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <p style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>Sorting</p>
+              <div className="flex flex-wrap gap-1.5">
+                {(['keep', 'donate', 'recycle', 'sell', 'dispose'] as const).map(d => review.dispositionCounts[d] > 0 && (
+                  <span key={d} style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa', border: '1px solid #a78bfa', borderRadius: 999, padding: '2px 9px' }}>{review.dispositionCounts[d]} {d}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </Section>
+      )}
+
+      {/* ── Customer confirmation review (Part 12) ─────────────────────────── */}
+      {review && review.hasConfirmation && (
+        <Section title={`Customer Confirmation${review.final ? ` · v${review.final.confirmationVersion}` : ''}`}>
+          <div className="flex flex-wrap gap-1.5" style={{ marginBottom: 10 }}>
+            <CountBadge label="AI detected" n={review.counts.aiDetected} tone="#60a5fa" />
+            <CountBadge label="Customer confirmed" n={review.counts.customerConfirmed} tone="#34d399" />
+            <CountBadge label="Added" n={review.counts.customerAdded} tone="#fbbf24" />
+            <CountBadge label="Removed" n={review.counts.removed} tone="#f87171" />
+            <CountBadge label="Owner modified" n={review.counts.ownerModified} tone="#c084fc" />
+            <CountBadge label="Uncertain" n={review.counts.uncertain} tone="#fbbf24" />
+          </div>
+
+          {review.items.length > 0 && (
+            <div style={{ display: 'grid', gap: 6, marginBottom: 10 }}>
+              {review.items.map((it, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 9px', borderRadius: 8, border: '1px solid var(--line)', background: it.removed ? 'rgba(248,113,113,.05)' : 'var(--card)', opacity: it.removed ? 0.65 : 1 }}>
+                  <ProvBadge p={it.removed ? 'removed' : it.provenance} />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)', textDecoration: it.removed ? 'line-through' : 'none' }}>{it.name}</span>
+                    <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 6 }}>{it.categoryLabel}</span>
+                    {it.sensitive && <span style={{ fontSize: 9.5, fontWeight: 800, color: '#f87171', marginLeft: 6 }}>⚠ SENSITIVE</span>}
+                    {it.disposition && <span style={{ fontSize: 9.5, fontWeight: 800, color: '#a78bfa', marginLeft: 6, textTransform: 'uppercase' }}>{it.disposition}</span>}
+                    {it.changed && it.aiDetected && (it.aiName !== it.name || it.aiQuantity !== it.quantity) && (
+                      <span style={{ fontSize: 10.5, color: 'var(--muted)', display: 'block' }}>AI read: {it.aiName ?? '—'}{it.aiQuantity != null ? ` ×${it.aiQuantity}` : ''}</span>
+                    )}
+                  </div>
+                  {it.uncertain && <span style={{ fontSize: 10, fontWeight: 700, color: '#fbbf24' }}>unsure</span>}
+                  <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)', minWidth: 26, textAlign: 'right' }}>×{it.quantity}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <KV k="Is this everything?" v={review.isEverything} />
+          {review.attestation && <KV k="Attestation" v={`${review.attestation.complete ? 'Complete' : 'Partial'} · v${review.attestation.version} · ${fmtTs(Date.parse(review.attestation.at))}`} />}
+
+          {review.disclosures.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <p style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--muted)', marginBottom: 4 }}>Disclosures</p>
+              {review.disclosures.map((d, i) => (
+                <div key={i} className="flex justify-between gap-3" style={{ padding: '3px 0' }}>
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>{d.label}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: d.risk ? '#f87171' : 'var(--text)' }}>{d.value}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {review.accessAnswers.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <p style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--muted)', marginBottom: 4 }}>Access answers</p>
+              {review.accessAnswers.map((a, i) => <KV key={i} k={a.label} v={a.value} />)}
+            </div>
+          )}
+
+          {review.photoQuality.length > 0 && review.photoQuality.map((q, i) => <KV key={`pq${i}`} k={q.label} v={q.value} />)}
+
+          {review.conflicts.length > 0 && (
+            <div style={{ marginTop: 10, padding: '9px 11px', borderRadius: 8, border: `1px solid ${review.conflictSeverity === 'material' ? '#f87171' : '#fbbf24'}`, background: review.conflictSeverity === 'material' ? 'rgba(248,113,113,.07)' : 'rgba(251,191,36,.06)' }}>
+              <p style={{ fontSize: 11.5, fontWeight: 800, color: review.conflictSeverity === 'material' ? '#f87171' : '#fbbf24', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
+                <AlertTriangle size={13} /> Photo/inventory flags ({review.conflictSeverity})
+              </p>
+              {review.conflicts.map((c, i) => <p key={i} style={{ fontSize: 12, color: 'var(--text)', marginTop: 2 }}>• {c.message}</p>)}
+            </div>
+          )}
+        </Section>
+      )}
+
+      {/* ── Final (second) analysis — initial vs revised (Part 12) ──────────── */}
+      {review?.final && (
+        <Section title={`Final Analysis · ${review.final.tier} confidence`}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+            <div style={{ padding: 10, borderRadius: 8, border: '1px solid var(--line)' }}>
+              <p style={{ fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase', color: 'var(--muted)' }}>Initial (photos only)</p>
+              <p style={{ fontSize: 16, fontWeight: 900, color: 'var(--text)', marginTop: 3 }}>{review.initial ? `$${review.initial.lowUsd.toLocaleString()}–$${review.initial.highUsd.toLocaleString()}` : '—'}</p>
+              {review.initial?.confidencePct != null && <p style={{ fontSize: 11, color: 'var(--muted)' }}>{review.initial.confidencePct}% · {review.initial.decision}</p>}
+            </div>
+            <div style={{ padding: 10, borderRadius: 8, border: '1px solid var(--red)', background: 'rgba(224,0,42,.05)' }}>
+              <p style={{ fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase', color: 'var(--red)' }}>Revised (confirmed)</p>
+              <p style={{ fontSize: 16, fontWeight: 900, color: 'var(--text)', marginTop: 3 }}>${review.final.lowUsd.toLocaleString()}–${review.final.highUsd.toLocaleString()}</p>
+              {review.final.confidencePct != null && <p style={{ fontSize: 11, color: 'var(--muted)' }}>{review.final.confidencePct}% · {review.final.finalDecision}</p>}
+            </div>
+          </div>
+          <KV k="Recommended workflow" v={review.final.finalDecision} />
+          <KV k="Truck loads" v={`${review.final.truckLoadMin}–${review.final.truckLoadMax}`} />
+          <KV k="Labor" v={`${review.final.laborHours} hr · crew of ${review.final.crewSize}`} />
+          <KV k="Disposal estimate" v={money(review.final.disposalUsd * 100)} />
+          <KV k="Expected trips" v={review.final.expectedTrips} />
+          <KV k="Special handling" v={review.final.specialHandling ? 'Yes' : 'No'} />
+          <KV k="Pricing policy" v={review.final.policyVersion} />
+          {review.final.evidenceSummary.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <p style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>Evidence</p>
+              {review.final.evidenceSummary.map((e, i) => <p key={i} style={{ fontSize: 12, color: 'var(--text)' }}>• {e}</p>)}
+            </div>
+          )}
+          {review.final.missingInfo.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <p style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', color: '#fbbf24', marginBottom: 4 }}>Missing information</p>
+              {review.final.missingInfo.map((e, i) => <p key={i} style={{ fontSize: 12, color: '#fcd34d' }}>• {e}</p>)}
+            </div>
+          )}
+        </Section>
+      )}
+
+      {/* Server FINAL-analysis job (durable, persisted). */}
+      {fj && (
+        <Section title="Server Final-Analysis Job">
+          <KV k="Status" v={fj.status} />
+          <KV k="Confirmation phase" v={confStatus} />
+          <KV k="Attempts" v={fj.attempts} />
+          <KV k="Last attempt" v={fj.lastAttemptAt ? fmtTs(fj.lastAttemptAt) : undefined} />
+          <KV k="Next retry" v={fj.nextRetryAt && (fj.status === 'queued' || fj.status === 'retrying') ? fmtTs(fj.nextRetryAt) : undefined} />
+          <KV k="Error" v={fj.errorCode ? `${fj.errorCode}${fj.errorSummary ? ` — ${fj.errorSummary}` : ''}` : undefined} />
+        </Section>
+      )}
+
+      {/* ── Guided-workflow owner actions (Part 12/13) ─────────────────────── */}
+      {isOwner && (b.confirmation || confStatus === 'awaiting') && (
+        <Section title="Guided Workflow Actions">
+          <div className="flex flex-wrap gap-2">
+            {b.confirmation && (
+              <button onClick={() => run(fj?.status === 'failed' ? 'retry-final-ai' : 'run-final-ai')} disabled={busy === 'run-final-ai' || busy === 'retry-final-ai'} style={{ ...btn, borderColor: 'var(--red)', color: '#fff', background: 'var(--red)' }}>
+                <RefreshCw size={13} /> {busy === 'run-final-ai' || busy === 'retry-final-ai' ? 'Running…' : fj?.status === 'failed' ? 'Retry Final Analysis' : 'Run Final Analysis'}
+              </button>
+            )}
+            {review?.final && review.final.finalDecision !== 'manual_review' && review.final.finalDecision !== 'site_visit_required' && (
+              <button onClick={() => run('approve-final', { send: true })} disabled={busy === 'approve-final'} style={{ ...btn, borderColor: '#34d399', color: '#34d399' }}>
+                <CheckCircle2 size={13} /> {busy === 'approve-final' ? 'Approving…' : 'Approve & Send Quote'}
+              </button>
+            )}
+            {b.confirmation && fj?.status !== 'manual_review' && (
+              <button onClick={() => run('final-manual-review')} disabled={busy === 'final-manual-review'} style={btn}>Send to Manual Review</button>
+            )}
+            <button onClick={() => setShowInfoForm(s => !s)} style={btn}><MessageSquarePlus size={13} /> Request More Info</button>
+          </div>
+
+          {showInfoForm && (
+            <div style={{ marginTop: 12, padding: 12, borderRadius: 10, border: '1px solid var(--line)', background: 'var(--card)' }}>
+              <p style={{ fontSize: 12, fontWeight: 800, color: 'var(--text)', marginBottom: 8 }}>What do you need from the customer?</p>
+              <div className="flex flex-wrap gap-1.5" style={{ marginBottom: 10 }}>
+                {(Object.keys(INFO_REQUEST_FIELD_LABEL) as InfoRequestField[]).map(f => (
+                  <button key={f} type="button" onClick={() => toggleInfoField(f)} style={{ ...btn, padding: '6px 10px', fontSize: 11.5, borderColor: infoFields.includes(f) ? 'var(--red)' : 'var(--line)', background: infoFields.includes(f) ? 'rgba(224,0,42,.1)' : 'var(--card)' }}>
+                    {INFO_REQUEST_FIELD_LABEL[f]}
+                  </button>
+                ))}
+              </div>
+              <textarea value={infoReason} onChange={e => setInfoReason(e.target.value)} placeholder="Optional note to the customer…" rows={2}
+                style={{ width: '100%', fontSize: 12.5, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--bg)', color: 'var(--text)', marginBottom: 8 }} />
+              <button
+                onClick={async () => { await run('request-info', { fields: infoFields, message: infoReason.trim() || undefined, reason: infoReason.trim() || undefined }); setShowInfoForm(false); setInfoFields([]); setInfoReason('') }}
+                disabled={infoFields.length === 0 || busy === 'request-info'}
+                style={{ ...btn, borderColor: 'var(--red)', color: '#fff', background: 'var(--red)', opacity: infoFields.length === 0 ? 0.5 : 1 }}>
+                <Send size={13} /> {busy === 'request-info' ? 'Sending…' : 'Send Secure Link'}
+              </button>
+            </div>
+          )}
+
+          {b.infoRequest && (
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
+              <p style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>Info Request</p>
+              <KV k="Requested" v={b.infoRequest.fields.map(f => INFO_REQUEST_FIELD_LABEL[f]).join(', ')} />
+              <KV k="Sent" v={fmtTs(b.infoRequest.sentAt)} />
+              <KV k="Delivery" v={b.infoRequest.channels ? [b.infoRequest.channels.sms && 'text', b.infoRequest.channels.email && 'email'].filter(Boolean).join(' + ') || 'not sent' : undefined} />
+              <KV k="Customer viewed" v={b.infoRequest.viewedAt ? fmtTs(b.infoRequest.viewedAt) : 'not yet'} />
+              <KV k="Customer responded" v={b.infoRequest.respondedAt ? fmtTs(b.infoRequest.respondedAt) : 'not yet'} />
+              <KV k="Status" v={b.infoRequest.completed ? 'Completed' : 'Awaiting customer'} />
+            </div>
+          )}
+        </Section>
+      )}
 
       <Section title="Workflow">
         <KV k="Quote status" v={quoteStatus(b)} />

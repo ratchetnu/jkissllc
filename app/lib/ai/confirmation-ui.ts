@@ -17,7 +17,7 @@ import {
   taxonomyEntry, normalizeToInventoryCategory,
   type InventoryCategory,
 } from './inventory-taxonomy'
-import { ATTESTATION_VERSION } from './confirmation-schema'
+import { ATTESTATION_VERSION, type Disposition } from './confirmation-schema'
 import type { FollowUpQuestion } from './followup-questions'
 
 // ── Confidence, in plain language (Part 5, 9) ────────────────────────────────
@@ -85,6 +85,7 @@ export type DraftItem = {
   aiConfidence?: number
   sourcePhotoUrl?: string
   freeText?: string
+  disposition?: Disposition       // estate/cleanout: keep / donate / recycle / sell / dispose
 }
 
 /** Seed editable rows from the AI's detected items (all aiDetected). */
@@ -139,6 +140,7 @@ type RawPayload = {
   accessConditions: Record<string, unknown>
   disclosures: Record<string, unknown>
   photoQuality: Record<string, unknown>
+  estate: Record<string, unknown>
   followUpAnswers: { questionId: string; value: unknown }[]
   attestation?: Record<string, unknown>
   notes?: string
@@ -157,6 +159,7 @@ export function applyAnswer(payload: RawPayload, q: FollowUpQuestion, value: Fol
   if (root === 'accessConditions') payload.accessConditions[field] = value
   else if (root === 'disclosures') payload.disclosures[field] = value
   else if (root === 'photoQuality') payload.photoQuality[field] = value
+  else if (root === 'estate') payload.estate[field] = value
 }
 
 // ── Assemble the raw confirmation payload the server will normalize ───────────
@@ -172,6 +175,7 @@ export function buildConfirmationPayload(input: {
     accessDisclosed: boolean
     mayRequireOwnerReview: boolean
   }
+  estate?: Record<string, unknown>
   notes?: string
   idempotencyKey?: string
 }): RawPayload {
@@ -180,6 +184,7 @@ export function buildConfirmationPayload(input: {
     accessConditions: {},
     disclosures: {},
     photoQuality: { allItemsPictured: input.everythingPictured },
+    estate: { ...(input.estate ?? {}) },
     followUpAnswers: [],
     attestation: { ...input.attestation, version: ATTESTATION_VERSION },
     notes: input.notes,
@@ -200,7 +205,7 @@ export function buildConfirmationPayload(input: {
 // never leaks internal pricing breakdown / cost basis.
 export type MinimalBookingState = {
   finalAiEstimate?: {
-    finalDecision: 'quote_ready' | 'awaiting_owner_approval' | 'manual_review'
+    finalDecision: 'quote_ready' | 'awaiting_owner_approval' | 'manual_review' | 'site_visit_required'
     confirmationVersion: number
     pricing: { recommendedUsd: number; lowUsd: number; highUsd: number }
     missingInfo?: string[]
@@ -209,7 +214,7 @@ export type MinimalBookingState = {
   confirmation?: { confirmationVersion: number }
 }
 
-export type CustomerFinalStage = 'processing' | 'quote_ready' | 'owner_review' | 'manual_review' | 'more_info' | 'failed'
+export type CustomerFinalStage = 'processing' | 'quote_ready' | 'owner_review' | 'manual_review' | 'more_info' | 'failed' | 'site_visit'
 
 export type CustomerFinalState = {
   stage: CustomerFinalStage
@@ -240,6 +245,13 @@ export function projectCustomerFinalState(b: MinimalBookingState): CustomerFinal
         stage: 'owner_review',
         headline: 'We’re reviewing a few details',
         message: 'We received everything and are reviewing a few details. You’ll be notified when your quote is ready.',
+      }
+    }
+    if (fe.finalDecision === 'site_visit_required') {
+      return {
+        stage: 'site_visit',
+        headline: 'We’ll take a quick look in person',
+        message: 'Because of the size and contents of this job, we’ll set up a short on-site visit to give you an accurate quote. A team member will reach out to schedule it.',
       }
     }
     // manual_review
