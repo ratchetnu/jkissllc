@@ -1,11 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { MapPin, Clock, User, ChevronDown, Plus, CalendarDays, AlertTriangle, CheckCircle2, Wallet } from 'lucide-react'
+import { MapPin, Clock, User, ChevronDown, Plus, CalendarDays, AlertTriangle, CheckCircle2, Wallet, Zap } from 'lucide-react'
 import OperationsShell from './OperationsShell'
 import { useOps } from './useOps'
 import ClaimsCard from './claims/ClaimsCard'
+import { BOOK_NOW_STAGE_LABEL, type BookNowStage } from '../../lib/book-now-queue'
 import { OpsPilotMark, OpsPilotWordmark } from '../../components/opspilot/OpsPilotMark'
 import { STATUS as CHIP, scoreColor, ymd, fmtDay, mapsUrl, type RouteStatus } from './ui'
 
@@ -78,6 +79,8 @@ function Dashboard() {
           </Link>
 
           <ClaimsCard />
+
+          <BookNowOverview />
 
           {/* Focus */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
@@ -200,6 +203,63 @@ function SkeletonHome() {
       <div className="skeleton" style={{ width: 180, height: 20, borderRadius: 8, marginBottom: 14 }} />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {[0, 1].map(i => <div key={i} className="os-card" style={{ padding: 18 }}><div className="skeleton" style={{ width: 120, height: 14, borderRadius: 7 }} /><div className="skeleton" style={{ width: '60%', height: 20, borderRadius: 8, marginTop: 12 }} /><div className="skeleton" style={{ width: '40%', height: 12, borderRadius: 6, marginTop: 10 }} /></div>)}
+      </div>
+    </div>
+  )
+}
+
+// ── Book Now overview: clickable counters into the Operations Book Now queue ──
+// The pre-job pipeline of online customer submissions — visible the moment a
+// customer submits, before any quote/payment/booking. Each counter deep-links to
+// the filtered queue. Fail-soft: a load error just hides the card, never blocks Home.
+const BOOK_NOW_TILES: { stage: BookNowStage; label: string }[] = [
+  { stage: 'new', label: 'New' },
+  { stage: 'awaiting_photos', label: 'Awaiting Photos' },
+  { stage: 'awaiting_ai', label: 'Awaiting AI' },
+  { stage: 'awaiting_approval', label: 'Awaiting Approval' },
+  { stage: 'quote_ready', label: 'Quote Ready' },
+  { stage: 'quote_sent', label: 'Quote Sent' },
+  { stage: 'payment_pending', label: 'Payment Pending' },
+  { stage: 'paid', label: 'Paid' },
+  { stage: 'booked', label: BOOK_NOW_STAGE_LABEL.booked },
+  { stage: 'failed', label: 'Failed' },
+]
+
+function BookNowOverview() {
+  const [counts, setCounts] = useState<Record<BookNowStage, number> | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    fetch('/api/admin/book-now', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(j => setCounts(j.counts ?? null))
+      .catch(() => setFailed(true))
+  }, [])
+  if (failed) return null
+  const total = counts ? Object.values(counts).reduce((s, n) => s + n, 0) : 0
+  const active = counts ? (counts.new + counts.awaiting_photos + counts.awaiting_ai + counts.awaiting_approval + counts.quote_ready) : 0
+
+  return (
+    <div className="os-card os-rise" style={{ padding: 16, marginBottom: 12 }}>
+      <div className="flex items-center justify-between gap-3" style={{ marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, display: 'grid', placeItems: 'center', background: 'rgba(224,0,42,.12)', border: '1px solid var(--red)' }}>
+            <Zap size={18} style={{ color: 'var(--red)' }} />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>Book Now Requests</div>
+            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{total} online submissions · {active} awaiting you</div>
+          </div>
+        </div>
+        <Link href="/admin/operations/book-now" style={{ fontSize: 13, fontWeight: 700, color: 'var(--red)', textDecoration: 'none', whiteSpace: 'nowrap' }}>Open →</Link>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(112px, 1fr))', gap: 8 }}>
+        {BOOK_NOW_TILES.map(({ stage, label }) => (
+          <Link key={stage} href={`/admin/operations/book-now?filter=${stage}`} className="os-tap"
+            style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '10px 12px', borderRadius: 11, textDecoration: 'none', background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)' }}>
+            <span style={{ fontSize: 20, fontWeight: 800, color: (counts?.[stage] ?? 0) > 0 ? 'var(--text)' : 'var(--muted)' }}>{counts ? counts[stage] : '·'}</span>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)' }}>{label}</span>
+          </Link>
+        ))}
       </div>
     </div>
   )

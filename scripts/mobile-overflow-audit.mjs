@@ -29,7 +29,7 @@ const PATHS = [
   '/', '/quote', '/track', '/about', '/careers', '/reviews', '/safety',
   '/privacy', '/terms', '/booking', '/box-truck-delivery', '/start-your-carrier',
   '/opspilot', '/coi',
-  '/admin/operations', '/admin/operations/list', '/admin/operations/employees',
+  '/admin/operations', '/admin/operations/book-now', '/admin/operations/list', '/admin/operations/employees',
   '/admin/operations/businesses', '/admin/operations/equipment',
   '/admin/operations/claims', '/admin/operations/messages', '/admin/operations/settings',
   '/portal',

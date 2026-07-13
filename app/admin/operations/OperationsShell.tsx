@@ -2,9 +2,9 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAdminSession } from '../useAdminSession'
-import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, Settings, LogOut, Search, Plus } from 'lucide-react'
+import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, Settings, LogOut, Search, Plus, Zap } from 'lucide-react'
 import CommandPalette from './CommandPalette'
 import LastLogin from './LastLogin'
 import { OpsPilotMark, OpsPilotWordmark } from '../../components/opspilot/OpsPilotMark'
@@ -13,6 +13,7 @@ import { OpsPilotMark, OpsPilotWordmark } from '../../components/opspilot/OpsPil
 // matching route (hiding is never the control — see the API guards).
 const NAV = [
   { href: '/admin/operations', label: 'Home', Icon: Home },
+  { href: '/admin/operations/book-now', label: 'Book Now', Icon: Zap },
   { href: '/admin/operations/list', label: 'Operations', Icon: ClipboardList },
   { href: '/admin/operations/employees', label: 'Crew', Icon: Users },
   { href: '/admin/operations/businesses', label: 'Businesses', Icon: Building2 },
@@ -33,6 +34,19 @@ export default function OperationsShell({ children }: { children: React.ReactNod
   const [email, setEmail] = useState('')
   const pathname = usePathname()
   const router = useRouter()
+
+  // Attention badge for the Book Now dock item: count of online submissions still
+  // awaiting the owner (new / awaiting photos / AI / approval / quote-ready).
+  // One fail-soft fetch; refreshed when you navigate back to the Home or queue.
+  const [bookNowNew, setBookNowNew] = useState(0)
+  useEffect(() => {
+    let live = true
+    fetch('/api/admin/book-now', { credentials: 'same-origin' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => { if (live && j?.counts) { const c = j.counts; setBookNowNew(c.new + c.awaiting_photos + c.awaiting_ai + c.awaiting_approval + c.quote_ready) } })
+      .catch(() => {})
+    return () => { live = false }
+  }, [pathname])
 
   async function submitLogin(e: React.FormEvent) {
     e.preventDefault()
@@ -119,8 +133,11 @@ export default function OperationsShell({ children }: { children: React.ReactNod
         {nav.map(n => {
           const active = n.href === activeHref
           return (
-            <Link key={n.href} href={n.href} className="os-dock-item" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 999, fontSize: 13.5, fontWeight: 700, textDecoration: 'none', color: active ? '#fff' : 'var(--muted)', background: active ? 'var(--red)' : 'transparent' }}>
+            <Link key={n.href} href={n.href} className="os-dock-item" style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 999, fontSize: 13.5, fontWeight: 700, textDecoration: 'none', color: active ? '#fff' : 'var(--muted)', background: active ? 'var(--red)' : 'transparent' }}>
               <n.Icon size={17} /> {n.label}
+              {n.href === '/admin/operations/book-now' && bookNowNew > 0 && (
+                <span aria-label={`${bookNowNew} new`} style={{ marginLeft: 2, fontSize: 10.5, fontWeight: 800, background: active ? '#fff' : 'var(--red)', color: active ? 'var(--red)' : '#fff', borderRadius: 999, minWidth: 17, height: 17, padding: '0 5px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{bookNowNew}</span>
+              )}
             </Link>
           )
         })}
@@ -131,9 +148,12 @@ export default function OperationsShell({ children }: { children: React.ReactNod
         {nav.map(n => {
           const active = n.href === activeHref
           return (
-            <Link key={n.href} href={n.href} aria-label={n.label} className="os-dock-item" style={{ display: 'inline-flex', alignItems: 'center', gap: active ? 7 : 0, padding: active ? '9px 15px' : '9px', borderRadius: 999, textDecoration: 'none', color: active ? '#fff' : 'var(--muted)', background: active ? 'var(--red)' : 'transparent' }}>
+            <Link key={n.href} href={n.href} aria-label={n.label} className="os-dock-item" style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: active ? 7 : 0, padding: active ? '9px 15px' : '9px', borderRadius: 999, textDecoration: 'none', color: active ? '#fff' : 'var(--muted)', background: active ? 'var(--red)' : 'transparent' }}>
               <n.Icon size={20} />
               {active && <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>{n.label}</span>}
+              {n.href === '/admin/operations/book-now' && bookNowNew > 0 && (
+                <span aria-label={`${bookNowNew} new`} style={{ position: 'absolute', top: 2, right: 2, fontSize: 9.5, fontWeight: 800, background: 'var(--red)', color: '#fff', borderRadius: 999, minWidth: 15, height: 15, padding: '0 4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1.5px solid var(--card)' }}>{bookNowNew}</span>
+              )}
             </Link>
           )
         })}
