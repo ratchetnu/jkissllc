@@ -71,7 +71,9 @@ export async function POST(req: NextRequest) {
       const exp = crypto.createHmac('sha1', tok).update(Buffer.from(data, 'utf-8')).digest('base64')
       if (exp === sig) { matched = c; break }
     }
-    console.warn(`[twilio-status][diag] sigfail matched=${matched} host=${host} proto=${proto} tokLen=${tok.length} keys=${sortedKeys.join(',')} recvSigPfx=${sig.slice(0, 6)}`)
+    const envAcct = process.env.TWILIO_ACCOUNT_SID || ''
+    const cbAcct = params.AccountSid || ''
+    console.warn(`[twilio-status][diag] sigfail matched=${matched} host=${host} proto=${proto} tokLen=${tok.length} acctMatch=${cbAcct === envAcct} cbAcctPfx=${cbAcct.slice(0, 10)} envAcctPfx=${envAcct.slice(0, 10)} keys=${sortedKeys.join(',')} recvSigPfx=${sig.slice(0, 6)}`)
     return new NextResponse('forbidden', { status: 403 })
   }
 
