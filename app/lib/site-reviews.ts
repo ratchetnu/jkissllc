@@ -28,7 +28,17 @@ export async function saveReview(r: SiteReview): Promise<void> {
 }
 
 export async function listReviews(limit = 300): Promise<SiteReview[]> {
-  const tokens = await redis.zrevrange(INDEX, 0, limit - 1)
+  let tokens: string[]
+  try {
+    tokens = await redis.zrevrange(INDEX, 0, limit - 1)
+  } catch (e) {
+    // Non-critical homepage read: with no Upstash configured (e.g. `next build`
+    // in CI, which has no production Redis), the homepage prerenders its designed
+    // empty "be among the first" reviews state instead of failing the build. Only
+    // the not-configured case is swallowed — any real Redis error still surfaces.
+    if (e instanceof Error && e.message === 'UPSTASH_NOT_CONFIGURED') return []
+    throw e
+  }
   if (!tokens.length) return []
   const raws = await Promise.all(tokens.map(t => redis.get(KEY(t))))
   return raws
