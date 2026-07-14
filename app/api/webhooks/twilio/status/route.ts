@@ -73,7 +73,14 @@ export async function POST(req: NextRequest) {
     }
     const envAcct = process.env.TWILIO_ACCOUNT_SID || ''
     const cbAcct = params.AccountSid || ''
-    console.warn(`[twilio-status][diag] sigfail matched=${matched} host=${host} proto=${proto} tokLen=${tok.length} acctMatch=${cbAcct === envAcct} cbAcctPfx=${cbAcct.slice(0, 10)} envAcctPfx=${envAcct.slice(0, 10)} keys=${sortedKeys.join(',')} recvSigPfx=${sig.slice(0, 6)}`)
+    // Manual parse that preserves '+' (decodeURIComponent, not URLSearchParams which
+    // turns literal '+' into a space) — tests the classic +→space param bug.
+    const manual: Record<string, string> = {}
+    for (const pair of raw.split('&')) { if (!pair) continue; const i = pair.indexOf('='); const k = decodeURIComponent(pair.slice(0, i)); manual[k] = decodeURIComponent(pair.slice(i + 1)) }
+    let manualData = `${base}${STATUS_CALLBACK_PATH}`
+    for (const k of Object.keys(manual).sort()) manualData += k + manual[k]
+    const manualMatch = crypto.createHmac('sha1', tok).update(Buffer.from(manualData, 'utf-8')).digest('base64') === sig
+    console.warn(`[twilio-status][diag] sigfail matched=${matched} manualMatch=${manualMatch} host=${host} proto=${proto} tokLen=${tok.length} acctMatch=${cbAcct === envAcct} keys=${sortedKeys.join(',')} recvSigPfx=${sig.slice(0, 6)}`)
     return new NextResponse('forbidden', { status: 403 })
   }
 
