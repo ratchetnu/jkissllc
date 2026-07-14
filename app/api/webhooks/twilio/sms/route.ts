@@ -18,6 +18,7 @@ import { recordMessage, seenProviderMessage } from '../../../../lib/messages'
 import { notifyOwnerOfReply } from '../../../../lib/owner-alerts'
 import { redis } from '../../../../lib/redis'
 import { withBackgroundTenant } from '../../../../lib/platform/tenancy/request-context'
+import { activeTenantIds } from '../../../../lib/platform/tenancy/tenant-store'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -73,7 +74,10 @@ export async function POST(req: NextRequest) {
   }
 
   // Tenant-owned work runs inside the resolved tenant context (off → reference
-  // tenant, no key change; on → scoped + fail-closed).
+  // tenant, no key change; on → scoped + fail-closed). Single-tenant deployment →
+  // the tenant is the deployment's own tenant (trusted internal mapping, NEVER the
+  // unsigned payload); a pooled deployment would map the recipient number → tenant.
+  const tenantId = activeTenantIds()[0]
   return withBackgroundTenant('webhook', async () => {
   const messageSid = params.MessageSid || params.SmsSid || ''
   const fromRaw = params.From || ''
@@ -141,5 +145,5 @@ export async function POST(req: NextRequest) {
   } catch (e) { console.error('[twilio-sms] owner alert failed', e) }
 
   return twiml()
-  })
+  }, tenantId)
 }

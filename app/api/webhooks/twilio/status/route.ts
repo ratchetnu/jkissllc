@@ -18,6 +18,7 @@ import { recordDeliveryStatus, maskPhone, isTerminalFailure } from '../../../../
 import { getMessageByProviderId, setMessageDeliveryStatus } from '../../../../lib/messages'
 import { sendOwnerAlert, getOwnerAlertConfig } from '../../../../lib/owner-alerts'
 import { withBackgroundTenant } from '../../../../lib/platform/tenancy/request-context'
+import { activeTenantIds } from '../../../../lib/platform/tenancy/tenant-store'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -66,6 +67,9 @@ export async function POST(req: NextRequest) {
   // Ack malformed callbacks with 200 so Twilio doesn't retry a payload we can't use.
   if (!messageSid || !status) return new NextResponse(null, { status: 204 })
 
+  // Single-tenant deployment → the deployment's own tenant (trusted internal
+  // mapping, NEVER the unsigned payload); pooled → map MessageSid/number → tenant.
+  const tenantId = activeTenantIds()[0]
   return withBackgroundTenant('webhook', async () => {
     // Correlate to the originating outbound message (and its booking) when we recorded
     // one. Best-effort: most automated sends aren't in the message ledger, so this is
@@ -130,5 +134,5 @@ export async function POST(req: NextRequest) {
     }
 
     return new NextResponse(null, { status: 204 })
-  })
+  }, tenantId)
 }

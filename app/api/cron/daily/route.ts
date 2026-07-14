@@ -10,6 +10,7 @@ import { accrueAllClaims } from '../../../lib/claim-accrual'
 import { sendSms, withSmsSuppressed } from '../../../lib/sms'
 import { getAutomationSettings } from '../../../lib/automation-settings'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
+import { activeTenantIds } from '../../../lib/platform/tenancy/tenant-store'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -219,10 +220,13 @@ export async function GET(req: NextRequest) {
     // Automated TEXTS are permanently disabled for the 9am run: everything below still
     // runs (email reminders, route generation, claim deductions, hold cleanup), but any
     // outbound SMS it would send is suppressed at the send layer. See withSmsSuppressed.
-    // Establish tenant context for the whole sweep. Off → reference tenant (no
-    // key change); on → keys scope to this tenant. Fails closed if tenancy is on
-    // and no tenant can be resolved.
-    return await withBackgroundTenant('cron', () => withSmsSuppressed(async () => {
+    // Per-tenant fan-out: each tenant's sweep runs in its own explicit context. Off →
+    // reference tenant (no key change); on → keys scope to this tenant, fail-closed if
+    // unresolved. One tenant's failure is isolated and never runs under another.
+    const tenants: Record<string, unknown>[] = []
+    for (const tenantId of activeTenantIds()) {
+      try {
+        const r = await withBackgroundTenant('cron', () => withSmsSuppressed(async () => {
     const counts = dryRun ? { skipped: 'reminders (dry-run)' } : await run()
     // Template generation is isolated: nextRouteNumber() now throws rather than
     // minting a possibly-duplicate number when Redis is unreachable, and a throw
@@ -238,8 +242,15 @@ export async function GET(req: NextRequest) {
     // Post any weekly claim deductions whose pay week has closed. Idempotent per
     // (contractor, week), and capped at what they actually earned.
     const claims = dryRun ? { skipped: 'claim deductions (dry-run)' } : await runClaims(Date.now())
-    return NextResponse.json({ ok: true, dryRun, smsSuppressed: true, ...counts, templates, routes, cleanup, claims })
-    }))
+    return { counts, templates, routes, cleanup, claims }
+        }), tenantId)
+        tenants.push({ tenant: tenantId, ...r })
+      } catch (e) {
+        console.error('[cron/daily] tenant', tenantId, e)
+        tenants.push({ tenant: tenantId, error: e instanceof Error ? e.name : 'unknown' })
+      }
+    }
+    return NextResponse.json({ ok: true, dryRun, smsSuppressed: true, tenants })
   } catch (e) {
     console.error('[cron/daily] fatal', e)
     return NextResponse.json({ error: 'failed' }, { status: 500 })

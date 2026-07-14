@@ -4,6 +4,7 @@ import { runDueFinalAiJobs } from '../../../lib/book-now-confirmation'
 import { notifyOwnerAiOutcome } from '../../../lib/booking-notify'
 import { getBookingByToken } from '../../../lib/bookings'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
+import { activeTenantIds } from '../../../lib/platform/tenancy/tenant-store'
 import { alert } from '../../../lib/alerts'
 
 export const runtime = 'nodejs'
@@ -23,9 +24,17 @@ function authorized(req: NextRequest): boolean {
 
 export async function GET(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  let summary: { processed: number; results: { token: string; status: string }[] } = { processed: 0, results: [] }
-  let finalSummary: { processed: number; results: { token: string; status: string }[] } = { processed: 0, results: [] }
-  await withBackgroundTenant('cron', async () => {
+  // Per-tenant fan-out: each tenant is processed independently inside its own
+  // explicit tenant context, so one tenant's failure can neither contaminate nor
+  // execute under another. Results are counts only (no booking tokens).
+  const tenants: { tenant: string; processed: number; final: number; error?: string }[] = []
+  let processed = 0
+  let finalProcessed = 0
+  for (const tenantId of activeTenantIds()) {
+    let summary: { processed: number; results: { token: string; status: string }[] } = { processed: 0, results: [] }
+    let finalSummary: { processed: number; results: { token: string; status: string }[] } = { processed: 0, results: [] }
+    try {
+      await withBackgroundTenant('cron', async () => {
     try {
       summary = await runDueAiJobs(10)
       // Owner alerts on terminal outcomes (ready / manual review / failed). Fail-soft:
@@ -56,6 +65,16 @@ export async function GET(req: NextRequest) {
         if (r.status === 'failed') await alert({ type: 'final_analysis_failed', severity: 'ERROR', worker: 'runDueFinalAiJobs', booking: r.token.slice(0, 8), errorClass: 'retry_exhausted' })
       }
     } catch (e) { console.error('[cron/ai-jobs] final run', e); await alert({ type: 'cron_job_failed', severity: 'CRITICAL', route: '/api/cron/ai-jobs', worker: 'runDueFinalAiJobs', errorClass: e instanceof Error ? e.name : 'unknown' }) }
-  })
-  return NextResponse.json({ ok: true, ...summary, final: finalSummary, at: Date.now() })
+      }, tenantId)
+      processed += summary.processed
+      finalProcessed += finalSummary.processed
+      tenants.push({ tenant: tenantId, processed: summary.processed, final: finalSummary.processed })
+    } catch (e) {
+      // A tenant-level failure (e.g. fail-closed tenant resolution) is isolated —
+      // record it and move on; it never runs under another tenant's context.
+      console.error('[cron/ai-jobs] tenant', tenantId, e)
+      tenants.push({ tenant: tenantId, processed: summary.processed, final: finalSummary.processed, error: e instanceof Error ? e.name : 'unknown' })
+    }
+  }
+  return NextResponse.json({ ok: true, processed, finalProcessed, tenants, at: Date.now() })
 }

@@ -13,6 +13,7 @@ import { listBookings, saveBooking, getBookingByNumber, type Booking } from '../
 import { recordMessage, seenProviderMessage } from '../../../lib/messages'
 import { notifyOwnerOfReply } from '../../../lib/owner-alerts'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
+import { activeTenantIds } from '../../../lib/platform/tenancy/tenant-store'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -41,7 +42,10 @@ export async function POST(req: NextRequest) {
   }
 
   // Tenant-owned work runs inside the resolved tenant context (off → reference
-  // tenant, no key change; on → scoped + fail-closed).
+  // tenant, no key change; on → scoped + fail-closed). Single-tenant deployment →
+  // the tenant is the deployment's own tenant (trusted internal mapping, NEVER the
+  // unsigned payload); a pooled deployment would map the recipient address → tenant.
+  const tenantId = activeTenantIds()[0]
   return withBackgroundTenant('webhook', async () => {
   // Accept JSON (Apps Script) or form-encoded (parse services).
   let p: Record<string, string> = {}
@@ -105,5 +109,5 @@ export async function POST(req: NextRequest) {
   } catch (e) { console.error('[email-webhook] owner alert failed', e) }
 
   return NextResponse.json({ ok: true, matched: !!booking })
-  })
+  }, tenantId)
 }
