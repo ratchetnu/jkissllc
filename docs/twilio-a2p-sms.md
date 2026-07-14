@@ -13,16 +13,17 @@ how to configure the Twilio Messaging Service so the two don't conflict.
     `JKISSLLC support: Call 817-909-4312 or visit jkissllc.com. Reply STOP to opt out.`
     No customer record is created and no booking workflow runs.
 - **Delivery-status webhook** — `POST /api/webhooks/twilio/status`
-  - Verifies `X-Twilio-Signature` (signature only — no secret is placed in the callback URL). Fails closed (503) if `TWILIO_AUTH_TOKEN` is unset.
+  - Authenticates the callback by **either** a valid `?key=…` shared secret (`TWILIO_WEBHOOK_SECRET` — the same scheme the inbound webhook uses) **or** a valid `X-Twilio-Signature` (`TWILIO_AUTH_TOKEN`). Fails closed (503) if neither secret is configured. The account Auth Token is **not** required for this to work — the shared secret is sufficient.
   - Records `queued/sent/delivered/undelivered/failed` per `MessageSid` (idempotent), correlates to a booking when the SID is in the message ledger, and raises the existing owner alert on a first-time `failed`/`undelivered` (never for a message sent to the owner's own alert number, to avoid loops).
-- **Outbound sends** attach `StatusCallback = ${PUBLIC_BASE_URL}/api/webhooks/twilio/status`. If no base origin (`PUBLIC_BASE_URL` / `NEXT_PUBLIC_SITE_URL`) is configured, the message still sends but without delivery tracking, and a structured warning is logged. **No URL is invented.**
+- **Outbound sends** attach `StatusCallback = ${PUBLIC_BASE_URL}/api/webhooks/twilio/status?key=${TWILIO_WEBHOOK_SECRET}`. If no base origin (`PUBLIC_BASE_URL` / `NEXT_PUBLIC_SITE_URL`) is configured, the message still sends but without delivery tracking, and a structured warning is logged. **No URL is invented.** The callback URL carries the webhook secret (for auth, same posture as the inbound webhook) but never any customer data.
 
 ## Required configuration
 
 | Setting | Where | Purpose |
 |---|---|---|
-| `TWILIO_AUTH_TOKEN` | env | Verifies BOTH webhooks' `X-Twilio-Signature`. Required even when sends use API-key auth, because Twilio signs callbacks with the account auth token. |
-| `PUBLIC_BASE_URL` = `https://www.jkissllc.com` | env | Origin used to build + verify the StatusCallback URL. **Without it, delivery callbacks are not attached.** |
+| `TWILIO_WEBHOOK_SECRET` | env | Shared `?key` secret authenticating BOTH webhooks (inbound + delivery status). This is the primary auth in this deployment. |
+| `TWILIO_AUTH_TOKEN` | env (optional) | Enables `X-Twilio-Signature` verification as an alternative/fallback. Not required — the shared secret is sufficient. Must be the account's **primary** Auth Token to verify. |
+| `PUBLIC_BASE_URL` = `https://www.jkissllc.com` | env | Origin used to build the StatusCallback URL. **Without it, delivery callbacks are not attached.** |
 | Inbound webhook | Twilio Console → Messaging Service → Integration → "A message comes in" → `https://www.jkissllc.com/api/webhooks/twilio/sms` | STOP/START/HELP + reply capture. |
 | Status callback | Attached per-message by the app (no console step) | Delivery receipts. A Messaging Service-level status callback is **not** required and should be left unset to avoid duplicate ingestion. |
 

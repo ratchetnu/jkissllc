@@ -34,10 +34,15 @@ export function callbackBaseUrl(): string {
 
 export const STATUS_CALLBACK_PATH = '/api/webhooks/twilio/status'
 
-// Absolute StatusCallback URL, or '' if no base origin is configured. No secrets
-// or customer data are ever placed in this URL — the status webhook authenticates
-// via X-Twilio-Signature, not a query-string key.
+// Absolute StatusCallback URL, or '' if no base origin is configured. When a shared
+// webhook secret is set (TWILIO_WEBHOOK_SECRET), it's appended as ?key=… so the
+// status webhook can authenticate the callback the same way the inbound webhook does
+// (the account Auth Token needed for X-Twilio-Signature isn't configured here). The
+// URL carries the webhook secret but never any customer data.
 export function statusCallbackUrl(): string {
   const base = callbackBaseUrl()
-  return base ? `${base}${STATUS_CALLBACK_PATH}` : ''
+  if (!base) return ''
+  const url = `${base}${STATUS_CALLBACK_PATH}`
+  const secret = process.env.TWILIO_WEBHOOK_SECRET
+  return secret ? `${url}?key=${encodeURIComponent(secret)}` : url
 }

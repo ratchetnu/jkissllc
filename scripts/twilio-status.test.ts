@@ -103,27 +103,43 @@ test('a stored record never contains a full number or a message body', () => {
 })
 
 // ── route auth boundary ─────────────────────────────────────────────────────
-test('status webhook FAILS CLOSED with no TWILIO_AUTH_TOKEN', async () => {
+test('status webhook FAILS CLOSED with neither secret nor token configured', async () => {
   const { POST } = await import('../app/api/webhooks/twilio/status/route')
-  await withEnv({ TWILIO_AUTH_TOKEN: undefined }, async () => {
+  await withEnv({ TWILIO_AUTH_TOKEN: undefined, TWILIO_WEBHOOK_SECRET: undefined }, async () => {
     const req = new NextRequest('https://www.jkissllc.com/api/webhooks/twilio/status', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'MessageSid=SM1&MessageStatus=delivered' })
     const res = await POST(req)
     assert.equal(res.status, 503)
   })
 })
-test('status webhook rejects a missing signature 403', async () => {
+test('status webhook rejects a missing signature 403 (token only)', async () => {
   const { POST } = await import('../app/api/webhooks/twilio/status/route')
-  await withEnv({ TWILIO_AUTH_TOKEN: 'test_token', PUBLIC_BASE_URL: 'https://www.jkissllc.com' }, async () => {
+  await withEnv({ TWILIO_AUTH_TOKEN: 'test_token', TWILIO_WEBHOOK_SECRET: undefined, PUBLIC_BASE_URL: 'https://www.jkissllc.com' }, async () => {
     const req = new NextRequest('https://www.jkissllc.com/api/webhooks/twilio/status', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'MessageSid=SM1&MessageStatus=delivered' })
     const res = await POST(req)
     assert.equal(res.status, 403)
   })
 })
-test('status webhook rejects an invalid signature 403', async () => {
+test('status webhook rejects an invalid signature 403 (token only)', async () => {
   const { POST } = await import('../app/api/webhooks/twilio/status/route')
-  await withEnv({ TWILIO_AUTH_TOKEN: 'test_token', PUBLIC_BASE_URL: 'https://www.jkissllc.com' }, async () => {
+  await withEnv({ TWILIO_AUTH_TOKEN: 'test_token', TWILIO_WEBHOOK_SECRET: undefined, PUBLIC_BASE_URL: 'https://www.jkissllc.com' }, async () => {
     const req = new NextRequest('https://www.jkissllc.com/api/webhooks/twilio/status', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-twilio-signature': 'bogus' }, body: 'MessageSid=SM1&MessageStatus=delivered' })
     const res = await POST(req)
     assert.equal(res.status, 403)
+  })
+})
+test('status webhook rejects a wrong ?key shared-secret 403', async () => {
+  const { POST } = await import('../app/api/webhooks/twilio/status/route')
+  await withEnv({ TWILIO_AUTH_TOKEN: undefined, TWILIO_WEBHOOK_SECRET: 'shhh' }, async () => {
+    const req = new NextRequest('https://www.jkissllc.com/api/webhooks/twilio/status?key=wrong', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'MessageSid=SM1&MessageStatus=delivered' })
+    const res = await POST(req)
+    assert.equal(res.status, 403)
+  })
+})
+test('status webhook accepts a valid ?key shared-secret (delivered) → 204', async () => {
+  const { POST } = await import('../app/api/webhooks/twilio/status/route')
+  await withEnv({ TWILIO_AUTH_TOKEN: undefined, TWILIO_WEBHOOK_SECRET: 'shhh' }, async () => {
+    const req = new NextRequest('https://www.jkissllc.com/api/webhooks/twilio/status?key=shhh', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'MessageSid=SMok&MessageStatus=delivered' })
+    const res = await POST(req)
+    assert.equal(res.status, 204)   // authenticated; ledger writes are no-ops without KV in test
   })
 })

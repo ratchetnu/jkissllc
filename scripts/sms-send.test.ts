@@ -28,7 +28,7 @@ const BASE_ENV = {
 test('StatusCallback is attached to a normal outbound send, via the status webhook route', async () => {
   await withEnv(BASE_ENV, async () => {
     const p = buildOutboundSmsParams('+15550001111', 'Hello there')
-    assert.equal(p.get('StatusCallback'), 'https://www.jkissllc.com/api/webhooks/twilio/status')
+    assert.equal(p.get('StatusCallback'), 'https://www.jkissllc.com/api/webhooks/twilio/status?key=supersecretwebhookvalue')
     assert.equal(p.get('MessagingServiceSid'), 'MGtestservice')   // Messaging Service routing preserved
     assert.equal(p.get('From'), null)
     assert.equal(p.get('To'), '+15550001111')
@@ -36,13 +36,18 @@ test('StatusCallback is attached to a normal outbound send, via the status webho
   })
 })
 
-test('callback URL contains no secret and no customer data', async () => {
+test('callback URL carries the shared webhook secret (for auth) but no customer data', async () => {
   await withEnv(BASE_ENV, async () => {
     const cb = buildOutboundSmsParams('+15550001111', 'Hello there').get('StatusCallback')!
-    assert.ok(!cb.includes('supersecretwebhookvalue'), 'no webhook secret in URL')
-    assert.ok(!cb.includes('5550001111'), 'no phone number in URL')
-    assert.ok(!cb.includes('?'), 'no query string (no key/secret) in URL')
-    assert.ok(!/token|auth/i.test(cb), 'no auth material in URL')
+    assert.ok(cb.includes('key=supersecretwebhookvalue'), 'webhook secret present as ?key so the status webhook can authenticate')
+    assert.ok(!cb.includes('5550001111'), 'no customer phone in URL')
+    assert.ok(!/AC[0-9a-f]/i.test(cb), 'no account SID / auth-token material in URL')
+  })
+})
+
+test('callback URL omits the ?key when no webhook secret is configured', async () => {
+  await withEnv({ ...BASE_ENV, TWILIO_WEBHOOK_SECRET: undefined }, async () => {
+    assert.equal(buildOutboundSmsParams('+15550001111', 'hi').get('StatusCallback'), 'https://www.jkissllc.com/api/webhooks/twilio/status')
   })
 })
 
@@ -51,7 +56,7 @@ test('From number is used when no Messaging Service SID is set', async () => {
     const p = buildOutboundSmsParams('+15550001111', 'hi')
     assert.equal(p.get('From'), '+18170000000')
     assert.equal(p.get('MessagingServiceSid'), null)
-    assert.equal(p.get('StatusCallback'), 'https://www.jkissllc.com/api/webhooks/twilio/status')
+    assert.equal(p.get('StatusCallback'), 'https://www.jkissllc.com/api/webhooks/twilio/status?key=supersecretwebhookvalue')
   })
 })
 

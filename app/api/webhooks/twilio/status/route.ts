@@ -38,51 +38,27 @@ export async function POST(req: NextRequest) {
   const params: Record<string, string> = {}
   form.forEach((v, k) => { params[k] = v })
 
-  // Auth: signature only (no query-string secret — the callback URL must carry no
-  // secret). Verify against the SAME origin the send helper used to build the URL.
+  // Auth: accept EITHER a valid shared secret (?key=…, TWILIO_WEBHOOK_SECRET — the
+  // same scheme the inbound webhook uses) OR a valid Twilio signature
+  // (TWILIO_AUTH_TOKEN). Either proof suffices. Fail closed (503) when neither secret
+  // is configured; reject (403) when configured but unproven.
   const token = process.env.TWILIO_AUTH_TOKEN
-  if (!token) {
-    console.error('[twilio-status] fail-closed: TWILIO_AUTH_TOKEN not configured')
+  const secret = process.env.TWILIO_WEBHOOK_SECRET
+  if (!token && !secret) {
+    console.error('[twilio-status] fail-closed: neither TWILIO_WEBHOOK_SECRET nor TWILIO_AUTH_TOKEN configured')
     return new NextResponse('webhook not configured', { status: 503 })
   }
-  const base = callbackBaseUrl() || `https://${req.headers.get('host') ?? 'www.jkissllc.com'}`
-  const url = `${base}${STATUS_CALLBACK_PATH}${req.nextUrl.search || ''}`
-  if (!verifyTwilioSignature(url, params, req.headers.get('x-twilio-signature'))) {
-    // TEMP DIAGNOSTIC (PII-safe): try candidate signed-URL forms to distinguish a
-    // URL-reconstruction mismatch from a wrong auth token. Logs only URLs, param
-    // KEYS, and short signature prefixes — never param values or the token.
-    const sig = req.headers.get('x-twilio-signature') || ''
-    const host = req.headers.get('host') ?? ''
-    const proto = req.headers.get('x-forwarded-proto') ?? 'https'
-    const candidates = [
-      url,
-      `${base}${STATUS_CALLBACK_PATH}`,
-      `${base}${STATUS_CALLBACK_PATH}/`,
-      `https://${host}${STATUS_CALLBACK_PATH}`,
-      `${proto}://${host}${req.nextUrl.pathname}${req.nextUrl.search || ''}`,
-      `https://jkissllc.com${STATUS_CALLBACK_PATH}`,
-    ]
-    const tok = process.env.TWILIO_AUTH_TOKEN || ''
-    const sortedKeys = Object.keys(params).sort()
-    let matched = 'none'
-    for (const c of candidates) {
-      let data = c
-      for (const k of sortedKeys) data += k + params[k]
-      const exp = crypto.createHmac('sha1', tok).update(Buffer.from(data, 'utf-8')).digest('base64')
-      if (exp === sig) { matched = c; break }
-    }
-    const envAcct = process.env.TWILIO_ACCOUNT_SID || ''
-    const cbAcct = params.AccountSid || ''
-    // Manual parse that preserves '+' (decodeURIComponent, not URLSearchParams which
-    // turns literal '+' into a space) — tests the classic +→space param bug.
-    const manual: Record<string, string> = {}
-    for (const pair of raw.split('&')) { if (!pair) continue; const i = pair.indexOf('='); const k = decodeURIComponent(pair.slice(0, i)); manual[k] = decodeURIComponent(pair.slice(i + 1)) }
-    let manualData = `${base}${STATUS_CALLBACK_PATH}`
-    for (const k of Object.keys(manual).sort()) manualData += k + manual[k]
-    const manualMatch = crypto.createHmac('sha1', tok).update(Buffer.from(manualData, 'utf-8')).digest('base64') === sig
-    console.warn(`[twilio-status][diag] sigfail matched=${matched} manualMatch=${manualMatch} host=${host} proto=${proto} tokLen=${tok.length} acctMatch=${cbAcct === envAcct} keys=${sortedKeys.join(',')} recvSigPfx=${sig.slice(0, 6)}`)
-    return new NextResponse('forbidden', { status: 403 })
+  let authed = false
+  if (secret) {
+    const key = req.nextUrl.searchParams.get('key') ?? ''
+    try { if (key.length === secret.length && crypto.timingSafeEqual(Buffer.from(key), Buffer.from(secret))) authed = true } catch { /* not authed */ }
   }
+  if (!authed && token) {
+    const base = callbackBaseUrl() || `https://${req.headers.get('host') ?? 'www.jkissllc.com'}`
+    const url = `${base}${STATUS_CALLBACK_PATH}${req.nextUrl.search || ''}`
+    authed = verifyTwilioSignature(url, params, req.headers.get('x-twilio-signature'))
+  }
+  if (!authed) { console.warn('[twilio-status] webhook auth failed'); return new NextResponse('forbidden', { status: 403 }) }
 
   const messageSid = params.MessageSid || params.SmsSid || ''
   const status = (params.MessageStatus || params.SmsStatus || '').toLowerCase()
