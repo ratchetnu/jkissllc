@@ -1,6 +1,7 @@
 import { ArrowRight } from 'lucide-react';
+import Image from 'next/image';
 import Reveal from '../Reveal';
-import { OpsPilotMark, OpsPilotWordmark } from '../opspilot/OpsPilotMark';
+import { OpsPilotWordmark } from '../opspilot/OpsPilotMark';
 import { pickCapabilities, HOMEPAGE_CAPABILITIES } from '../../lib/opspilot';
 
 /**
@@ -28,8 +29,8 @@ export default function PoweredByOpsPilot() {
 
             <Reveal delay={70}>
               <h2 className="display-2" style={{ marginTop: 18, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-                <span style={{ color: 'var(--ink)', display: 'inline-flex' }}>
-                  <OpsPilotMark size={38} className="ops-mark-in" />
+                <span style={{ display: 'inline-flex' }}>
+                  <Image src="/operion-mark.png" alt="Operion" width={44} height={44} style={{ width: 42, height: 42 }} />
                 </span>
                 <span>
                   Powered by <OpsPilotWordmark />

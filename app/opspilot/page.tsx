@@ -1,13 +1,13 @@
 import type { Metadata } from 'next';
 import { COMPANY } from '../lib/company';
 import Link from 'next/link';
+import Image from 'next/image';
 import { Lock, ArrowRight } from 'lucide-react';
 import Reveal from '../components/Reveal';
 import SubPageNav from '../components/home/SubPageNav';
 import SiteFooter from '../components/home/SiteFooter';
 import CapabilityGrid from '../components/opspilot/CapabilityGrid';
 import EarlyAccessForm from '../components/opspilot/EarlyAccessForm';
-import { OpsPilotMark, OpsPilotWordmark } from '../components/opspilot/OpsPilotMark';
 import { CAPABILITIES } from '../lib/opspilot';
 
 export const metadata: Metadata = {
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     title: 'Operion — The operating system behind J KISS Freight',
     description: 'The proprietary operations platform powering J KISS. Coming soon for other owner-operators.',
     url: 'https://www.jkissllc.com/opspilot',
-    images: [{ url: '/operion-logo.png', width: 1240, height: 1240, alt: 'Operion — AI Operating System for Business' }],
+    images: [{ url: '/operion-og.png', width: 982, height: 784, alt: 'Operion — AI Operating System for Business' }],
   },
 };
 
@@ -41,22 +41,21 @@ export default function OpsPilotPage() {
         <div className="ops-grid" aria-hidden style={{ position: 'absolute', inset: 0 }} />
         <div className="max-w-4xl mx-auto" style={{ position: 'relative' }}>
           <Reveal>
-            <span style={{ color: 'var(--ops-steel)', display: 'inline-flex' }}>
-              <OpsPilotMark size={54} className="ops-mark-in" title="Operion" />
-            </span>
-          </Reveal>
-
-          <Reveal delay={80}>
-            <h1
-              className="display-1"
-              style={{ color: '#fff', marginTop: 28 }}
-            >
-              <OpsPilotWordmark tm />
+            <h1 className="display-1" style={{ margin: 0 }}>
+              <Image
+                src="/operion-logo.png"
+                alt="Operion — AI Operating System for Business"
+                width={982}
+                height={784}
+                priority
+                sizes="(max-width: 640px) 78vw, 480px"
+                style={{ width: 'min(480px, 78vw)', height: 'auto' }}
+              />
             </h1>
           </Reveal>
 
           <Reveal delay={140}>
-            <p className="lede" style={{ marginTop: 20, maxWidth: '46ch', fontSize: 'clamp(1.15rem, 2vw, 1.45rem)', color: 'var(--muted)' }}>
+            <p className="lede" style={{ marginTop: 24, maxWidth: '46ch', fontSize: 'clamp(1.15rem, 2vw, 1.45rem)', color: 'var(--muted)' }}>
               The operating system behind J KISS Freight.
             </p>
           </Reveal>
