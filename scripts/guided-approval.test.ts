@@ -52,6 +52,29 @@ test('manual mode: online booking with an initial read but no final estimate nee
   assert.equal(st.decision, 'manual_review')
 })
 
+test('manual mode: the owner-saved override prefills the send price (override wins over AI baseline)', () => {
+  const st = guidedApprovalState(mk({
+    finalAiEstimate: undefined, source: 'online',
+    aiEstimate: { decision: 'manual_review', pricing: { recommendedUsd: 770 }, override: { overriddenUsd: 1300 } } as never,
+  }))
+  assert.equal(st.mode, 'manual')
+  assert.equal(st.suggestedPriceUsd, 1300)   // the owner's $1300 override, not the $770 baseline
+  assert.equal(st.recommendedUsd, 0)         // unchanged: guided-only field stays 0 in manual mode
+})
+
+test('manual mode: with no override, the AI baseline prefills the price', () => {
+  const st = guidedApprovalState(mk({
+    finalAiEstimate: undefined, source: 'online',
+    aiEstimate: { decision: 'manual_review', pricing: { recommendedUsd: 770 } } as never,
+  }))
+  assert.equal(st.suggestedPriceUsd, 770)
+})
+
+test('guided mode: suggestedPriceUsd is 0 (guided uses recommendedUsd, blank = recommended)', () => {
+  const st = guidedApprovalState(mk({ finalAiEstimate: fe('quote_ready') }))
+  assert.equal(st.suggestedPriceUsd, 0)
+})
+
 test('manual mode ends once quoted/sent → not manual anymore', () => {
   const sent = guidedApprovalState(mk({ finalAiEstimate: undefined, source: 'online', aiEstimate: { decision: 'manual_review' } as never, confirmationLinkSentAt: 5 }))
   assert.equal(sent.mode, 'sent')

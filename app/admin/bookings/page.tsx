@@ -383,14 +383,17 @@ function StatusBadge({ s }: { s: string }) {
 //    enters the price and sends. Both set the invoice, text/email the customer, and
 //    advance to Quote Sent. Renders nothing when there's no owner quote action to take.
 function GuidedApprovalPanel({ booking, busy, run, isOwner }: { booking: Booking; busy: string; run: (action: string, body?: Record<string, unknown>, confirmMsg?: string) => void; isOwner: boolean }) {
-  const [amt, setAmt] = useState('')
+  const st = guidedApprovalState(booking)
+  // Manual mode: seed the price with the owner's saved override (or the AI baseline)
+  // so a manual_review quote is one click to send, instead of re-typing a price the
+  // owner already entered on the AI-estimate card above (JK-B-1008).
+  const [amt, setAmt] = useState(() => (st.mode === 'manual' && st.suggestedPriceUsd > 0 ? String(st.suggestedPriceUsd) : ''))
   useEffect(() => {
     if (typeof window !== 'undefined' && window.location.hash === '#guided-estimate-approval') {
       const el = document.getElementById('guided-estimate-approval')
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
   }, [])
-  const st = guidedApprovalState(booking)
   if (st.mode === 'none') return null
   const fe = booking.finalAiEstimate
   const guided = st.mode === 'guided'

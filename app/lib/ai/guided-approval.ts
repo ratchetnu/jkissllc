@@ -19,6 +19,7 @@ export type GuidedApprovalState = {
   lowUsd: number
   highUsd: number
   recommendedUsd: number    // 0 in manual mode → owner must enter a price
+  suggestedPriceUsd: number // manual mode: the owner's saved override ?? the AI's baseline, to PREFILL the price input (0 if none). guided mode: 0.
   alreadySent: boolean      // the quote link has already gone to the customer
   canSend: boolean          // owner may Approve & Send now (guided) — manual always needs a price
   needsPrice: boolean       // manual mode: the owner must enter an amount
@@ -37,6 +38,13 @@ export function guidedApprovalState(b: ApprovalBooking): GuidedApprovalState {
   // not yet quoted/sent — the owner needs to price it by hand and send.
   const manual = !fe && b.source === 'online' && !quotedOrSent && !!b.aiEstimate
   const mode: ApprovalMode = alreadySent ? 'sent' : fe ? 'guided' : manual ? 'manual' : 'none'
+  // In manual mode, carry the owner's already-entered price forward so "Set Price &
+  // Send" is one click: an `ai.override` (owner edited the AI estimate) wins over the
+  // AI's baseline recommendation. Without this the owner's saved override is stranded
+  // on the AI-estimate card and the send panel opens blank (JK-B-1008).
+  const suggestedPriceUsd = mode === 'manual'
+    ? (b.aiEstimate?.override?.overriddenUsd ?? b.aiEstimate?.pricing?.recommendedUsd ?? 0)
+    : 0
   return {
     mode,
     hasFinal: !!fe,
@@ -45,6 +53,7 @@ export function guidedApprovalState(b: ApprovalBooking): GuidedApprovalState {
     lowUsd: fe?.pricing.lowUsd ?? 0,
     highUsd: fe?.pricing.highUsd ?? 0,
     recommendedUsd: fe?.pricing.recommendedUsd ?? 0,
+    suggestedPriceUsd,
     alreadySent,
     canSend: guidedSendable && !alreadySent,
     needsPrice: mode === 'manual',
