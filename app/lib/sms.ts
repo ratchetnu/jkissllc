@@ -8,6 +8,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { redis } from './redis'
+import { statusCallbackUrl } from './twilio-webhook'
 
 // Per-async-context kill switch for OUTBOUND texts. When a run wraps its work in
 // withSmsSuppressed(), every sendSms/sendSmsDetailed call inside that async context
@@ -62,6 +63,31 @@ export type SmsDetail =
   | { ok: true; sid: string; status: string }
   | { ok: false; error: string; code?: number; httpStatus?: number }
 
+// Build the Twilio Messages POST body for one outbound SMS: destination, sender
+// (Messaging Service SID when set — preserving A2P routing — else the From number),
+// the message body, and a StatusCallback so delivery receipts (delivered/failed/
+// undelivered) flow to /api/webhooks/twilio/status. The callback URL carries no
+// secret and no customer data — the status webhook authenticates via X-Twilio-
+// Signature. If no public base origin is configured we DON'T invent one: the SMS
+// still sends, just without delivery tracking, and we log a structured config warning.
+export function buildOutboundSmsParams(dest: string, body: string): URLSearchParams {
+  const params = new URLSearchParams()
+  params.set('To', dest)
+  if (process.env.TWILIO_MESSAGING_SERVICE_SID) {
+    params.set('MessagingServiceSid', process.env.TWILIO_MESSAGING_SERVICE_SID)
+  } else {
+    params.set('From', process.env.TWILIO_FROM!)
+  }
+  params.set('Body', body)
+  const callback = statusCallbackUrl()
+  if (callback) {
+    params.set('StatusCallback', callback)
+  } else if (process.env.NODE_ENV === 'production') {
+    console.warn('[sms] StatusCallback base URL not configured (set PUBLIC_BASE_URL) — sending without delivery tracking')
+  }
+  return params
+}
+
 export async function sendSmsDetailed(to: string | undefined | null, body: string): Promise<SmsDetail> {
   // Honor an active suppression context (e.g. the daily 9am cron) before anything
   // else — no Twilio call is attempted for an automated text that's been switched off.
@@ -76,14 +102,7 @@ export async function sendSmsDetailed(to: string | undefined | null, body: strin
 
   const accountSid = process.env.TWILIO_ACCOUNT_SID!
   const auth = authPair()!
-  const params = new URLSearchParams()
-  params.set('To', dest)
-  if (process.env.TWILIO_MESSAGING_SERVICE_SID) {
-    params.set('MessagingServiceSid', process.env.TWILIO_MESSAGING_SERVICE_SID)
-  } else {
-    params.set('From', process.env.TWILIO_FROM!)
-  }
-  params.set('Body', body)
+  const params = buildOutboundSmsParams(dest, body)
 
   try {
     const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {

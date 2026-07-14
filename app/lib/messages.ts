@@ -284,3 +284,26 @@ export async function crewUnreadCount(staffId: string, limit = 100): Promise<num
 export async function seenProviderMessage(providerMessageId: string): Promise<boolean> {
   return !!(await redis.get(dedupKey(providerMessageId)))
 }
+
+// Look up a stored message by its provider id (Twilio MessageSid / Resend id). Used by
+// the delivery-status webhook to correlate a callback back to the original outbound
+// message (and thereby its booking) when one was recorded. Returns null if unknown.
+export async function getMessageByProviderId(providerMessageId: string): Promise<Message | null> {
+  const id = await redis.get(dedupKey(providerMessageId))
+  return id ? getMessage(id) : null
+}
+
+// Apply an outbound delivery status (delivered/failed) to a stored message, idempotently
+// — a no-op if the message is unknown or already at that status, so repeated callbacks
+// never rewrite or duplicate ledger state.
+export async function setMessageDeliveryStatus(
+  providerMessageId: string, status: 'sent' | 'delivered' | 'failed',
+): Promise<Message | null> {
+  const m = await getMessageByProviderId(providerMessageId)
+  if (!m || m.status === status) return m
+  // Only advance outbound lifecycle statuses; never touch inbound/read/archived state.
+  if (m.direction !== 'outbound') return m
+  m.status = status
+  await saveMessage(m)
+  return m
+}

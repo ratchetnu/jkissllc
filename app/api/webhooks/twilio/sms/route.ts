@@ -11,6 +11,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { toE164 } from '../../../../lib/sms'
+import { verifyTwilioSignature } from '../../../../lib/twilio-webhook'
+import { classifyInboundKeyword, helpTwiml, STOP_WORDS, START_WORDS } from '../../../../lib/sms-keywords'
 import { listBookings, saveBooking, type Booking } from '../../../../lib/bookings'
 import { recordMessage, seenProviderMessage } from '../../../../lib/messages'
 import { notifyOwnerOfReply } from '../../../../lib/owner-alerts'
@@ -27,22 +29,6 @@ function twiml(): NextResponse {
     headers: { 'Content-Type': 'text/xml' },
   })
 }
-
-// Twilio X-Twilio-Signature = base64( HMAC-SHA1( authToken, URL + sortedParamKeyVal ) ).
-function verifyTwilioSignature(url: string, params: Record<string, string>, signature: string | null): boolean {
-  const token = process.env.TWILIO_AUTH_TOKEN
-  if (!token || !signature) return false
-  let data = url
-  for (const k of Object.keys(params).sort()) data += k + params[k]
-  const expected = crypto.createHmac('sha1', token).update(Buffer.from(data, 'utf-8')).digest('base64')
-  try {
-    const a = Buffer.from(expected), b = Buffer.from(signature)
-    return a.length === b.length && crypto.timingSafeEqual(a, b)
-  } catch { return false }
-}
-
-const STOP_WORDS = new Set(['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT', 'REVOKE', 'OPTOUT'])
-const START_WORDS = new Set(['START', 'YES', 'UNSTOP'])
 
 export async function POST(req: NextRequest) {
   const raw = await req.text()
@@ -79,6 +65,14 @@ export async function POST(req: NextRequest) {
     return new NextResponse('webhook not configured', { status: 503 })
   }
   if (!authed) return new NextResponse('forbidden', { status: 403 })
+
+  // HELP / INFO — reply with public support info and return immediately. This never
+  // creates a customer record, matches no booking, and triggers no owner/booking
+  // workflow (kept out of the tenant/Redis path so it stays a pure auto-reply).
+  // STOP/START keep their existing behavior in the tenant block below.
+  if (classifyInboundKeyword(params.Body) === 'help') {
+    return new NextResponse(helpTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+  }
 
   // Tenant-owned work runs inside the resolved tenant context (off → reference
   // tenant, no key change; on → scoped + fail-closed).
