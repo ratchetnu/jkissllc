@@ -13,6 +13,17 @@
 import { isEnabled } from '../flags'
 import { requireTenantKey } from './keys'
 import { DEFAULT_TENANT_ID } from './types'
+import { JKISS_TENANT } from './jkiss'
+
+/**
+ * The active tenant set for background fan-out (crons/webhooks). Today this
+ * deployment is single-tenant, so it is exactly the reference tenant. This is a
+ * READ over existing tenant config — NOT a provisioning system; when a real
+ * multi-tenant registry lands, this is the one place to source it from.
+ */
+export function activeTenantIds(): string[] {
+  return [JKISS_TENANT.id]
+}
 
 export function assertTenant(tenantId: string | undefined | null): asserts tenantId is string {
   if (!tenantId || typeof tenantId !== 'string') {
