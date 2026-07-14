@@ -12,6 +12,7 @@ import ModifyEstimate from './ModifyEstimate'
 import type { Booking, Payment, InvoicePhoto } from '../../lib/bookings'
 import { serviceFamily } from '../../lib/bookings'
 import type { StoredAiEstimate } from '../../lib/ai/estimate-store'
+import { guidedApprovalState } from '../../lib/ai/guided-approval'
 
 // ── Local label maps + helpers (avoid bundling server lib runtime) ───────────
 const SERVICE_LABELS: Record<string, string> = {
@@ -375,6 +376,73 @@ function StatusBadge({ s }: { s: string }) {
 // ── AI Estimate panel (Phase 11) ─────────────────────────────────────────────
 // Clearly separates the four layers: AI OBSERVATION → PRICING CALCULATION →
 // ADMIN ADJUSTMENT → FINAL QUOTE. The vision model never sets the price.
+// Owner quote action. Two modes:
+//  • GUIDED — the customer confirmed their inventory and the governed second analysis
+//    produced a number awaiting one-click Approve & Send.
+//  • MANUAL — no guided estimate (e.g. the AI routed to manual_review), so the owner
+//    enters the price and sends. Both set the invoice, text/email the customer, and
+//    advance to Quote Sent. Renders nothing when there's no owner quote action to take.
+function GuidedApprovalPanel({ booking, busy, run, isOwner }: { booking: Booking; busy: string; run: (action: string, body?: Record<string, unknown>, confirmMsg?: string) => void; isOwner: boolean }) {
+  const [amt, setAmt] = useState('')
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.hash === '#guided-estimate-approval') {
+      const el = document.getElementById('guided-estimate-approval')
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [])
+  const st = guidedApprovalState(booking)
+  if (st.mode === 'none') return null
+  const fe = booking.finalAiEstimate
+  const guided = st.mode === 'guided'
+  const amtNum = parseFloat(amt)
+  const tone = guided ? (st.decision === 'quote_ready' ? '#34d399' : '#fbbf24') : '#f59e0b'
+  const decisionLabel: Record<string, string> = { quote_ready: 'Ready to send', awaiting_owner_approval: 'Awaiting your approval', manual_review: 'Needs your pricing', site_visit_required: 'Site visit — price by hand' }
+  const approveBody = () => (amtNum > 0 ? { amount: amtNum } : {})
+
+  return (
+    <div id="guided-estimate-approval" className="os-card" style={{ padding: 16, marginBottom: 14, border: `1px solid ${tone}66`, scrollMarginTop: 80 }}>
+      <div className="flex items-center justify-between gap-2 flex-wrap" style={{ marginBottom: 8 }}>
+        <p style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--muted)' }}>{guided ? 'Guided Estimate · Customer Confirmed' : 'Quote & Send to Customer'}</p>
+        <span style={{ fontSize: 11.5, fontWeight: 800, color: tone }}>{decisionLabel[st.decision] ?? st.decision}{guided ? ` · ${st.tier} confidence` : ''}</span>
+      </div>
+
+      {guided && fe && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+          <div><p style={{ fontSize: 10.5, color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase' }}>Revised estimate</p><p style={{ fontSize: 18, fontWeight: 900, color: 'var(--text)' }}>${fe.pricing.lowUsd.toLocaleString()}–${fe.pricing.highUsd.toLocaleString()}</p></div>
+          <div><p style={{ fontSize: 10.5, color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase' }}>Recommended</p><p style={{ fontSize: 18, fontWeight: 900, color: tone }}>${fe.pricing.recommendedUsd.toLocaleString()}</p></div>
+        </div>
+      )}
+      {!guided && (
+        <p style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 10 }}>The AI couldn’t price this one automatically. Enter your price and send the quote to the customer.{st.sensitiveItems.length > 0 && ` ⚠ Sensitive items: ${st.sensitiveItems.join(', ')}.`}</p>
+      )}
+
+      {!isOwner ? (
+        <p style={{ fontSize: 12.5, color: 'var(--muted)' }}>An owner/admin can price and send this quote.</p>
+      ) : (
+        <>
+          <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>{guided ? 'Send at $' : 'Price $'}</span>
+            <input value={amt} onChange={e => setAmt(e.target.value.replace(/[^0-9.]/g, ''))} placeholder={guided ? String(fe?.pricing.recommendedUsd ?? '') : 'amount'} inputMode="decimal"
+              style={{ width: 110, fontSize: 14, padding: '7px 10px', borderRadius: 8, border: `1px solid ${!guided && !(amtNum > 0) ? '#f59e0b' : 'var(--line)'}`, background: 'var(--bg)', color: 'var(--text)' }} />
+            {guided && <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>blank = recommended</span>}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" disabled={busy === 'approve-final' || (!guided && !(amtNum > 0))}
+              onClick={() => run('approve-final', { ...approveBody(), send: true }, guided ? 'Approve this estimate and SEND the quote to the customer now (email/text)?' : `Send a $${amtNum} quote to the customer now (email/text)?`)}
+              style={{ fontSize: 12.5, fontWeight: 800, padding: '9px 14px', borderRadius: 10, border: 'none', background: !guided && !(amtNum > 0) ? '#6b7280' : '#16a34a', color: '#fff', cursor: !guided && !(amtNum > 0) ? 'not-allowed' : 'pointer', opacity: !guided && !(amtNum > 0) ? 0.6 : 1 }}>
+              {busy === 'approve-final' ? 'Sending…' : guided ? '✓ Approve & Send Quote' : '✓ Set Price & Send Quote'}
+            </button>
+            <button type="button" disabled={busy === 'approve-final' || (!guided && !(amtNum > 0))} onClick={() => run('approve-final', { ...approveBody(), send: false }, 'Set the quote WITHOUT sending it yet?')}
+              style={{ fontSize: 12.5, fontWeight: 700, padding: '9px 14px', borderRadius: 10, border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--text)', cursor: 'pointer' }}>
+              {guided ? 'Approve only (don’t send)' : 'Set price (don’t send)'}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function AiEstimatePanel({ est, busy, run }: { est: StoredAiEstimate; busy: string; run: (action: string, body?: Record<string, unknown>) => void }) {
   const a = est.analysis
   const p = est.pricing
@@ -1067,6 +1135,13 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
       )}
 
       {b.aiEstimate && <AiEstimatePanel est={b.aiEstimate} busy={busy} run={run} />}
+
+      {/* Owner quote action — GUIDED (customer-confirmed final estimate awaiting one-
+          click Approve & Send) or MANUAL (no guided estimate, e.g. the AI routed to
+          manual_review, so the owner prices it and sends). Renders nothing when there's
+          no owner quote action to take. Approve/Send sets the quote, texts/emails the
+          customer, and advances to Quote Sent. */}
+      <GuidedApprovalPanel booking={b} busy={busy} run={run} isOwner={!!isOwner} />
 
       {/* Governed intake workflow: live stepper + event stream */}
       <WorkflowTimeline booking={b} />

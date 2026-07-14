@@ -23,6 +23,13 @@ export async function proxy(request: NextRequest) {
   requestHeaders.delete('x-tenant-id')
   const res = NextResponse.next({ request: { headers: requestHeaders } })
 
+  // Baseline security headers on every content response (HSTS is already set at the
+  // platform edge). Conservative set — no CSP, since the app relies on inline styles
+  // and a strict policy would need a dedicated hardening pass.
+  res.headers.set('X-Content-Type-Options', 'nosniff')
+  res.headers.set('X-Frame-Options', 'SAMEORIGIN')
+  res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+
   const path = request.nextUrl.pathname
   const isAdminRequest = path.startsWith('/admin') || path.startsWith('/api/admin')
   const isPortalRequest = path.startsWith('/portal') || path.startsWith('/api/portal')

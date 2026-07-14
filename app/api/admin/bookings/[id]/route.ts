@@ -3,12 +3,15 @@ import { requireSession, getPrincipal } from '../../_lib/session'
 import { can } from '../../../../lib/rbac'
 import {
   getBookingByToken, saveBooking, deleteBooking, recompute, balanceDueCents, dollarsToCents,
-  paymentSummaryStatus, sanitizePhotos, pushBookingEvent, generateToken,
+  paymentSummaryStatus, sanitizePhotos, pushBookingEvent, generateToken, setInfoRequestToken,
+  withBookingWriteLock,
   SERVICE_TYPES, type Booking, type ServiceType, type Payment, type PaymentMethod, type PaymentType,
   type BookingStatus,
 } from '../../../../lib/bookings'
 import { notifyCustomerZelleRejected, resendOwnerNotification, notifyOwnerAiOutcome } from '../../../../lib/booking-notify'
 import { processAiJob, enqueueAiJob, supportsPhotoAi, photoVersion } from '../../../../lib/book-now-ai'
+import { submitConfirmation, processFinalAiJob, enqueueFinalAiJob } from '../../../../lib/book-now-confirmation'
+import { INFO_REQUEST_FIELD_LABEL, type InfoRequest, type InfoRequestField } from '../../../../lib/bookings'
 import { currentTenantId } from '../../../../lib/platform/tenancy/context'
 import { getPolicyVersion, getCurrentPolicy } from '../../../../lib/policy'
 import { sendConfirmationLink, notifyJobCompleted, notifyBookingConfirmed, notifyPaidInFull, notifyContinuation, notifyCustomerMessage } from '../../../../lib/notify'
@@ -23,6 +26,8 @@ import { getCalibration } from '../../../../lib/job-learning'
 import { decideQuote } from '../../../../lib/pricing/quote-decision'
 import { onEstimateModified } from '../../../../lib/intake-workflow'
 import { validateEstimateModification } from '../../../../lib/estimate-modify'
+import { alert } from '../../../../lib/alerts'
+import { canApproveAndSend, quoteDeliveryMode } from '../../../../lib/ai/guided-approval'
 
 export const runtime = 'nodejs'
 
@@ -64,6 +69,14 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { id } = await params
+  // Serialize every admin write to this booking with background workers + customer
+  // writes on the unified per-booking lease (bk:wlock) — no last-write-wins clobber.
+  return withBookingWriteLock(id, () => patchBooking(req, id), {
+    onBusy: () => NextResponse.json({ error: 'This booking is being updated — please retry in a moment.' }, { status: 409 }),
+  })
+}
+
+async function patchBooking(req: NextRequest, id: string): Promise<NextResponse> {
   const b = await getBookingByToken(id)
   if (!b) return NextResponse.json({ error: 'not_found' }, { status: 404 })
 
@@ -212,7 +225,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       enqueueAiJob(b, { force: true, initiatedBy: actor, tenantId })
       if (b.aiJob) b.aiJob.attempts = 0
       await saveBooking(b)
-      const result = await processAiJob(id, { initiatedBy: actor, tenantId })
+      const result = await processAiJob(id, { initiatedBy: actor, tenantId, lockHeld: true })
       const nb = await getBookingByToken(id)
       if (nb && (result.status === 'completed' || result.status === 'manual_review' || result.status === 'failed')) {
         try { await notifyOwnerAiOutcome(nb, result.status) } catch (e) { console.error('[run-ai notify]', e) }
@@ -242,7 +255,155 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       pushBookingEvent(b, { actor, action: 'ai.manual_review', result: 'owner', meta: { by: actor } })
       break
     }
+
+    // ── Guided-confirmation FINAL analysis controls (owner-only). Like run-ai,
+    // these load+save their own copy via processFinalAiJob, so RETURN early. ────
+    case 'run-final-ai':
+    case 'retry-final-ai': {
+      if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
+      if (!b.confirmation) return NextResponse.json({ error: 'No customer confirmation to analyze. Request or enter the confirmation first.' }, { status: 400 })
+      let tenantId: string | undefined
+      try { tenantId = currentTenantId() } catch { /* ignore */ }
+      enqueueFinalAiJob(b, { force: true, initiatedBy: actor, tenantId })
+      if (b.finalAiJob) b.finalAiJob.attempts = 0
+      await saveBooking(b)
+      const result = await processFinalAiJob(id, { initiatedBy: actor, tenantId, lockHeld: true })
+      const nb = await getBookingByToken(id)
+      if (nb && (result.status === 'completed' || result.status === 'manual_review' || result.status === 'failed')) {
+        try { await notifyOwnerAiOutcome(nb, result.status) } catch (e) { console.error('[run-final-ai notify]', e) }
+      }
+      return NextResponse.json({ ok: true, booking: nb ?? b, finalAiJob: nb?.finalAiJob, result })
+    }
+
+    case 'final-manual-review': {
+      if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
+      b.finalAiJob = {
+        status: 'manual_review',
+        idempotencyKey: b.finalAiJob?.idempotencyKey ?? `book-now-final:manual:${b.token}:${b.confirmation?.confirmationVersion ?? 0}`,
+        photoVersion: b.invoicePhotos?.length ?? 0, attempts: b.finalAiJob?.attempts ?? 0,
+        initiatedBy: actor, updatedAt: Date.now(),
+      }
+      pushBookingEvent(b, { actor, action: 'ai.final_manual_review', result: 'owner', meta: { by: actor } })
+      break
+    }
+
+    // ── Owner edits the confirmed inventory. Creates a NEW confirmation version
+    // (submittedBy owner) so the original customer read is preserved in history +
+    // item-level provenance, then re-runs the durable final analysis. Returns early. ─
+    case 'edit-confirmed-inventory': {
+      if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
+      if (!Array.isArray(body.items)) return NextResponse.json({ error: 'items[] required.' }, { status: 400 })
+      const existing = b.confirmation
+      // Deterministic idempotency key so an owner double-click doesn't create two
+      // versions + two final runs (submitConfirmation dedups on this key).
+      const itemsSig = (body.items as unknown[]).map((it) => {
+        const o = (it ?? {}) as Record<string, unknown>
+        return `${String(o.id ?? '')}:${String(o.category ?? '')}:${String(o.quantity ?? '')}:${o.removed ? 1 : 0}`
+      }).join('|').slice(0, 200)
+      const raw = {
+        items: body.items,
+        accessConditions: existing?.accessConditions ?? {},
+        disclosures: existing?.disclosures ?? {},
+        photoQuality: existing?.photoQuality ?? {},
+        estate: existing?.estate,
+        followUpAnswers: existing?.followUpAnswers ?? [],
+        attestation: existing?.attestation,
+        idempotencyKey: `owner-edit:${actor}:${(body.items as unknown[]).length}:${itemsSig}`,
+      }
+      let tenantId: string | undefined
+      try { tenantId = currentTenantId() } catch { /* ignore */ }
+      const sub = await submitConfirmation(id, raw, { submittedBy: 'owner', initiatedBy: actor, tenantId, lockHeld: true })
+      if (!sub.ok) return NextResponse.json({ error: 'Could not save the edited inventory.' }, { status: 400 })
+      const result = await processFinalAiJob(id, { initiatedBy: actor, tenantId, lockHeld: true })
+      const nb = await getBookingByToken(id)
+      return NextResponse.json({ ok: true, booking: nb ?? b, result })
+    }
+
+    // ── Approve the FINAL estimate and set the quote from it (owner approval,
+    // recorded). Optionally sends the customer their confirmation link. ─────────
+    case 'approve-final': {
+      // Owner/admin only + a SEND is idempotent (one quote per booking). A quote
+      // needs a number: the guided estimate's recommended price OR an owner-entered
+      // `amount` (manual pricing for a manual_review booking). Shared pure gate.
+      const overrideUsd = Math.round(num(body.amount) ?? 0)
+      const gate = canApproveAndSend({ role: who?.role, booking: b, send: body.send === true, amount: overrideUsd })
+      if (!gate.allowed) {
+        if (gate.reason === 'not_owner') {
+          console.warn(`[approve-final] unauthorized role=${who?.role ?? 'none'} booking=${b.bookingNumber}`)
+          await alert({ type: 'unauthorized_approval', severity: 'WARNING', route: '/api/admin/bookings/[id]', booking: b.bookingNumber, errorClass: `role_${who?.role ?? 'none'}` })
+        } else if (gate.reason === 'already_sent') {
+          console.warn(`[approve-final] duplicate send blocked booking=${b.bookingNumber}`)
+        }
+        return NextResponse.json({ error: gate.message, ...(gate.reason === 'already_sent' ? { alreadySent: true } : {}) }, { status: gate.status })
+      }
+      const fe = b.finalAiEstimate   // may be undefined in manual-pricing mode
+      const approvedUsd = overrideUsd > 0 ? overrideUsd : (fe?.pricing.recommendedUsd ?? 0)
+      b.invoiceAmountCents = approvedUsd * 100
+      if (b.depositAmountCents <= 0) b.depositAmountCents = Math.min(approvedUsd * 100, Math.max(5000, Math.round(approvedUsd * 100 * 0.2)))
+      pushBookingEvent(b, { actor, action: 'ai.owner_approved', result: `$${approvedUsd}`, meta: { approvedUsd, tier: fe?.routingTier ?? 'manual', override: overrideUsd > 0, send: body.send === true } })
+      b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[Estimate approved by ${actor}] $${approvedUsd}${overrideUsd > 0 ? ' (owner-set)' : ''}`
+      console.info(`[approve-final] submitted booking=${b.bookingNumber} amount=$${approvedUsd} send=${body.send === true} by=${actor}`)
+      // SANDBOX outbound safety: approve-final is the one send path not in the
+      // blanket OUTBOUND_COMMS guard above, so the test-record decision lives in the
+      // shared pure layer. A test record's send is SIMULATED — never a provider call.
+      const delivery = quoteDeliveryMode({ send: body.send === true, isTest: !!b.isTest })
+      if (delivery !== 'none') {
+        // Stamp the send on BOTH paths so duplicate-send protection engages either way.
+        const channels = delivery === 'live' ? await sendConfirmationLink(b) : { email: false, sms: false }
+        b.confirmationLinkSentAt = Date.now()
+        b.confirmationLinkSentBy = actor
+        if (['quote_received', 'pending_payment', 'payment_received', 'booking_created'].includes(b.status)) b.status = 'confirmation_link_sent'
+        if (delivery === 'simulated') {
+          pushBookingEvent(b, { actor, action: 'ai.quote_simulated', result: 'sandbox — no email/SMS sent', meta: { simulated: true, approvedUsd } })
+          console.info(`[approve-final] quote SIMULATED (sandbox test record — no external delivery) booking=${b.bookingNumber}`)
+          extra = { channels, quoteSent: true, simulated: true }
+        } else {
+          const anySent = !!(channels.email || channels.sms)
+          console.info(`[approve-final] quote_sent booking=${b.bookingNumber} email=${!!channels.email} sms=${!!channels.sms}`)
+          if (!anySent) {
+            console.error(`[approve-final] notification_failed booking=${b.bookingNumber} (no channel delivered)`)
+            await alert({ type: 'quote_send_failed', severity: 'ERROR', route: '/api/admin/bookings/[id]', booking: b.bookingNumber, errorClass: 'no_channel_delivered' })
+          }
+          extra = { channels, quoteSent: anySent }
+        }
+      } else {
+        extra = { confirmLink: bookingLink(b.token) }
+      }
+      break
+    }
+
+    // ── Request more information (Part 13): a secure, single-step clarification.
+    // The customer returns via /quote/resume/<token> that opens ONLY the step. ──
+    case 'request-info': {
+      if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
+      const rawFields: unknown[] = Array.isArray(body.fields) ? body.fields : []
+      const fields = rawFields
+        .filter((f): f is InfoRequestField => typeof f === 'string' && f in INFO_REQUEST_FIELD_LABEL)
+      if (fields.length === 0) return NextResponse.json({ error: 'Choose at least one thing to request.' }, { status: 400 })
+      const reason = str(body.reason, 300) || 'We need a couple more details to finish your quote.'
+      const note = str(body.message, 500)
+      const rtoken = generateToken()
+      const req: InfoRequest = {
+        token: rtoken, reason, message: note, fields, requestedBy: actor, sentAt: Date.now(), completed: false,
+      }
+      // Compose a friendly customer message with the secure resume link.
+      const link = `${siteUrl()}/quote/resume/${rtoken}`
+      const asked = fields.map(f => INFO_REQUEST_FIELD_LABEL[f]).join(', ')
+      const text = `${note || reason} To finish your quote, please add: ${asked}. Continue here (no need to start over): ${link}`
+      const channel: 'sms' | 'email' | 'both' = b.customerPhone && b.customerEmail ? 'both' : b.customerPhone ? 'sms' : 'email'
+      let channels = { sms: false, email: false }
+      if (b.customerPhone || b.customerEmail) {
+        try { channels = await notifyCustomerMessage(b, text, channel) } catch (e) { console.error('[request-info notify]', e) }
+      }
+      req.channels = channels
+      b.infoRequest = req
+      await setInfoRequestToken(rtoken, b.token)
+      pushBookingEvent(b, { actor, action: 'confirmation.requested', result: fields.join(','), meta: { fields, reason, sent: channels.sms || channels.email } })
+      extra = { infoRequest: { token: rtoken, link, channels } }
+      break
+    }
     case 'void-payment': {
+      if (!who || !can(who.role, 'invoices:manage')) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
       // Remove a payment record (e.g. a customer re-reported a payment that was
       // already recorded — confirming it would double-count). Recompute drops it
       // from Amount Paid. Logged to the audit trail for chargeback evidence.
@@ -258,6 +419,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     case 'mark-deposit-paid':
     case 'mark-balance-paid':
     case 'mark-paid-full': {
+      if (!who || !can(who.role, 'invoices:manage')) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
       const method = (METHODS.includes(body.method) ? body.method : 'cash') as PaymentMethod
       const balance = balanceDueCents(b)
       let amountCents: number
@@ -471,6 +633,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       break
     }
     case 'refund': {
+      if (!who || !can(who.role, 'invoices:manage')) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
       // One-click Stripe refund for the eligible amount. Records a negative payment
       // so Amount Paid drops, and emails the customer. Zelle/cash refunds are manual.
       const refundCents = dollarsToCents(body.amount)
@@ -506,6 +669,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
       } catch (e) {
         console.error('[refund]', e)
+        await alert({ type: 'refund_failed', severity: 'CRITICAL', route: '/api/admin/bookings/[id]', booking: b.bookingNumber, errorClass: e instanceof Error ? e.name : 'stripe_refund_failed' })
         return NextResponse.json({ error: 'Stripe refund failed — check the dashboard and try again.' }, { status: 502 })
       }
       const stamp = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })
@@ -516,6 +680,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
     // ── AI estimate: admin price override (recorded, never silent) ───────────
     case 'ai-override': {
+      if (!who || !can(who.role, 'invoices:manage')) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
       if (!b.aiEstimate) return NextResponse.json({ error: 'No AI estimate on this booking.' }, { status: 400 })
       const overriddenUsd = Math.round(num(body.overriddenUsd) ?? 0)
       const reason = str(body.reason, 500)
@@ -530,6 +695,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     // ── AI estimate: re-run the deterministic pricing on the stored analysis ──
     // (no new AI call — cheap; picks up pricing-config changes).
     case 'ai-reprice': {
+      if (!who || !can(who.role, 'invoices:manage')) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
       if (!b.aiEstimate?.analysis) return NextResponse.json({ error: 'No stored analysis to re-price.' }, { status: 400 })
       const [settings, calibration] = await Promise.all([getDisposalSettings(), getCalibration()])
       const d = decideQuote({ analysis: b.aiEstimate.analysis, settings, calibration, serviceType: b.serviceType })
@@ -545,6 +711,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     // as an additive override with a required reason + who/when + an immutable
     // ai.modify timeline event. Does NOT send the quote — that's a separate approve.
     case 'ai-modify': {
+      if (!who || !can(who.role, 'invoices:manage')) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
       if (!b.aiEstimate) return NextResponse.json({ error: 'No AI estimate on this booking.' }, { status: 400 })
       const reason = str(body.reason, 500) ?? ''
       const overriddenUsd = Math.round(num(body.overriddenUsd) ?? 0)

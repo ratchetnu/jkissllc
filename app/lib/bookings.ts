@@ -1,5 +1,8 @@
 import { redis } from './redis'
+import { optimisticUpdate, type Mutate, type UpdateOutcome } from './booking-concurrency'
 import type { StoredAiEstimate } from './ai/estimate-store'
+import type { CustomerConfirmation } from './ai/confirmation-schema'
+import type { FinalAnalysisResult } from './ai/confirmed-analysis'
 
 // ── Service types ────────────────────────────────────────────────────────────
 // Reusable across every line of business J Kiss runs (and future ones).
@@ -145,6 +148,10 @@ export type BookingEventAction =
   | 'customer.confirmation'
   | 'ai.override' | 'ai.reprice' | 'ai.modify'
   | 'ai.queued' | 'ai.analyzed' | 'ai.failed' | 'ai.manual_review'
+  // ── Customer inventory-confirmation + second (final) analysis (Part 3/7/10) ──
+  | 'confirmation.requested' | 'confirmation.submitted' | 'confirmation.owner_edited'
+  | 'ai.final_queued' | 'ai.final_analyzed' | 'ai.final_failed' | 'ai.final_manual_review'
+  | 'ai.owner_approved' | 'ai.quote_simulated'
   | 'test.marked' | 'test.unmarked'
 
 export type BookingEvent = {
@@ -204,6 +211,32 @@ export type AiJob = {
   completedAt?: number
   initiatedBy?: string         // 'system' | principal.sub (manual run/retry)
   updatedAt: number
+}
+
+// ── Owner "request more information" workflow (Part 13) ──────────────────────
+export type InfoRequestField =
+  | 'more_photos' | 'wide_photo' | 'closeup_photo' | 'item_quantity'
+  | 'access_details' | 'heavy_item' | 'confirm_inventory'
+export const INFO_REQUEST_FIELD_LABEL: Record<InfoRequestField, string> = {
+  more_photos: 'Additional photos',
+  wide_photo: 'A better wide-angle photo',
+  closeup_photo: 'A close-up photo',
+  item_quantity: 'A missing quantity',
+  access_details: 'Access details',
+  heavy_item: 'Heavy-item clarification',
+  confirm_inventory: 'Confirm the item list',
+}
+export type InfoRequest = {
+  token: string                // secure random resume token (unguessable, tenant-scoped)
+  reason: string               // owner-facing reason
+  message?: string             // custom note shown to the customer
+  fields: InfoRequestField[]
+  requestedBy: string          // principal.sub
+  sentAt: number
+  channels?: { sms: boolean; email: boolean }
+  viewedAt?: number
+  respondedAt?: number
+  completed: boolean
 }
 
 // ── Derived payment status (for display + bookkeeping) ───────────────────────
@@ -303,8 +336,22 @@ export type Booking = {
   assignedHelper?: string      // helper / second rep (shown to customer)
   disposalEstimateCents?: number // estimated dump/disposal cost (from the quote)
   disposalActualCents?: number   // actual disposal cost entered after the job
-  aiEstimate?: StoredAiEstimate  // AI photo analysis + deterministic pricing + decision (internal)
+  aiEstimate?: StoredAiEstimate  // INITIAL AI photo analysis + deterministic pricing + decision (internal)
   aiJob?: AiJob                  // durable server-side AI processing job (recovery + retry)
+  // ── Guided customer inventory-confirmation workflow (Part 3–11) ──────────────
+  // The confirmation record is the customer's confirmed/corrected inventory +
+  // targeted answers + attestation. The FINAL estimate is the SECOND, governed
+  // analysis (confirmed inventory + photos). Both are ADDITIVE — the original
+  // `aiEstimate` (initial read) is never overwritten.
+  confirmation?: CustomerConfirmation      // customer-confirmed inventory + answers + attestation
+  finalAiEstimate?: FinalAnalysisResult    // second (confirmed) analysis + governed pricing (internal)
+  finalAiJob?: AiJob                        // durable server-side FINAL-analysis job (recovery + retry)
+  // ── Owner "request more information" workflow (Part 13) ──────────────────────
+  // A secure, single-step clarification request the owner sends; the customer
+  // returns through a continuation link that opens ONLY the requested step. The
+  // ACTIVE request lives here; completed ones move to history for the timeline.
+  infoRequest?: InfoRequest
+  infoRequestHistory?: InfoRequest[]
   loyaltyCode?: string         // 10% off code issued when paid in full (reuse/referral)
   archived?: boolean           // hidden from the default list (soft delete)
   archivedAt?: number
@@ -372,6 +419,12 @@ export type Booking = {
     notes?: string
   }
 
+  // Optimistic-concurrency token — advances on every persisted write. The CAS
+  // write path (updateBooking) rejects a save whose expected version is stale, so
+  // a concurrent writer can never be silently clobbered. Absent on legacy records
+  // (treated as 0) until their first save under the new path.
+  version?: number
+
   // Lifecycle timestamps
   createdAt: number
   updatedAt: number
@@ -426,14 +479,102 @@ export async function getBookingByNumber(bookingNumber: string): Promise<Booking
   return getBookingByToken(token)
 }
 
+// ── "Request more information" resume-token index (Part 13) ──────────────────
+// Maps a secure info-request token → the owning booking so the customer's
+// continuation link resolves without a scan. 30-day TTL (matches typical intake).
+const KEY_INFOREQ = 'bk:inforeq:'
+export async function setInfoRequestToken(reqToken: string, bookingToken: string): Promise<void> {
+  await redis.set(`${KEY_INFOREQ}${reqToken}`, bookingToken)
+  await redis.pexpire(`${KEY_INFOREQ}${reqToken}`, 30 * 24 * 60 * 60 * 1000)
+}
+export async function getBookingByInfoRequest(reqToken: string): Promise<Booking | null> {
+  if (!reqToken || !/^[a-f0-9]{16,}$/i.test(reqToken)) return null
+  const token = await redis.get(`${KEY_INFOREQ}${reqToken}`)
+  if (!token) return null
+  const b = await getBookingByToken(token)
+  // Guard: the ACTIVE request must still match this token (revoked/rotated → 404).
+  if (!b || b.infoRequest?.token !== reqToken) return null
+  return b
+}
+
 /** Owner-controlled sandbox record — excluded from all business analytics/comms. */
 export const isTestBooking = (b: Pick<Booking, 'isTest'>): boolean => !!b.isTest
 
 export async function saveBooking(b: Booking): Promise<void> {
   b.updatedAt = Date.now()
+  b.version = (b.version ?? 0) + 1   // advance the concurrency token on every write
   await redis.set(`${KEY_PREFIX}${b.token}`, JSON.stringify(b))
   await redis.set(`${KEY_NUM}${b.bookingNumber.toUpperCase()}`, b.token)
   await redis.zadd(KEY_INDEX, b.updatedAt, b.token)
+}
+
+// ── Protected write paths (per-booking concurrency control) ──────────────────
+// Lua compare-and-swap: write the booking JSON ONLY if the stored copy's version
+// still equals `expected`. Atomic on the single booking key (the KV's eval).
+const CAS_SCRIPT = `
+local raw = redis.call('GET', KEYS[1])
+local expected = tonumber(ARGV[2])
+local curv = 0
+if raw and raw ~= false then
+  local ok, obj = pcall(cjson.decode, raw)
+  if ok and type(obj) == 'table' and obj.version then curv = tonumber(obj.version) or 0 end
+end
+if curv == expected then
+  redis.call('SET', KEYS[1], ARGV[1])
+  return 1
+else
+  return 0
+end`
+
+/**
+ * CAS-protected, retrying booking update for PURE-DATA mutations. `mutate` runs on
+ * the freshest copy and re-runs on a version conflict, so no concurrent write is
+ * lost and audit events are never duplicated. Do NOT use for mutations with
+ * external side effects (Stripe/model/SMS) — a retry would repeat them; use
+ * withBookingWriteLock for those. `mutate` may return `{ abort: reason }` to stop
+ * non-retryably (controlled 409-style outcome).
+ */
+export async function updateBooking(
+  token: string,
+  mutate: Mutate<Booking>,
+  opts: { maxAttempts?: number } = {},
+): Promise<UpdateOutcome<Booking>> {
+  return optimisticUpdate<Booking>({
+    load: () => getBookingByToken(token),
+    versionOf: (b) => b.version ?? 0,
+    save: async (b, expected) => {
+      b.version = expected + 1
+      b.updatedAt = Date.now()
+      const r = await redis.eval(CAS_SCRIPT, [`${KEY_PREFIX}${token}`], [JSON.stringify(b), String(expected)])
+      if (r === 1 || r === '1') {
+        // Secondary indexes are idempotent — safe to refresh after the CAS win.
+        await redis.set(`${KEY_NUM}${b.bookingNumber.toUpperCase()}`, b.token)
+        await redis.zadd(KEY_INDEX, b.updatedAt, b.token)
+        return 'ok'
+      }
+      return 'conflict'
+    },
+  }, mutate, opts)
+}
+
+/**
+ * Short, self-expiring per-booking write LEASE. SERIALIZES a multi-step operation
+ * that has external side effects (where a CAS re-run would double them). A missed
+ * lease is fail-soft: the caller decides via `onBusy` (a durable job retries; an
+ * interactive request returns a controlled 409). `lockHeld` lets a nested call
+ * skip re-acquiring a lease its caller already holds (prevents self-deadlock).
+ */
+export async function withBookingWriteLock<T>(
+  token: string,
+  fn: () => Promise<T>,
+  opts: { onBusy: () => T | Promise<T>; ttlMs?: number; lockHeld?: boolean },
+): Promise<T> {
+  if (opts.lockHeld) return fn()
+  const key = `bk:wlock:${token}`
+  let got = false
+  try { got = await redis.setNxPx(key, '1', opts.ttlMs ?? 20_000) } catch { got = true /* KV hiccup: don't block the write */ }
+  if (!got) return await opts.onBusy()
+  try { return await fn() } finally { try { await redis.del(key) } catch { /* lease self-expires */ } }
 }
 
 export async function deleteBooking(token: string): Promise<void> {
@@ -472,10 +613,13 @@ function normalize(b: Booking): Booking {
 export function sanitizePhotos(v: unknown): InvoicePhoto[] {
   if (!Array.isArray(v)) return []
   const out: InvoicePhoto[] = []
+  const seen = new Set<string>()   // dedup by URL — a retried append never duplicates a photo
   for (const item of v) {
     if (!item || typeof item !== 'object') continue
     const url = String((item as { url?: unknown }).url ?? '').trim()
     if (!/^https:\/\/\S+$/i.test(url) || url.length > 1000) continue
+    if (seen.has(url)) continue
+    seen.add(url)
     const rawName = (item as { name?: unknown }).name
     const name = typeof rawName === 'string' ? rawName.trim().slice(0, 120) : undefined
     out.push(name ? { url, name } : { url })
@@ -624,7 +768,7 @@ export function dollarsToCents(v: string | number): number {
 // a booking to the browser.
 export type CustomerBooking = Omit<Booking,
   'internalNotes' | 'agreementIp' | 'agreementUserAgent' | 'payments' | 'disposalEstimateCents' | 'disposalActualCents'
-  | 'aiEstimate' | 'events' | 'notifications' | 'replacementUpload' | 'idempotencyKey'> & {
+  | 'aiEstimate' | 'finalAiEstimate' | 'events' | 'notifications' | 'replacementUpload' | 'idempotencyKey'> & {
   balanceDueCents: number
   paymentSummary: PaymentSummaryStatus
   payments: Array<Pick<Payment, 'type' | 'method' | 'status' | 'amountCents' | 'feeCents' | 'totalChargedCents' | 'createdAt' | 'confirmedAt'> & { hasProof: boolean }>
@@ -635,10 +779,10 @@ export function customerView(b: Booking): CustomerBooking {
   // paths), the owner-notification ledger, and the disposal cost / margin numbers.
   const {
     internalNotes: _i, agreementIp: _ip, agreementUserAgent: _ua, payments,
-    disposalEstimateCents: _de, disposalActualCents: _da, aiEstimate: _ai,
+    disposalEstimateCents: _de, disposalActualCents: _da, aiEstimate: _ai, finalAiEstimate: _fai,
     events: _ev, notifications: _no, replacementUpload: _ru, idempotencyKey: _ik, ...rest
   } = b
-  void _i; void _ip; void _ua; void _de; void _da; void _ai; void _ev; void _no; void _ru; void _ik
+  void _i; void _ip; void _ua; void _de; void _da; void _ai; void _fai; void _ev; void _no; void _ru; void _ik
   return {
     ...rest,
     balanceDueCents: balanceDueCents(b),

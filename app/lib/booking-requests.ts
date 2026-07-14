@@ -209,6 +209,14 @@ export async function persistQuoteRequest(input: QuoteRequestInput): Promise<Boo
 
   await saveBooking(booking)
 
+  // Convert the PENDING idempotency claim into the real token mapping IMMEDIATELY
+  // after the booking is persisted — BEFORE the slow lead/notify work below — so a
+  // retry can never outlive the 30s PENDING TTL and create a duplicate booking.
+  if (idem) {
+    await redis.set(`bk:idem:${idem}`, booking.token)
+    await redis.pexpire(`bk:idem:${idem}`, REQ_IDEM_TTL_MS)
+  }
+
   // Governed intake: upsert Customer, project Lead, publish LeadCreated/QuoteRequested
   // (+ QuoteGenerated). Flag-gated + fail-soft — a no-op today, never blocks the save.
   await onLeadPersisted(booking)
@@ -217,11 +225,6 @@ export async function persistQuoteRequest(input: QuoteRequestInput): Promise<Boo
   // SMS, recorded on the booking with provider id / status / error). This REPLACES the
   // old fire-and-forget /api/quote ops email so a delivery failure can never be silent.
   try { await notifyOwnerNewSubmission(booking) } catch (e) { console.error('[booking-requests] owner notify', e) }
-
-  if (idem) {
-    await redis.set(`bk:idem:${idem}`, booking.token)
-    await redis.pexpire(`bk:idem:${idem}`, REQ_IDEM_TTL_MS)
-  }
 
   return booking
 }

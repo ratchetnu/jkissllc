@@ -8,10 +8,11 @@ import OperationsShell from '../OperationsShell'
 import { fmtTs } from '../ui'
 import { SERVICE_LABELS, type Booking } from '../../../lib/bookings'
 import {
-  bookNowStage, bookNowServiceGroup, matchesBookNowFilter,
-  aiStatus, quoteStatus, paymentStatus, ownerAlertStatus,
+  bookNowStage, bookNowServiceGroup, matchesBookNowFilter, isEstateBooking,
+  aiStatus, quoteStatus, paymentStatus, ownerAlertStatus, confirmationStatus,
   BOOK_NOW_STAGE_LABEL, type BookNowFilter, type BookNowStage,
 } from '../../../lib/book-now-queue'
+import { CLEANOUT_SUBTYPE_LABEL, type CleanoutSubtype } from '../../../lib/ai/confirmation-schema'
 
 const SEEN_KEY = 'jkos-booknow-seen'
 
@@ -20,6 +21,7 @@ const GROUP_LABEL: Record<string, string> = { junk: 'Junk Removal', moving: 'Mov
 const STAGE_TONE: Record<BookNowStage, string> = {
   new: '#f87171', awaiting_photos: '#fbbf24', awaiting_ai: '#fbbf24',
   ai_queued: '#fbbf24', ai_processing: '#60a5fa', ai_failed: '#f87171',
+  final_processing: '#60a5fa', awaiting_owner_approval: '#c084fc', site_visit: '#f59e0b',
   quote_ready: '#60a5fa', manual_review: '#c084fc', quote_sent: '#60a5fa', payment_pending: '#fbbf24',
   paid: '#34d399', booked: '#34d399', failed: '#f87171',
 }
@@ -27,9 +29,9 @@ const STAGE_TONE: Record<BookNowStage, string> = {
 // The filter chips, in the owner's mental order. Value → visible label.
 const FILTERS: [BookNowFilter, string][] = [
   ['all', 'All'], ['new', 'New'],
-  ['junk', 'Junk Removal'], ['moving', 'Moving'], ['delivery', 'Delivery'],
+  ['junk', 'Junk Removal'], ['estate', 'Estate Cleanout'], ['moving', 'Moving'], ['delivery', 'Delivery'],
   ['awaiting_photos', 'Awaiting Photos'], ['ai_queued', 'AI Queued'], ['ai_processing', 'AI Processing'], ['ai_failed', 'AI Failed'],
-  ['manual_review', 'Manual Review'], ['awaiting_approval', 'Awaiting Approval'], ['quote_ready', 'Quote Ready'], ['quote_sent', 'Quote Sent'],
+  ['site_visit', 'Site Visit'], ['manual_review', 'Manual Review'], ['awaiting_approval', 'Awaiting Approval'], ['quote_ready', 'Quote Ready'], ['quote_sent', 'Quote Sent'],
   ['accepted', 'Accepted'], ['payment_pending', 'Payment Pending'], ['paid', 'Paid'], ['booked', 'Booked'], ['failed', 'Failed'],
 ]
 
@@ -182,8 +184,14 @@ function Queue() {
                     {unread && <span aria-label="New" style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--red)', flexShrink: 0 }} />}
                     <span style={{ fontWeight: 800, fontSize: 15.5, color: 'var(--text)' }}>{b.customerName}</span>
                     <span style={{ background: 'var(--red)', color: '#fff', borderRadius: 6, fontSize: 9.5, fontWeight: 800, padding: '2px 6px', letterSpacing: '.04em' }}>⚡ BOOK NOW</span>
+                    {isEstateBooking(b) && <span style={{ background: '#7c3aed', color: '#fff', borderRadius: 6, fontSize: 9.5, fontWeight: 800, padding: '2px 6px', letterSpacing: '.04em' }}>🏠 ESTATE</span>}
                     <span style={{ fontSize: 11, fontWeight: 700, color: STAGE_TONE[stage], background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', borderRadius: 999, padding: '2px 9px' }}>{BOOK_NOW_STAGE_LABEL[stage]}</span>
+                    {(b.finalAiEstimate?.sensitiveItems?.length ?? 0) > 0 && <span style={{ fontSize: 10, fontWeight: 800, color: '#f87171', border: '1px solid #f87171', borderRadius: 999, padding: '1px 7px' }}>⚠ SENSITIVE</span>}
+                    {(b.confirmation?.estate?.multipleDays || b.confirmation?.estate?.multipleCrews || (b.finalAiEstimate?.truckLoadMax ?? 0) > 2) && <span style={{ fontSize: 10, fontWeight: 700, color: '#f59e0b', border: '1px solid #f59e0b', borderRadius: 999, padding: '1px 7px' }}>multi-day/truck</span>}
                   </div>
+                  {b.confirmation?.estate?.subtype && (
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa', marginBottom: 3 }}>{CLEANOUT_SUBTYPE_LABEL[b.confirmation.estate.subtype as CleanoutSubtype]}{b.confirmation.estate.deadlineType && b.confirmation.estate.deadlineType !== 'none' ? ` · ${b.confirmation.estate.deadlineType} deadline${b.confirmation.estate.deadlineDate ? ` ${b.confirmation.estate.deadlineDate}` : ''}` : ''}</div>
+                  )}
                   <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>
                     {GROUP_LABEL[bookNowServiceGroup(b.serviceType)]} · {SERVICE_LABELS[b.serviceType] ?? b.serviceType} · <span className="font-mono">{b.bookingNumber}</span>
                   </div>
@@ -195,6 +203,7 @@ function Queue() {
                   </div>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <Sub label="AI" value={aiStatus(b)} />
+                    {confirmationStatus(b) !== 'none' && <Sub label="Confirm" value={confirmationStatus(b)} tone={confirmationStatus(b) === 'site_visit' || confirmationStatus(b) === 'review' ? '#f59e0b' : undefined} />}
                     <Sub label="Quote" value={quoteStatus(b)} />
                     <Sub label="Pay" value={paymentStatus(b)} />
                     <Sub label="Alert" value={alert} tone={alert === 'sent' ? '#34d399' : alert === 'failed' ? '#f87171' : '#fbbf24'} />

@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runDueAiJobs } from '../../../lib/book-now-ai'
+import { runDueFinalAiJobs } from '../../../lib/book-now-confirmation'
 import { notifyOwnerAiOutcome } from '../../../lib/booking-notify'
 import { getBookingByToken } from '../../../lib/bookings'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
+import { alert } from '../../../lib/alerts'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -22,6 +24,7 @@ function authorized(req: NextRequest): boolean {
 export async function GET(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   let summary: { processed: number; results: { token: string; status: string }[] } = { processed: 0, results: [] }
+  let finalSummary: { processed: number; results: { token: string; status: string }[] } = { processed: 0, results: [] }
   await withBackgroundTenant('cron', async () => {
     try {
       summary = await runDueAiJobs(10)
@@ -34,8 +37,25 @@ export async function GET(req: NextRequest) {
             if (b) await notifyOwnerAiOutcome(b, r.status)
           } catch (e) { console.error('[cron/ai-jobs] notify', e) }
         }
+        // Retry exhaustion / terminal AI failure → operational alert.
+        if (r.status === 'failed') await alert({ type: 'ai_analysis_failed', severity: 'ERROR', worker: 'runDueAiJobs', booking: r.token.slice(0, 8), errorClass: 'retry_exhausted' })
       }
-    } catch (e) { console.error('[cron/ai-jobs] run', e) }
+    } catch (e) { console.error('[cron/ai-jobs] run', e); await alert({ type: 'cron_job_failed', severity: 'CRITICAL', route: '/api/cron/ai-jobs', worker: 'runDueAiJobs', errorClass: e instanceof Error ? e.name : 'unknown' }) }
+
+    // Second (final) analysis recovery: process due FINAL jobs the same way, so a
+    // customer who confirms then closes the browser still gets a durable result.
+    try {
+      finalSummary = await runDueFinalAiJobs(10)
+      for (const r of finalSummary.results) {
+        if (r.status === 'completed' || r.status === 'manual_review' || r.status === 'failed') {
+          try {
+            const b = await getBookingByToken(r.token)
+            if (b) await notifyOwnerAiOutcome(b, r.status)
+          } catch (e) { console.error('[cron/ai-jobs] final notify', e) }
+        }
+        if (r.status === 'failed') await alert({ type: 'final_analysis_failed', severity: 'ERROR', worker: 'runDueFinalAiJobs', booking: r.token.slice(0, 8), errorClass: 'retry_exhausted' })
+      }
+    } catch (e) { console.error('[cron/ai-jobs] final run', e); await alert({ type: 'cron_job_failed', severity: 'CRITICAL', route: '/api/cron/ai-jobs', worker: 'runDueFinalAiJobs', errorClass: e instanceof Error ? e.name : 'unknown' }) }
   })
-  return NextResponse.json({ ok: true, ...summary, at: Date.now() })
+  return NextResponse.json({ ok: true, ...summary, final: finalSummary, at: Date.now() })
 }

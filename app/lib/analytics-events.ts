@@ -18,11 +18,26 @@ export type FunnelEvent =
   | 'estimate_range_displayed'
   | 'manual_review_required'
   | 'quote_request_persisted'
+  // ── Guided customer inventory-confirmation flow (Phase 2, Part 17) ──
+  | 'confirmation_started'
+  | 'confirmation_item_corrected'
+  | 'confirmation_conflict_detected'
+  | 'confirmation_attested'
+  | 'confirmation_submitted'
+  | 'final_analysis_started'
+  | 'final_analysis_completed'
+  | 'final_routed_owner_approval'
+  | 'final_routed_manual_review'
+  | 'confirmation_resumed'
 
 export const FUNNEL_EVENTS: FunnelEvent[] = [
   'quote_analyze_started', 'ai_analysis_completed', 'ai_analysis_failed',
   'instant_quote_displayed', 'estimate_range_displayed', 'manual_review_required',
   'quote_request_persisted',
+  'confirmation_started', 'confirmation_item_corrected', 'confirmation_conflict_detected',
+  'confirmation_attested', 'confirmation_submitted', 'final_analysis_started',
+  'final_analysis_completed', 'final_routed_owner_approval', 'final_routed_manual_review',
+  'confirmation_resumed',
 ]
 
 const RETENTION_MS = 200 * 24 * 60 * 60 * 1000

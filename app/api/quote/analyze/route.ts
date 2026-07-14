@@ -3,8 +3,10 @@ import { rateLimit } from '../../../lib/rate-limit'
 import { isBlockedBot } from '../../../lib/botcheck'
 import { buildPhotoEstimate } from '../../../lib/ai/photo-estimate'
 import { saveDraftEstimate, customerEstimateView } from '../../../lib/ai/estimate-store'
+import { selectFollowUpQuestions } from '../../../lib/ai/followup-questions'
 import { recordFunnelEvent } from '../../../lib/analytics-events'
-import { SERVICE_TYPES, type ServiceType } from '../../../lib/bookings'
+import { filterPhotoUrls } from '../../../lib/photo-url'
+import { SERVICE_TYPES, serviceFamily, type ServiceType } from '../../../lib/bookings'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -23,9 +25,8 @@ export async function POST(req: NextRequest) {
   if (await isBlockedBot()) return NextResponse.json({ error: 'Request blocked. Please try again.' }, { status: 403 })
 
   const body = await req.json().catch(() => ({}))
-  const photos: string[] = Array.isArray(body.photos)
-    ? body.photos.map((u: unknown) => String(u)).filter((u: string) => /^https:\/\/\S+$/i.test(u)).slice(0, 8)
-    : []
+  // Only our Vercel Blob store — never an attacker-supplied URL handed to the model.
+  const photos: string[] = filterPhotoUrls(body.photos, 8)
   if (photos.length === 0) {
     return NextResponse.json({ error: 'Please upload at least one photo to get an instant estimate.' }, { status: 400 })
   }
@@ -52,5 +53,9 @@ export async function POST(req: NextRequest) {
   // Persist the draft estimate so /api/quote can attach it on submit.
   try { await saveDraftEstimate(stored) } catch (e) { console.error('[quote/analyze] save draft', e) }
 
-  return NextResponse.json({ ok: true, estimate: customerEstimateView(stored) })
+  // Governed follow-up question selection (server-side; the client only renders).
+  const estate = serviceType === 'estate-cleanout' || serviceType === 'garage-cleanout' || serviceType === 'eviction'
+  const followUps = selectFollowUpQuestions({ serviceFamily: serviceFamily(serviceType), analysis: stored.analysis, estate })
+
+  return NextResponse.json({ ok: true, estimate: customerEstimateView(stored), followUps })
 }

@@ -8,7 +8,12 @@ import { getCalibration } from '../../lib/job-learning'
 import { COMPANY } from '../../lib/company'
 import { persistQuoteRequest } from '../../lib/booking-requests'
 import { unitsForLoad } from '../../lib/availability'
-import { SERVICE_TYPES, type ServiceType } from '../../lib/bookings'
+import { SERVICE_TYPES, getBookingByToken, type ServiceType } from '../../lib/bookings'
+import { submitConfirmation, processFinalAiJob } from '../../lib/book-now-confirmation'
+import { notifyOwnerAiOutcome } from '../../lib/booking-notify'
+import { projectCustomerFinalState, type CustomerFinalState } from '../../lib/ai/confirmation-ui'
+import { recordFunnelEvent } from '../../lib/analytics-events'
+import { filterPhotoUrls } from '../../lib/photo-url'
 
 // Look up a US ZIP via zippopotam.us (free, no key required).
 async function lookupZip(zip: string): Promise<{ lat: number; lon: number; city: string; state: string } | null> {
@@ -156,10 +161,9 @@ export async function POST(request: NextRequest) {
   const addOnLabels = selectedAddOns.map(a => `${ADDON_LABELS[a] ?? a} (+$${PRICING.addOns[a]})`)
 
   // Job photos uploaded via /api/upload (Vercel Blob) — carried into the ops email
-  // so the team can size the job accurately. Only trusted http(s) URLs, capped at 6.
-  const photoUrls: string[] = Array.isArray(body.photos)
-    ? body.photos.map((u: unknown) => String(u)).filter((u: string) => /^https?:\/\//.test(u)).slice(0, 6)
-    : []
+  // so the team can size the job accurately. ONLY our Blob host (no attacker links
+  // reaching ops inboxes or the model), deduped, capped at 6.
+  const photoUrls: string[] = filterPhotoUrls(body.photos, 6)
 
   // Compute estimate (delivery only — job-based services are quoted by hand)
   let low = 0
@@ -223,6 +227,7 @@ export async function POST(request: NextRequest) {
     // otherwise create a DUPLICATE. Best-effort: a storage hiccup must not deny the
     // customer their estimate or block the ops email.
     let request_out: { number: string; token: string } | undefined
+    let final: CustomerFinalState | undefined
     try {
       const svcType: ServiceType = SERVICE_TYPES.includes(bookService) ? bookService : 'other'
       const persisted = await persistQuoteRequest({
@@ -248,6 +253,36 @@ export async function POST(request: NextRequest) {
         analysisId: typeof analysisId === 'string' ? analysisId : undefined,
       })
       if (persisted) request_out = { number: persisted.bookingNumber, token: persisted.token }
+
+      // ── Guided confirmation: run the SECOND (final) governed analysis on the
+      // SERVER (never the browser). Idempotent + durable — if this inline attempt
+      // fails or times out, the cron worker recovers the queued finalAiJob. ──
+      if (persisted && isJobBased && body.confirmation && typeof body.confirmation === 'object') {
+        try {
+          const nowIso = new Date().toISOString()
+          await recordFunnelEvent('confirmation_submitted', nowIso)
+          const sub = await submitConfirmation(persisted.token, body.confirmation, { submittedBy: 'customer' })
+          if (sub.ok) {
+            await recordFunnelEvent('final_analysis_started', nowIso)
+            const res = await processFinalAiJob(persisted.token, { initiatedBy: 'customer' })
+            if (res.finalDecision === 'quote_ready') await recordFunnelEvent('final_analysis_completed', nowIso)
+            else if (res.finalDecision === 'awaiting_owner_approval') await recordFunnelEvent('final_routed_owner_approval', nowIso)
+            else if (res.finalDecision === 'manual_review') await recordFunnelEvent('final_routed_manual_review', nowIso)
+            const after = await getBookingByToken(persisted.token)
+            if (after) {
+              final = projectCustomerFinalState(after)
+              // Notify the OWNER the moment a guided estimate lands (parity with the
+              // cron path). The final job parks at 'completed' for quote_ready /
+              // owner_approval and 'manual_review' for review/site-visit — without
+              // this the owner is never told there's an estimate awaiting approval.
+              const jobStatus = after.finalAiJob?.status
+              if (jobStatus === 'completed' || jobStatus === 'manual_review') {
+                try { await notifyOwnerAiOutcome(after, jobStatus) } catch (e) { console.error('[quote] owner notify', e) }
+              }
+            }
+          }
+        } catch (e) { console.error('[quote] final analysis', e); /* cron recovers */ }
+      }
     } catch (e) {
       console.error('[quote] persist request', e)
     }
@@ -257,6 +292,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         ok: true,
         request: request_out,
+        final,
         estimate: {
           low, high, miles: 0, promoCode, promoPct,
           confidence: disposal?.confidence ?? 'medium',

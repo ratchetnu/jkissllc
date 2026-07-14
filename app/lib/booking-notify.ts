@@ -2,6 +2,7 @@ import { COMPANY } from './company'
 import { sendSmsDetailed, toE164 } from './sms'
 import { emailRaw } from './booking-emails'
 import { getOwnerAlertConfig } from './owner-alerts'
+import { alert } from './alerts'
 import {
   saveBooking, fmtUSD, balanceDueCents, effectiveServiceDate,
   pushBookingEvent, recordNotificationAttempt, lastNotification,
@@ -19,8 +20,11 @@ const BASE = (process.env.NEXT_PUBLIC_SITE_URL || COMPANY.siteUrlApex).replace(/
 
 // Deep link the owner taps to review a booking in OpsPilot (the dashboard opens it
 // via ?b=<bookingNumber>). This is the "Secure OpsPilot link".
-export function ownerBookingUrl(b: Booking): string {
-  return `${BASE}/admin/bookings?b=${encodeURIComponent(b.bookingNumber)}`
+export function ownerBookingUrl(b: Booking, anchor?: string): string {
+  // Deep link to the booking editor; the optional #anchor scrolls straight to a
+  // section (e.g. the guided-estimate approval panel). No sensitive data in the URL —
+  // only the human booking number; admin auth is still enforced by the page.
+  return `${BASE}/admin/bookings?b=${encodeURIComponent(b.bookingNumber)}${anchor ? `#${anchor}` : ''}`
 }
 
 function svcDateLabel(b: Booking): string {
@@ -85,6 +89,9 @@ async function sendOwnerNotification(
     meta: { kind },
   })
   await saveBooking(b)
+  // A totally-undelivered owner notification is a missed lead / missed action →
+  // alert (deduped per booking+kind so a broken channel can't storm).
+  if (!anySent) await alert({ type: 'notification_failed', severity: 'WARNING', worker: 'sendOwnerNotification', booking: b.bookingNumber, meta: { kind } })
   return { sent: anySent, deduped: false }
 }
 
@@ -132,7 +139,9 @@ export async function notifyOwnerNewSubmission(b: Booking, opts: { force?: boole
  */
 export async function notifyOwnerAiOutcome(b: Booking, status: 'completed' | 'manual_review' | 'failed', opts: { force?: boolean; resend?: boolean } = {}) {
   if (b.isTest) return { sent: false, deduped: false }
-  const url = ownerBookingUrl(b)
+  // 'completed' for a guided (customer-confirmed) estimate means it's awaiting the
+  // owner's Approve & Send — deep-link straight to that panel.
+  const url = ownerBookingUrl(b, status === 'completed' && b.finalAiEstimate ? 'guided-estimate-approval' : undefined)
   const kind = status === 'completed' ? 'ai_ready' : status === 'manual_review' ? 'ai_manual_review' : 'ai_failed'
   const headline =
     status === 'completed' ? 'AI estimate ready for approval'

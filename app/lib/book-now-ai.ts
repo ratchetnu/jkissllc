@@ -1,5 +1,5 @@
 import {
-  getBookingByToken, saveBooking, listBookings, pushBookingEvent, serviceFamily,
+  getBookingByToken, saveBooking, listBookings, pushBookingEvent, serviceFamily, withBookingWriteLock,
   type Booking, type AiJob, type AiJobErrorCode, type AiJobStatus,
 } from './bookings'
 import { buildPhotoEstimate } from './ai/photo-estimate'
@@ -125,7 +125,16 @@ export type ProcessResult = {
  * the model call, attaches the estimate on success, or schedules a bounded retry /
  * terminal failure on provider error. Idempotent + safe to call repeatedly.
  */
-export async function processAiJob(token: string, opts: { initiatedBy?: string; tenantId?: string } = {}): Promise<ProcessResult> {
+export async function processAiJob(token: string, opts: { initiatedBy?: string; tenantId?: string; lockHeld?: boolean } = {}): Promise<ProcessResult> {
+  // Serialize on the unified per-booking write lease so the inline + cron runners
+  // (and any admin write) never double-execute / clobber. lockHeld skips re-acquire
+  // when an admin handler already holds it. A missed lease → the cron retries.
+  return withBookingWriteLock(token, () => processAiJobInner(token, opts), {
+    onBusy: () => ({ ok: false, status: 'processing', reason: 'locked' }), ttlMs: 90_000, lockHeld: opts.lockHeld,
+  })
+}
+
+async function processAiJobInner(token: string, opts: { initiatedBy?: string; tenantId?: string } = {}): Promise<ProcessResult> {
   const b = await getBookingByToken(token)
   if (!b) return { ok: false, status: 'failed', reason: 'not_found' }
 

@@ -14,6 +14,7 @@
 
 import type { ModelMessage } from 'ai'
 import { runAiTask } from './service'
+import { isAllowedPhotoUrl } from '../photo-url'
 import {
   normalizeAnalysis, reviewFallbackAnalysis,
   type JunkPhotoAnalysis, type NormalizeCtx,
@@ -43,7 +44,8 @@ export interface VisionAnalysisProvider {
 }
 
 export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<AnalyzeJunkPhotosResult> {
-  const photos = input.photoUrls.filter(u => /^https?:\/\/\S+$/i.test(u)).slice(0, 8)
+  // Defense-in-depth: only ever hand our own Blob-hosted images to the provider.
+  const photos = input.photoUrls.filter(isAllowedPhotoUrl).slice(0, 8)
   const ctx: NormalizeCtx = {
     analysisId: input.analysisId, bookingId: input.bookingId, photoUrls: photos,
     modelProvider: 'vercel-ai-gateway', modelName: '', analyzedAt: input.nowIso,
