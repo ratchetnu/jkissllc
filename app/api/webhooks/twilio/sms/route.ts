@@ -44,27 +44,25 @@ export async function POST(req: NextRequest) {
   // Auth: prefer Twilio signature (needs TWILIO_AUTH_TOKEN); also accept a shared
   // secret in the URL (?key=…) via TWILIO_WEBHOOK_SECRET. At least one should be set
   // in prod so this public endpoint can't be spoofed.
+  // Auth: accept EITHER a valid shared secret (?key=…, TWILIO_WEBHOOK_SECRET) OR a
+  // valid Twilio signature (TWILIO_AUTH_TOKEN). Either proof is sufficient, so having
+  // both configured never makes a genuine Twilio request fail. Fail closed (503) when
+  // neither is configured; reject (403) when configured but no proof validates.
   const token = process.env.TWILIO_AUTH_TOKEN
   const secret = process.env.TWILIO_WEBHOOK_SECRET
-  let authed = false
-  if (secret) {
-    const key = req.nextUrl.searchParams.get('key') ?? ''
-    try { authed = key.length === secret.length && crypto.timingSafeEqual(Buffer.from(key), Buffer.from(secret)) } catch { authed = false }
-    if (!authed) { console.warn('[twilio-sms] shared-secret mismatch'); return new NextResponse('forbidden', { status: 403 }) }
-  }
-  if (token) {
-    if (!verifyTwilioSignature(url, params, req.headers.get('x-twilio-signature'))) {
-      console.warn('[twilio-sms] signature verification failed'); return new NextResponse('forbidden', { status: 403 })
-    }
-    authed = true
-  }
-  // Fail closed: with no verifying secret configured, reject rather than process an
-  // unauthenticated inbound webhook (previously it warned and continued).
   if (!token && !secret) {
     console.error('[twilio-sms] fail-closed: neither TWILIO_AUTH_TOKEN nor TWILIO_WEBHOOK_SECRET configured')
     return new NextResponse('webhook not configured', { status: 503 })
   }
-  if (!authed) return new NextResponse('forbidden', { status: 403 })
+  let authed = false
+  if (secret) {
+    const key = req.nextUrl.searchParams.get('key') ?? ''
+    try { if (key.length === secret.length && crypto.timingSafeEqual(Buffer.from(key), Buffer.from(secret))) authed = true } catch { /* not authed */ }
+  }
+  if (!authed && token) {
+    authed = verifyTwilioSignature(url, params, req.headers.get('x-twilio-signature'))
+  }
+  if (!authed) { console.warn('[twilio-sms] webhook auth failed'); return new NextResponse('forbidden', { status: 403 }) }
 
   // HELP / INFO — reply with public support info and return immediately. This never
   // creates a customer record, matches no booking, and triggers no owner/booking

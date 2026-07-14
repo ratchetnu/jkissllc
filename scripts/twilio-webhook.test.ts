@@ -86,6 +86,25 @@ test('POST with an invalid signature is rejected 403', async () => {
   })
 })
 
+// ── either/or auth: adding the auth token must not break existing ?key auth ──
+test('with BOTH secret and token set, a valid ?key alone authenticates (no signature)', async () => {
+  const { POST } = await import('../app/api/webhooks/twilio/sms/route')
+  await withEnv({ TWILIO_AUTH_TOKEN: 'test_token', TWILIO_WEBHOOK_SECRET: 'shhh', PUBLIC_BASE_URL: 'https://www.jkissllc.com' }, async () => {
+    const req = new NextRequest('https://www.jkissllc.com/api/webhooks/twilio/sms?key=shhh', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'Body=HELP' })
+    const res = await POST(req)
+    assert.equal(res.status, 200)
+    assert.ok((await res.text()).includes(HELP_REPLY))
+  })
+})
+test('with BOTH set, wrong key AND bad signature is rejected 403', async () => {
+  const { POST } = await import('../app/api/webhooks/twilio/sms/route')
+  await withEnv({ TWILIO_AUTH_TOKEN: 'test_token', TWILIO_WEBHOOK_SECRET: 'shhh', PUBLIC_BASE_URL: 'https://www.jkissllc.com' }, async () => {
+    const req = new NextRequest('https://www.jkissllc.com/api/webhooks/twilio/sms?key=wrong', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-twilio-signature': 'bogus' }, body: 'Body=HELP' })
+    const res = await POST(req)
+    assert.equal(res.status, 403)
+  })
+})
+
 // synchronous env helper for pure-function cases
 function withEnvSync(overrides: Record<string, string | undefined>, fn: () => void) {
   const prev: Record<string, string | undefined> = {}
