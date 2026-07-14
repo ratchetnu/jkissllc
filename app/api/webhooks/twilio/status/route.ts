@@ -10,6 +10,7 @@
 // unset this endpoint fails closed. No secret is placed in the callback URL.
 
 import { NextRequest, NextResponse } from 'next/server'
+import crypto from 'crypto'
 import { verifyTwilioSignature, callbackBaseUrl, STATUS_CALLBACK_PATH } from '../../../../lib/twilio-webhook'
 import { toE164 } from '../../../../lib/sms'
 import { COMPANY } from '../../../../lib/company'
@@ -47,7 +48,30 @@ export async function POST(req: NextRequest) {
   const base = callbackBaseUrl() || `https://${req.headers.get('host') ?? 'www.jkissllc.com'}`
   const url = `${base}${STATUS_CALLBACK_PATH}${req.nextUrl.search || ''}`
   if (!verifyTwilioSignature(url, params, req.headers.get('x-twilio-signature'))) {
-    console.warn('[twilio-status] signature verification failed')
+    // TEMP DIAGNOSTIC (PII-safe): try candidate signed-URL forms to distinguish a
+    // URL-reconstruction mismatch from a wrong auth token. Logs only URLs, param
+    // KEYS, and short signature prefixes — never param values or the token.
+    const sig = req.headers.get('x-twilio-signature') || ''
+    const host = req.headers.get('host') ?? ''
+    const proto = req.headers.get('x-forwarded-proto') ?? 'https'
+    const candidates = [
+      url,
+      `${base}${STATUS_CALLBACK_PATH}`,
+      `${base}${STATUS_CALLBACK_PATH}/`,
+      `https://${host}${STATUS_CALLBACK_PATH}`,
+      `${proto}://${host}${req.nextUrl.pathname}${req.nextUrl.search || ''}`,
+      `https://jkissllc.com${STATUS_CALLBACK_PATH}`,
+    ]
+    const tok = process.env.TWILIO_AUTH_TOKEN || ''
+    const sortedKeys = Object.keys(params).sort()
+    let matched = 'none'
+    for (const c of candidates) {
+      let data = c
+      for (const k of sortedKeys) data += k + params[k]
+      const exp = crypto.createHmac('sha1', tok).update(Buffer.from(data, 'utf-8')).digest('base64')
+      if (exp === sig) { matched = c; break }
+    }
+    console.warn(`[twilio-status][diag] sigfail matched=${matched} host=${host} proto=${proto} tokLen=${tok.length} keys=${sortedKeys.join(',')} recvSigPfx=${sig.slice(0, 6)}`)
     return new NextResponse('forbidden', { status: 403 })
   }
 
