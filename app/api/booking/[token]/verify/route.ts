@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getBookingByToken, saveBooking, recompute, customerView } from '../../../../lib/bookings'
+import { getBookingByToken, saveBooking, recompute, customerView, pushBookingEvent } from '../../../../lib/bookings'
 import { getCurrentPolicy } from '../../../../lib/policy'
 import { rateLimit } from '../../../../lib/rate-limit'
 import { getIP, getUA } from '../../../../lib/req'
@@ -61,6 +61,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   b.customerTimeVerifiedAt = now
   const wasConfirmed = b.status === 'confirmed'
   recompute(b)
+  // Audit the confirmed transition (time verified + payment already on file) so every
+  // confirmation carries an explicit timeline event, not just a notification.
+  if (!wasConfirmed && b.status === 'confirmed') {
+    pushBookingEvent(b, { actor: 'customer', action: 'booking.confirmed', meta: { via: 'time_verified' } })
+  }
   await saveBooking(b)
 
   // Notify ops always; notify customer of verification; if payment already made

@@ -152,6 +152,7 @@ export type BookingEventAction =
   | 'confirmation.requested' | 'confirmation.submitted' | 'confirmation.owner_edited'
   | 'ai.final_queued' | 'ai.final_analyzed' | 'ai.final_failed' | 'ai.final_manual_review'
   | 'ai.owner_approved' | 'ai.quote_simulated'
+  | 'status.changed'
   | 'test.marked' | 'test.unmarked'
 
 export type BookingEvent = {
@@ -714,6 +715,32 @@ export function recompute(b: Booking): Booking {
     }
   }
   return b
+}
+
+// ── Booking status transition guard ──────────────────────────────────────────
+// `confirmed` means the job is genuinely locked in, so it may only be reached when
+// there is a REAL scheduled date AND the booking is financially real (a priced
+// quote or a payment) AND there is no unresolved manual review. recompute() already
+// only ever auto-confirms on timeVerified+paid — this is the guard for the ADMIN
+// manual status control, which previously wrote any status with no checks and no
+// audit event (that is how JK-B-1008, an online manual_review record with no date,
+// no price, and no payment, was silently set to 'confirmed'). Other statuses stay
+// owner-controllable; only the confirmed precondition is enforced here.
+export type StatusGuard = { ok: true } | { ok: false; reason: string }
+
+type ConfirmableBooking = Pick<Booking, 'selectedDate' | 'invoiceAmountCents' | 'amountPaidCents' | 'finalAiEstimate' | 'aiEstimate'>
+
+export function canMarkConfirmed(b: ConfirmableBooking): StatusGuard {
+  const priced = (b.invoiceAmountCents ?? 0) > 0 || !!b.finalAiEstimate
+  const paid = (b.amountPaidCents ?? 0) > 0
+  // An unresolved manual review (the AI couldn't price it and no owner price exists)
+  // can never be confirmed — it isn't a real, priced job yet.
+  if (b.aiEstimate?.decision === 'manual_review' && !priced) {
+    return { ok: false, reason: 'unresolved manual review — set a price or quote first' }
+  }
+  if (!b.selectedDate) return { ok: false, reason: 'no service date is scheduled' }
+  if (!priced && !paid) return { ok: false, reason: 'no priced quote or payment on file' }
+  return { ok: true }
 }
 
 // ── Audit + notification ledger helpers (pure mutations on the record) ───────

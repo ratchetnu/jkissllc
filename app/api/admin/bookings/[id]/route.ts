@@ -4,7 +4,7 @@ import { can } from '../../../../lib/rbac'
 import {
   getBookingByToken, saveBooking, deleteBooking, recompute, balanceDueCents, dollarsToCents,
   paymentSummaryStatus, sanitizePhotos, pushBookingEvent, generateToken, setInfoRequestToken,
-  withBookingWriteLock,
+  withBookingWriteLock, canMarkConfirmed,
   SERVICE_TYPES, type Booking, type ServiceType, type Payment, type PaymentMethod, type PaymentType,
   type BookingStatus,
 } from '../../../../lib/bookings'
@@ -130,10 +130,24 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
       if ('disposalActual' in f) b.disposalActualCents = dollarsToCents(f.disposalActual) || undefined
       if ('collectInPerson' in f) b.collectInPerson = f.collectInPerson === true || f.collectInPerson === 'true' || f.collectInPerson === 'on'
       if (f.status && STATUS_SET[f.status as BookingStatus]) {
-        b.status = f.status as BookingStatus
-        // Stamp lifecycle timestamps so the timeline + reporting stay accurate.
-        if ((b.status === 'completed' || b.status === 'partially_completed') && !b.completedAt) b.completedAt = Date.now()
-        if ((b.status === 'cancelled' || b.status === 'could_not_complete' || b.status === 'refunded') && !b.cancelledAt) b.cancelledAt = Date.now()
+        const target = f.status as BookingStatus
+        if (target !== b.status) {
+          // Guard the confirmed transition: a booking may only be marked Confirmed
+          // when it's genuinely locked in (real date + priced/paid, no unresolved
+          // manual review). This is the fix for silent premature confirmation.
+          if (target === 'confirmed') {
+            const guard = canMarkConfirmed(b)   // b already has this request's field updates applied
+            if (!guard.ok) return NextResponse.json({ error: `Can't mark Confirmed — ${guard.reason}.` }, { status: 400 })
+          }
+          const from = b.status
+          b.status = target
+          // Stamp lifecycle timestamps so the timeline + reporting stay accurate.
+          if ((target === 'completed' || target === 'partially_completed') && !b.completedAt) b.completedAt = Date.now()
+          if ((target === 'cancelled' || target === 'could_not_complete' || target === 'refunded') && !b.cancelledAt) b.cancelledAt = Date.now()
+          if (target === 'confirmed' && !b.confirmedAt) b.confirmedAt = Date.now()
+          // EVERY manual status change is now audited (previously this path was silent).
+          pushBookingEvent(b, { actor, action: 'status.changed', result: `${from} → ${target}`, meta: { from, to: target, by: actor } })
+        }
       }
       break
     }
