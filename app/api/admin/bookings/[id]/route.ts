@@ -761,6 +761,12 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
   if (!b.selectedDate && b.amountPaidCents > 0 && b.availableDates.length === 1) {
     b.selectedDate = b.availableDates[0]
   }
+  // Audit ANY admin action that flips the booking into `confirmed` (a recorded
+  // payment on a time-verified booking, etc.) so the confirmation is never silent.
+  // approve-zelle already emits its own booking.confirmed (via:'zelle') above.
+  if (!wasConfirmed && b.status === 'confirmed' && action !== 'approve-zelle') {
+    pushBookingEvent(b, { actor, action: 'booking.confirmed', meta: { via: action } })
+  }
   // On the transition to paid-in-full, issue a 10%-off loyalty/referral code (once)
   // before persisting so the receipt + email can show it.
   const nowPaidInFull = !wasPaidInFull && paymentSummaryStatus(b) === 'paid_in_full'
