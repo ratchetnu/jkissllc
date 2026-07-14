@@ -12,7 +12,7 @@ const FOOTER_LINKS: [string, string][] = [
   ['Careers', '/careers'],
   ['Carrier Guide', '/start-your-carrier'],
   ['About', '/about'],
-  ['OpsPilot', '/opspilot'],
+  ['Operion', '/opspilot'],
   ['Services', '/#services'],
   ['Contact', '/#contact'],
 ];

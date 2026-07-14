@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { COMPANY } from '../lib/company';
 
 export const metadata: Metadata = {
-  title: `OpsPilot | ${COMPANY.legalName}`,
+  title: `Operion | ${COMPANY.legalName}`,
   robots: {
     index: false,
     follow: false,

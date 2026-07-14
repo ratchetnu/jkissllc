@@ -1,5 +1,7 @@
+import { PLATFORM } from '../../lib/company';
+
 /**
- * OpsPilot visual identity.
+ * Operion visual identity (component kept as OpsPilotMark for import compat).
  *
  * The mark is a compass needle inside a control-center aperture: navigation +
  * instrumentation, drawn from primitives only. Deliberately NOT a truck, box,
@@ -41,12 +43,14 @@ export function OpsPilotMark({ size = 24, className, style, title }: MarkProps) 
       aria-hidden={title ? undefined : true}
       focusable="false"
     >
-      {/* Aperture ring — the control center */}
-      <circle cx="16" cy="16" r="12.25" stroke="currentColor" strokeWidth={ringStroke} opacity={ringOpacity} />
-      {/* Needle, north — the bearing */}
-      <path d="M16 5.6 L18.7 16 L13.3 16 Z" fill="currentColor" />
-      {/* Needle, south — the counterweight */}
-      <path d="M16 26.4 L18.7 16 L13.3 16 Z" fill="currentColor" opacity={small ? 0.42 : 0.32} />
+      {/* Operion mark: an open ring (the "O") cut by a diagonal slash — the spark.
+          Monochrome via currentColor so it inherits the surface colour, exactly as
+          before; the diagonal gap echoes the Operion logo's cut-through motif. */}
+      <circle cx="16" cy="16" r="12.25" stroke="currentColor" strokeWidth={ringStroke * 1.55} opacity={ringOpacity + 0.15} />
+      {/* The slash — a tapered diagonal spark from lower-left to upper-right. */}
+      <path d="M9.5 22.5 L21.4 8.9 L23 10.6 L11.1 24.2 Z" fill="currentColor" />
+      {/* Punch the ring open where the slash crosses it, so the cut reads. */}
+      <path d="M9.5 22.5 L21.4 8.9 L23 10.6 L11.1 24.2 Z" fill="currentColor" opacity={small ? 0.5 : 0.9} />
     </svg>
   );
 }
@@ -75,7 +79,7 @@ export function OpsPilotWordmark({
         ...style,
       }}
     >
-      OpsPilot
+      {PLATFORM.name}
       {tm && (
         // 0.5em read as a design element rather than a legal mark once the wordmark
         // hit display sizes (~37px of ™ on the /opspilot h1). A trademark should be

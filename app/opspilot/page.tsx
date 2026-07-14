@@ -11,14 +11,15 @@ import { OpsPilotMark, OpsPilotWordmark } from '../components/opspilot/OpsPilotM
 import { CAPABILITIES } from '../lib/opspilot';
 
 export const metadata: Metadata = {
-  title: 'OpsPilot — The operating system behind J KISS Freight',
+  title: 'Operion — The operating system behind J KISS Freight',
   description:
-    `OpsPilot is the proprietary operations platform built and run by ${COMPANY.legalNameUpper}. Route assignment, recurring contracts, equipment, crew and hiring, claims with crew cost recovery, invoicing, payroll, an AI command palette, and financial tracking in one system. Coming soon for other owner-operators.`,
+    `Operion is the proprietary operations platform built and run by ${COMPANY.legalNameUpper}. Route assignment, recurring contracts, equipment, crew and hiring, claims with crew cost recovery, invoicing, payroll, an AI command palette, and financial tracking in one system. Coming soon for other owner-operators.`,
   alternates: { canonical: 'https://www.jkissllc.com/opspilot' },
   openGraph: {
-    title: 'OpsPilot — The operating system behind J KISS Freight',
+    title: 'Operion — The operating system behind J KISS Freight',
     description: 'The proprietary operations platform powering J KISS. Coming soon for other owner-operators.',
     url: 'https://www.jkissllc.com/opspilot',
+    images: [{ url: '/operion-logo.png', width: 1240, height: 1240, alt: 'Operion — AI Operating System for Business' }],
   },
 };
 
@@ -41,7 +42,7 @@ export default function OpsPilotPage() {
         <div className="max-w-4xl mx-auto" style={{ position: 'relative' }}>
           <Reveal>
             <span style={{ color: 'var(--ops-steel)', display: 'inline-flex' }}>
-              <OpsPilotMark size={54} className="ops-mark-in" title="OpsPilot" />
+              <OpsPilotMark size={54} className="ops-mark-in" title="Operion" />
             </span>
           </Reveal>
 
@@ -64,7 +65,7 @@ export default function OpsPilotPage() {
             <p style={{ marginTop: 22, maxWidth: '58ch', fontSize: 15.5, lineHeight: 1.7, color: 'var(--muted)' }}>
               Every quote, dispatch, crew assignment, route confirmation, claim, crew deduction, invoice,
               new-hire application, financial calculation, and customer notification at J KISS is managed
-              through OpsPilot. We built it because nothing off the shelf fit how a small carrier actually runs.
+              through Operion. We built it because nothing off the shelf fit how a small carrier actually runs.
             </p>
           </Reveal>
 
@@ -107,7 +108,7 @@ export default function OpsPilotPage() {
             Not just us anymore.
           </Reveal>
           <Reveal as="p" delay={130} className="lede" style={{ marginTop: 16, maxWidth: '58ch' }}>
-            OpsPilot now runs two Dallas–Fort Worth service businesses. Every route, crew
+            Operion now runs two Dallas–Fort Worth service businesses. Every route, crew
             assignment, confirmation, and payout on both goes through the same platform.
           </Reveal>
 
@@ -123,7 +124,7 @@ export default function OpsPilotPage() {
             </div>
 
             <a href="https://superchargedenterprise.com" target="_blank" rel="noopener noreferrer" className="ops-card" style={{ padding: 26, textDecoration: 'none', display: 'block' }}>
-              <span className="ops-badge">Now running on OpsPilot</span>
+              <span className="ops-badge">Now running on Operion</span>
               <p style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '1.35rem', letterSpacing: '-0.02em', color: '#fff', marginTop: 16 }}>
                 Supercharged Enterprise
               </p>

@@ -19,7 +19,7 @@ const ACTIONS: Item[] = [
   { id: 'a-equip', label: 'Equipment', sub: 'Trucks & gear', Icon: Truck, href: '/admin/operations/equipment', group: 'Go to' },
   { id: 'a-set', label: 'Settings', Icon: Settings, href: '/admin/operations/settings', group: 'Go to' },
   { id: 'a-ai', label: 'AI Control Center', sub: 'AI usage, cost & quality', Icon: Sparkles, href: '/admin/operations/ai', group: 'Go to' },
-  { id: 'a-ops-wl', label: 'OpsPilot Waitlist', sub: 'Early-access requests', Icon: Rocket, href: '/admin/opspilot', group: 'Go to' },
+  { id: 'a-ops-wl', label: 'Operion Waitlist', sub: 'Early-access requests', Icon: Rocket, href: '/admin/opspilot', group: 'Go to' },
 ]
 
 const fbBtn: React.CSSProperties = { background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', borderRadius: 7, padding: '2px 8px', fontSize: 13, cursor: 'pointer', lineHeight: 1.2 }
@@ -84,7 +84,7 @@ export default function CommandPalette() {
         list.push({ id: `o-${o.token}`, label: `${o.businessName} · ${o.routeNumber}`, sub: `${fmtDay(o.routeDate)} · ${o.reportTime}${o.assignedStaffName ? ` · ${o.assignedStaffName}` : ''}`, Icon: Briefcase, href: `/admin/operations/${o.token}`, group: 'Operations' })
       // Natural-language fallback — always offered so you can just describe what you
       // want ("show tomorrow's routes", "open unresolved claims") and let AI route it.
-      list.push({ id: 'ai-ask', label: 'Ask OpsPilot AI', sub: q.trim(), Icon: Sparkles, href: '', group: 'OpsPilot AI', ai: true })
+      list.push({ id: 'ai-ask', label: 'Ask Operion AI', sub: q.trim(), Icon: Sparkles, href: '', group: 'Operion AI', ai: true })
     }
     return list
   }, [q, ops, staff, businesses])

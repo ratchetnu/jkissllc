@@ -159,7 +159,7 @@ export default function AboutPage() {
                 href="/opspilot"
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600, color: '#fff', textDecoration: 'none' }}
               >
-                See what OpsPilot does <ArrowRight size={15} />
+                See what Operion does <ArrowRight size={15} />
               </Link>
             </div>
           </Reveal>

@@ -1456,10 +1456,10 @@ export default function StartYourCarrierPage() {
                 <Lock size={12} strokeWidth={2} /> Coming Soon
               </span>
               <h3 className="text-2xl font-black text-white mt-5 mb-3" style={{ letterSpacing: '-0.03em' }}>
-                OpsPilot is coming to other operators.
+                Operion is coming to other operators.
               </h3>
               <p className="text-sm leading-relaxed max-w-2xl mb-7" style={{ color: 'var(--muted)' }}>
-                We&apos;re opening OpsPilot up to other owner-operators and service businesses. If you want
+                We&apos;re opening Operion up to other owner-operators and service businesses. If you want
                 first access when we do, join the early interest list.
               </p>
               <EarlyAccessForm source="/start-your-carrier" tone="dark" />

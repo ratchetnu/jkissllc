@@ -382,7 +382,7 @@ function CrewEarnings({ comp, s }: { comp: CrewCompSummary; s: Staff }) {
           ))}
         </div>
       )}
-      <p style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 8 }}>Earned from completed work. Payouts aren’t settled in OpsPilot yet.</p>
+      <p style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 8 }}>Earned from completed work. Payouts aren’t settled in Operion yet.</p>
     </div>
   )
 }

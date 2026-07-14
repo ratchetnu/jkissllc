@@ -50,7 +50,7 @@ function WaitlistView() {
     <div className="max-w-3xl mx-auto">
       <div className="mb-5 flex items-end justify-between gap-3">
         <div>
-          <p className="text-2xl font-black text-white" style={{ letterSpacing: '-0.03em' }}>OpsPilot Waitlist</p>
+          <p className="text-2xl font-black text-white" style={{ letterSpacing: '-0.03em' }}>Operion Waitlist</p>
           <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>
             Early-access requests from jkissllc.com{count > 0 ? ` · ${count} total` : ''}. Each one also emailed the owner when it came in.
           </p>
@@ -67,7 +67,7 @@ function WaitlistView() {
         <SkeletonList rows={4} />
       ) : items.length === 0 ? (
         <div className="glass-card p-8 text-center" style={{ borderRadius: '16px' }}>
-          <p className="text-sm" style={{ color: 'var(--muted)' }}>No early-access requests yet. They’ll appear here the moment someone submits the OpsPilot form.</p>
+          <p className="text-sm" style={{ color: 'var(--muted)' }}>No early-access requests yet. They’ll appear here the moment someone submits the Operion form.</p>
         </div>
       ) : (
         <div className="space-y-2.5">
@@ -95,5 +95,5 @@ function WaitlistView() {
 }
 
 export default function OpsPilotWaitlistPage() {
-  return <AdminGate title="OpsPilot Waitlist"><WaitlistView /></AdminGate>
+  return <AdminGate title="Operion Waitlist"><WaitlistView /></AdminGate>
 }

@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     subject: `OpsPilot early access — ${entry.company ?? entry.email}`,
     html: `
       <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
-        <h2 style="margin-bottom:4px">New OpsPilot early-access request</h2>
+        <h2 style="margin-bottom:4px">New Operion early-access request</h2>
         <p style="color:#666;margin-top:0">Captured on ${escapeHtml(entry.source)}</p>
         <hr style="border:1px solid #eee;margin:20px 0"/>
         <table style="width:100%;border-collapse:collapse">

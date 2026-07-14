@@ -127,7 +127,7 @@ export async function notifyOwnerNewSubmission(b: Booking, opts: { force?: boole
     `<tr><td style="padding:2px 10px 2px 0;color:#666">Location</td><td>${locationLabel(b)}</td></tr>` +
     `<tr><td style="padding:2px 10px 2px 0;color:#666">Photos</td><td>${b.invoicePhotos?.length ?? 0}</td></tr>` +
     `<tr><td style="padding:2px 10px 2px 0;color:#666">Estimate</td><td>${est}</td></tr></table>` +
-    `<p style="margin:16px 0 0"><a href="${url}" style="background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px;display:inline-block">Review in OpsPilot</a></p></div>`
+    `<p style="margin:16px 0 0"><a href="${url}" style="background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px;display:inline-block">Review in Operion</a></p></div>`
   return sendOwnerNotification(b, 'new_submission', { sms, emailSubject: `New Book Now request — ${b.bookingNumber}`, emailHtml }, opts)
 }
 
@@ -166,7 +166,7 @@ export async function notifyOwnerAiOutcome(b: Booking, status: 'completed' | 'ma
       ? `<tr><td style="padding:2px 10px 2px 0;color:#666">Reason</td><td>${b.aiJob?.errorCode ?? 'unknown'}${b.aiJob?.attempts ? ` (after ${b.aiJob.attempts} attempts)` : ''}</td></tr>`
       : `<tr><td style="padding:2px 10px 2px 0;color:#666">Estimate</td><td>${est}</td></tr>`) +
     `</table>` +
-    `<p style="margin:16px 0 0"><a href="${url}" style="background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px;display:inline-block">Open in OpsPilot</a></p></div>`
+    `<p style="margin:16px 0 0"><a href="${url}" style="background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px;display:inline-block">Open in Operion</a></p></div>`
   return sendOwnerNotification(b, kind, { sms, emailSubject: `${headline} — ${b.bookingNumber}`, emailHtml }, opts)
 }
 
@@ -189,7 +189,7 @@ export async function notifyOwnerZelleReview(b: Booking, payment: Payment, opts:
     `<tr><td style="padding:2px 10px 2px 0;color:#666">Customer</td><td>${b.customerName}</td></tr>` +
     `<tr><td style="padding:2px 10px 2px 0;color:#666">Deposit</td><td>${fmtUSD(payment.amountCents)}</td></tr>` +
     `<tr><td style="padding:2px 10px 2px 0;color:#666">Service date</td><td>${svcDateLabel(b)}</td></tr></table>` +
-    `<p style="margin:16px 0 0"><a href="${url}" style="background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px;display:inline-block">Review in OpsPilot</a></p></div>`
+    `<p style="margin:16px 0 0"><a href="${url}" style="background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px;display:inline-block">Review in Operion</a></p></div>`
   return sendOwnerNotification(b, 'zelle_review', { sms, emailSubject: `Zelle review required — ${b.bookingNumber}`, emailHtml }, opts)
 }
 
@@ -217,7 +217,7 @@ export async function notifyOwnerNewConfirmedBooking(b: Booking, payment: Paymen
     `<tr><td style="padding:2px 10px 2px 0;color:#666">Location</td><td>${locationLabel(b)}</td></tr>` +
     `<tr><td style="padding:2px 10px 2px 0;color:#666">Deposit paid</td><td>${fmtUSD(payment.amountCents)}</td></tr>` +
     `<tr><td style="padding:2px 10px 2px 0;color:#666">Balance</td><td>${fmtUSD(balanceDueCents(b))}</td></tr></table>` +
-    `<p style="margin:16px 0 0"><a href="${url}" style="background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px;display:inline-block">Open in OpsPilot</a></p></div>`
+    `<p style="margin:16px 0 0"><a href="${url}" style="background:${COMPANY.brand.red};color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px;display:inline-block">Open in Operion</a></p></div>`
   return sendOwnerNotification(b, 'new_confirmed_booking', { sms, emailSubject: `New confirmed booking — ${b.bookingNumber}`, emailHtml }, opts)
 }
 

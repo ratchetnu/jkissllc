@@ -71,7 +71,7 @@ export const CAPABILITIES: Capability[] = [
 ];
 
 /** The one-line positioning statement. Used verbatim in the footer and login. */
-export const OPSPILOT_TAGLINE = 'The operating system behind J KISS Freight.';
+export const OPSPILOT_TAGLINE = 'AI Operating System for Business.';
 
 /**
  * Pick a subset by title, preserving the order requested. Throws on a typo rather

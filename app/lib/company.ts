@@ -89,6 +89,24 @@ export const COMPANY = {
   },
 } as const
 
+// ── Platform identity — the operating-system brand (OpsPilot → Operion) ──────
+// Distinct from COMPANY above: COMPANY is the customer-facing TENANT (J Kiss LLC);
+// PLATFORM is the software product that powers it and future tenants, shown on
+// platform surfaces (the /opspilot marketing page, "Powered by" bands, admin
+// chrome, platform emails). This is the single source of truth for the platform
+// name/tagline — flip it here and every platform surface follows.
+//
+// Backward compatibility: internal identifiers, folders (app/opspilot/,
+// components/opspilot/, lib/opspilot.ts), routes (/opspilot, /api/opspilot/…),
+// component names (OpsPilotMark, …), and code comments intentionally keep the
+// legacy `opspilot` slug — renaming them is not user-facing and would break links
+// + imports for no benefit.
+export const PLATFORM = {
+  name: 'Operion',
+  nameUpper: 'OPERION',
+  tagline: 'AI Operating System for Business',
+} as const
+
 // ── Convenience composites ───────────────────────────────────────────────────
 // The credential line appears with two different separators across the codebase;
 // expose both so no call site has to hand-concatenate (and drift).

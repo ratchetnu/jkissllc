@@ -10,7 +10,7 @@ import { COMPANY } from '../../lib/company';
 const LINKS: [string, string][] = [
   ['Services', '/#services'],
   ['About', '/about'],
-  ['OpsPilot', '/opspilot'],
+  ['Operion', '/opspilot'],
   ['Coverage', '/#coverage'],
   ['Contact', '/#contact'],
 ];
