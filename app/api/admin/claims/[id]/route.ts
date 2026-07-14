@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession } from '../../_lib/session'
 import {
   getClaim, saveClaim, deleteClaim, pushClaimAudit, rollupClaimStatus,
@@ -27,7 +28,7 @@ async function tell(c: ClaimRecord, staffId: string, event: CrewClaimEvent, noti
   await notifyCrewOfClaim(c, a, event, phone)
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   if (!(await requireSession(req))) return bad('unauthorized', 401)
   const { id } = await params
 
@@ -232,9 +233,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     console.error('[admin/claims PATCH]', err)
     return bad('update failed', 500)
   }
-}
+})
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const DELETE = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   if (!(await requireSession(req))) return bad('unauthorized', 401)
   const { id } = await params
   const claim = await getClaim(id)
@@ -256,4 +257,4 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
   await deleteClaim(id)
   return NextResponse.json({ ok: true })
-}
+})

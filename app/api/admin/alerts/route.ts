@@ -3,15 +3,16 @@
 // toggled from the dashboard without a redeploy. Admin-only.
 
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession, requireAdmin } from '../_lib/session'
 import { getOwnerAlertConfig, setOwnerAlertConfig } from '../../../lib/owner-alerts'
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   return NextResponse.json({ config: await getOwnerAlertConfig() })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   // Owner-alert config is a global setting — admin only.
   const who = await requireAdmin(req)
   if (who instanceof NextResponse) return who
@@ -23,4 +24,4 @@ export async function POST(req: NextRequest) {
     emailTo: typeof body.emailTo === 'string' ? body.emailTo : undefined,
   })
   return NextResponse.json({ config })
-}
+})

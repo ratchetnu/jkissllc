@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireCrew } from '../_lib/crew'
 import { listRoutes } from '../../../lib/routes'
 import { computeCrewComp } from '../../../lib/crew-comp'
@@ -9,7 +10,7 @@ import { centralToday, mondayOf } from '../../../lib/dates'
 // (see lib/crew-comp: truthful, never fabricated). Scoped to the caller's staffId.
 // Honors the owner's showPayInConfirm setting: when off, amounts are withheld
 // (crew still see their schedule/routes, just not dollar figures).
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
 
@@ -22,4 +23,4 @@ export async function GET(req: NextRequest) {
   const today = centralToday()
   const summary = computeCrewComp(who.staffId, routes, today, mondayOf(today))
   return NextResponse.json({ ok: true, visible: true, summary })
-}
+})

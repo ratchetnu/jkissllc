@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession } from '../_lib/session'
 import { getBlackout, setBlackout, getCapacity, setCapacity, getDepositCents, setDepositCents } from '../../../lib/availability'
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const [blackout, capacity, depositCents] = await Promise.all([getBlackout(), getCapacity(), getDepositCents()])
   return NextResponse.json({ ok: true, blackout, capacity, depositCents })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({}))
   if (Array.isArray(body.blackout)) await setBlackout(body.blackout.map((x: unknown) => String(x)))
@@ -16,4 +17,4 @@ export async function POST(req: NextRequest) {
   if (body.depositDollars !== undefined) await setDepositCents(Math.round((parseFloat(String(body.depositDollars)) || 0) * 100))
   const [blackout, capacity, depositCents] = await Promise.all([getBlackout(), getCapacity(), getDepositCents()])
   return NextResponse.json({ ok: true, blackout, capacity, depositCents })
-}
+})

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession, getPrincipal } from '../../_lib/session'
 import {
   getRouteByToken, saveRoute, deleteRoute, setStatus, pushAudit,
@@ -15,7 +16,7 @@ import {
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { id } = await params
   const body = await req.json().catch(() => ({}))
@@ -152,11 +153,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (e instanceof RouteBusyError) return NextResponse.json({ error: 'The route is being updated — please try again.' }, { status: 503 })
     throw e
   }
-}
+})
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const DELETE = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { id } = await params
   await deleteRoute(id)
   return NextResponse.json({ ok: true })
-}
+})

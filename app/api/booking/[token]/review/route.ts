@@ -1,19 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { getBookingByToken, paymentSummaryStatus } from '../../../../lib/bookings'
 import { getReview, saveReview, type SiteReview } from '../../../../lib/site-reviews'
 import { rateLimit } from '../../../../lib/rate-limit'
 import { emailOpsReviewLeft } from '../../../../lib/booking-emails'
 
 // GET /api/booking/[token]/review — the existing review for this booking, if any.
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export const GET = withTenantRoute(async (_req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   const r = await getReview(token)
   return NextResponse.json({ review: r ?? null })
-}
+})
 
 // POST /api/booking/[token]/review — a customer leaves (or updates) a review.
 // Gated to bookings that are paid in full; one review per booking.
-export async function POST(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export const POST = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   if (await rateLimit(req, 'bookingreview', 10, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many attempts. Please wait a few minutes.' }, { status: 429 })
@@ -46,4 +47,4 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   await emailOpsReviewLeft(b, rating, review.text)
 
   return NextResponse.json({ ok: true, review })
-}
+})

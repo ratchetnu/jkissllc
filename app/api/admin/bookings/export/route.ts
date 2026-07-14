@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession } from '../../_lib/session'
 import {
   listBookings, balanceDueCents, paymentSummaryStatus, confirmedFeesCents,
@@ -16,7 +17,7 @@ function jobDate(b: Booking): string {
 }
 
 // GET /api/admin/bookings/export?filter=all|paid|unpaid|completed&service=&from=&to=
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { searchParams } = new URL(req.url)
   const filter = searchParams.get('filter') ?? 'all'
@@ -80,4 +81,4 @@ export async function GET(req: NextRequest) {
       'Content-Disposition': `attachment; filename="${fname}"`,
     },
   })
-}
+})

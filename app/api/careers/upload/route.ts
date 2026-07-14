@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { put } from '@vercel/blob'
 import { rateLimit } from '../../../lib/rate-limit'
 import { isBlockedBot } from '../../../lib/botcheck'
@@ -22,7 +23,7 @@ const KINDS = new Set(['drivers_license', 'id', 'ss_card', 'headshot'])
 //
 // The headshot stays public: it is a badge photo, it carries no identity data, and
 // it flows into staff avatars on crew-facing screens.
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   if (await rateLimit(req, 'careers-upload', 40, 15 * 60_000)) {
     return NextResponse.json({ error: 'Too many uploads. Please wait a few minutes.' }, { status: 429 })
   }
@@ -72,4 +73,4 @@ export async function POST(req: NextRequest) {
     console.error('[careers-upload]', e)
     return NextResponse.json({ error: 'Upload failed — please try again.' }, { status: 500 })
   }
-}
+})

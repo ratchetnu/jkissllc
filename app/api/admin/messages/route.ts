@@ -3,6 +3,7 @@
 // message to a booking, or dismisses it as not-customer. Admin-only.
 
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession } from '../_lib/session'
 import {
   listRecent, listUnread, markRead, markUnread, archiveMessage, setReviewState,
@@ -13,7 +14,7 @@ import { getBookingByToken } from '../../../lib/bookings'
 
 const REVIEW_STATES = new Set<MsgReviewState>(['needs_reply', 'customer_responded', 'waiting_on_customer', 'resolved'])
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const sp = new URL(req.url).searchParams
   const tab = sp.get('tab') || 'unread'                  // unread | all | archived
@@ -39,9 +40,9 @@ export async function GET(req: NextRequest) {
     )
   }
   return NextResponse.json({ items, unread: await unreadCount() })
-}
+})
 
-export async function PATCH(req: NextRequest) {
+export const PATCH = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({}))
   const id = typeof body.id === 'string' ? body.id : ''
@@ -68,4 +69,4 @@ export async function PATCH(req: NextRequest) {
 
   if (!m) return NextResponse.json({ error: 'not found' }, { status: 404 })
   return NextResponse.json({ message: m, unread: await unreadCount() })
-}
+})

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../../_lib/session'
 import { getReminder, saveReminder, deleteReminder, listInstancesForReminder } from '../../../../lib/reminders'
 import { recordAudit } from '../../../../lib/audit'
@@ -9,7 +10,7 @@ export const dynamic = 'force-dynamic'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const GET = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const who = await requirePermission(req, 'reminders:view')
   if (who instanceof NextResponse) return who
   const { id } = await params
@@ -17,12 +18,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!reminder) return NextResponse.json({ error: 'not_found' }, { status: 404 })
   const instances = await listInstancesForReminder(id, 200)
   return NextResponse.json({ reminder, instances })
-}
+})
 
 // PATCH handles lifecycle actions (pause/resume/archive/unarchive/activate) and full
 // edits. `action` selects a lifecycle transition; otherwise the body is re-validated
 // as a full reminder edit.
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const who = await requirePermission(req, 'reminders:manage')
   if (who instanceof NextResponse) return who
   const { id } = await params
@@ -69,9 +70,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     entity: 'reminder', entityId: id, summary: `Edited reminder "${merged.title}"`,
   })
   return NextResponse.json({ reminder: merged })
-}
+})
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const DELETE = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const who = await requirePermission(req, 'reminders:manage')
   if (who instanceof NextResponse) return who
   const { id } = await params
@@ -82,4 +83,4 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     entity: 'reminder', entityId: id, summary: `Deleted reminder "${reminder?.title ?? id}"`,
   })
   return NextResponse.json({ ok: true })
-}
+})

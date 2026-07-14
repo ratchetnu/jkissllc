@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { COMPANY, CREDENTIALS_SLASH } from '../../../../lib/company'
 import {
   getBookingByToken, balanceDueCents, fmtUSD,
@@ -21,7 +22,7 @@ function fmtTs(ts?: number): string {
 
 // GET /api/booking/[token]/confirmation — printable Booking Confirmation Record.
 // Customer-safe (no IP / internal notes); doubles as the customer's receipt.
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export const GET = withTenantRoute(async (_req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   const b = await getBookingByToken(token)
   if (!b) return new NextResponse('Booking not found', { status: 404 })
@@ -112,4 +113,4 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
 </body></html>`
 
   return new NextResponse(html, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
-}
+})

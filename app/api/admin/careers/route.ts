@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession } from '../_lib/session'
 import { str } from '../../../lib/validators'
 import { saveStaff, findStaffDuplicate } from '../../../lib/staff'
@@ -20,14 +21,14 @@ const REC_TO_STATUS: Record<Recommendation, ApplicantStatus> = {
 function unauthorized() { return NextResponse.json({ error: 'unauthorized' }, { status: 401 }) }
 
 // GET /api/admin/careers — list all applicants (newest first).
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return unauthorized()
   const applicants = await listApplicants()
   return NextResponse.json({ applicants })
-}
+})
 
 // PATCH /api/admin/careers — { id, action, value? } review actions.
-export async function PATCH(req: NextRequest) {
+export const PATCH = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return unauthorized()
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
   const id = String(body.id || '')
@@ -112,12 +113,12 @@ export async function PATCH(req: NextRequest) {
 
   await saveApplicant(a)
   return NextResponse.json({ ok: true, applicant: a, linkedExisting })
-}
+})
 
 // DELETE /api/admin/careers?id=... — remove an applicant record.
-export async function DELETE(req: NextRequest) {
+export const DELETE = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return unauthorized()
   const id = new URL(req.url).searchParams.get('id') || ''
   await deleteApplicant(id)
   return NextResponse.json({ ok: true })
-}
+})

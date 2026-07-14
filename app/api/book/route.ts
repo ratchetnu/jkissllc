@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../lib/platform/tenancy/with-tenant-route'
 import { COMPANY } from '../../lib/company'
 import { redis } from '../../lib/redis'
 import {
@@ -25,7 +26,7 @@ const IDEM_TTL_MS = 24 * 60 * 60_000
 // POST /api/book — instant online booking: reserve an open date + pay a deposit by
 // Stripe (redirect) or Zelle (upload a verifiable screenshot). Idempotent: a retry
 // with the same idempotencyKey returns the original booking instead of duplicating.
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   if (await rateLimit(req, 'instantbook', 8, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many attempts. Please wait a few minutes.' }, { status: 429 })
   }
@@ -187,4 +188,4 @@ export async function POST(req: NextRequest) {
     }
   }
   return NextResponse.json({ ok: true, token: booking.token, bookingUrl: `${base}/booking/${booking.token}` })
-}
+})

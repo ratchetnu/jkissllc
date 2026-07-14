@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../../_lib/session'
 import { runAiTask } from '../../../../lib/ai/service'
 import { COMMAND_SCHEMA } from '../../../../lib/ai/schema'
@@ -41,7 +42,7 @@ const STATIC_TARGETS: Target[] = [
 const S = (v: unknown, max = 400): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 const bad = (error: string, status = 400) => NextResponse.json({ error }, { status })
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   // Role enforcement: the AI command bar requires the ai:use permission (admin +
   // manager). Crew are additionally blocked from /admin at the edge.
   const who = await requirePermission(req, 'ai:use')
@@ -116,4 +117,4 @@ export async function POST(req: NextRequest) {
     console.error('[ai/command]', e)
     return bad('Command failed — please try again.', 500)
   }
-}
+})

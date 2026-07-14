@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { getShipment, normalizeBol, STATUS_LABEL, STATUS_DESC } from '../../../lib/shipments'
 import { rateLimit } from '../../../lib/rate-limit'
 
@@ -9,7 +10,7 @@ function normalizeName(v: string): string {
   return v.trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   // BOL/PO numbers are short, sequential and guessable, so tracking cannot be
   // BOL-only. Rate-limit per IP first so the second-factor check below can't
   // be brute-forced by spraying name guesses.
@@ -60,4 +61,4 @@ export async function POST(req: NextRequest) {
     console.error('[shipments/lookup]', err)
     return NextResponse.json({ error: 'Lookup failed.' }, { status: 500 })
   }
-}
+})

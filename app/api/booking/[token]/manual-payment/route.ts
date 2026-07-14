@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import {
   getBookingByToken, saveBooking, customerView, dollarsToCents, recompute, pushBookingEvent,
   type Payment, type PaymentMethod, type PaymentType,
@@ -16,7 +17,7 @@ const METHODS: PaymentMethod[] = ['zelle', 'apple_cash', 'cash', 'other']
 // Zelle now REQUIRES a payment screenshot (sealed + owner-reviewed); apple_cash/cash
 // remain lightweight self-reports. Recorded as 'sent_by_customer' (pending) until an
 // admin verifies it — the balance never moves on an unverified proof.
-export async function POST(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export const POST = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   if (await rateLimit(req, 'bookingmanualpay', 8, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many attempts. Please wait a few minutes.' }, { status: 429 })
@@ -100,4 +101,4 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   await saveBooking(b)
   await emailOpsManualPaymentSubmitted(b, payment).catch(() => {})
   return NextResponse.json({ ok: true, booking: customerView(b) })
-}
+})

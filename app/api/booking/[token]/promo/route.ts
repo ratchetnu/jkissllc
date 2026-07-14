@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { getBookingByToken, saveBooking, customerView, recompute, balanceDueCents } from '../../../../lib/bookings'
 import { rateLimit } from '../../../../lib/rate-limit'
 import { getPromo, savePromo, validatePromo, normalizeCode } from '../../../../lib/promo'
 
 // POST /api/booking/[token]/promo — customer applies a promo code to their invoice.
-export async function POST(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export const POST = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   if (await rateLimit(req, 'bookingpromo', 10, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many attempts. Please wait a few minutes.' }, { status: 429 })
@@ -34,4 +35,4 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   await saveBooking(b)
 
   return NextResponse.json({ ok: true, booking: customerView(b), discountCents: v.discountCents })
-}
+})

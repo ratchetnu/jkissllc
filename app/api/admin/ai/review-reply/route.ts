@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../../_lib/session'
 import { runAiTask } from '../../../../lib/ai/service'
 
 export const maxDuration = 30
 
 // POST /api/admin/ai/review-reply — drafts a public reply to a customer review.
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePermission(req, 'ai:use')
   if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({}))
@@ -21,4 +22,4 @@ export async function POST(req: NextRequest) {
   })
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status })
   return NextResponse.json({ ok: true, reply: result.text, callId: result.callId })
-}
+})

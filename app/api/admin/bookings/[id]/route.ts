@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession, getPrincipal } from '../../_lib/session'
 import { can } from '../../../../lib/rbac'
 import {
@@ -48,7 +49,7 @@ function addConfirmedPayment(b: Booking, p: { amountCents: number; method: Payme
 
 // GET — full booking (admin sees everything: payments, internal notes, the IP /
 // UA agreement audit trail) plus the exact accepted policy text for evidence.
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const GET = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { id } = await params
   const b = await getBookingByToken(id)
@@ -57,16 +58,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     ? (await getPolicyVersion(b.agreementPolicyVersion)) ?? (await getCurrentPolicy())
     : null
   return NextResponse.json({ booking: b, acceptedPolicy: policy })
-}
+})
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const DELETE = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { id } = await params
   await deleteBooking(id)
   return NextResponse.json({ ok: true })
-}
+})
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { id } = await params
   // Serialize every admin write to this booking with background workers + customer
@@ -74,7 +75,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   return withBookingWriteLock(id, () => patchBooking(req, id), {
     onBusy: () => NextResponse.json({ error: 'This booking is being updated — please retry in a moment.' }, { status: 409 }),
   })
-}
+})
 
 async function patchBooking(req: NextRequest, id: string): Promise<NextResponse> {
   const b = await getBookingByToken(id)

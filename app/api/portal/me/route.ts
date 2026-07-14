@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireCrew } from '../_lib/crew'
 import { getStaff } from '../../../lib/staff'
 import { getUser } from '../../../lib/users'
 
 // The signed-in crew member's own identity + profile. Nothing here is another
 // person's data: staff is fetched by the token's staffId, user by its sub.
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
 
@@ -32,4 +33,4 @@ export async function GET(req: NextRequest) {
     },
     lastLogin,
   })
-}
+})

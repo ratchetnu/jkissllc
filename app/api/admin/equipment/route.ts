@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession } from '../_lib/session'
 import { listEquipment, saveEquipment, deleteEquipment, type Equipment, type Ownership } from '../../../lib/equipment'
 
@@ -6,12 +7,12 @@ const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim()
 const OWNERSHIP: Ownership[] = ['company', 'contractor']
 const isOwnership = (v: unknown): v is Ownership => typeof v === 'string' && (OWNERSHIP as string[]).includes(v)
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   return NextResponse.json({ ok: true, items: await listEquipment() })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({}))
   const name = S(body.name, 100)
@@ -39,12 +40,12 @@ export async function POST(req: NextRequest) {
   }
   await saveEquipment(equipment)
   return NextResponse.json({ ok: true, equipment })
-}
+})
 
-export async function DELETE(req: NextRequest) {
+export const DELETE = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const id = new URL(req.url).searchParams.get('id')
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
   await deleteEquipment(id)
   return NextResponse.json({ ok: true })
-}
+})

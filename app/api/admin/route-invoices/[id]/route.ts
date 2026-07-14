@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { COMPANY } from '../../../../lib/company'
 import { requireSession } from '../../_lib/session'
 import {
@@ -27,7 +28,7 @@ function sanitizeLines(v: unknown): InvoiceLine[] {
   })
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { id } = await params
   const inv = await getInvoiceByToken(id)
@@ -89,11 +90,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   return NextResponse.json({ error: 'Unknown action.' }, { status: 400 })
-}
+})
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const DELETE = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { id } = await params
   await deleteInvoice(id)
   return NextResponse.json({ ok: true })
-}
+})

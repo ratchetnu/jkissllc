@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { put } from '@vercel/blob'
 import { requireSession } from '../_lib/session'
 
@@ -9,7 +10,7 @@ export const maxDuration = 30
 // badge photos, etc.). Same {image: dataURL} → {url} shape as the public /api/upload,
 // but behind requireSession instead of the rate-limit/bot-check the public form uses:
 // an admin-only feature should ride an authenticated path, not the anonymous uploader.
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
@@ -29,4 +30,4 @@ export async function POST(req: NextRequest) {
     console.error('[admin/upload]', e)
     return NextResponse.json({ error: 'Upload failed — please try again.' }, { status: 500 })
   }
-}
+})

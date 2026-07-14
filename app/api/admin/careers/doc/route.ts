@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { get } from '@vercel/blob'
 import { requireSession } from '../../_lib/session'
 import { openDoc } from '../../../../lib/doc-crypto'
@@ -22,7 +23,7 @@ const MEDIA: Record<string, string> = {
   jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', heif: 'image/heif',
 }
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
@@ -57,4 +58,4 @@ export async function GET(req: NextRequest) {
     console.error('[admin/careers/doc]', e)
     return NextResponse.json({ error: 'could not read document' }, { status: 500 })
   }
-}
+})

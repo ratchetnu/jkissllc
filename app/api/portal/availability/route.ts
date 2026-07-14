@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireCrew } from '../_lib/crew'
 import { getOrInitWeek, saveWeek, normalizeWeekStart } from '../../../lib/crew-availability'
 import { centralToday, mondayOf, addDaysStr } from '../../../lib/dates'
@@ -15,7 +16,7 @@ function upcomingWeekStarts(count = 5): string[] {
   return Array.from({ length: count }, (_, i) => addDaysStr(thisMonday, i * 7))
 }
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
 
@@ -23,9 +24,9 @@ export async function GET(req: NextRequest) {
   const weekStart = qWeek ? normalizeWeekStart(qWeek) : mondayOf(centralToday())
   const week = await getOrInitWeek(who.staffId, weekStart)
   return NextResponse.json({ ok: true, week, weekOptions: upcomingWeekStarts() })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
 
@@ -40,4 +41,4 @@ export async function POST(req: NextRequest) {
 
   const week = await saveWeek(who.staffId, weekStart, body?.days, !!body?.submit)
   return NextResponse.json({ ok: true, week })
-}
+})

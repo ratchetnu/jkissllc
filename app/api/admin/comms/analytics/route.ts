@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../../_lib/session'
 import { listInstances, listReminders } from '../../../../lib/reminders'
 
@@ -8,7 +9,7 @@ export const dynamic = 'force-dynamic'
 // Communication analytics (request Part 15). Aggregates the ReminderInstance ledger:
 // sent / read / ack / completion rates, average response time, per-crew compliance,
 // the most-missed reminder, and the most-reliable crew. All derived — no new store.
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePermission(req, 'comms:analytics')
   if (who instanceof NextResponse) return who
 
@@ -74,4 +75,4 @@ export async function GET(req: NextRequest) {
     mostMissed,
     activeReminders: reminders.filter(r => r.active && !r.archived).length,
   })
-}
+})

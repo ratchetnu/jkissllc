@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession } from '../_lib/session'
 import {
   listInvoices, saveInvoice, generateFromRoutes, uninvoicedRoutes,
@@ -9,7 +10,7 @@ import { parsePayCents } from '../../../lib/route-pay'
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s)
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const url = new URL(req.url)
 
@@ -33,9 +34,9 @@ export async function GET(req: NextRequest) {
     console.error('[route-invoices GET]', err)
     return NextResponse.json({ error: 'list failed' }, { status: 500 })
   }
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
   const action = S(b.action, 40) || 'generate'
@@ -60,4 +61,4 @@ export async function POST(req: NextRequest) {
   const res = await generateFromRoutes(businessName, start, end, { clientName, clientEmail })
   if ('error' in res) return NextResponse.json({ error: res.error }, { status: 400 })
   return NextResponse.json({ ok: true, invoice: res.invoice, count: res.count })
-}
+})

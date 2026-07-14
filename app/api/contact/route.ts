@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
+import { withTenantRoute } from '../../lib/platform/tenancy/with-tenant-route'
 import { rateLimit } from '../../lib/rate-limit'
 import { escapeHtml, isValidEmail } from '../../lib/validators'
 import { isBlockedBot } from '../../lib/botcheck'
 import { COMPANY } from '../../lib/company'
 
-export async function POST(request: NextRequest) {
+export const POST = withTenantRoute(async (request: NextRequest) => {
   // Public form — rate-limit per IP so it can't be used as an email-spam relay.
   if (await rateLimit(request, 'contact', 5, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many submissions. Please wait a few minutes and try again.' }, { status: 429 })
@@ -67,4 +68,4 @@ export async function POST(request: NextRequest) {
     console.error('[contact]', err)
     return NextResponse.json({ error: 'Failed to send.' }, { status: 500 })
   }
-}
+})

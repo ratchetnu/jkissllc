@@ -3,6 +3,7 @@
 // contractors must never see. The only gate is requireSession; there is no public
 // projection of this data anywhere (see lib/routes.toPublicRouteFor).
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireAdmin } from '../_lib/session'
 import { listRoutes } from '../../../lib/routes'
 import { listStaff } from '../../../lib/staff'
@@ -13,7 +14,7 @@ const P = (v: string | null, max = 80): string | undefined => {
   return s || undefined
 }
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireAdmin(req)
   if (who instanceof NextResponse) return who
   const q = new URL(req.url).searchParams
@@ -33,11 +34,11 @@ export async function GET(req: NextRequest) {
     console.error('[admin/finance GET]', err)
     return NextResponse.json({ error: 'finance failed' }, { status: 500 })
   }
-}
+})
 
 // Update the finance settings (currently just: does the crew's confirmation text
 // and page show them their own pay?).
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requireAdmin(req)
   if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({}))
@@ -46,4 +47,4 @@ export async function POST(req: NextRequest) {
   }
   const settings = await setFinanceSettings({ showPayInConfirm: body.showPayInConfirm })
   return NextResponse.json({ ok: true, settings })
-}
+})

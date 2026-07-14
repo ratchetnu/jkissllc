@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
+import { withTenantRoute } from '../../lib/platform/tenancy/with-tenant-route'
 import { rateLimit } from '../../lib/rate-limit'
 import { escapeHtml, isValidEmail } from '../../lib/validators'
 import { isBlockedBot } from '../../lib/botcheck'
 import { COMPANY, CREDENTIALS_DOT } from '../../lib/company'
 
-export async function POST(request: NextRequest) {
+export const POST = withTenantRoute(async (request: NextRequest) => {
   // Public form that sends two emails (one to a requester-supplied address) —
   // rate-limit per IP so it can't be used as an email-spam relay.
   if (await rateLimit(request, 'coi', 5, 10 * 60_000)) {
@@ -108,4 +109,4 @@ export async function POST(request: NextRequest) {
     console.error('[coi]', err)
     return NextResponse.json({ error: `Failed to submit. Please email ${COMPANY.email} directly.` }, { status: 500 })
   }
-}
+})

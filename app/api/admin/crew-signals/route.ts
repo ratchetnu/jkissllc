@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../_lib/session'
 import { listStaff } from '../../../lib/staff'
 import { listClaims } from '../../../lib/claims'
@@ -14,7 +15,7 @@ import { centralToday, mondayOf } from '../../../lib/dates'
 // they're assigned to is.
 const AVAIL_WINDOW = 4
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePermission(req, 'crew:score:view')
   if (who instanceof NextResponse) return who
 
@@ -41,4 +42,4 @@ export async function GET(req: NextRequest) {
   }))
 
   return NextResponse.json({ ok: true, signals })
-}
+})

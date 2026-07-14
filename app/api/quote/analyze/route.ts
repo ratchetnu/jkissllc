@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { rateLimit } from '../../../lib/rate-limit'
 import { isBlockedBot } from '../../../lib/botcheck'
 import { buildPhotoEstimate } from '../../../lib/ai/photo-estimate'
@@ -18,7 +19,7 @@ export const maxDuration = 60
 // 3) classify instant_quote | estimate_range | manual_review
 // 4) persist a draft estimate (qa:{id}, 24h) so submit can attach it to the booking
 // The result is customer-safe (no cost basis / margin). The AI never sees PII.
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   if (await rateLimit(req, 'quoteanalyze', 10, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many estimates. Please wait a few minutes.' }, { status: 429 })
   }
@@ -58,4 +59,4 @@ export async function POST(req: NextRequest) {
   const followUps = selectFollowUpQuestions({ serviceFamily: serviceFamily(serviceType), analysis: stored.analysis, estate })
 
   return NextResponse.json({ ok: true, estimate: customerEstimateView(stored), followUps })
-}
+})

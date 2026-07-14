@@ -14,7 +14,11 @@ export async function GET(req: NextRequest) {
   if (who instanceof NextResponse) return who
   try {
     const analytics = await computeAiAnalytics(2000)
-    return NextResponse.json({ ok: true, analytics })
+    // Spread the analytics fields onto the envelope (matching the registry/prompts
+    // routes): the Control Center page reads a.totals / a.today / a.generatedAt off
+    // the top level, so nesting under `analytics` left every field undefined and
+    // crashed the page on render.
+    return NextResponse.json({ ok: true, ...analytics })
   } catch (e) {
     console.error('[ai/analytics]', e)
     return NextResponse.json({ error: 'Failed to load AI analytics.' }, { status: 500 })

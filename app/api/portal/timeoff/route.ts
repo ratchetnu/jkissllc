@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireCrew } from '../_lib/crew'
 import { createRequest, listForStaff, cancelRequest, isLateRequest } from '../../../lib/timeoff'
 import { getStaff } from '../../../lib/staff'
@@ -8,13 +9,13 @@ import { COMPANY } from '../../../lib/company'
 
 // Crew manage their OWN time-off requests. staffId is always the token's — never
 // from the body.
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
   return NextResponse.json({ ok: true, requests: await listForStaff(who.staffId) })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
 
@@ -53,9 +54,9 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: true, request, late: request.isLate })
-}
+})
 
-export async function PATCH(req: NextRequest) {
+export const PATCH = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({}))
@@ -66,4 +67,4 @@ export async function PATCH(req: NextRequest) {
   const request = await cancelRequest(id, who.staffId)
   if (!request) return NextResponse.json({ ok: false, error: 'Request not found.' }, { status: 404 })
   return NextResponse.json({ ok: true, request })
-}
+})

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { COMPANY } from '../../../../lib/company'
 import { requirePermission } from '../../_lib/session'
 import { getBookingByToken, balanceDueCents, fmtUSD, SERVICE_LABELS } from '../../../../lib/bookings'
@@ -16,7 +17,7 @@ const INTENTS: Record<string, string> = {
 }
 
 // POST /api/admin/ai/message — drafts a short SMS/email message to a customer.
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePermission(req, 'ai:use')
   if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({}))
@@ -42,4 +43,4 @@ export async function POST(req: NextRequest) {
   })
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status })
   return NextResponse.json({ ok: true, message: result.text, callId: result.callId })
-}
+})

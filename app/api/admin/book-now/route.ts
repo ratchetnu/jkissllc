@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession, getPrincipal } from '../_lib/session'
 import { listBookings } from '../../../lib/bookings'
 import { isBookNow, summarizeBookNow } from '../../../lib/book-now-queue'
@@ -9,7 +10,7 @@ import { isBookNow, summarizeBookNow } from '../../../lib/book-now-queue'
 // reach an admin session (they are redirected to the crew portal), so this is
 // owner/admin/manager only. Test + archived records are included in the payload and
 // filtered client-side by explicit toggles (so the counts of "real" work stay honest).
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   // Belt-and-suspenders: never serve intake data to a crew principal.
   const who = await getPrincipal(req)
@@ -26,4 +27,4 @@ export async function GET(req: NextRequest) {
     console.error('[admin/book-now GET]', err)
     return NextResponse.json({ error: 'list failed' }, { status: 500 })
   }
-}
+})

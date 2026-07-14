@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession } from '../_lib/session'
 import { listBusinesses, getBusiness, saveBusiness, deleteBusiness, bizKey, type Business, type RateHistoryEntry } from '../../../lib/businesses'
 import { parseMoneyCents } from '../../../lib/finance'
@@ -7,7 +8,7 @@ import { repriceBusinessRoutes, repriceCandidates, isApplyTo, type ApplyTo } fro
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s)
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     // ?candidates=<business name> lists the live routes a rate change could apply
@@ -20,11 +21,11 @@ export async function GET(req: NextRequest) {
     if (msg === 'UPSTASH_NOT_CONFIGURED') return NextResponse.json({ error: 'UPSTASH_NOT_CONFIGURED' }, { status: 503 })
     return NextResponse.json({ error: 'list failed' }, { status: 500 })
   }
-}
+})
 
 // Upsert a business's editable details + its route contract rate, keyed by its
 // (normalized) name. Admin-only — pricing never leaves this boundary.
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
   const name = S(b.name, 200)
@@ -99,12 +100,12 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: true, business: rec, reprice })
-}
+})
 
-export async function DELETE(req: NextRequest) {
+export const DELETE = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const key = new URL(req.url).searchParams.get('key')
   if (!key) return NextResponse.json({ error: 'key required' }, { status: 400 })
   await deleteBusiness(key)
   return NextResponse.json({ ok: true })
-}
+})

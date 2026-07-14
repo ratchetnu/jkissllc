@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireCrew } from '../_lib/crew'
 import { createCorrection, listForStaff } from '../../../lib/pay-corrections'
 import { getStaff } from '../../../lib/staff'
@@ -7,13 +8,13 @@ import { COMPANY } from '../../../lib/company'
 
 // Crew raise a pay-correction request (they can't edit pay). Scoped to their own
 // staffId. Management reviews it in Operations.
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
   return NextResponse.json({ ok: true, corrections: await listForStaff(who.staffId) })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
 
@@ -38,4 +39,4 @@ export async function POST(req: NextRequest) {
   }).catch(() => {})
 
   return NextResponse.json({ ok: true, correction })
-}
+})

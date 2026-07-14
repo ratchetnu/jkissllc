@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../_lib/session'
 import { buildCrewCards, filterBySegment, segmentCounts } from '../../../lib/reminder-segments'
 import { listBusinesses } from '../../../lib/businesses'
@@ -10,7 +11,7 @@ export const dynamic = 'force-dynamic'
 // The Crew directory that lives inside the Communication Center (request Part 1).
 // Returns rich per-crew cards with today's operational status + live segment counts,
 // so the UI can search, filter, multi-select, and target sends without extra calls.
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePermission(req, 'crew:view')
   if (who instanceof NextResponse) return who
 
@@ -25,4 +26,4 @@ export async function GET(req: NextRequest) {
     total: cards.length,
     businesses: businesses.map(b => ({ key: b.key, name: b.name })),
   })
-}
+})

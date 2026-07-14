@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession, requireAdmin } from '../_lib/session'
 import { listStaff, saveStaff, deleteStaff, type Staff, type PayKind, type PayHistoryEntry } from '../../../lib/staff'
 import { bizKey } from '../../../lib/businesses'
@@ -32,15 +33,15 @@ const sameRates = (a: Record<string, number> | undefined, b: Record<string, numb
   return ka.length === kb.length && ka.every(k => a?.[k] === b?.[k])
 }
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   // ?candidates=<staffId> lists the live routes a pay change could apply to.
   const candidatesFor = new URL(req.url).searchParams.get('candidates')
   if (candidatesFor) return NextResponse.json({ ok: true, items: await repriceCandidates({ staffId: candidatesFor }) })
   return NextResponse.json({ ok: true, items: await listStaff() })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   // Crew records + pay settings are admin-only (crew:manage / pay:configure).
   // Managers assign crew to routes via the routes API, not here.
   const who = await requireAdmin(req)
@@ -144,13 +145,13 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: true, staff, reprice })
-}
+})
 
-export async function DELETE(req: NextRequest) {
+export const DELETE = withTenantRoute(async (req: NextRequest) => {
   const who = await requireAdmin(req)
   if (who instanceof NextResponse) return who
   const id = new URL(req.url).searchParams.get('id')
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
   await deleteStaff(id)
   return NextResponse.json({ ok: true })
-}
+})

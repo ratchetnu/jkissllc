@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../../../_lib/session'
 import { getBookingByToken } from '../../../../../lib/bookings'
 import { PROOF_PATH_RE, proofMediaType, openProof } from '../../../../../lib/payment-proof'
@@ -11,7 +12,7 @@ export const dynamic = 'force-dynamic'
 // (booking token, paymentId), which defeats IDOR: an admin can only view a proof
 // that actually belongs to the booking they name, and the ciphertext path never
 // reaches the browser. Gated on invoices:manage (Owner/Admin). Never cached.
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const GET = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const who = await requirePermission(req, 'invoices:manage')
   if (who instanceof NextResponse) return who
 
@@ -42,4 +43,4 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     console.error('[admin/bookings/proof]', e)
     return NextResponse.json({ error: 'could_not_read' }, { status: 500 })
   }
-}
+})

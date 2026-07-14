@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession } from '../_lib/session'
 import {
   listClaims, saveClaim, getClaim, generateClaimId, nextClaimNumber,
@@ -34,7 +35,7 @@ function buildIntakeAttachments(raw: unknown): ClaimAttachment[] {
   return out
 }
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const q = new URL(req.url).searchParams
@@ -76,9 +77,9 @@ export async function GET(req: NextRequest) {
     console.error('[admin/claims GET]', err)
     return NextResponse.json({ error: 'list failed' }, { status: 500 })
   }
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
 
@@ -154,4 +155,4 @@ export async function POST(req: NextRequest) {
     console.error('[admin/claims POST]', err)
     return NextResponse.json({ error: 'create failed' }, { status: 500 })
   }
-}
+})

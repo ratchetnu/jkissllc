@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../_lib/session'
 import { computePay } from '../../../lib/route-pay'
 import { getStaff } from '../../../lib/staff'
@@ -34,15 +35,15 @@ async function buildSnapshot(staffId: string, start: string, end: string) {
   }
 }
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePermission(req, 'pay:view:all')
   if (who instanceof NextResponse) return who
   const staffId = new URL(req.url).searchParams.get('staffId')
   const all = await listStatements()
   return NextResponse.json({ ok: true, statements: staffId ? all.filter(s => s.staffId === staffId) : all })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePermission(req, 'pay:generate')
   if (who instanceof NextResponse) return who
 
@@ -94,4 +95,4 @@ export async function POST(req: NextRequest) {
   }
   await saveStatement(statement)
   return NextResponse.json({ ok: true, statement })
-}
+})

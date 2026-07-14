@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { put } from '@vercel/blob'
 import { requireCrew } from '../_lib/crew'
 import { saveUniformPhoto, getUniformPhoto } from '../../../lib/uniform'
@@ -10,14 +11,14 @@ export const maxDuration = 30
 // Daily uniform-photo upload (request "Uniform Photo"). A crew member submits today's
 // uniform photo; this suppresses the uniform reminder and clears the "missing uniform"
 // flag. Scoped to the caller's own staffId.
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
   const photo = await getUniformPhoto(who.staffId, centralToday())
   return NextResponse.json({ uploaded: !!photo, url: photo?.url ?? null, at: photo?.uploadedAt ?? null })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
@@ -36,4 +37,4 @@ export async function POST(req: NextRequest) {
     console.error('[portal/uniform]', e)
     return NextResponse.json({ error: 'Upload failed — please try again.' }, { status: 500 })
   }
-}
+})

@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { getBookingByToken, saveBooking, customerView } from '../../../lib/bookings'
 import { getCurrentPolicy, getPolicyVersion } from '../../../lib/policy'
 import { emailOpsBookingViewed } from '../../../lib/booking-emails'
 
 // GET /api/booking/[token] — customer-safe booking + the policy to display.
 // Also records the first view (chargeback evidence) without leaking internals.
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export const GET = withTenantRoute(async (_req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   let booking
   try {
@@ -35,4 +36,4 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
     booking: customerView(booking),
     policy: { version: policy.version, text: policy.text },
   })
-}
+})

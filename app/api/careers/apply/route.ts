@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { rateLimit } from '../../../lib/rate-limit'
 import { isBlockedBot } from '../../../lib/botcheck'
 import { str, isValidEmail, escapeHtml } from '../../../lib/validators'
@@ -85,7 +86,7 @@ function cleanDocs(raw: unknown): ApplicantDoc[] {
 // POST /api/careers/apply — public applicant intake. Validates, scores, persists
 // to Redis, and notifies the owner + confirms the applicant. Reuses the same
 // rate-limit / bot-check / validator spine as the contact & quote routes.
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   if (await rateLimit(req, 'careers-apply', 8, 30 * 60_000)) {
     return NextResponse.json({ error: 'Too many submissions. Please wait a bit and try again.' }, { status: 429 })
   }
@@ -165,4 +166,4 @@ export async function POST(req: NextRequest) {
   }).catch(() => {})
 
   return NextResponse.json({ ok: true, applicantNumber: applicant.applicantNumber })
-}
+})

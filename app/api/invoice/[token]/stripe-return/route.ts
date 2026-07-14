@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { getStripe, stripeConfigured } from '../../../../lib/stripe'
 import { getInvoiceByToken, saveInvoice, subtotalCents } from '../../../../lib/route-invoices'
 import { siteUrl } from '../../../../lib/booking-emails'
@@ -7,7 +8,7 @@ export const runtime = 'nodejs'
 
 // Stripe success redirect. Retrieve the session, mark the invoice paid
 // (idempotent), then bounce back to the invoice page.
-export async function GET(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export const GET = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   const base = siteUrl()
   const sessionId = new URL(req.url).searchParams.get('session_id')
@@ -30,4 +31,4 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
     }
   }
   return NextResponse.redirect(`${base}/invoice/${token}?paid=1`)
-}
+})

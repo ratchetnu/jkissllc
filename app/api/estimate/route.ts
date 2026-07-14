@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../lib/platform/tenancy/with-tenant-route'
 import { rateLimit } from '../../lib/rate-limit'
 import { getDepositCents, unitsForLoad } from '../../lib/availability'
 import { getDisposalSettings, priceJob, categoryFor } from '../../lib/disposal'
@@ -10,7 +11,7 @@ const JOB_BASED = ['junk-removal', 'eviction', 'estate-cleanout', 'garage-cleano
 
 // POST /api/estimate — instant, email-free price + deposit preview for the booking
 // wizard. Uses the disposal-protected pricing for job-based services.
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   if (await rateLimit(req, 'estimate', 30, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many requests. Please wait a moment.' }, { status: 429 })
   }
@@ -29,4 +30,4 @@ export async function POST(req: NextRequest) {
   }
   // Non-job-based (moving/appliance/etc.): no instant range, just the deposit to hold.
   return NextResponse.json({ ok: true, hasPrice: false, depositCents, units })
-}
+})

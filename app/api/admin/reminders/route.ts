@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../_lib/session'
 import {
   listReminders, createReminder, type NewReminder,
@@ -85,14 +86,14 @@ export function parseReminderInput(body: Record<string, unknown>, actor: { sub: 
   }
 }
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePermission(req, 'reminders:view')
   if (who instanceof NextResponse) return who
   const reminders = await listReminders(400)
   return NextResponse.json({ reminders })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePermission(req, 'reminders:manage')
   if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
@@ -105,4 +106,4 @@ export async function POST(req: NextRequest) {
     meta: { templateId: r.templateId, schedule: r.schedule.kind, target: r.target.mode },
   })
   return NextResponse.json({ reminder: r }, { status: 201 })
-}
+})

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../lib/platform/tenancy/with-tenant-route'
 import { rateLimit } from '../../lib/rate-limit'
 import { isValidEmail } from '../../lib/validators'
 import { isBlockedBot } from '../../lib/botcheck'
@@ -103,7 +104,7 @@ const ADDON_LABELS: Record<string, string> = {
   'appliance-hookup': 'Appliance hookup', priority: 'Priority scheduling',
 }
 
-export async function POST(request: NextRequest) {
+export const POST = withTenantRoute(async (request: NextRequest) => {
   // Public form that sends email and makes an outbound ZIP-lookup call —
   // rate-limit per IP to block spam/amplification abuse.
   if (await rateLimit(request, 'quote', 5, 10 * 60_000)) {
@@ -311,4 +312,4 @@ export async function POST(request: NextRequest) {
     console.error('[quote]', err)
     return NextResponse.json({ error: `Failed to submit. Please email ${COMPANY.email} directly.` }, { status: 500 })
   }
-}
+})

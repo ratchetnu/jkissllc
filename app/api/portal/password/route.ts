@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireCrew } from '../_lib/crew'
 import { getUser, setUserPassword } from '../../../lib/users'
 import { verifyPassword, passwordPolicyError } from '../../../lib/password'
 
 // Crew changes their OWN password. Requires the current password (so a borrowed,
 // still-open session can't silently reset it). Never touches pay, rates, or role.
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
 
@@ -24,4 +25,4 @@ export async function POST(req: NextRequest) {
 
   await setUserPassword(user.id, next)
   return NextResponse.json({ ok: true })
-}
+})

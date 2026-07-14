@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../_lib/session'
 import { getWeek, listWeeks, isAvailableOn, normalizeWeekStart } from '../../../lib/crew-availability'
 import { listStaff } from '../../../lib/staff'
@@ -12,7 +13,7 @@ import { listStaff } from '../../../lib/staff'
 //  ?date= (no staffId)   → { availability: { [staffId]: true|false|null } } for all
 //                          active crew on that date (the scheduling warning source)
 //  ?staffId=             → recent submitted/draft weeks
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePermission(req, 'availability:view')
   if (who instanceof NextResponse) return who
 
@@ -39,4 +40,4 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: true, weeks: await listWeeks(staffId) })
-}
+})

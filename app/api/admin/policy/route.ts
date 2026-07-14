@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession } from '../_lib/session'
 import { getCurrentPolicy, savePolicy, listPolicyVersions } from '../../../lib/policy'
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const current = await getCurrentPolicy()
@@ -13,9 +14,9 @@ export async function GET(req: NextRequest) {
     if (msg === 'UPSTASH_NOT_CONFIGURED') return NextResponse.json({ error: 'UPSTASH_NOT_CONFIGURED' }, { status: 503 })
     return NextResponse.json({ error: 'failed' }, { status: 500 })
   }
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({}))
   const text = typeof body.text === 'string' ? body.text.trim() : ''
@@ -28,4 +29,4 @@ export async function POST(req: NextRequest) {
     if (msg === 'UPSTASH_NOT_CONFIGURED') return NextResponse.json({ error: 'UPSTASH_NOT_CONFIGURED' }, { status: 503 })
     return NextResponse.json({ error: 'failed' }, { status: 500 })
   }
-}
+})

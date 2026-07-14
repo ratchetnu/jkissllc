@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession } from '../_lib/session'
 import { redis } from '../../../lib/redis'
 
@@ -14,7 +15,7 @@ function parseHash(arr: string[]): { key: string; total: number }[] {
   return out.sort((a, b) => b.total - a.total)
 }
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
@@ -64,4 +65,4 @@ export async function GET(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: 'analytics unavailable' }, { status: 500 })
   }
-}
+})

@@ -7,6 +7,7 @@
 // Admin-only. Does not touch webhook/matching logic.
 
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession } from '../../_lib/session'
 import { sendSmsDetailed, toE164 } from '../../../../lib/sms'
 import { COMPANY } from '../../../../lib/company'
@@ -22,7 +23,7 @@ function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({}))
 
@@ -110,4 +111,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, channels: out })
   }
   return NextResponse.json({ error: smsErr || 'Could not send — no reachable phone/email on this message.', channels: out }, { status: 502 })
-}
+})

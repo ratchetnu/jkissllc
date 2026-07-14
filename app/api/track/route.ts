@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../lib/platform/tenancy/with-tenant-route'
 import { COMPANY } from '../../lib/company'
 import { redis } from '../../lib/redis'
 
@@ -6,7 +7,7 @@ import { redis } from '../../lib/redis'
 // bypassed the tenant-isolation chokepoint; it now goes through app/lib/redis.ts
 // so the pv:*/uv:* keys are namespaced identically to every other tenant-owned
 // key (unchanged while TENANCY_ENABLED=false). No cookies, no PII stored.
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   try {
     const { path, referrer } = await req.json()
     const page = path || '/'
@@ -35,4 +36,4 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ ok: false }, { status: 500 })
   }
-}
+})

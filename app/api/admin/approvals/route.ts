@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireStaffSession } from '../_lib/session'
 import { listApprovals } from '../../../lib/approvals-store'
 import { decideApproval } from '../../../lib/intake-workflow'
@@ -9,16 +10,16 @@ import type { ApprovalRequest } from '../../../lib/platform/approvals/types'
 //   GET  ?status=pending|all → list approvals
 //   POST { approvalId, decision:'approve'|'reject', reason? } → decide one
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireStaffSession(req)
   if (who instanceof NextResponse) return who
   const statusParam = req.nextUrl.searchParams.get('status') ?? 'pending'
   const status = statusParam === 'all' ? undefined : (statusParam as ApprovalRequest['status'])
   const items = await listApprovals(who.tenantId, { status, limit: 100 })
   return NextResponse.json({ items })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requireStaffSession(req)
   if (who instanceof NextResponse) return who
   const body = (await req.json().catch(() => ({}))) as { approvalId?: string; decision?: string; reason?: string }
@@ -35,4 +36,4 @@ export async function POST(req: NextRequest) {
   })
   if (!res.ok) return NextResponse.json({ error: res.error }, { status: res.status })
   return NextResponse.json({ ok: true, approval: res.approval })
-}
+})

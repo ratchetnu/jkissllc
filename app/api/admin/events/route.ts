@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireStaffSession } from '../_lib/session'
 import { eventLog } from '../../../lib/platform/events/event-log'
 
@@ -6,7 +7,7 @@ import { eventLog } from '../../../lib/platform/events/event-log'
 // Admin/manager only; strictly tenant-scoped.
 //   GET ?entityId=<bookingToken>  → that booking's events (newest-first)
 //   GET (no entityId)             → recent events for the caller's tenant
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireStaffSession(req)
   if (who instanceof NextResponse) return who
 
@@ -18,4 +19,4 @@ export async function GET(req: NextRequest) {
     : (await eventLog.readRecent(limit)).filter((e) => e.tenantId === who.tenantId)
 
   return NextResponse.json({ events })
-}
+})

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { rateLimit } from '../../../../lib/rate-limit'
 import { isBlockedBot } from '../../../../lib/botcheck'
 import {
@@ -43,7 +44,7 @@ function safeView(b: Awaited<ReturnType<typeof getBookingByInfoRequest>>) {
   }
 }
 
-export async function GET(req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
+export const GET = withTenantRoute(async (req: NextRequest, ctx: { params: Promise<{ token: string }> }) => {
   if (await rateLimit(req, 'quoteresume', 40, 5 * 60_000)) return NextResponse.json({ error: 'Too many requests.' }, { status: 429 })
   const { token } = await ctx.params
   const b = await getBookingByInfoRequest(token)
@@ -56,9 +57,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ token: stri
     await saveBooking(b)
   }
   return NextResponse.json({ ok: true, ...safeView(b) })
-}
+})
 
-export async function POST(req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
+export const POST = withTenantRoute(async (req: NextRequest, ctx: { params: Promise<{ token: string }> }) => {
   if (await rateLimit(req, 'quoteresumepost', 15, 5 * 60_000)) return NextResponse.json({ error: 'Too many requests.' }, { status: 429 })
   if (await isBlockedBot()) return NextResponse.json({ error: 'Request blocked.' }, { status: 403 })
   const { token } = await ctx.params
@@ -120,4 +121,4 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ token: str
   }
 
   return NextResponse.json({ ok: true, final: projectCustomerFinalState(target) })
-}
+})

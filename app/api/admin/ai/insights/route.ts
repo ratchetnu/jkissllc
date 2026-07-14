@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../../_lib/session'
 import { listBookings } from '../../../../lib/bookings'
 import { computeBookingAnalytics } from '../../../../lib/analytics'
@@ -7,7 +8,7 @@ import { runAiTask } from '../../../../lib/ai/service'
 export const maxDuration = 30
 
 // GET /api/admin/ai/insights — plain-English insights over the booking analytics.
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePermission(req, 'ai:use')
   if (who instanceof NextResponse) return who
   try {
@@ -40,4 +41,4 @@ export async function GET(req: NextRequest) {
     console.error('[ai/insights]', e)
     return NextResponse.json({ error: 'Failed to generate insights.' }, { status: 500 })
   }
-}
+})

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession, getPrincipal } from '../_lib/session'
 import {
   listBookings, saveBooking, generateToken, nextBookingNumber, nextInvoiceNumber, dollarsToCents, sanitizePhotos,
@@ -8,7 +9,7 @@ import { emailOpsBookingCreated } from '../../../lib/booking-emails'
 import { sendConfirmationLink } from '../../../lib/notify'
 import { str, strList, num } from '../../../lib/validators'
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const items = await listBookings(500)
@@ -19,9 +20,9 @@ export async function GET(req: NextRequest) {
     console.error('[admin/bookings GET]', err)
     return NextResponse.json({ error: 'list failed' }, { status: 500 })
   }
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({}))
 
@@ -105,4 +106,4 @@ export async function POST(req: NextRequest) {
     console.error('[admin/bookings POST]', err)
     return NextResponse.json({ error: 'save failed' }, { status: 500 })
   }
-}
+})

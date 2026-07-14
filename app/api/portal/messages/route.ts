@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireCrew } from '../_lib/crew'
 import { threadForStaff, recordMessage, markCrewRead, recentForStaff } from '../../../lib/messages'
 import { getStaff } from '../../../lib/staff'
@@ -10,7 +11,7 @@ export const dynamic = 'force-dynamic'
 
 // The crew portal inbox (request Part 12, crew side). GET returns this crew member's
 // full conversation with dispatch; POST marks-read or sends a reply back to ops.
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
   const msgs = await threadForStaff(who.staffId, 300)
@@ -21,9 +22,9 @@ export async function GET(req: NextRequest) {
       crewReadAt: m.crewReadAt ?? null, crewAckKind: m.crewAckKind ?? null,
     })),
   })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
@@ -61,4 +62,4 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ error: 'unknown_action' }, { status: 400 })
-}
+})

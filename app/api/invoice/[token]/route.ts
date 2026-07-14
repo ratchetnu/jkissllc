@@ -1,6 +1,7 @@
 // PUBLIC invoice API — the token IS the credential. Returns a scrubbed invoice
 // (no route tokens / internal ids) and starts a Stripe Checkout for the balance.
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { getInvoiceByToken, subtotalCents, balanceCents } from '../../../lib/route-invoices'
 import { COMPANY } from '../../../lib/company'
 import { getStripe, stripeConfigured, grossUp } from '../../../lib/stripe'
@@ -27,14 +28,14 @@ function publicView(inv: NonNullable<Awaited<ReturnType<typeof getInvoiceByToken
   }
 }
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export const GET = withTenantRoute(async (_req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   const inv = await getInvoiceByToken(token)
   if (!inv || inv.status === 'void') return NextResponse.json({ error: 'not_found' }, { status: 404 })
   return NextResponse.json({ invoice: publicView(inv) })
-}
+})
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export const POST = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   if (await rateLimit(req, 'invoicepay', 12, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many attempts. Please wait a few minutes.' }, { status: 429 })
@@ -72,4 +73,4 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     console.error('[invoice/pay]', err)
     return NextResponse.json({ error: 'Could not start checkout. Please try again.' }, { status: 500 })
   }
-}
+})

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../../_lib/session'
 import { sendImmediate } from '../../../../lib/reminder-engine'
 import { buildCrewCards, filterBySegment } from '../../../../lib/reminder-segments'
@@ -19,7 +20,7 @@ const strArr = (v: unknown): string[] => Array.isArray(v) ? v.filter(x => typeof
 // (request Part 13). One endpoint, `origin` = 'dispatch' | 'bulk'. Recipients come
 // from explicit staffIds and/or a live segment and/or businesses; dispatch bypasses
 // suppression, bulk may opt in.
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePermission(req, 'messages:send')
   if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
@@ -81,4 +82,4 @@ export async function POST(req: NextRequest) {
     ok: true, sent, requested: staffIds.length,
     instances: instances.map(i => ({ id: i.id, staffId: i.staffId, staffName: i.staffName, channels: i.channelResults })),
   })
-}
+})

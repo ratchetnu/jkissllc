@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession } from '../_lib/session'
 import {
   getShipment, saveShipment, deleteShipment, listShipments,
@@ -7,7 +8,7 @@ import {
 
 const VALID_STATUSES: ShipmentStatus[] = ['created', 'dispatched', 'out-for-delivery', 'delivered']
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const items = await listShipments(200)
@@ -20,9 +21,9 @@ export async function GET(req: NextRequest) {
     console.error('[admin/shipments GET]', err)
     return NextResponse.json({ error: 'list failed' }, { status: 500 })
   }
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json()
   const norm = normalizeBol(body.bol ?? '')
@@ -73,9 +74,9 @@ export async function POST(req: NextRequest) {
     console.error('[admin/shipments POST]', err)
     return NextResponse.json({ error: 'save failed' }, { status: 500 })
   }
-}
+})
 
-export async function DELETE(req: NextRequest) {
+export const DELETE = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { searchParams } = new URL(req.url)
   const bol = searchParams.get('bol')
@@ -87,4 +88,4 @@ export async function DELETE(req: NextRequest) {
     console.error('[admin/shipments DELETE]', err)
     return NextResponse.json({ error: 'delete failed' }, { status: 500 })
   }
-}
+})

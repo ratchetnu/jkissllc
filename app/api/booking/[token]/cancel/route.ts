@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { COMPANY } from '../../../../lib/company'
 import { getBookingByToken, saveBooking, customerView, hoursUntilService, cancellationTier } from '../../../../lib/bookings'
 import { rateLimit } from '../../../../lib/rate-limit'
@@ -6,7 +7,7 @@ import { notifyCancelledByCustomer } from '../../../../lib/notify'
 
 // POST /api/booking/[token]/cancel — customer self-cancels, applying the policy's
 // refund tier by how much notice they gave. Requires an explicit confirm flag.
-export async function POST(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export const POST = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   if (await rateLimit(req, 'bookingcancel', 8, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many attempts. Please wait a few minutes.' }, { status: 429 })
@@ -35,4 +36,4 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   await notifyCancelledByCustomer(b, tier.label)
 
   return NextResponse.json({ ok: true, tier, booking: customerView(b) })
-}
+})

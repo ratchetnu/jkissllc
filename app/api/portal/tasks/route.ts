@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireCrew } from '../_lib/crew'
 import { listInstancesForStaff } from '../../../lib/reminders'
 import { buildCrewCards } from '../../../lib/reminder-segments'
@@ -11,7 +12,7 @@ export const dynamic = 'force-dynamic'
 // The crew dashboard feed (request Part 8): today's tasks, urgent alerts, reminders,
 // incomplete vs completed, and the crew member's own live status — everything
 // actionable in one tap. Scoped to the caller's own staffId (never a request id).
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
   const staffId = who.staffId
@@ -48,4 +49,4 @@ export async function GET(req: NextRequest) {
     tasks,
     counts: { incomplete: incomplete.length, completed: completed.length, urgent: urgent.length },
   })
-}
+})

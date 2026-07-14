@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../../../_lib/session'
 import { getReminder, createReminder } from '../../../../../lib/reminders'
 import { recordAudit } from '../../../../../lib/audit'
@@ -8,7 +9,7 @@ export const dynamic = 'force-dynamic'
 
 // Duplicate a reminder (request Part 7). Copies the rule as a paused draft so the
 // admin can tweak before it fires; counters reset.
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const POST = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const who = await requirePermission(req, 'reminders:manage')
   if (who instanceof NextResponse) return who
   const { id } = await params
@@ -39,4 +40,4 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     meta: { from: id },
   })
   return NextResponse.json({ reminder: copy }, { status: 201 })
-}
+})

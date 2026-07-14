@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireCrew } from '../_lib/crew'
 import { listRoutes } from '../../../lib/routes'
 import { getFinanceSettings } from '../../../lib/finance'
@@ -9,7 +10,7 @@ import { centralToday } from '../../../lib/dates'
 // matching the confirmation-link behavior.
 const DONE = new Set(['completed', 'cancelled', 'declined'])
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
 
@@ -51,4 +52,4 @@ export async function GET(req: NextRequest) {
     .slice(0, 50)
 
   return NextResponse.json({ ok: true, upcoming, past, showPay })
-}
+})

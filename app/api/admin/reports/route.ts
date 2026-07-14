@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession } from '../_lib/session'
 import { listBookings } from '../../../lib/bookings'
 import { computeBookingAnalytics } from '../../../lib/analytics'
 import { listReviews, aggregate } from '../../../lib/site-reviews'
 
 // Executive revenue/booking analytics for the admin dashboard.
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const [bookings, reviews] = await Promise.all([listBookings(1000), listReviews(500)])
@@ -18,4 +19,4 @@ export async function GET(req: NextRequest) {
     console.error('[admin/reports]', err)
     return NextResponse.json({ error: 'failed' }, { status: 500 })
   }
-}
+})

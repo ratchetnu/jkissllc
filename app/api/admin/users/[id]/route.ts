@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../../_lib/session'
 import { getUser, saveUser, setUserPassword, deleteUser, toSafeUser } from '../../../../lib/users'
 import { isRole } from '../../../../lib/rbac'
@@ -8,7 +9,7 @@ import { passwordPolicyError } from '../../../../lib/password'
 // changing a role additionally requires roles:manage — both live on admin, so this
 // is effectively admin-only, but the checks stay explicit and matrix-driven.
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const who = await requirePermission(req, 'users:manage')
   if (who instanceof NextResponse) return who
   const { id } = await params
@@ -63,9 +64,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const fresh = await getUser(user.id)
   return NextResponse.json({ ok: true, user: fresh ? toSafeUser(fresh) : toSafeUser(user) })
-}
+})
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const DELETE = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const who = await requirePermission(req, 'users:manage')
   if (who instanceof NextResponse) return who
   const { id } = await params
@@ -74,4 +75,4 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   }
   await deleteUser(id)
   return NextResponse.json({ ok: true })
-}
+})

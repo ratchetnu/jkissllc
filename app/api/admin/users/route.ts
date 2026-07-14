@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../_lib/session'
 import { createUser, listUsers, toSafeUser } from '../../../lib/users'
 import { getStaff } from '../../../lib/staff'
@@ -8,14 +9,14 @@ import { passwordPolicyError } from '../../../lib/password'
 // Team & Access — manage the manager and crew logins. Admin-only end to end
 // (users:manage). Passwords are hashed in createUser; the hash never leaves here.
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePermission(req, 'users:manage')
   if (who instanceof NextResponse) return who
   const users = await listUsers()
   return NextResponse.json({ ok: true, users: users.map(toSafeUser) })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePermission(req, 'users:manage')
   if (who instanceof NextResponse) return who
 
@@ -58,4 +59,4 @@ export async function POST(req: NextRequest) {
     console.error('[admin/users POST]', err)
     return NextResponse.json({ ok: false, error: 'Could not create the account.' }, { status: 500 })
   }
-}
+})

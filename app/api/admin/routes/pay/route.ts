@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requireSession } from '../../_lib/session'
 import { computePay, defaultPayPeriod } from '../../../../lib/route-pay'
 
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const url = new URL(req.url)
   const def = defaultPayPeriod()
@@ -16,4 +17,4 @@ export async function GET(req: NextRequest) {
     console.error('[routes/pay GET]', err)
     return NextResponse.json({ error: 'failed' }, { status: 500 })
   }
-}
+})

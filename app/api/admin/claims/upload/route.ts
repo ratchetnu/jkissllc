@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client'
 import { requireSession } from '../../_lib/session'
 
@@ -11,7 +12,7 @@ import { requireSession } from '../../_lib/session'
 // evidence must also accept the PDF/photo of a damage report, a lumper receipt, or a
 // dashcam clip — so documents and video are allowed here. The claim's `attach` action
 // stores the returned URL; kind (photo/video/document) is derived client-side.
-export async function POST(req: NextRequest): Promise<NextResponse> {
+export const POST = withTenantRoute(async (req: NextRequest): Promise<NextResponse>  => {
   const body = (await req.json()) as HandleUploadBody
   try {
     const result = await handleUpload({
@@ -44,4 +45,4 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const msg = err instanceof Error ? err.message : 'upload failed'
     return NextResponse.json({ error: msg }, { status: msg === 'unauthorized' ? 401 : 400 })
   }
-}
+})

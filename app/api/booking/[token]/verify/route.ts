@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { getBookingByToken, saveBooking, recompute, customerView, pushBookingEvent } from '../../../../lib/bookings'
 import { getCurrentPolicy } from '../../../../lib/policy'
 import { rateLimit } from '../../../../lib/rate-limit'
@@ -14,7 +15,7 @@ function clean(v: unknown, max = 500): string | undefined {
 
 // POST /api/booking/[token]/verify — customer verifies date + arrival window,
 // supplies access details, and accepts the cancellation/refund policy.
-export async function POST(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export const POST = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   if (await rateLimit(req, 'bookingverify', 10, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many attempts. Please wait a few minutes.' }, { status: 429 })
@@ -78,4 +79,4 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   }
 
   return NextResponse.json({ ok: true, booking: customerView(b) })
-}
+})

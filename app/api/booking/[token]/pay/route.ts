@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { COMPANY } from '../../../../lib/company'
 import {
   getBookingByToken, balanceDueCents, fmtUSD,
@@ -12,7 +13,7 @@ export const runtime = 'nodejs'
 
 // POST /api/booking/[token]/pay — start a Stripe Checkout for deposit / balance
 // / full. Card payments are grossed up so J Kiss nets the invoice amount.
-export async function POST(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export const POST = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   if (await rateLimit(req, 'bookingpay', 12, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many attempts. Please wait a few minutes.' }, { status: 429 })
@@ -78,4 +79,4 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     console.error('[booking/pay]', err)
     return NextResponse.json({ error: 'Could not start checkout. Please try again or use Zelle/Apple Pay.' }, { status: 500 })
   }
-}
+})

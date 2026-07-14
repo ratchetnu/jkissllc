@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireCrew } from '../_lib/crew'
 import { getInstance, ackInstance } from '../../../lib/reminders'
 import { getMessage, saveMessage } from '../../../lib/messages'
@@ -12,7 +13,7 @@ const ALL_ACKS: AckKind[] = ['acknowledged', 'completed', 'calling', 'need_help'
 
 // Acknowledge a reminder from inside the authenticated crew portal (request Part 5).
 // Scoped: a crew member may only ack an instance addressed to their own staffId.
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
@@ -36,4 +37,4 @@ export async function POST(req: NextRequest) {
     meta: { kind, reminderId: inst.reminderId, via: 'portal' },
   })
   return NextResponse.json({ ok: true, ackedKind: kind, completed: !!inst.completedAt })
-}
+})

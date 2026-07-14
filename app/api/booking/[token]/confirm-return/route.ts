@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { getBookingByToken, saveBooking, customerView } from '../../../../lib/bookings'
 import { rateLimit } from '../../../../lib/rate-limit'
 import { notifyReturnConfirmed, notifyReturnChangeRequest } from '../../../../lib/notify'
@@ -11,7 +12,7 @@ const clean = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().sli
 // the return date for a multi-day / continued job.
 //   mode 'confirm': the proposed return date/window works — lock it in.
 //   mode 'request': ask for a different return date (ops coordinates a new one).
-export async function POST(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export const POST = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   if (await rateLimit(req, 'confirmreturn', 10, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many attempts. Please wait a few minutes.' }, { status: 429 })
@@ -46,4 +47,4 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   await saveBooking(b)
   await notifyReturnConfirmed(b)
   return NextResponse.json({ ok: true, confirmed: true, booking: customerView(b) })
-}
+})
