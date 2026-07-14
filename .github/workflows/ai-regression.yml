@@ -1,13 +1,18 @@
-name: AI Regression
+name: CI
 
-# Pre-deploy quality gate for the AI platform (LLMOps Phase 3, item 10). Runs the
-# deterministic golden-fixture regression + a typecheck on every push to main and on
-# every PR. A prompt or scorer change that regresses any AI feature fails this check.
+# Blocking pre-deploy quality gate. Runs on every push to main and every PR:
+# typecheck → the FULL test suite → production build. The full suite
+# (scripts/*.test.ts) includes the security-critical suites — tenant-isolation,
+# bypass-detection, rbac, authorization-coverage, security-hardening — plus the AI
+# golden-fixture regression and all workflow tests, so a regression in any of them
+# fails this job. `npm test` runs them once (no duplication); it is fast (<1s) — the
+# build is the long pole.
 #
-# To make it BLOCK production deploys (recommended): either
-#   • GitHub → Settings → Branches → protect `main` → require the "regression" check, or
+# To make this HARD-STOP a production deploy (recommended): either
+#   • GitHub → Settings → Branches → protect `main` → require the "verify" check, or
 #   • Vercel → Project → Settings → Git → enable "Only build/deploy when checks pass".
-# Without that, this is a visible signal but does not hard-stop Vercel's auto-deploy.
+# Without one of those, this is a visible signal but does not by itself block Vercel's
+# auto-deploy.
 
 on:
   push:
@@ -15,18 +20,18 @@ on:
   pull_request:
 
 jobs:
-  regression:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version-file: '.nvmrc'
           cache: 'npm'
       - run: npm ci
       - name: Typecheck
         run: npx tsc --noEmit
-      - name: Full AI test suite
-        run: npm run test:ai
-      - name: AI regression gate (golden fixtures)
-        run: npm run test:ai:regression
+      - name: Full test suite (tenancy, bypass-detection, rbac, authz, security, AI, workflows)
+        run: npm test
+      - name: Production build
+        run: npm run build
