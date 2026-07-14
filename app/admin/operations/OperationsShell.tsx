@@ -7,7 +7,8 @@ import { useAdminSession } from '../useAdminSession'
 import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, Settings, LogOut, Search, Plus, Zap } from 'lucide-react'
 import CommandPalette from './CommandPalette'
 import LastLogin from './LastLogin'
-import { OpsPilotMark, OpsPilotWordmark } from '../../components/opspilot/OpsPilotMark'
+import Image from 'next/image'
+import { OpsPilotWordmark } from '../../components/opspilot/OpsPilotMark'
 
 // `adminOnly` tabs are hidden from managers in the UI AND gated server-side on the
 // matching route (hiding is never the control — see the API guards).
@@ -92,7 +93,7 @@ export default function OperationsShell({ children }: { children: React.ReactNod
         </form>
 
         <div style={{ marginTop: 26, paddingTop: 18, borderTop: '1px solid var(--line)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--muted)' }}>
-          <OpsPilotMark size={15} />
+          <Image src="/operion-mark.png" alt="Operion" width={18} height={18} style={{ width: 16, height: 16 }} />
           <span style={{ fontSize: 12.5 }}>
             Powered by <OpsPilotWordmark tm style={{ color: 'var(--text)', fontWeight: 600 }} />
           </span>

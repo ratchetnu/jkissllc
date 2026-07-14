@@ -7,7 +7,8 @@ import OperationsShell from './OperationsShell'
 import { useOps } from './useOps'
 import ClaimsCard from './claims/ClaimsCard'
 import { BOOK_NOW_STAGE_LABEL, type BookNowStage } from '../../lib/book-now-queue'
-import { OpsPilotMark, OpsPilotWordmark } from '../../components/opspilot/OpsPilotMark'
+import Image from 'next/image'
+import { OpsPilotWordmark } from '../../components/opspilot/OpsPilotMark'
 import { STATUS as CHIP, scoreColor, ymd, fmtDay, mapsUrl, type RouteStatus } from './ui'
 
 type Op = {
@@ -45,7 +46,7 @@ function Dashboard() {
         <div>
           {/* The platform names itself once, at the top of its own home screen. */}
           <p style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--muted)', marginBottom: 7 }}>
-            <OpsPilotMark size={15} />
+            <Image src="/operion-mark.png" alt="Operion" width={17} height={17} style={{ width: 15, height: 15 }} />
             <OpsPilotWordmark tm style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }} />
             <span style={{ fontSize: 13, fontWeight: 600 }}>Operations</span>
           </p>
