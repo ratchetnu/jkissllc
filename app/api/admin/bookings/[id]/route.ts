@@ -27,7 +27,7 @@ import { decideQuote } from '../../../../lib/pricing/quote-decision'
 import { onEstimateModified } from '../../../../lib/intake-workflow'
 import { validateEstimateModification } from '../../../../lib/estimate-modify'
 import { alert } from '../../../../lib/alerts'
-import { canApproveAndSend } from '../../../../lib/ai/guided-approval'
+import { canApproveAndSend, quoteDeliveryMode } from '../../../../lib/ai/guided-approval'
 
 export const runtime = 'nodejs'
 
@@ -343,18 +343,29 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
       pushBookingEvent(b, { actor, action: 'ai.owner_approved', result: `$${approvedUsd}`, meta: { approvedUsd, tier: fe?.routingTier ?? 'manual', override: overrideUsd > 0, send: body.send === true } })
       b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[Estimate approved by ${actor}] $${approvedUsd}${overrideUsd > 0 ? ' (owner-set)' : ''}`
       console.info(`[approve-final] submitted booking=${b.bookingNumber} amount=$${approvedUsd} send=${body.send === true} by=${actor}`)
-      if (body.send === true) {
-        const channels = await sendConfirmationLink(b)
+      // SANDBOX outbound safety: approve-final is the one send path not in the
+      // blanket OUTBOUND_COMMS guard above, so the test-record decision lives in the
+      // shared pure layer. A test record's send is SIMULATED — never a provider call.
+      const delivery = quoteDeliveryMode({ send: body.send === true, isTest: !!b.isTest })
+      if (delivery !== 'none') {
+        // Stamp the send on BOTH paths so duplicate-send protection engages either way.
+        const channels = delivery === 'live' ? await sendConfirmationLink(b) : { email: false, sms: false }
         b.confirmationLinkSentAt = Date.now()
         b.confirmationLinkSentBy = actor
         if (['quote_received', 'pending_payment', 'payment_received', 'booking_created'].includes(b.status)) b.status = 'confirmation_link_sent'
-        const anySent = !!(channels.email || channels.sms)
-        console.info(`[approve-final] quote_sent booking=${b.bookingNumber} email=${!!channels.email} sms=${!!channels.sms}`)
-        if (!anySent) {
-          console.error(`[approve-final] notification_failed booking=${b.bookingNumber} (no channel delivered)`)
-          await alert({ type: 'quote_send_failed', severity: 'ERROR', route: '/api/admin/bookings/[id]', booking: b.bookingNumber, errorClass: 'no_channel_delivered' })
+        if (delivery === 'simulated') {
+          pushBookingEvent(b, { actor, action: 'ai.quote_simulated', result: 'sandbox — no email/SMS sent', meta: { simulated: true, approvedUsd } })
+          console.info(`[approve-final] quote SIMULATED (sandbox test record — no external delivery) booking=${b.bookingNumber}`)
+          extra = { channels, quoteSent: true, simulated: true }
+        } else {
+          const anySent = !!(channels.email || channels.sms)
+          console.info(`[approve-final] quote_sent booking=${b.bookingNumber} email=${!!channels.email} sms=${!!channels.sms}`)
+          if (!anySent) {
+            console.error(`[approve-final] notification_failed booking=${b.bookingNumber} (no channel delivered)`)
+            await alert({ type: 'quote_send_failed', severity: 'ERROR', route: '/api/admin/bookings/[id]', booking: b.bookingNumber, errorClass: 'no_channel_delivered' })
+          }
+          extra = { channels, quoteSent: anySent }
         }
-        extra = { channels, quoteSent: anySent }
       } else {
         extra = { confirmLink: bookingLink(b.token) }
       }

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { guidedApprovalState, canApproveAndSend } from '../app/lib/ai/guided-approval'
+import { guidedApprovalState, canApproveAndSend, quoteDeliveryMode } from '../app/lib/ai/guided-approval'
 import type { Booking } from '../app/lib/bookings'
 
 const fe = (decision: string): Booking['finalAiEstimate'] => ({
@@ -96,4 +96,23 @@ test('idempotency guards SEND only — approve-only (no send) is still allowed a
   assert.equal(canApproveAndSend({ role: 'admin', booking: sent, send: false }).allowed, true)
   // And a first send (not yet sent) is allowed.
   assert.equal(canApproveAndSend({ role: 'admin', booking: mk({}), send: true }).allowed, true)
+})
+
+// ── Sandbox outbound guard for approve-final ─────────────────────────────────
+// approve-final is the one send path NOT in the route's blanket OUTBOUND_COMMS
+// list, so the test-record guard lives here in the shared decision layer.
+test('sandbox guard: a test record Approve & Send is SIMULATED — never a live provider call', () => {
+  assert.equal(quoteDeliveryMode({ send: true, isTest: true }), 'simulated')
+})
+
+test('sandbox guard: a test record Approve Only delivers nothing (approve-only is always safe)', () => {
+  assert.equal(quoteDeliveryMode({ send: false, isTest: true }), 'none')
+})
+
+test('sandbox guard: a REAL booking Approve & Send is LIVE — production send path unchanged', () => {
+  assert.equal(quoteDeliveryMode({ send: true, isTest: false }), 'live')
+})
+
+test('sandbox guard: a real booking Approve Only delivers nothing', () => {
+  assert.equal(quoteDeliveryMode({ send: false, isTest: false }), 'none')
 })

@@ -151,7 +151,7 @@ export type BookingEventAction =
   // ── Customer inventory-confirmation + second (final) analysis (Part 3/7/10) ──
   | 'confirmation.requested' | 'confirmation.submitted' | 'confirmation.owner_edited'
   | 'ai.final_queued' | 'ai.final_analyzed' | 'ai.final_failed' | 'ai.final_manual_review'
-  | 'ai.owner_approved'
+  | 'ai.owner_approved' | 'ai.quote_simulated'
   | 'test.marked' | 'test.unmarked'
 
 export type BookingEvent = {
