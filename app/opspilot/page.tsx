@@ -160,7 +160,7 @@ export default function OpsPilotPage() {
               </h2>
 
               <p style={{ marginTop: 16, maxWidth: '56ch', fontSize: 15.5, lineHeight: 1.7, color: 'var(--muted)' }}>
-                Two businesses already dispatch on OpsPilot every morning. It&apos;s opening up
+                Two businesses already dispatch on Operion every morning. It&apos;s opening up
                 to more owner-operators and service businesses — if you run crews, routes, or
                 contracts and you&apos;re tired of stitching together spreadsheets and group
                 texts, tell us where to reach you.

@@ -68,7 +68,7 @@ export default function EarlyAccessForm({
         }}
       >
         <Check size={16} style={{ color: 'var(--ops-steel)' }} />
-        You&apos;re on the list. We&apos;ll be in touch when OpsPilot opens up.
+        You&apos;re on the list. We&apos;ll be in touch when Operion opens up.
       </div>
     );
   }
@@ -126,7 +126,7 @@ export default function EarlyAccessForm({
         </p>
       )}
       <p style={{ fontSize: 12, color: dark ? 'rgba(255,255,255,.4)' : 'var(--ink-muted)', marginTop: 11 }}>
-        No spam. We&apos;ll only email you when OpsPilot is ready for outside operators.
+        No spam. We&apos;ll only email you when Operion is ready for outside operators.
       </p>
     </form>
   );
