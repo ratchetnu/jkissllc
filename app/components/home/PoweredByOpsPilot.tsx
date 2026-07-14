@@ -47,7 +47,7 @@ export default function PoweredByOpsPilot() {
               <div style={{ marginTop: 26, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
                 <span className="ops-badge">Built In-House</span>
                 <a
-                  href="/opspilot"
+                  href="/operion"
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',

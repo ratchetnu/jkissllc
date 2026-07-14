@@ -156,7 +156,7 @@ export default function AboutPage() {
             <div style={{ marginTop: 32, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
               <span className="ops-badge">Built In-House</span>
               <Link
-                href="/opspilot"
+                href="/operion"
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600, color: '#fff', textDecoration: 'none' }}
               >
                 See what Operion does <ArrowRight size={15} />

@@ -16,7 +16,7 @@ export default function PoweredByBand({ variant = 'full' }: { variant?: 'full' |
   if (variant === 'compact') {
     return (
       <a
-        href="/opspilot"
+        href="/operion"
         style={{
           display: 'inline-flex',
           alignItems: 'center',
@@ -74,7 +74,7 @@ export default function PoweredByBand({ variant = 'full' }: { variant?: 'full' |
       </div>
 
       <a
-        href="/opspilot"
+        href="/operion"
         className="btn-ghost"
         style={{ padding: '10px 20px', fontSize: 13, borderRadius: 10 }}
       >

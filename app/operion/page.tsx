@@ -14,17 +14,17 @@ export const metadata: Metadata = {
   title: 'Operion — The operating system behind J KISS Freight',
   description:
     `Operion is the proprietary operations platform built and run by ${COMPANY.legalNameUpper}. Route assignment, recurring contracts, equipment, crew and hiring, claims with crew cost recovery, invoicing, payroll, an AI command palette, and financial tracking in one system. Coming soon for other owner-operators.`,
-  alternates: { canonical: 'https://www.jkissllc.com/opspilot' },
+  alternates: { canonical: 'https://www.jkissllc.com/operion' },
   openGraph: {
     title: 'Operion — The operating system behind J KISS Freight',
     description: 'The proprietary operations platform powering J KISS. Coming soon for other owner-operators.',
-    url: 'https://www.jkissllc.com/opspilot',
+    url: 'https://www.jkissllc.com/operion',
     images: [{ url: '/operion-og.png', width: 982, height: 784, alt: 'Operion — AI Operating System for Business' }],
   },
 };
 
 /**
- * /opspilot — the one page where the platform gets to speak.
+ * /operion — the one page where the platform gets to speak.
  *
  * Everywhere else on this site OpsPilot whispers. Here it can be direct, but it
  * still is not a SaaS landing page: no pricing table, no logo wall, no
@@ -166,7 +166,7 @@ export default function OpsPilotPage() {
               </p>
 
               <div style={{ marginTop: 30 }}>
-                <EarlyAccessForm source="/opspilot" tone="dark" />
+                <EarlyAccessForm source="/operion" tone="dark" />
               </div>
             </div>
           </Reveal>
