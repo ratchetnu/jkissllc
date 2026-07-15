@@ -230,6 +230,12 @@ function Detail({ token }: { token: string }) {
               <button onClick={() => run('cancel-ai')} disabled={busy === 'cancel-ai'} style={btn}>Cancel Pending Analysis</button>}
             {b.aiJob?.status !== 'manual_review' &&
               <button onClick={() => run('send-manual-review')} disabled={busy === 'send-manual-review'} style={btn}>Send to Manual Review</button>}
+            {/* Shown when photos were stored as HEIC (unreadable by the vision model) —
+                converts them to JPEG in place, then re-runs analysis. */}
+            {(b.invoicePhotos ?? []).some((p) => /\.(heic|heif)(\?|#|$)/i.test(p.url)) &&
+              <button onClick={() => run('reconvert-photos')} disabled={busy === 'reconvert-photos'} style={{ ...btn, borderColor: '#f59e0b', color: '#f59e0b' }}>
+                {busy === 'reconvert-photos' ? 'Reconverting…' : 'Re-scan HEIC photos'}
+              </button>}
           </div>
         )}
 
