@@ -5,11 +5,23 @@ import { rateLimit } from '../../../lib/rate-limit'
 import { isBlockedBot } from '../../../lib/botcheck'
 import { isSensitiveDoc } from '../../../lib/ats-config'
 import { sealDoc, docCryptoReady } from '../../../lib/doc-crypto'
+import { scopeBlobPath, sanitizeBlobSegment } from '../../../lib/platform/tenancy/blob-keys'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
 
 const KINDS = new Set(['drivers_license', 'id', 'ss_card', 'headshot'])
+
+// Tenant-safe physical path for an applicant document. `kind` is a directory
+// segment drawn only from the fixed KINDS set; the filename is sanitized. Sealed
+// identity docs carry a trailing `.enc`. Byte-identical to
+// `driver-docs/<kind>/<uuid>.<ext>[.enc]` while tenancy is off;
+// `tenants/<id>/driver-docs/…` once on. The RETURNED value (not a URL) is what we
+// persist and later read back, so legacy records keep resolving unchanged.
+export function driverDocBlobPath(kind: string, id: string, ext: string, sealed: boolean): string {
+  const filename = sanitizeBlobSegment(`${id}.${ext}${sealed ? '.enc' : ''}`)
+  return scopeBlobPath(`driver-docs/${kind}/${filename}`)
+}
 
 // POST /api/careers/upload — public applicant document upload (photo ID, SS card,
 // badge headshot). Rate-limited + bot-protected.
@@ -52,7 +64,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     if (sensitive) {
       // `.enc` marks the object as sealed, so the reader never has to guess. The
       // real media type is recovered from the extension embedded before it.
-      const pathname = `driver-docs/${kind}/${crypto.randomUUID()}.${ext}.enc`
+      const pathname = driverDocBlobPath(kind, crypto.randomUUID(), ext, true)
       await put(pathname, sealDoc(buf), {
         access: 'public',                          // the store is public; the BYTES are not
         contentType: 'application/octet-stream',
@@ -63,7 +75,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
       return NextResponse.json({ ok: true, url: pathname })
     }
 
-    const blob = await put(`driver-docs/${kind}/${crypto.randomUUID()}.${ext}`, buf, {
+    const blob = await put(driverDocBlobPath(kind, crypto.randomUUID(), ext, false), buf, {
       access: 'public',
       contentType: m[1],
       addRandomSuffix: false,

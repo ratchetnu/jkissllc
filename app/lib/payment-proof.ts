@@ -1,5 +1,6 @@
 import { put, get } from '@vercel/blob'
 import { sealDoc, openDoc, docCryptoReady } from './doc-crypto'
+import { scopeBlobPath, sanitizeBlobSegment } from './platform/tenancy/blob-keys'
 
 // Secure storage for Zelle payment screenshots (request Parts 4-5). Treated as
 // sensitive customer financial data:
@@ -15,7 +16,13 @@ import { sealDoc, openDoc, docCryptoReady } from './doc-crypto'
 
 export const PROOF_MIME = /^image\/(jpeg|png|webp|heic|heif)$/
 // Path shape the serve endpoint locks to (prefix + token scope + .enc marker).
-export const PROOF_PATH_RE = /^payment-proofs\/[a-f0-9]{16,}\/[a-zA-Z0-9-]+\.(jpg|png|webp|heic|heif)\.enc$/
+// The leading tenant prefix is OPTIONAL: legacy (un-prefixed) paths match exactly
+// as before — byte-identical — and once tenancy is on a `tenants/<id>/` prefix is
+// also accepted, so stored proof paths keep validating across the flip. NOTE: the
+// booking-scoped ownership check lives in the serve route
+// (app/api/admin/bookings/[id]/proof) via `startsWith('payment-proofs/<token>/')`
+// and must be widened to tolerate the same optional prefix BEFORE tenancy flips on.
+export const PROOF_PATH_RE = /^(?:tenants\/[a-z0-9][a-z0-9-]{0,63}\/)?payment-proofs\/[a-f0-9]{16,}\/[a-zA-Z0-9-]+\.(jpg|png|webp|heic|heif)\.enc$/
 const MEDIA: Record<string, string> = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', heif: 'image/heif' }
 
 // Max encoded data-URL length (~7.5 MB of actual image after base64 overhead).
@@ -53,11 +60,21 @@ export function validateProofImage(image: unknown): ProofValidation {
   return { ok: true, buf, ext, mime }
 }
 
+// Tenant-safe physical path for a sealed payment proof. The booking token stays a
+// directory segment exactly as today (it is server-controlled and already
+// `[a-f0-9]{16,}`); only the filename is sanitized. Byte-identical to
+// `payment-proofs/<token>/<uuid>.<ext>.enc` while tenancy is off;
+// `tenants/<id>/payment-proofs/…` once on. The returned pathname (never a URL) is
+// what we persist and read back, so legacy records keep resolving unchanged.
+export function proofBlobPath(bookingToken: string, id: string, ext: string): string {
+  return scopeBlobPath(`payment-proofs/${bookingToken}/${sanitizeBlobSegment(`${id}.${ext}.enc`)}`)
+}
+
 // Seal + store under an unguessable, booking-scoped path. Returns the pathname
 // (NOT a public URL) to persist on the payment record.
 export async function sealAndStoreProof(bookingToken: string, buf: Buffer, ext: string): Promise<string> {
   if (!docCryptoReady()) throw new Error('DOC_CRYPTO_UNAVAILABLE')
-  const pathname = `payment-proofs/${bookingToken}/${crypto.randomUUID()}.${ext}.enc`
+  const pathname = proofBlobPath(bookingToken, crypto.randomUUID(), ext)
   await put(pathname, sealDoc(buf), {
     access: 'public',                       // the store is public; the BYTES are ciphertext
     contentType: 'application/octet-stream',

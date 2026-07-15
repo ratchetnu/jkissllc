@@ -12,6 +12,15 @@ import { onPaymentCaptured } from './intake-workflow'
 // Record a paid Stripe Checkout Session against its booking. Idempotent: a
 // session is only ever applied once (deduped by session id), so the webhook and
 // the success-URL return path can both call this safely.
+//
+// Tenant context: this function intentionally takes NO tenant argument. All of its
+// data access (getBookingByToken / saveBooking / the write lock) flows through the
+// redis chokepoint, which scopes keys to the AMBIENT tenant context. Callers MUST
+// invoke it inside an established scope — the webhook wraps it in
+// withBackgroundTenant('webhook', …, resolution.tenantId); the success-URL return
+// path runs inside its withTenantRoute request scope. While TENANCY_ENABLED=false
+// the chokepoint no-ops, so this is byte-identical to before. Do NOT add tenant
+// branching or change the session-id dedup here.
 export async function recordStripeSessionPayment(session: Stripe.Checkout.Session): Promise<Booking | null> {
   const token = session.metadata?.bookingToken
   if (!token) return null

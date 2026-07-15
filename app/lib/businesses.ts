@@ -3,6 +3,7 @@
 // details worth editing (contact, address, notes) keyed by the normalized name,
 // so the Businesses hub can overlay it without changing how routes are joined.
 import { redis } from './redis'
+import { stableId, isStableId, looksNameDerived } from './platform/tenancy/stable-id'
 
 // One entry per rate change, newest last. Written by the businesses API on every
 // edit so the owner can see what a client used to pay and when it changed.
@@ -38,16 +39,34 @@ export type Business = {
   updatedAt: number
 }
 
-// TODO(opspilot/tenancy): bizKey is derived from the business NAME, so two tenants
-// hauling for "Rooms To Go" would collide on `biz:rooms to go` and overwrite each
-// other's contract rates. Prefixing the Redis key is necessary but NOT sufficient:
-// bizKey is also used as a map key inside persisted staff records
-// (Staff.payByBusiness — app/lib/staff.ts:36), so the collision propagates into
-// payroll. Fixing this needs a data migration, not a prefix.
-// See docs/opspilot-multi-tenant-roadmap.md §2.3.
+// TENANCY (H-KEY-1): bizKey is derived from the business NAME. Two properties:
+//  1) The Redis-KEY collision ("Rooms To Go" → `biz:rooms to go`) is now handled by
+//     the isolation chokepoint: `biz:` is NOT platform-global, so redis.ts routes
+//     it through scopeKey → `t:{tid}:biz:rooms to go` when TENANCY_ENABLED. Two
+//     tenants no longer overwrite each other's contract rates at rest. (Proven in
+//     scripts/name-derived-keys.test.ts.)
+//  2) The RESIDUAL defect the chokepoint CANNOT fix: bizKey is also a map key INSIDE
+//     persisted staff records (Staff.payByBusiness — app/lib/staff.ts), i.e. inside
+//     a JSON VALUE, not a Redis key. A prefix can't reach it, and a name is not a
+//     durable identity (a rename moves the override). This needs a DATA MIGRATION to
+//     opaque stable ids — see the forward-path helpers below and
+//     docs/opspilot-os/tenant-isolation/07-name-derived-key-migration.md.
 export const bizKey = (name: string) => name.trim().toLowerCase().replace(/\s+/g, ' ')
 const KEY = (k: string) => `biz:${k}`
 const INDEX = 'biz:index'
+
+// ── Forward path (doc 07): stable-id identity for businesses — PROPOSAL, NOT wired
+// The migration replaces name-derived identity with an opaque, rename-safe stableId:
+//   • `biz:id:{stableId}`         — canonical record (opaque)
+//   • `biz:byname:{normalized}` → stableId — lookup for the legacy name join
+// Staff.payByBusiness is then rekeyed from bizKey(name) → stableId during the data
+// run. These builders MATERIALIZE that scheme; the live getters/setters below stay
+// name-keyed for compatibility until cutover. Nothing calls these yet.
+export const newBizId = () => stableId('biz')
+export const bizIdKey = (id: string) => `biz:id:${id}`
+export const bizNameIndexKey = (name: string) => `biz:byname:${bizKey(name)}`
+/** Guard: true when a business identity is (unsafely) name-derived rather than a stableId. */
+export const isNameDerivedBizKey = (k: string) => !isStableId(k) && looksNameDerived(k)
 
 export async function getBusiness(key: string): Promise<Business | null> {
   const raw = await redis.get(KEY(key))

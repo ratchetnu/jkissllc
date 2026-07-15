@@ -3,6 +3,8 @@ import type Stripe from 'stripe'
 import { getStripe, stripeConfigured } from '../../../lib/stripe'
 import { recordStripeSessionPayment } from '../../../lib/record-payment'
 import { alert } from '../../../lib/alerts'
+import { resolveTenantFromStripe } from '../../../lib/platform/tenancy/tenant-resolve'
+import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -31,9 +33,27 @@ export async function POST(req: NextRequest) {
   try {
     if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') {
       const session = event.data.object as Stripe.Checkout.Session
-      // Re-fetch to be sure payment_status is current.
-      const full = await getStripe().checkout.sessions.retrieve(session.id)
-      await recordStripeSessionPayment(full)
+      // Signature is verified (constructEvent above), so the metadata is trusted:
+      // resolve the originating tenant from the tenantId stamped at session
+      // creation. While tenancy is off this yields the reference tenant; when on
+      // WITHOUT metadata it returns null → fail closed (skip + alert), never a
+      // silent cross-tenant write.
+      const resolution = resolveTenantFromStripe(session.metadata, { correlationId: event.id })
+      if (!resolution) {
+        await alert({
+          type: 'stripe_webhook_tenant_unresolved', severity: 'ERROR', route: '/api/webhooks/stripe',
+          errorClass: 'missing_tenant_metadata', correlationId: event.id,
+          meta: { eventType: event.type, sessionId: session.id },
+        }).catch(alertErr => console.error('[stripe-webhook] tenant alert failed:', alertErr))
+      } else {
+        // Run the recorder (and its downstream redis/audit/notify writes) inside
+        // the resolved tenant scope so record-payment inherits tenant context.
+        await withBackgroundTenant('webhook', async () => {
+          // Re-fetch to be sure payment_status is current.
+          const full = await getStripe().checkout.sessions.retrieve(session.id)
+          await recordStripeSessionPayment(full)
+        }, resolution.tenantId)
+      }
     }
   } catch (err) {
     console.error('[stripe-webhook] handler error:', err)

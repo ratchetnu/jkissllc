@@ -8,6 +8,7 @@ import {
 import { getStripe, stripeConfigured, grossUp } from '../../../../lib/stripe'
 import { rateLimit } from '../../../../lib/rate-limit'
 import { siteUrl } from '../../../../lib/booking-emails'
+import { tenantIdForOutboundMetadata } from '../../../../lib/platform/tenancy/tenant-resolve'
 
 export const runtime = 'nodejs'
 
@@ -72,6 +73,9 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
         paymentType: type,
         invoiceAmountCents: String(net),
         feeCents: String(feeCents),
+        // Stamp the originating tenant for the later (session-less) webhook to
+        // resolve via resolveTenantFromStripe. Returns 'jkiss' while tenancy off.
+        tenantId: tenantIdForOutboundMetadata(),
       },
     })
     return NextResponse.json({ url: session.url })
