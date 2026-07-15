@@ -10,6 +10,21 @@ the product is **Operion**. See `README.md` for the naming/source-of-truth note.
 
 ---
 
+## 2026-07-15 — Production release of the hardening sprint 🚀
+
+The Production Hardening sprint (below) was merged to `main` and **deployed to Production**
+after Preview click-through approval.
+
+- **Merge:** `fix/operion-production-hardening` (`b7c3809`) → `main` via `--no-ff` release
+  merge `ddd7d3c` ("feat(operion): harden authorization, AI recovery, alerts, KPIs, and
+  accessibility"); brought the hardening + the Operion blueprint reconciliation + the
+  enterprise-readiness audit onto `main` (the single source of truth). No conflicts.
+- **Production deployment:** `dpl_7EpbqahqnEsqrk9XYvTP6c1D4Hr4`, commit `ddd7d3c`, `target: production`, state `READY`, build clean (0 errors, 44s). Serves `jkissllc.com` / `www.jkissllc.com`.
+- **Verification:** `/api/health` → `{"status":"healthy","build":"dpl_7Epb…"}` (KV reachable, new build live); `/quote` renders 200; no runtime errors attributed to the new deployment. Pre-merge gates: `tsc` 0 · `npm test` **629/629** · `next build` OK.
+- **Shipped fixes:** authorization tightening (38 routes), AI stale-job recovery + call timeout, alert Slack→email→console fallback, KPI accuracy (Awaiting-AI parity, Booked-Today via `confirmedAt`+Central), Book Now wizard accessibility.
+- **Safety:** `TENANCY_ENABLED` remained `false`; no Production env/secret changed for this release (Production `ADMIN_SESSION_SECRET`/`ADMIN_PASSWORD`/`DOC_ENCRYPTION_KEY` untouched); no customer/payment/job/message data altered.
+- **Next:** highest remaining enterprise blocker = tenant-safe Blob storage + public-route/Stripe-webhook tenant resolution (see the audit's §21/§22) — the recommended next sprint once this release is confirmed stable.
+
 ## 2026-07-14 — Production Hardening sprint (auth, worker recovery, failure visibility)
 
 Resolved the audit's live-and-near-term HIGH/MEDIUM issues on branch
