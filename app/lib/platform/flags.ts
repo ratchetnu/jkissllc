@@ -25,6 +25,12 @@ export type FeatureFlag =
   | 'DESIGN_SYSTEM_REFERENCE_ENABLED'
   | 'INTAKE_WORKFLOW_ENABLED'
   | 'VISION_ESTIMATION_SHADOW'
+  // Independent V2 shadow subsystem (separate queue/worker/cron — replaces the old
+  // inline VISION_ESTIMATION_SHADOW execution, which is retired permanently):
+  | 'VISION_SHADOW_QUEUE_ENABLED'   // allow enqueueing shadow jobs after authoritative terminal
+  | 'VISION_SHADOW_AUTO_ENQUEUE'    // auto-enqueue ALL eligible bookings (off ⇒ selected-only)
+  | 'VISION_SHADOW_SELECTED_ONLY'   // only owner-selected bookings are eligible (safe default ON)
+  | 'VISION_SHADOW_WORKER_ENABLED'  // the independent shadow cron actually processes jobs
 
 export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   TENANCY_ENABLED: false,
@@ -49,7 +55,17 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   // comparison, NEVER authoritative over the live estimate/quote. OFF = byte-identical
   // to today. Promote only after offline eval + shadow metrics clear (see
   // docs/opspilot-os/vision-estimation/).
+  // DEPRECATED / RETIRED: the old inline shadow path (a 2nd vision call inside the
+  // authoritative worker) caused the double-analysis timeouts. It is permanently
+  // removed from the worker; this flag no longer wires anything and must stay false.
   VISION_ESTIMATION_SHADOW: false,
+  // Independent V2 shadow subsystem. QUEUE gates enqueue-on-terminal; WORKER gates the
+  // separate cron actually running jobs; AUTO_ENQUEUE off + SELECTED_ONLY on = only
+  // owner-selected bookings are ever shadow-analyzed (the safe default for calibration).
+  VISION_SHADOW_QUEUE_ENABLED: false,
+  VISION_SHADOW_AUTO_ENQUEUE: false,
+  VISION_SHADOW_SELECTED_ONLY: true,
+  VISION_SHADOW_WORKER_ENABLED: false,
 }
 
 export const ALL_FLAGS = Object.keys(FLAG_DEFAULTS) as FeatureFlag[]

@@ -30,11 +30,8 @@ import { onEstimateModified } from '../../../../lib/intake-workflow'
 import { validateEstimateModification } from '../../../../lib/estimate-modify'
 import { alert } from '../../../../lib/alerts'
 import { canApproveAndSend, quoteDeliveryMode } from '../../../../lib/ai/guided-approval'
-import {
-  correctItemQuantity, markDuplicate, setLoadTier, setSurcharge, buildV2Override,
-  type V2ShadowOverride,
-} from '../../../../lib/estimation/v2-corrections'
-import type { EstimationResultV2 } from '../../../../lib/estimation/v2-bridge'
+import { handleShadowAdminAction, isShadowAdminAction } from '../../../../lib/estimation/shadow-admin'
+import { getShadowJob } from '../../../../lib/estimation/shadow-store'
 
 export const runtime = 'nodejs'
 
@@ -64,7 +61,10 @@ export const GET = withTenantRoute(async (req: NextRequest, { params }: { params
   const policy = b.agreementPolicyVersion
     ? (await getPolicyVersion(b.agreementPolicyVersion)) ?? (await getCurrentPolicy())
     : null
-  return NextResponse.json({ booking: b, acceptedPolicy: policy })
+  // The V2 shadow job lives in its own store (never on the booking). Surface it for the
+  // admin detail view only — it is staff-gated here and never returned by any customer route.
+  const shadowJob = await getShadowJob(id).catch(() => null)
+  return NextResponse.json({ booking: b, acceptedPolicy: policy, shadowJob })
 })
 
 export const DELETE = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
@@ -94,6 +94,14 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
   const action: string = body.action ?? 'update'
   const who = await getPrincipal(req)
   const actor = who?.sub || 'admin'
+
+  // ── V2 SHADOW actions — handled entirely against the independent `shadow:*` store
+  // and returned EARLY. They never touch the booking blob, authoritative fields,
+  // pricing, comms, or the saveBooking flow below. Owner/admin only.
+  if (isShadowAdminAction(action)) {
+    const r = await handleShadowAdminAction(action, b, body, actor, who?.role, Date.now())
+    return NextResponse.json(r.body, { status: r.status })
+  }
 
   // Sandbox comms safety: a test record never sends automatic customer messages.
   // An owner may still force one with an explicit confirmTest flag.
@@ -785,43 +793,6 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
       })
       b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[Estimate modified by ${actor}] final $${originalUsd} → $${overriddenUsd}: ${reason}`
       try { await onEstimateModified(b, { by: actor, originalUsd, overriddenUsd }) } catch { /* fail-soft */ }
-      break
-    }
-    // ── V2 shadow estimate: owner corrections (Phase 8) ──────────────────────
-    // Deterministic, admin-only edits to the stashed multi-pass shadow estimate
-    // (b.v2Shadow). The MODEL NEVER RE-PRICES: item/tier edits re-run only the
-    // governed volume/weight/tier math (lib/estimation/v2-corrections); the dollar
-    // figure moves only via an explicit owner surcharge/override. Every correction
-    // is audited to the booking timeline. Corrections persist on the stash as
-    // learning evidence — the existing outcome capture reads the final numbers.
-    case 'v2-correct-item':
-    case 'v2-mark-duplicate':
-    case 'v2-set-tier':
-    case 'v2-set-surcharge':
-    case 'v2-override': {
-      if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
-      const stash = (b as { v2Shadow?: { estimate: EstimationResultV2; questions?: unknown[]; ok?: boolean; model?: string; override?: V2ShadowOverride } }).v2Shadow
-      if (!stash?.estimate) return NextResponse.json({ error: 'No V2 shadow estimate on this booking.' }, { status: 400 })
-
-      if (action === 'v2-override') {
-        const o = buildV2Override(num(body.overriddenUsd) ?? 0, str(body.reason, 500) ?? '', actor, new Date().toISOString())
-        if (!o.ok || !o.override) return NextResponse.json({ error: o.error ?? 'Override failed.' }, { status: 400 })
-        stash.override = o.override
-        pushBookingEvent(b, { actor, action: 'ai.override', result: o.summary, meta: { source: 'v2-shadow', correction: 'v2-override', ...o.meta } })
-        b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[V2 quote override by ${actor}] $${o.override.overriddenUsd}: ${o.override.reason}`
-        extra = { v2Correction: o.summary }
-        break
-      }
-
-      const res =
-        action === 'v2-correct-item' ? correctItemQuantity(stash.estimate, str(body.objectId, 40) ?? '', num(body.quantity) ?? 0)
-        : action === 'v2-mark-duplicate' ? markDuplicate(stash.estimate, str(body.objectId, 40) ?? '')
-        : action === 'v2-set-tier' ? setLoadTier(stash.estimate, str(body.tierKey, 40) ?? '')
-        : setSurcharge(stash.estimate, str(body.label, 80) ?? '', Math.round(num(body.cents) ?? 0), body.add !== false)
-      if (!res.ok) return NextResponse.json({ error: res.error ?? 'Correction failed.' }, { status: 400 })
-      stash.estimate = res.estimate
-      pushBookingEvent(b, { actor, action: 'ai.modify', result: res.summary, meta: { source: 'v2-shadow', correction: action, ...res.meta } })
-      extra = { v2Correction: res.summary }
       break
     }
     default:

@@ -11,9 +11,9 @@ import WorkflowTimeline from './WorkflowTimeline'
 import ModifyEstimate from './ModifyEstimate'
 import type { Booking, Payment, InvoicePhoto } from '../../lib/bookings'
 import { serviceFamily } from '../../lib/bookings'
-import type { EstimationResult } from '../../lib/estimation/types'
 import type { EstimationResultV2 } from '../../lib/estimation/v2-bridge'
 import type { ClarificationV2 } from '../../lib/estimation/clarify-v2'
+import type { V2ShadowJob } from '../../lib/estimation/shadow-types'
 import { LOAD_TIERS } from '../../lib/estimation/load-tier'
 import type { StoredAiEstimate } from '../../lib/ai/estimate-store'
 import { guidedApprovalState } from '../../lib/ai/guided-approval'
@@ -1138,6 +1138,100 @@ function BookingMessages({ token, customerName, reloadKey, communications }: { t
 }
 
 // ── Detail + actions ─────────────────────────────────────────────────────────
+// ── Independent V2 shadow job panel (admin-only) ─────────────────────────────
+// Reads the shadow job from its OWN store (fetched separately, never on the booking).
+// Owner controls: queue / cancel / retry / re-run / exclude / mark-reviewed + ground
+// truth. Every button posts a shadow-* action that touches ONLY the shadow store.
+const SHADOW_STATUS_COLOR: Record<string, string> = {
+  queued: '#fbbf24', processing: '#60a5fa', retrying: '#fbbf24', completed: '#34d399',
+  manual_review: '#f59e0b', failed: '#f87171', cancelled: '#9ca3af', skipped: '#9ca3af', not_eligible: '#9ca3af',
+}
+const SHADOW_OUTCOME_LABEL: Record<string, string> = {
+  better_than_authoritative: '✅ Better than current', equivalent: '≈ Equivalent', worse: '⚠ Worse',
+  inconclusive: '❔ Inconclusive', needs_ground_truth: '📋 Needs your ground truth',
+}
+function ShadowJobPanel({ job, busy, run }: {
+  job: V2ShadowJob | null; busy: string
+  run: (action: string, body?: Record<string, unknown>, confirmMsg?: string) => void
+}) {
+  const [gtOpen, setGtOpen] = useState(false)
+  const [gt, setGt] = useState({ correctLoadTier: '', actualQuoteUsd: '', actualFinalUsd: '', actualTruckPct: '', confirmedItems: '', notes: '' })
+  const active = !!job && ['queued', 'processing', 'retrying'].includes(job.status)
+  const cmp = job?.comparison
+  return (
+    <div className="glass-card mb-4" style={{ borderRadius: 16, border: '1px solid rgba(129,140,248,.35)', overflow: 'hidden' }}>
+      <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2" style={{ background: 'rgba(129,140,248,.08)', borderBottom: '1px solid var(--line)' }}>
+        <p className="text-xs font-bold uppercase tracking-wide" style={{ color: '#a5b4fc' }}>🧪 V2 Shadow · internal — never shown to customer</p>
+        {job && <span className="text-[11px] font-bold px-2 py-0.5 rounded" style={{ background: 'rgba(255,255,255,.06)', color: SHADOW_STATUS_COLOR[job.status] ?? '#fff' }}>{job.status}</span>}
+      </div>
+      <div className="px-4 py-3">
+        {!job && (
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <p className="text-sm" style={{ color: 'var(--muted)' }}>No shadow analysis yet.</p>
+            <div className="flex gap-2">
+              <button type="button" disabled={busy === 'shadow-select'} onClick={() => run('shadow-select')} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.08)', color: '#fff' }}>Select for V2</button>
+              <button type="button" disabled={busy === 'shadow-enqueue'} onClick={() => run('shadow-enqueue', {}, 'Queue a V2 shadow analysis for this booking? It runs in the background and never affects the customer estimate.')} className="text-xs font-bold px-3 py-1.5 rounded-lg" style={{ background: 'rgba(129,140,248,.2)', border: '1px solid rgba(129,140,248,.4)', color: '#a5b4fc' }}>{busy === 'shadow-enqueue' ? '…' : 'Queue V2 now'}</button>
+            </div>
+          </div>
+        )}
+        {job && (
+          <>
+            <div className="grid sm:grid-cols-2 gap-x-4 text-[13px]">
+              <KV k="Status" v={job.status} />
+              <KV k="Attempts" v={String(job.attempts)} />
+              <KV k="Created by" v={job.createdBy} />
+              <KV k="Model" v={job.model ?? '—'} />
+              {job.latencyMs != null && <KV k="Runtime" v={`${Math.round(job.latencyMs / 100) / 10}s`} />}
+              {job.failureSummary && <KV k="Error" v={`${job.failureCategory ?? ''}: ${job.failureSummary}`} />}
+            </div>
+            {cmp && (
+              <div className="mt-3 p-3 rounded-xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+                <p className="text-xs font-bold mb-1" style={{ color: '#a5b4fc' }}>{SHADOW_OUTCOME_LABEL[cmp.outcome] ?? cmp.outcome}</p>
+                <KV k="Shadow quote" v={cmp.shadowRecommendedUsd != null ? `$${cmp.shadowRecommendedUsd}` : '—'} />
+                {cmp.authoritativeRecommendedUsd != null && <KV k="Current quote" v={`$${cmp.authoritativeRecommendedUsd}`} />}
+                {cmp.quoteDeltaUsd != null && <KV k="Δ vs current" v={`${cmp.quoteDeltaUsd > 0 ? '+' : ''}$${cmp.quoteDeltaUsd}${cmp.quoteDeltaPct != null ? ` (${cmp.quoteDeltaPct}%)` : ''}`} />}
+                {cmp.shadowLoadTier && <KV k="Shadow tier" v={cmp.shadowLoadTier} />}
+                {cmp.vsGroundTruthQuoteDeltaUsd != null && <KV k="Δ vs owner actual" v={`${cmp.vsGroundTruthQuoteDeltaUsd > 0 ? '+' : ''}$${cmp.vsGroundTruthQuoteDeltaUsd}`} />}
+                {cmp.outcomeReasons?.length > 0 && <p className="text-[11px] mt-1" style={{ color: 'var(--muted)' }}>{cmp.outcomeReasons.join(' · ')}</p>}
+              </div>
+            )}
+            {job.result && <div className="mt-3"><V2EstimatePanel shadow={job.result} busy={busy} run={run} canEdit /></div>}
+            <div className="flex gap-2 flex-wrap mt-3">
+              {active && <button type="button" disabled={busy === 'shadow-cancel'} onClick={() => run('shadow-cancel', {}, 'Cancel this shadow job?')} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ background: 'rgba(224,0,42,.08)', border: '1px solid rgba(224,0,42,.3)', color: '#ff6680' }}>Cancel</button>}
+              {(job.status === 'failed' || job.status === 'cancelled') && <button type="button" disabled={busy === 'shadow-retry'} onClick={() => run('shadow-retry')} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.08)', color: '#fff' }}>Retry</button>}
+              <button type="button" disabled={busy === 'shadow-rerun'} onClick={() => run('shadow-rerun', {}, 'Re-run V2 with the current estimator version? Replaces the current shadow result; ground truth is preserved.')} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ background: 'rgba(129,140,248,.15)', border: '1px solid rgba(129,140,248,.4)', color: '#a5b4fc' }}>Re-run</button>
+              {(job.status === 'completed' || job.status === 'manual_review') && !job.reviewedAt && <button type="button" disabled={busy === 'shadow-mark-reviewed'} onClick={() => run('shadow-mark-reviewed')} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ background: 'rgba(52,211,153,.12)', border: '1px solid rgba(52,211,153,.35)', color: '#34d399' }}>Mark reviewed</button>}
+              <button type="button" disabled={busy === 'shadow-exclude'} onClick={() => run('shadow-exclude', {}, 'Exclude this booking from all future V2 shadow analysis?')} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.06)', color: 'var(--muted)' }}>Exclude</button>
+              <button type="button" onClick={() => setGtOpen(v => !v)} className="text-xs font-bold px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,.08)', color: '#fff' }}>{gtOpen ? 'Close ground truth' : 'Record ground truth'}</button>
+            </div>
+            {job.reviewedAt && <p className="text-[11px] mt-2" style={{ color: '#34d399' }}>Reviewed{job.reviewedBy ? ` by ${job.reviewedBy}` : ''}.</p>}
+            {gtOpen && (
+              <div className="mt-3 p-3 rounded-xl grid sm:grid-cols-2 gap-2" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+                <div><label style={lab}>Actual quote ($)</label><input value={gt.actualQuoteUsd} onChange={e => setGt({ ...gt, actualQuoteUsd: e.target.value })} style={iStyle} inputMode="decimal" /></div>
+                <div><label style={lab}>Final price ($)</label><input value={gt.actualFinalUsd} onChange={e => setGt({ ...gt, actualFinalUsd: e.target.value })} style={iStyle} inputMode="decimal" /></div>
+                <div><label style={lab}>Correct load tier</label><input value={gt.correctLoadTier} onChange={e => setGt({ ...gt, correctLoadTier: e.target.value })} style={iStyle} placeholder="e.g. 3/8 load" /></div>
+                <div><label style={lab}>Actual truck %</label><input value={gt.actualTruckPct} onChange={e => setGt({ ...gt, actualTruckPct: e.target.value })} style={iStyle} inputMode="decimal" /></div>
+                <div className="sm:col-span-2"><label style={lab}>Confirmed items</label><input value={gt.confirmedItems} onChange={e => setGt({ ...gt, confirmedItems: e.target.value })} style={iStyle} /></div>
+                <div className="sm:col-span-2"><label style={lab}>Notes</label><input value={gt.notes} onChange={e => setGt({ ...gt, notes: e.target.value })} style={iStyle} /></div>
+                <div className="sm:col-span-2">
+                  <button type="button" disabled={busy === 'shadow-ground-truth'} onClick={() => run('shadow-ground-truth', {
+                    actualQuoteUsd: gt.actualQuoteUsd ? Number(gt.actualQuoteUsd) : undefined,
+                    actualFinalUsd: gt.actualFinalUsd ? Number(gt.actualFinalUsd) : undefined,
+                    correctLoadTier: gt.correctLoadTier || undefined,
+                    actualTruckPct: gt.actualTruckPct ? Number(gt.actualTruckPct) : undefined,
+                    confirmedItems: gt.confirmedItems || undefined,
+                    notes: gt.notes || undefined,
+                  })} className="text-xs font-bold px-4 py-2 rounded-lg" style={{ background: 'rgba(52,211,153,.15)', border: '1px solid rgba(52,211,153,.4)', color: '#34d399' }}>{busy === 'shadow-ground-truth' ? 'Saving…' : 'Save ground truth'}</button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: { b: Booking; onBack: () => void; onEdit: () => void; onChanged: () => Promise<void>; onDuplicate: () => void; isOwner?: boolean }) {
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
@@ -1161,6 +1255,29 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
       .catch(() => {})
   }, [])
   const link = typeof window !== 'undefined' ? `${window.location.origin}/booking/${b.token}` : ''
+
+  // V2 shadow job lives in its OWN store — fetch it separately (owner-only) so it never
+  // rides on the booking blob. runShadow posts a shadow-* action and refreshes just this.
+  const [shadowJob, setShadowJob] = useState<V2ShadowJob | null>(null)
+  const refreshShadow = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/admin/bookings/${b.token}`, { credentials: 'same-origin' })
+      const j = await res.json()
+      if (res.ok) setShadowJob((j.shadowJob as V2ShadowJob) ?? null)
+    } catch { /* non-blocking */ }
+  }, [b.token])
+  useEffect(() => { if (isOwner) refreshShadow() }, [isOwner, refreshShadow])
+  async function runShadow(action: string, body: Record<string, unknown> = {}, confirmMsg?: string) {
+    if (confirmMsg && !confirm(confirmMsg)) return
+    setBusy(action); setMsg(''); setErr('')
+    try {
+      const j = await patch(b.token, { action, ...body })
+      if (j.shadowJob) setShadowJob(j.shadowJob as V2ShadowJob)
+      else await refreshShadow()
+      setMsg(j.summary ?? 'Done.')
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') }
+    finally { setBusy('') }
+  }
 
   // Personalized message templates (client-side so they work even without AI).
   const firstName = (b.customerName || '').trim().split(/\s+/)[0] || 'there'
@@ -1419,39 +1536,9 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
 
       {b.aiEstimate && <AiEstimatePanel est={b.aiEstimate} busy={busy} run={run} />}
 
-      {/* Shadow estimate (VISION_ESTIMATION_SHADOW) — the deterministic engine's parallel
-          result for owner comparison. INTERNAL, never authoritative, never shown to the
-          customer. Renders only when a shadow result was attached (i.e. the flag was on). */}
-      {(() => {
-        const shadow = (b as { shadowEstimate?: EstimationResult }).shadowEstimate
-        if (!shadow) return null
-        const items = shadow.inventory.map((i) => `${i.itemName}×${i.count}`).join(', ')
-        return (
-          <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px', border: '1px solid rgba(245,158,11,.35)' }}>
-            <p className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: '#f59e0b' }}>🧪 Shadow estimate · internal — not shown to customer</p>
-            <KV k="Engine recommended" v={usd(shadow.pricing.recommendedCents)} />
-            <KV k="Engine range" v={`${usd(shadow.pricing.rangeCents.low)} – ${usd(shadow.pricing.rangeCents.high)}`} />
-            <KV k="Inventory" v={items || 'none detected'} />
-            <KV k="Volume (cu yd)" v={`${shadow.volume.cubicYards.low}–${shadow.volume.cubicYards.high} (exp ${shadow.volume.cubicYards.expected})`} />
-            <KV k="Truck loads" v={String(shadow.volume.truckLoads.expected)} />
-            <KV k="Crew / labor" v={`${shadow.complexity.recommendedCrewSize} crew · ${shadow.complexity.laborHours.expected}h`} />
-            <KV k="Complexity / risk" v={`${shadow.complexity.level} / ${shadow.riskLevel}`} />
-            <KV k="Restricted items" v={shadow.restrictedItems.join(', ') || 'none'} />
-            <KV k="Manual review" v={shadow.manualReviewRequired ? (shadow.manualReviewReasons.join('; ') || 'required') : 'not required'} />
-            {shadow.clarificationQuestions.length > 0 && <KV k="Clarify" v={shadow.clarificationQuestions.map((q) => q.question).join(' | ')} />}
-            <KV k="Engine version" v={`v${shadow.engineVersion} · pricing ${shadow.pricingRuleVersion}`} />
-          </div>
-        )
-      })()}
-
-      {/* V2 multi-pass shadow estimate + owner corrections (VISION_ESTIMATION_SHADOW).
-          Admin-only, internal, never authoritative. Renders only when the V2 shadow
-          was attached (flag on) and the viewer is the owner. */}
-      {isOwner && (() => {
-        const v2s = (b as { v2Shadow?: V2ShadowStash }).v2Shadow
-        if (!v2s?.estimate) return null
-        return <V2EstimatePanel shadow={v2s} busy={busy} run={run} canEdit={!!isOwner} />
-      })()}
+      {/* Independent V2 shadow — its own store/queue/cron, fetched separately. Admin-only,
+          internal, never authoritative, never shown to the customer. */}
+      {isOwner && serviceFamily(b.serviceType) === 'junk' && <ShadowJobPanel job={shadowJob} busy={busy} run={runShadow} />}
 
       {/* Owner quote action — GUIDED (customer-confirmed final estimate awaiting one-
           click Approve & Send) or MANUAL (no guided estimate, e.g. the AI routed to

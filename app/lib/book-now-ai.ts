@@ -3,14 +3,12 @@ import {
   type Booking, type AiJob, type AiJobErrorCode, type AiJobStatus,
 } from './bookings'
 import { buildPhotoEstimate } from './ai/photo-estimate'
-import { isEnabled } from './platform/flags'
-import { runEstimationEngine } from './estimation/engine'
-import { clarificationsFor } from './estimation/clarify'
-import { buildShadowComparison, recordShadowComparison } from './estimation/shadow'
-import type { EstimationResult } from './estimation/types'
-import { analyzePhotosV2 } from './ai/analysis-v2'
-import { estimateFromV2, type EstimationResultV2 } from './estimation/v2-bridge'
-import { clarificationsForV2, type ClarificationV2 } from './estimation/clarify-v2'
+// V2 shadow analysis is fully DECOUPLED: after the authoritative estimate reaches a
+// terminal state we only ENQUEUE an independent shadow job (a cheap, fail-soft Redis
+// write). The heavy V2 vision call runs later in its OWN cron/worker/queue, never in
+// this authoritative path. (The old inline 2nd-vision-call shadow block — which caused
+// the double-analysis timeouts — is permanently removed.)
+import { maybeEnqueueShadowJob } from './estimation/shadow-worker'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Durable, server-side Book Now AI processing — the RECOVERY path for the
@@ -263,6 +261,7 @@ async function processAiJobInner(token: string, opts: { initiatedBy?: string; te
       }
       pushBookingEvent(b, { actor: opts.initiatedBy ?? 'system', action: 'ai.manual_review', result: `ai:${res.outcome}`, meta: { attempts, outcome: res.outcome } })
       await saveBooking(b)
+      await maybeEnqueueShadowJob(b)
       return { ok: false, status: 'manual_review', reason: res.outcome }
     }
     // A genuine provider failure (timeout, 5xx, rate limit, image fetch) → retry.
@@ -289,63 +288,15 @@ async function processAiJobInner(token: string, opts: { initiatedBy?: string; te
     result: `ai:${res.stored.decision}`,
     meta: { recommendedUsd: res.stored.pricing.recommendedUsd, confidence: res.stored.analysis.confidence?.overall, attempts, model: res.model },
   })
-  // Persist the AUTHORITATIVE estimate + completed status FIRST — before any shadow
-  // work — so a slow/failed shadow can never delay, lose, or block the live result.
+  // Persist the AUTHORITATIVE estimate + completed status FIRST. The live result is now
+  // durable and the job is terminal — nothing below can delay, lose, or block it.
   await saveBooking(b)
 
-  // SHADOW (VISION_ESTIMATION_SHADOW, default OFF): runs AFTER the authoritative save.
-  // Stashes results for admin comparison + records the redacted delta. NEVER
-  // authoritative, never shown to the customer, fully fail-soft. Off ⇒ no-op
-  // (byte-identical to today). A V2 provider timeout/error only affects the shadow
-  // stash — the live estimate is already durably saved and the job already complete.
-  if (isEnabled('VISION_ESTIMATION_SHADOW')) {
-    let shadowDirty = false
-    // (a) v1 deterministic engine over the already-computed analysis (no extra AI call).
-    try {
-      const shadow = runEstimationEngine(res.stored.analysis, {
-        bookingId: b.token, serviceType: b.serviceType,
-        imageIds: (b.invoicePhotos ?? []).map((p) => p.url),
-      })
-      shadow.clarificationQuestions = clarificationsFor(shadow)
-      shadow.clarificationRequired = shadow.clarificationQuestions.length > 0
-      ;(b as { shadowEstimate?: EstimationResult }).shadowEstimate = shadow
-      shadowDirty = true
-      recordShadowComparison(
-        buildShadowComparison(shadow, { recommendedUsd: res.stored.pricing.recommendedUsd, decision: res.stored.decision }),
-      )
-    } catch (e) {
-      console.error('[book-now-ai] shadow estimation v1 (non-fatal)', e)
-    }
-    // (b) v2 MULTI-PASS pipeline: a fresh per-image + reconciled vision analysis →
-    // deterministic bridge (volume/tier/pricing via priceJob, model never prices) →
-    // intelligent clarification questions. One extra vision call, shadow-only.
-    try {
-      const v2 = await analyzePhotosV2({
-        bookingId: b.token,
-        photoUrls: (b.invoicePhotos ?? []).map((p) => p.url),
-        serviceLabel: b.serviceType,
-        customerNotes: b.description,
-        nowIso: new Date(now()).toISOString(),
-      })
-      const v2Estimate = estimateFromV2(v2.analysis, { bookingId: b.token, serviceType: b.serviceType })
-      const v2Questions = clarificationsForV2(v2.analysis)
-      ;(b as { v2Shadow?: { estimate: EstimationResultV2; questions: ClarificationV2[]; ok: boolean; model?: string } }).v2Shadow =
-        { estimate: v2Estimate, questions: v2Questions, ok: v2.ok, model: v2.model }
-      shadowDirty = true
-      recordShadowComparison(
-        buildShadowComparison(v2Estimate, { recommendedUsd: res.stored.pricing.recommendedUsd, decision: res.stored.decision }),
-      )
-    } catch (e) {
-      console.error('[book-now-ai] shadow estimation v2 (non-fatal)', e)
-    }
-    // Persist the stashed shadow separately (second write) — fail-soft; a failure here
-    // cannot affect the already-saved authoritative estimate. Re-load under the lock is
-    // unnecessary: we still hold the same booking object; saveBooking is last-write of
-    // the shadow-only fields.
-    if (shadowDirty) {
-      try { await saveBooking(b) } catch (e) { console.error('[book-now-ai] shadow persist (non-fatal)', e) }
-    }
-  }
+  // Enqueue the INDEPENDENT V2 shadow job (fail-soft, gated OFF by default). This does
+  // NO AI work here — it just writes a queued job to the separate `shadow:*` store; the
+  // heavy analysis runs later in /api/cron/vision-shadow. Never touches authoritative
+  // fields, never sends comms.
+  await maybeEnqueueShadowJob(b)
   return { ok: true, status, decision: res.stored.decision }
 }
 

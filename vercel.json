@@ -3,6 +3,7 @@
   "crons": [
     { "path": "/api/cron/daily", "schedule": "0 14 * * *" },
     { "path": "/api/cron/reminders", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/ai-jobs", "schedule": "*/3 * * * *" }
+    { "path": "/api/cron/ai-jobs", "schedule": "*/3 * * * *" },
+    { "path": "/api/cron/vision-shadow", "schedule": "*/10 * * * *" }
   ]
 }
