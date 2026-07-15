@@ -1232,6 +1232,23 @@ function ShadowJobPanel({ job, busy, run }: {
   )
 }
 
+// Compact summary/dashboard card — taps jump to the relevant tab.
+function SummaryCard({ label, value, sub, tone, onClick }: { label: string; value: string; sub?: string; tone?: string; onClick?: () => void }) {
+  return (
+    <button type="button" onClick={onClick} disabled={!onClick}
+      className="text-left glass-card p-3 shrink-0" style={{ borderRadius: 12, minWidth: 128, border: '1px solid var(--line)', cursor: onClick ? 'pointer' : 'default' }}>
+      <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>{label}</p>
+      <p className="text-[15px] font-black mt-0.5 truncate" style={{ color: tone ?? '#fff', letterSpacing: '-0.02em' }}>{value}</p>
+      {sub && <p className="text-[11px] mt-0.5 truncate" style={{ color: 'var(--muted)' }}>{sub}</p>}
+    </button>
+  )
+}
+
+const DETAIL_TABS: [string, string][] = [
+  ['overview', 'Overview'], ['estimate', 'Estimate'], ['photos', 'Photos'], ['workflow', 'Workflow'],
+  ['messages', 'Messages'], ['timeline', 'Timeline'], ['shadow', 'V2 Shadow'], ['actions', 'Actions'],
+]
+
 function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: { b: Booking; onBack: () => void; onEdit: () => void; onChanged: () => Promise<void>; onDuplicate: () => void; isOwner?: boolean }) {
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
@@ -1244,7 +1261,9 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
   const [msgBusy, setMsgBusy] = useState<'sms' | 'email' | 'both' | ''>('')
   const [msgInfo, setMsgInfo] = useState('')
   const [msgErr, setMsgErr] = useState('')
-  const [tabKey, setTabKey] = useState<'overview' | 'messages' | 'timeline' | 'actions'>('overview')
+  const [tabKey, setTabKey] = useState<'overview' | 'estimate' | 'photos' | 'workflow' | 'messages' | 'timeline' | 'shadow' | 'actions'>('overview')
+  const [disposalActual, setDisposalActual] = useState('')   // controlled so it survives tab switches
+  useEffect(() => { setDisposalActual(b.disposalActualCents ? (b.disposalActualCents / 100).toFixed(2) : '') }, [b.token, b.disposalActualCents])
   const [lightbox, setLightbox] = useState<number | null>(null)   // open photo index, or null
   const [msgReload, setMsgReload] = useState(0)
   const [staffNames, setStaffNames] = useState<string[]>([])
@@ -1385,9 +1404,83 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
 
   const pendingPayments = b.payments.filter(p => p.status === 'sent_by_customer')
 
+  // ── UI-only derivations for the header / summary / attention area (NO logic change) ──
+  const aiEst = b.aiEstimate as { pricing?: { recommendedUsd?: number }; confidence?: number } | undefined
+  const recUsd = aiEst?.pricing?.recommendedUsd
+  const quoteHeadline = b.invoiceAmountCents > 0 ? usd(b.invoiceAmountCents)
+    : b.aiJob?.status === 'manual_review' ? 'Manual review'
+    : recUsd != null ? `$${recUsd.toLocaleString()}` : '—'
+  const aiStatusLabel = b.aiJob ? b.aiJob.status.replace(/_/g, ' ') : (b.aiEstimate ? 'completed' : '—')
+  const bal = balanceDue(b)
+  const terminal = b.status === 'completed' || b.status === 'cancelled'
+  const showShadowTab = !!isOwner && serviceFamily(b.serviceType) === 'junk'
+  const visibleTabs = DETAIL_TABS.filter(([k]) => k !== 'shadow' || showShadowTab)
+
+  type Sev = 'high' | 'med' | 'info'
+  const alerts: { sev: Sev; text: string; tab: typeof tabKey }[] = []
+  if (b.aiJob?.status === 'manual_review') alerts.push({ sev: 'high', text: 'Manual review required — price by hand', tab: 'estimate' })
+  if (b.aiJob?.status === 'failed') alerts.push({ sev: 'high', text: 'AI analysis failed', tab: 'estimate' })
+  if (pendingPayments.length > 0) alerts.push({ sev: 'med', text: `${pendingPayments.length} customer payment(s) to confirm`, tab: 'estimate' })
+  if (!terminal && bal > 0 && b.amountPaidCents > 0) alerts.push({ sev: 'med', text: `Balance due ${usd(bal)}`, tab: 'estimate' })
+  if (showShadowTab && shadowJob?.status === 'failed') alerts.push({ sev: 'med', text: 'V2 shadow analysis failed', tab: 'shadow' })
+  if ((b.aiJob?.attempts ?? 0) > 1) alerts.push({ sev: 'info', text: `AI retried ${b.aiJob!.attempts}×`, tab: 'estimate' })
+  const SEV_COLOR: Record<Sev, string> = { high: '#f87171', med: '#fbbf24', info: '#93c5fd' }
+
+  const primary: { label: string; onClick: () => void } =
+    (!terminal && bal > 0) ? { label: 'Record payment', onClick: () => setTabKey('estimate') }
+    : (b.aiJob?.status === 'manual_review' || (serviceFamily(b.serviceType) === 'junk' && !b.aiEstimate)) ? { label: 'Review estimate', onClick: () => setTabKey('estimate') }
+    : { label: 'View workflow', onClick: () => setTabKey('workflow') }
+
   return (
-    <div>
-      <button onClick={onBack} className="text-sm mb-4" style={{ color: 'var(--muted)' }}>← All bookings</button>
+    <div className="pb-24 sm:pb-0">
+      {/* ── Sticky header: identity + status + quote + primary action + tab nav ── */}
+      <div className="sticky z-30 -mx-4 px-4 pt-1 pb-2 mb-3" style={{ top: 0, background: 'var(--bg)', borderBottom: '1px solid var(--line)' }}>
+        <div className="flex items-center gap-2 mb-2">
+          <button onClick={onBack} aria-label="Back to all bookings" className="text-lg shrink-0 leading-none" style={{ color: 'var(--muted)' }}>←</button>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-black text-white truncate">{b.customerName} <span className="text-[11px] font-mono font-normal" style={{ color: 'var(--muted)' }}>{b.bookingNumber}</span></p>
+            <p className="text-[11px] truncate" style={{ color: 'var(--muted)' }}>{SERVICE_LABELS[b.serviceType] ?? b.serviceType} · <span className="font-bold" style={{ color: b.aiJob?.status === 'manual_review' ? '#fbbf24' : '#fff' }}>{quoteHeadline}</span></p>
+          </div>
+          <StatusBadge s={b.status} />
+          <button type="button" onClick={primary.onClick} className="hidden sm:block text-xs font-bold px-3 py-1.5 rounded-lg shrink-0" style={{ background: 'var(--red)', color: '#fff' }}>{primary.label}</button>
+        </div>
+        <div className="flex gap-1.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }} role="tablist" aria-label="Booking sections">
+          {visibleTabs.map(([k, label]) => (
+            <button key={k} role="tab" aria-selected={tabKey === k} onClick={() => setTabKey(k as typeof tabKey)} style={{
+              fontSize: 13, fontWeight: 800, padding: '7px 14px', borderRadius: 10, whiteSpace: 'nowrap', cursor: 'pointer', border: '1px solid',
+              background: tabKey === k ? 'var(--red)' : 'rgba(255,255,255,.05)',
+              borderColor: tabKey === k ? 'var(--red)' : 'rgba(255,255,255,.1)',
+              color: tabKey === k ? '#fff' : 'var(--muted)',
+            }}>{label}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Attention banner — concise, severity-coded, links to the relevant tab */}
+      {alerts.length > 0 && (
+        <div className="mb-3 space-y-1.5">
+          {alerts.map((a, i) => (
+            <button key={i} type="button" onClick={() => setTabKey(a.tab)} className="w-full text-left flex items-center gap-2 px-3 py-2 rounded-xl"
+              style={{ background: 'rgba(255,255,255,.03)', border: `1px solid ${SEV_COLOR[a.sev]}55` }}>
+              <span aria-hidden style={{ color: SEV_COLOR[a.sev] }}>●</span>
+              <span className="text-sm" style={{ color: 'var(--text)' }}>{a.text}</span>
+              <span className="ml-auto text-[11px] shrink-0" style={{ color: 'var(--muted)' }}>Open →</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Summary dashboard — tap a card to jump to its tab */}
+      <div className="flex gap-2 overflow-x-auto mb-3 pb-1" style={{ scrollbarWidth: 'none' }}>
+        <SummaryCard label="Quote" value={quoteHeadline} sub={bal > 0 ? `${usd(bal)} due` : b.aiJob?.status === 'manual_review' ? 'price by hand' : undefined} tone={b.aiJob?.status === 'manual_review' ? '#fbbf24' : '#fff'} onClick={() => setTabKey('estimate')} />
+        <SummaryCard label="AI" value={aiStatusLabel} sub={aiEst?.confidence != null ? `${Math.round((aiEst.confidence as number) * 100)}% conf` : undefined} onClick={() => setTabKey('estimate')} />
+        <SummaryCard label="Workflow" value={STATUS_LABEL[b.status] ?? b.status} onClick={() => setTabKey('workflow')} />
+        <SummaryCard label="Payment" value={paySummary(b)} onClick={() => setTabKey('estimate')} />
+        {(b.invoicePhotos?.length ?? 0) > 0 && <SummaryCard label="Photos" value={String(b.invoicePhotos!.length)} onClick={() => setTabKey('photos')} />}
+        {showShadowTab && <SummaryCard label="V2 Shadow" value={shadowJob ? shadowJob.status.replace(/_/g, ' ') : 'none'} onClick={() => setTabKey('shadow')} />}
+      </div>
+
+      {(msg || err) && <p className="text-sm mb-3" role="status" style={{ color: err ? '#f87171' : '#34d399' }}>{err || msg}</p>}
 
       {b.isTest && (
         <div className="mb-3 px-3 py-2 flex items-center justify-between gap-3 flex-wrap" style={{ borderRadius: 12, background: 'rgba(168,85,247,.14)', border: '1px solid #a855f7' }}>
@@ -1412,16 +1505,8 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
         )
       })()}
 
+      {tabKey === 'overview' && (
       <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
-        <div className="flex items-start justify-between gap-3 mb-3">
-          <div>
-            <p className="text-xl font-black text-white">{b.customerName}</p>
-            <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>
-              <span className="font-mono">{b.bookingNumber}</span>{b.invoiceNumber && <> · Inv <span className="font-mono">{b.invoiceNumber}</span></>} · {SERVICE_LABELS[b.serviceType] ?? b.serviceType}
-            </p>
-          </div>
-          <StatusBadge s={b.status} />
-        </div>
         <div className="flex items-center gap-2 mb-3 flex-wrap">
           <span className="text-sm font-semibold" style={{ color: 'var(--muted)', minWidth: 90 }}>Status</span>
           <select value={STATUS_OPTIONS.some(([v]) => v === b.status) ? b.status : ''} disabled={busy === 'update'}
@@ -1456,38 +1541,43 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
         </div>
         {b.description && <p className="text-sm mt-3" style={{ color: 'var(--muted)' }}>{b.description}</p>}
         {b.items.length > 0 && <ul className="text-sm mt-2 space-y-0.5" style={{ color: 'var(--muted)' }}>{b.items.map((i, n) => <li key={n}>• {i}</li>)}</ul>}
-        {b.invoicePhotos && b.invoicePhotos.length > 0 && (
-          <div className="mt-3">
-            <p className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: 'var(--muted)' }}>
-              Customer photos · {b.invoicePhotos.length}
-            </p>
-            <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-              {b.invoicePhotos.map((p, n) => (
-                <button key={n} type="button" onClick={() => setLightbox(n)} aria-label={`View photo ${n + 1}`}
-                  style={{ display: 'block', aspectRatio: '1 / 1', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)', cursor: 'zoom-in', padding: 0 }}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={p.url} alt={p.name ?? `Photo ${n + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                </button>
-              ))}
-            </div>
-            {/* Shown only when photos were stored as HEIC (unreadable by the vision model) —
-                converts them to JPEG in place, then re-runs analysis. */}
-            {isOwner && b.invoicePhotos.some((p) => /\.(heic|heif)(\?|#|$)/i.test(p.url)) && (
-              <button type="button" onClick={() => run('reconvert-photos')} disabled={busy === 'reconvert-photos'}
-                style={{ marginTop: 10, fontSize: 12.5, fontWeight: 700, padding: '7px 13px', borderRadius: 8, border: '1px solid #f59e0b', color: '#f59e0b', background: 'transparent', cursor: 'pointer' }}>
-                {busy === 'reconvert-photos' ? 'Reconverting…' : '🔄 Re-scan HEIC photos'}
-              </button>
-            )}
-          </div>
-        )}
       </div>
+      )}
+
+      {/* ── PHOTOS ── */}
+      {tabKey === 'photos' && (
+        <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
+          {(!b.invoicePhotos || b.invoicePhotos.length === 0) && <p className="text-sm" style={{ color: 'var(--muted)' }}>No customer photos on this booking.</p>}
+          {b.invoicePhotos && b.invoicePhotos.length > 0 && (
+            <>
+              <p className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: 'var(--muted)' }}>Customer photos · {b.invoicePhotos.length}</p>
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                {b.invoicePhotos.map((p, n) => (
+                  <button key={n} type="button" onClick={() => setLightbox(n)} aria-label={`View photo ${n + 1}`}
+                    style={{ display: 'block', aspectRatio: '1 / 1', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)', cursor: 'zoom-in', padding: 0 }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={p.url} alt={p.name ?? `Photo ${n + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  </button>
+                ))}
+              </div>
+              {/* HEIC re-scan — converts stored HEIC to JPEG in place, then re-runs analysis. */}
+              {isOwner && b.invoicePhotos.some((p) => /\.(heic|heif)(\?|#|$)/i.test(p.url)) && (
+                <button type="button" onClick={() => run('reconvert-photos')} disabled={busy === 'reconvert-photos'}
+                  style={{ marginTop: 10, fontSize: 12.5, fontWeight: 700, padding: '7px 13px', borderRadius: 8, border: '1px solid #f59e0b', color: '#f59e0b', background: 'transparent', cursor: 'pointer' }}>
+                  {busy === 'reconvert-photos' ? 'Reconverting…' : '🔄 Re-scan HEIC photos'}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {b.invoicePhotos && lightbox !== null && (
         <PhotoLightbox photos={b.invoicePhotos} index={lightbox} onClose={() => setLightbox(null)} onIndex={setLightbox} />
       )}
 
       {/* Structured Book Now selections — first-class fields, not a notes blob. */}
-      {b.bookNow && (b.bookNow.loadSizeLabel || b.bookNow.timing || b.bookNow.requestedDate || b.bookNow.contactMethod || b.bookNow.addOns?.length || (b.bookNow.shownEstimateHighCents ?? 0) > 0) && (
+      {tabKey === 'overview' && b.bookNow && (b.bookNow.loadSizeLabel || b.bookNow.timing || b.bookNow.requestedDate || b.bookNow.contactMethod || b.bookNow.addOns?.length || (b.bookNow.shownEstimateHighCents ?? 0) > 0) && (
         <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
           <p className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: 'var(--muted)' }}>📥 Book Now Request Detail</p>
           <KV k="Load size" v={b.bookNow.loadSizeLabel} />
@@ -1506,7 +1596,7 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
           take it over via Send to Manual Review (which unblocks the workflow so the owner
           can price + send by hand). Backend actions already exist; this surfaces them on
           the page the owner actually uses. */}
-      {isOwner && serviceFamily(b.serviceType) === 'junk' && (
+      {tabKey === 'estimate' && isOwner && serviceFamily(b.serviceType) === 'junk' && (
         <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
           <p className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: 'var(--muted)' }}>🤖 AI Analysis</p>
           <KV k="Status" v={b.aiJob ? `${b.aiJob.status.replace(/_/g, ' ')}${b.aiJob.attempts ? ` · attempt ${b.aiJob.attempts}` : ''}` : (b.aiEstimate ? 'completed' : 'not started')} />
@@ -1534,35 +1624,21 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
         </div>
       )}
 
-      {b.aiEstimate && <AiEstimatePanel est={b.aiEstimate} busy={busy} run={run} />}
-
-      {/* Independent V2 shadow — its own store/queue/cron, fetched separately. Admin-only,
-          internal, never authoritative, never shown to the customer. */}
-      {isOwner && serviceFamily(b.serviceType) === 'junk' && <ShadowJobPanel job={shadowJob} busy={busy} run={runShadow} />}
+      {/* ── ESTIMATE: AI findings → deterministic pricing → owner decision → payment ── */}
+      {tabKey === 'estimate' && b.aiEstimate && <AiEstimatePanel est={b.aiEstimate} busy={busy} run={run} />}
 
       {/* Owner quote action — GUIDED (customer-confirmed final estimate awaiting one-
-          click Approve & Send) or MANUAL (no guided estimate, e.g. the AI routed to
-          manual_review, so the owner prices it and sends). Renders nothing when there's
-          no owner quote action to take. Approve/Send sets the quote, texts/emails the
-          customer, and advances to Quote Sent. */}
-      <GuidedApprovalPanel booking={b} busy={busy} run={run} isOwner={!!isOwner} />
+          click Approve & Send) or MANUAL (owner prices + sends). Renders nothing when
+          there's no owner quote action to take. */}
+      {tabKey === 'estimate' && <GuidedApprovalPanel booking={b} busy={busy} run={run} isOwner={!!isOwner} />}
 
-      {/* Governed intake workflow: live stepper + event stream */}
-      <WorkflowTimeline booking={b} />
+      {/* ── WORKFLOW: governed intake stepper + event stream ── */}
+      {tabKey === 'workflow' && <WorkflowTimeline booking={b} />}
 
-      {/* Tabs */}
-      <div className="flex gap-1.5 mb-4 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
-        {(([['overview', 'Overview'], ['messages', 'Messages'], ['timeline', 'Timeline'], ['actions', 'Actions']]) as [typeof tabKey, string][]).map(([k, label]) => (
-          <button key={k} onClick={() => setTabKey(k)} style={{
-            fontSize: 13, fontWeight: 800, padding: '8px 16px', borderRadius: 10, whiteSpace: 'nowrap', cursor: 'pointer', border: '1px solid',
-            background: tabKey === k ? 'var(--red)' : 'rgba(255,255,255,.05)',
-            borderColor: tabKey === k ? 'var(--red)' : 'rgba(255,255,255,.1)',
-            color: tabKey === k ? '#fff' : 'var(--muted)',
-          }}>{label}</button>
-        ))}
-      </div>
+      {/* ── V2 SHADOW: independent store/queue/cron, admin-only, never customer-facing ── */}
+      {tabKey === 'shadow' && showShadowTab && <ShadowJobPanel job={shadowJob} busy={busy} run={runShadow} />}
 
-      {tabKey === 'overview' && (
+      {tabKey === 'estimate' && (
       <>
       {/* Money */}
       <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
@@ -1613,7 +1689,7 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
         <form key={b.token} onSubmit={e => { e.preventDefault(); const v = new FormData(e.currentTarget).get('disposalActual'); run('set-disposal', { disposalActual: v }) }} className="flex items-end gap-2 mt-1">
           <div className="flex-1">
             <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 4 }}>Actual disposal cost ($)</label>
-            <input name="disposalActual" inputMode="decimal" defaultValue={b.disposalActualCents ? (b.disposalActualCents / 100).toFixed(2) : ''} placeholder="0.00"
+            <input name="disposalActual" inputMode="decimal" value={disposalActual} onChange={e => setDisposalActual(e.target.value)} placeholder="0.00"
               style={{ width: '100%', padding: '9px 12px', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 9, color: '#f3f4f6', fontSize: 15, outline: 'none' }} />
           </div>
           <button type="submit" disabled={busy === 'set-disposal'} className="btn-ghost" style={{ padding: '9px 16px', fontSize: 13 }}>{busy === 'set-disposal' ? '…' : 'Save'}</button>
@@ -1638,20 +1714,29 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
       {/* Actions */}
       <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
         <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)' }}>Actions</p>
-        <div className="flex flex-wrap gap-2">
+        <p className="text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color: 'var(--muted)' }}>Routine</p>
+        <div className="flex flex-wrap gap-2 mb-4">
           <ActBtn label="Copy Link" onClick={copyLink} />
-          {isOwner && !b.isTest && <ActBtn label="🧪 Mark as Test" busy={busy === 'mark-test'} onClick={() => { if (confirm('Mark this booking as a SANDBOX test record? It will be excluded from revenue, analytics, and automatic customer comms.')) run('mark-test') }} />}
-          {isOwner && b.isTest && <ActBtn label="Convert to Production" busy={busy === 'unmark-test'} onClick={() => run('unmark-test')} />}
           <ActBtn label={b.confirmationLinkSentAt ? 'Resend Confirmation Link' : 'Send Confirmation Link'} primary busy={busy === 'send-link'} onClick={() => run('send-link')} />
           <ActBtn label="Add Note" onClick={() => { const n = prompt('Internal note:'); if (n) run('add-note', { note: n }) }} />
           <ActBtn label="Edit" onClick={onEdit} />
           <ActBtn label="Duplicate" onClick={onDuplicate} />
+        </div>
+        <p className="text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color: 'var(--muted)' }}>Administrative</p>
+        <div className="flex flex-wrap gap-2 mb-4">
+          {isOwner && !b.isTest && <ActBtn label="🧪 Mark as Test" busy={busy === 'mark-test'} onClick={() => { if (confirm('Mark this booking as a SANDBOX test record? It will be excluded from revenue, analytics, and automatic customer comms.')) run('mark-test') }} />}
+          {isOwner && b.isTest && <ActBtn label="Convert to Production" busy={busy === 'unmark-test'} onClick={() => run('unmark-test')} />}
           {b.status !== 'completed' && <ActBtn label="Mark Completed" busy={busy === 'mark-completed'} onClick={() => run('mark-completed', {}, 'Mark this job completed?')} />}
-          {b.status !== 'cancelled' && <ActBtn label="Cancel Booking" danger onClick={() => { const r = prompt('Cancellation reason (optional):') ?? ''; run('cancel', { reason: r }, 'Cancel this booking?') }} />}
           {b.archived
             ? <ActBtn label="Unarchive" busy={busy === 'unarchive'} onClick={() => run('unarchive')} />
             : <ActBtn label="Archive" busy={busy === 'archive'} onClick={() => run('archive', {}, 'Archive this booking? It will be hidden from the default list but kept for your records.')} />}
-          <ActBtn label="Delete" danger busy={busy === 'delete'} onClick={del} />
+        </div>
+        <div className="pt-3" style={{ borderTop: '1px solid rgba(224,0,42,.2)' }}>
+          <p className="text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color: '#f87171' }}>Destructive — requires confirmation</p>
+          <div className="flex flex-wrap gap-2">
+            {b.status !== 'cancelled' && <ActBtn label="Cancel Booking" danger onClick={() => { const r = prompt('Cancellation reason (optional):') ?? ''; run('cancel', { reason: r }, 'Cancel this booking?') }} />}
+            <ActBtn label="Delete" danger busy={busy === 'delete'} onClick={del} />
+          </div>
         </div>
         <a href={link} target="_blank" rel="noreferrer" className="block text-xs mt-3 font-mono break-all" style={{ color: 'var(--red)' }}>{link}</a>
         {msg && <p className="text-sm mt-2" style={{ color: '#34d399' }}>{msg}</p>}
@@ -1762,6 +1847,11 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
       </details>
       </>
       )}
+
+      {/* Mobile primary-action bar — the current next step, always reachable */}
+      <div className="sm:hidden fixed bottom-0 left-0 right-0 z-30 px-4 py-3" style={{ background: 'var(--bg)', borderTop: '1px solid var(--line)' }}>
+        <button type="button" onClick={primary.onClick} className="w-full text-sm font-bold py-2.5 rounded-xl" style={{ background: 'var(--red)', color: '#fff' }}>{primary.label}</button>
+      </div>
     </div>
   )
 
