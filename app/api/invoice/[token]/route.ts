@@ -7,6 +7,8 @@ import { COMPANY } from '../../../lib/company'
 import { getStripe, stripeConfigured, grossUp } from '../../../lib/stripe'
 import { siteUrl } from '../../../lib/booking-emails'
 import { rateLimit } from '../../../lib/rate-limit'
+import { resolveTenantFromResource } from '../../../lib/platform/tenancy/tenant-resolve'
+import { runWithTenant } from '../../../lib/platform/tenancy/context'
 
 export const runtime = 'nodejs'
 
@@ -32,7 +34,16 @@ export const GET = withTenantRoute(async (_req: NextRequest, { params }: { param
   const { token } = await params
   const inv = await getInvoiceByToken(token)
   if (!inv || inv.status === 'void') return NextResponse.json({ error: 'not_found' }, { status: 404 })
-  return NextResponse.json({ invoice: publicView(inv) })
+  // Tenant is derived from the RECORD the unguessable token binds to — never from a
+  // client param/query/body. Fail closed when tenancy is on and the record has no
+  // binding; reference tenant (no-op) while TENANCY_ENABLED=false → response
+  // unchanged. Invoice has no tenantId field yet; the cast lets the resolver read it
+  // once bindings exist (today undefined → fallback off / fail-closed on).
+  const resolution = resolveTenantFromResource(inv as { tenantId?: string | null }, { kind: 'invoice', correlationId: token })
+  if (!resolution) return NextResponse.json({ error: 'not_found' }, { status: 404 })
+  return runWithTenant({ tenantId: resolution.tenantId }, async () =>
+    NextResponse.json({ invoice: publicView(inv) }),
+  )
 })
 
 export const POST = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
@@ -44,6 +55,15 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
   if (!inv || inv.status === 'void') return NextResponse.json({ error: 'not_found' }, { status: 404 })
   if (inv.status === 'paid' || balanceCents(inv) <= 0) return NextResponse.json({ error: 'This invoice is already paid.' }, { status: 409 })
   if (!stripeConfigured()) return NextResponse.json({ error: `Card payment isn’t available right now — contact ${COMPANY.legalName} to pay.` }, { status: 503 })
+
+  // Tenant is derived from the RECORD the unguessable token binds to — never from a
+  // client param/query/body. Fail closed when tenancy is on and the record has no
+  // binding; reference tenant (no-op) while TENANCY_ENABLED=false → response
+  // unchanged. Invoice has no tenantId field yet; the cast lets the resolver read it
+  // once bindings exist (today undefined → fallback off / fail-closed on).
+  const resolution = resolveTenantFromResource(inv as { tenantId?: string | null }, { kind: 'invoice', correlationId: token })
+  if (!resolution) return NextResponse.json({ error: 'not_found' }, { status: 404 })
+  return runWithTenant({ tenantId: resolution.tenantId }, async () => {
 
   const net = balanceCents(inv)
   const { feeCents, totalCents } = grossUp(net)
@@ -73,4 +93,5 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
     console.error('[invoice/pay]', err)
     return NextResponse.json({ error: 'Could not start checkout. Please try again.' }, { status: 500 })
   }
+  })
 })

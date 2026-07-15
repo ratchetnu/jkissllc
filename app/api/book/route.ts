@@ -17,6 +17,7 @@ import { getPromo, validatePromo, normalizeCode } from '../../lib/promo'
 import { getPaymentProvider } from '../../lib/payments'
 import { validateProofImage, sealAndStoreProof } from '../../lib/payment-proof'
 import { notifyOwnerZelleReview } from '../../lib/booking-notify'
+import { tenantIdForOutboundMetadata } from '../../lib/platform/tenancy/tenant-resolve'
 
 export const runtime = 'nodejs'
 
@@ -180,7 +181,9 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
         customer_email: email || undefined,
         success_url: `${base}/api/booking/${booking.token}/stripe-return?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${base}/booking/${booking.token}?pay=cancelled`,
-        metadata: { bookingToken: booking.token, bookingNumber: booking.bookingNumber, paymentType: 'deposit', invoiceAmountCents: String(depositCents), feeCents: String(feeCents) },
+        // Stamp the originating tenant so the later (session-less) webhook can
+        // resolve it via resolveTenantFromStripe. Returns 'jkiss' while tenancy off.
+        metadata: { bookingToken: booking.token, bookingNumber: booking.bookingNumber, paymentType: 'deposit', invoiceAmountCents: String(depositCents), feeCents: String(feeCents), tenantId: tenantIdForOutboundMetadata() },
       })
       return NextResponse.json({ ok: true, token: booking.token, url: session.url })
     } catch (e) {

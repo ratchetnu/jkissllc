@@ -2,10 +2,18 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { put } from '@vercel/blob'
 import { requireStaffSession } from '../_lib/session'
+import { scopeBlobPath, sanitizeBlobSegment } from '../../../lib/platform/tenancy/blob-keys'
 import { toModelReadableImage, UnreadableImageError } from '../../../lib/image-convert'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
+
+// Tenant-safe physical path for a staff-uploaded ops photo (crew badge, etc.).
+// Byte-identical to the legacy `admin-photos/<uuid>.<ext>` while tenancy is off;
+// `tenants/<id>/admin-photos/…` once on. Filename sanitized against traversal.
+export function adminPhotoBlobPath(id: string, ext: string): string {
+  return scopeBlobPath(`admin-photos/${sanitizeBlobSegment(`${id}.${ext}`)}`)
+}
 
 // POST /api/admin/upload — staff-gated image upload for ops features (crew badge
 // photos, etc.). Same {image: dataURL} → {url} shape as the public /api/upload, but
@@ -26,7 +34,8 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     const raw = Buffer.from(m[3], 'base64')
     // HEIC/HEIF → JPEG so the vision model can decode admin-added photos too.
     const { buffer: buf, contentType, ext } = await toModelReadableImage(raw, m[1])
-    const blob = await put(`admin-photos/${crypto.randomUUID()}.${ext}`, buf, { access: 'public', contentType, addRandomSuffix: false })
+    // Tenant-safe path with the CONVERTED ext/contentType; byte-identical to legacy while off.
+    const blob = await put(adminPhotoBlobPath(crypto.randomUUID(), ext), buf, { access: 'public', contentType, addRandomSuffix: false })
     return NextResponse.json({ ok: true, url: blob.url })
   } catch (e) {
     if (e instanceof UnreadableImageError) {

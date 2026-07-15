@@ -10,6 +10,43 @@ the product is **Operion**. See `README.md` for the naming/source-of-truth note.
 
 ---
 
+## 2026-07-15 — Tenant-safe storage + public/webhook tenant resolution (dark-launch)
+
+Built the multi-tenant boundaries that were the top remaining activation blockers, all
+**inert while `TENANCY_ENABLED=false`** (byte-identical behavior today). Branch
+`feat/operion-tenant-safe-boundaries`. No tenancy enablement, no UI redesign.
+
+**New canonical primitives (IMPLEMENTED, unit-tested):**
+- `app/lib/platform/tenancy/blob-keys.ts` — `scopeBlobPath()` (Blob analogue of `scopeKey`): legacy path when off, `tenants/{tid}/{path}` when on, fail-closed, traversal/name-derived guards.
+- `app/lib/platform/tenancy/tenant-resolve.ts` — canonical session-less resolver with a documented trust model: `resolveTenantFromResource` (token routes), `resolveTenantFromHost` (domain map), `resolveTenantFromStripe` (verified metadata), `tenantIdForOutboundMetadata`.
+
+**By blocker:**
+- **Blob storage (IMPLEMENTED + LEGACY-COMPATIBLE):** 5 write sites (quote/admin/uniform/careers/payment-proof) route through `scopeBlobPath`; filenames sanitized. Reads/deletes use stored absolute URLs → legacy objects stay readable; **bulk migration MIGRATION-REQUIRED** (plan in `tenant-isolation/08-blob-migration-plan.md`, not executed).
+- **Stripe webhook (IMPLEMENTED):** `tenantId` stamped into Checkout metadata at creation; webhook verifies signature → `resolveTenantFromStripe` → `withBackgroundTenant`; fail-closed + alert when unresolved; idempotency/dedup/200-contract preserved.
+- **Public token routes (COMPLETE):** all customer-token routes now derive tenant from the resource the token binds to (never a client-supplied id) — `booking/[token]` (base + verify/cancel/confirm-return/confirmation/manual-payment/pay/promo/reschedule/review/stripe-return), `invoice/[token]` (+ stripe-return), `quote/status/[token]`. `booking/stripe-return` derives from the server-fetched Stripe session metadata (same authority as the webhook). `review` GET intentionally skipped (no booking/invoice record to bind to).
+- **Dark-launch validation (COMPLETE):** owner click-through on the correct tenant-boundaries Preview (`dpl_7U8amgqh2z`, `fcf0736`); telemetry read from that deployment's runtime logs. **95 requests, zero 4xx/5xx, zero `tenancy:*` events, zero warnings/errors → no dangerous mismatches, no fail-closed, no cross-tenant, byte-identical while off.** Live coverage was the customer read paths + wizard; write/admin/payment boundaries (which dark-launch read-compare can't surface anyway) are covered by the 684-case suite. Full detail + honest scope in `tenant-isolation/09-dark-launch-validation.md`. **No fixes required.**
+- **AI audit read (IMPLEMENTED):** `listAiCalls`/`computeAiAnalytics` now filter by tenant when enabled (H-AI-2), inert when off; `ai:cost:{tid}` already isolated; prompts intentionally global.
+- **Name-derived keys (PARTIAL + MIGRATION-REQUIRED):** `biz:*`/`learn:*` Redis keys are already tenant-isolated by the chokepoint when enabled; the residual name-derived **value** key `Staff.payByBusiness` is migration-required (stable-id forward helpers added, inert; doc in `tenant-isolation/07-name-derived-key-migration.md`).
+
+**Status legend:** IMPLEMENTED (code + tests, inert off) · LEGACY-COMPATIBLE (old data still works) · PARTIAL (representative set done, rest enumerated) · MIGRATION-REQUIRED (planned, not executed) · DARK-LAUNCHED (Preview validation pending) · NOT-ENABLED (`TENANCY_ENABLED` stays false).
+
+**Gates:** `tsc` 0 · `npm test` **684/684** (+55) · `next build` OK · no new lint in changed files.
+
+## 2026-07-15 — Production release of the hardening sprint 🚀
+
+The Production Hardening sprint (below) was merged to `main` and **deployed to Production**
+after Preview click-through approval.
+
+- **Merge:** `fix/operion-production-hardening` (`b7c3809`) → `main` via `--no-ff` release
+  merge `ddd7d3c` ("feat(operion): harden authorization, AI recovery, alerts, KPIs, and
+  accessibility"); brought the hardening + the Operion blueprint reconciliation + the
+  enterprise-readiness audit onto `main` (the single source of truth). No conflicts.
+- **Production deployment:** `dpl_7EpbqahqnEsqrk9XYvTP6c1D4Hr4`, commit `ddd7d3c`, `target: production`, state `READY`, build clean (0 errors, 44s). Serves `jkissllc.com` / `www.jkissllc.com`.
+- **Verification:** `/api/health` → `{"status":"healthy","build":"dpl_7Epb…"}` (KV reachable, new build live); `/quote` renders 200; no runtime errors attributed to the new deployment. Pre-merge gates: `tsc` 0 · `npm test` **629/629** · `next build` OK.
+- **Shipped fixes:** authorization tightening (38 routes), AI stale-job recovery + call timeout, alert Slack→email→console fallback, KPI accuracy (Awaiting-AI parity, Booked-Today via `confirmedAt`+Central), Book Now wizard accessibility.
+- **Safety:** `TENANCY_ENABLED` remained `false`; no Production env/secret changed for this release (Production `ADMIN_SESSION_SECRET`/`ADMIN_PASSWORD`/`DOC_ENCRYPTION_KEY` untouched); no customer/payment/job/message data altered.
+- **Next:** highest remaining enterprise blocker = tenant-safe Blob storage + public-route/Stripe-webhook tenant resolution (see the audit's §21/§22) — the recommended next sprint once this release is confirmed stable.
+
 ## 2026-07-14 — Production Hardening sprint (auth, worker recovery, failure visibility)
 
 Resolved the audit's live-and-near-term HIGH/MEDIUM issues on branch

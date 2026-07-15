@@ -4,9 +4,18 @@ import { put } from '@vercel/blob'
 import { requireCrew } from '../_lib/crew'
 import { saveUniformPhoto, getUniformPhoto } from '../../../lib/uniform'
 import { centralToday } from '../../../lib/dates'
+import { scopeBlobPath, sanitizeBlobSegment } from '../../../lib/platform/tenancy/blob-keys'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
+
+// Tenant-safe physical path for a crew member's daily uniform photo. The staffId
+// stays a directory segment exactly as today (server-controlled), only the
+// filename is sanitized. Byte-identical to `uniform-photos/<staffId>/<uuid>.<ext>`
+// while tenancy is off; `tenants/<id>/uniform-photos/…` once on.
+export function uniformPhotoBlobPath(staffId: string, id: string, ext: string): string {
+  return scopeBlobPath(`uniform-photos/${staffId}/${sanitizeBlobSegment(`${id}.${ext}`)}`)
+}
 
 // Daily uniform-photo upload (request "Uniform Photo"). A crew member submits today's
 // uniform photo; this suppresses the uniform reminder and clears the "missing uniform"
@@ -30,7 +39,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   try {
     const buf = Buffer.from(m[3], 'base64')
     const ext = m[2] === 'jpeg' ? 'jpg' : m[2]
-    const blob = await put(`uniform-photos/${who.staffId}/${crypto.randomUUID()}.${ext}`, buf, { access: 'public', contentType: m[1], addRandomSuffix: false })
+    const blob = await put(uniformPhotoBlobPath(who.staffId, crypto.randomUUID(), ext), buf, { access: 'public', contentType: m[1], addRandomSuffix: false })
     const rec = await saveUniformPhoto(who.staffId, blob.url)
     return NextResponse.json({ ok: true, url: rec.url, at: rec.uploadedAt })
   } catch (e) {

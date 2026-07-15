@@ -41,12 +41,17 @@ export type Calibration = CalibrationBias & {
   updatedAt: string
 }
 
-// TODO(opspilot/tenancy): DATA-ISOLATION DEFECT, not just a key rename. This is
-// the pricing model's calibration state, and it is global. Under multi-tenancy,
-// one tenant's completed-job outcomes would train another tenant's price
-// estimator — a data leak and a pricing-integrity bug. Must be tenant-scoped
-// before a second company is onboarded.
-// See docs/opspilot-multi-tenant-roadmap.md §2.3.
+// TENANCY (H-KEY-2): this is the pricing model's calibration state. The keys below
+// are STATIC (not name-derived) and NOT platform-global, so the isolation chokepoint
+// (redis.ts → scopeKey) namespaces them per tenant automatically when TENANCY_ENABLED
+// → `t:{tid}:learn:jobs` / `t:{tid}:learn:calibration`. One tenant's completed-job
+// outcomes therefore CANNOT train another tenant's estimator once tenancy is on
+// (proven in scripts/name-derived-keys.test.ts). While TENANCY_ENABLED=false the
+// physical keys are unchanged (global) — byte-identical to today.
+//
+// ACTIVATION REQUIREMENT: recordJobOutcome/getCalibration must run WITHIN a tenant
+// context (runWithTenant) once tenancy is on, or scopeKey fails closed and throws.
+// Background/cron paths that fold outcomes into calibration must seed that context.
 const OUTCOMES_KEY = 'learn:jobs'
 const CALIB_KEY = 'learn:calibration'
 const MAX_OUTCOMES = 250

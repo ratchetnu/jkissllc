@@ -6,6 +6,8 @@ import {
   SERVICE_LABELS, BOOKING_STATUS_LABEL, paymentSummaryStatus, PAYMENT_SUMMARY_LABEL,
 } from '../../../../lib/bookings'
 import { getPolicyVersion, getCurrentPolicy } from '../../../../lib/policy'
+import { resolveTenantFromResource } from '../../../../lib/platform/tenancy/tenant-resolve'
+import { runWithTenant } from '../../../../lib/platform/tenancy/context'
 
 function esc(v: unknown): string {
   if (v === null || v === undefined) return ''
@@ -26,6 +28,15 @@ export const GET = withTenantRoute(async (_req: NextRequest, { params }: { param
   const { token } = await params
   const b = await getBookingByToken(token)
   if (!b) return new NextResponse('Booking not found', { status: 404 })
+
+  // Tenant is derived from the RECORD the unguessable token binds to — never from a
+  // client param/query/body. Fail closed when tenancy is on and the record has no
+  // binding; reference tenant (no-op) while TENANCY_ENABLED=false → response
+  // unchanged. Booking has no tenantId field yet; the cast lets the resolver read it
+  // once bindings exist (today undefined → fallback off / fail-closed on).
+  const resolution = resolveTenantFromResource(b as { tenantId?: string | null }, { kind: 'booking', correlationId: token })
+  if (!resolution) return new NextResponse('Booking not found', { status: 404 })
+  return runWithTenant({ tenantId: resolution.tenantId }, async () => {
 
   const policy = b.agreementPolicyVersion
     ? (await getPolicyVersion(b.agreementPolicyVersion)) ?? (await getCurrentPolicy())
@@ -113,4 +124,5 @@ export const GET = withTenantRoute(async (_req: NextRequest, { params }: { param
 </body></html>`
 
   return new NextResponse(html, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+  })
 })

@@ -8,6 +8,8 @@ import {
 import { getStripe, stripeConfigured, grossUp } from '../../../../lib/stripe'
 import { rateLimit } from '../../../../lib/rate-limit'
 import { siteUrl } from '../../../../lib/booking-emails'
+import { tenantIdForOutboundMetadata, resolveTenantFromResource } from '../../../../lib/platform/tenancy/tenant-resolve'
+import { runWithTenant } from '../../../../lib/platform/tenancy/context'
 
 export const runtime = 'nodejs'
 
@@ -25,6 +27,16 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
   const b = await getBookingByToken(token)
   if (!b) return NextResponse.json({ error: 'not_found' }, { status: 404 })
   if (b.status === 'cancelled') return NextResponse.json({ error: 'This booking has been cancelled.' }, { status: 409 })
+
+  // Tenant is derived from the RECORD the unguessable token binds to — never from a
+  // client param/query/body. This scope is what tenantIdForOutboundMetadata() reads
+  // to stamp the Stripe session's tenantId below. Fail closed when tenancy is on and
+  // the record has no binding; reference tenant (no-op) while TENANCY_ENABLED=false →
+  // response + stamped metadata unchanged. Booking has no tenantId field yet; the
+  // cast lets the resolver read it once bindings exist.
+  const resolution = resolveTenantFromResource(b as { tenantId?: string | null }, { kind: 'booking', correlationId: token })
+  if (!resolution) return NextResponse.json({ error: 'This booking is temporarily unavailable. Please try again shortly.' }, { status: 503 })
+  return runWithTenant({ tenantId: resolution.tenantId }, async () => {
 
   const body = await req.json().catch(() => ({}))
   const kind = (['deposit', 'balance', 'full'].includes(body.kind) ? body.kind : 'balance') as 'deposit' | 'balance' | 'full'
@@ -72,6 +84,9 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
         paymentType: type,
         invoiceAmountCents: String(net),
         feeCents: String(feeCents),
+        // Stamp the originating tenant for the later (session-less) webhook to
+        // resolve via resolveTenantFromStripe. Returns 'jkiss' while tenancy off.
+        tenantId: tenantIdForOutboundMetadata(),
       },
     })
     return NextResponse.json({ url: session.url })
@@ -79,4 +94,5 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
     console.error('[booking/pay]', err)
     return NextResponse.json({ error: 'Could not start checkout. Please try again or use Zelle/Apple Pay.' }, { status: 500 })
   }
+  })
 })

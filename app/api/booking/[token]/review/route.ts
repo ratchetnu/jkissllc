@@ -4,6 +4,8 @@ import { getBookingByToken, paymentSummaryStatus } from '../../../../lib/booking
 import { getReview, saveReview, type SiteReview } from '../../../../lib/site-reviews'
 import { rateLimit } from '../../../../lib/rate-limit'
 import { emailOpsReviewLeft } from '../../../../lib/booking-emails'
+import { resolveTenantFromResource } from '../../../../lib/platform/tenancy/tenant-resolve'
+import { runWithTenant } from '../../../../lib/platform/tenancy/context'
 
 // GET /api/booking/[token]/review — the existing review for this booking, if any.
 export const GET = withTenantRoute(async (_req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
@@ -26,6 +28,15 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
     return NextResponse.json({ error: 'Reviews open once your invoice is paid in full.' }, { status: 403 })
   }
 
+  // Tenant is derived from the RECORD the unguessable token binds to — never from a
+  // client param/query/body. Fail closed when tenancy is on and the record has no
+  // binding; reference tenant (no-op) while TENANCY_ENABLED=false → response
+  // unchanged. Booking has no tenantId field yet; the cast lets the resolver read it
+  // once bindings exist (today undefined → fallback off / fail-closed on).
+  const resolution = resolveTenantFromResource(b as { tenantId?: string | null }, { kind: 'booking', correlationId: token })
+  if (!resolution) return NextResponse.json({ error: 'This booking is temporarily unavailable. Please try again shortly.' }, { status: 503 })
+  return runWithTenant({ tenantId: resolution.tenantId }, async () => {
+
   const body = await req.json().catch(() => ({}))
   const rating = Math.round(Number(body.rating))
   if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
@@ -47,4 +58,5 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
   await emailOpsReviewLeft(b, rating, review.text)
 
   return NextResponse.json({ ok: true, review })
+  })
 })

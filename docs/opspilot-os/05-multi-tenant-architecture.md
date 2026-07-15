@@ -152,6 +152,19 @@ activation blockers.)_
 
 ## 5a. Activation blockers — before flipping `TENANCY_ENABLED=true` (FACT)
 
+> **Update 2026-07-15** (branch `feat/operion-tenant-safe-boundaries`, dark-launch, not
+> merged): most of these blockers now have their code boundaries built and inert
+> (`TENANCY_ENABLED=false` → byte-identical). **Blob** paths → `scopeBlobPath` at 5 write
+> sites (legacy objects still readable; bulk migration planned, not run —
+> `tenant-isolation/08-blob-migration-plan.md`). **Stripe webhook** → `tenantId` in
+> Checkout metadata + `resolveTenantFromStripe` + `withBackgroundTenant`. **Public token
+> routes** → `resolveTenantFromResource` (representative set; rest enumerated). **AI audit
+> read** → tenant-filtered when enabled (H-AI-2). **Name-derived keys** → `biz:*`/`learn:*`
+> already isolated by the chokepoint; the residual `Staff.payByBusiness` value key remains
+> MIGRATION-REQUIRED. New canonical primitives: `blob-keys.ts`, `tenant-resolve.ts`. See
+> `CHANGELOG.md` (2026-07-15). What remains before a flip: execute the Blob + name-key
+> migrations, finish the remaining public token routes, and pass dark-launch validation.
+
 _(Added 2026-07-14.)_ The context layer is wired and dormant; **data-level
 activation is BLOCKED** on the following, each of which would otherwise cause a
 silent cross-tenant leak or a fail-closed outage:

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { getBookingByToken, saveBooking, recompute, customerView, pushBookingEvent } from '../../../../lib/bookings'
+import { resolveTenantFromResource } from '../../../../lib/platform/tenancy/tenant-resolve'
+import { runWithTenant } from '../../../../lib/platform/tenancy/context'
 import { getCurrentPolicy } from '../../../../lib/policy'
 import { rateLimit } from '../../../../lib/rate-limit'
 import { getIP, getUA } from '../../../../lib/req'
@@ -24,6 +26,18 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
   const b = await getBookingByToken(token)
   if (!b) return NextResponse.json({ error: 'not_found' }, { status: 404 })
   if (b.status === 'cancelled') return NextResponse.json({ error: 'This booking has been cancelled. Please contact us.' }, { status: 409 })
+
+  // Derive tenant context from the RECORD itself. The unguessable token binds to
+  // exactly one booking; that booking's own tenant binding is the authority — we
+  // NEVER read a tenant from a client-supplied id/param/body. Fail closed when
+  // tenancy is on and the record carries no binding. No-op (reference tenant)
+  // while TENANCY_ENABLED=false, so the customer experience is unchanged.
+  // Booking has no tenantId field yet (records aren't tenant-bound in this
+  // sprint); the cast lets the resolver read it once bindings exist. Today it is
+  // undefined → fallback while off, fail-closed while on. Authority is the record.
+  const resolution = resolveTenantFromResource(b as { tenantId?: string | null }, { kind: 'booking', correlationId: token })
+  if (!resolution) return NextResponse.json({ error: 'This booking is temporarily unavailable. Please try again shortly.' }, { status: 503 })
+  return runWithTenant({ tenantId: resolution.tenantId }, async () => {
 
   const body = await req.json().catch(() => ({}))
   const selectedDate = clean(body.selectedDate, 20)
@@ -79,4 +93,5 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
   }
 
   return NextResponse.json({ ok: true, booking: customerView(b) })
+  })
 })
