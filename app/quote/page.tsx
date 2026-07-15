@@ -1018,12 +1018,12 @@ function YesNo({ id, label, value, onChange }: { id: string; label: string; valu
 
 // ── Step 3: Photos ───────────────────────────────────────────────────────────
 const PHOTO_TIPS: { icon: LucideIcon; text: string }[] = [
-  { icon: Camera, text: 'One wide shot showing the whole area or pile.' },
-  { icon: Boxes, text: 'Include everything that needs to be removed.' },
-  { icon: Truck, text: 'Extra angles when items overlap or hide each other.' },
-  { icon: HardHat, text: 'Close-ups of unusually heavy or unclear objects.' },
-  { icon: DoorOpen, text: 'Show stairs, elevators, gates, or a long carry when relevant.' },
-  { icon: Lightbulb, text: 'Avoid dark, blurry, cropped, or blocked photos.' },
+  { icon: Camera, text: 'One wide shot showing the whole area or pile — stand back far enough to fit it all in.' },
+  { icon: Boxes, text: 'Include everything that needs to be removed; open cabinets, closets, or storage with items in them.' },
+  { icon: Truck, text: 'At least two angles when items overlap or hide each other — it helps us not double-count.' },
+  { icon: HardHat, text: 'Close-ups of unusually heavy, unclear, or specialty items (appliances, exercise gear, etc.).' },
+  { icon: DoorOpen, text: 'Show stairs, elevators, gates, hallways, and the path to where a truck can park.' },
+  { icon: Lightbulb, text: 'Keep photos bright and sharp — avoid dark, blurry, cropped, or blocked shots, and don’t upload the same photo twice.' },
 ]
 function StepPhotos(props: {
   photos: PhotoItem[]; dragOver: boolean; setDragOver: (v: boolean) => void
@@ -1101,6 +1101,13 @@ function StepPhotos(props: {
           <p className="mt-3 text-sm font-semibold flex items-center gap-2" style={{ color: failed > 0 ? '#ffb3c0' : uploading > 0 ? 'var(--muted)' : '#34d399' }}>
             {uploading > 0 ? <Loader2 size={15} className="animate-spin" aria-hidden="true" /> : failed > 0 ? <X size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}
             {status}
+          </p>
+        )}
+        {/* Coverage nudge: a single photo rarely captures a whole job — invite a second
+            angle for a more accurate instant estimate (non-blocking). */}
+        {done === 1 && uploading === 0 && (
+          <p className="mt-2 text-xs flex items-center gap-1.5" style={{ color: '#fbbf24', lineHeight: 1.5 }}>
+            <Camera size={13} aria-hidden="true" /> One more angle helps us quote accurately — add a wide shot or a second view if you can.
           </p>
         )}
       </div>
