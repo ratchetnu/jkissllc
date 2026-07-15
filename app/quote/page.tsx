@@ -637,7 +637,7 @@ export default function QuotePage() {
                 photoCount: uploadedUrls.length,
                 contactMethod,
               }}
-              onReset={() => { try { sessionStorage.removeItem('jkq_r'); window.history.replaceState(null, '', '/quote') } catch { /* noop */ } setSent(null); setFinalState(null); quoteIdemRef.current = ''; confIdemRef.current = ''; setEstimate(null); analysisIdRef.current = ''; setFollowUps([]); setConfItems([]); setConfAnswers({}); setIsEverything(''); setEverythingPictured(null); setAttest(EMPTY_ATTEST); setEstate({}); setStep(0); setSvcId(''); setPickupText(''); setDeliveryText(''); setSizeId(''); setHeavy(null); setStairs(null); setElevator(null); setPrefDate(''); setPhotos([]); setUpgrades([]); setName(''); setCompany(''); setPhone(''); setEmail(''); setPromo(''); setEst(null); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
+              onReset={() => { try { sessionStorage.removeItem('jkq_r'); window.history.replaceState(null, '', '/quote') } catch { /* noop */ } setSent(null); setFinalState(null); quoteIdemRef.current = ''; confIdemRef.current = ''; setEstimate(null); analysisIdRef.current = ''; setFollowUps([]); setConfItems([]); setConfAnswers({}); setIsEverything(''); setEverythingPictured(null); setAttest(EMPTY_ATTEST); setEstate({}); setStep(0); setSvcId(''); setPickupText(''); setDeliveryText(''); setSizeId(''); setHeavy(null); setStairs(null); setElevator(null); setPrefDate(''); setPhotos([]); setUpgrades([]); setName(''); setCompany(''); setPhone(''); setEmail(''); setPromo(''); setEst(null); setContactMethod('Text message'); setErr(''); setAnalyzing(false); setReserveOpen(false); setAvail(null); setBookDate(''); setBookWin(''); setBookMethod('stripe'); setBookProof(''); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
           ) : (
             <>
               {/* Intro */}
@@ -1470,7 +1470,7 @@ function SuccessView({ sent, deposit, summary, onReset, final }: {
     ['Photos attached', summary.photoCount ? `${summary.photoCount} photo${summary.photoCount === 1 ? '' : 's'}` : 'None'],
   ]
   return (
-    <div className="max-w-2xl mx-auto wiz-reveal">
+    <div className="max-w-2xl mx-auto wiz-reveal" style={{ position: 'relative', zIndex: 10 }}>
       <div className="glass-card p-7 sm:p-10 text-center" style={{ borderRadius: 24, border: '1px solid rgba(224,0,42,.25)' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 64, height: 64, borderRadius: 999, background: 'rgba(224,0,42,.12)', color: RED, marginBottom: 18 }}>
           <Check size={32} />
@@ -1522,9 +1522,15 @@ function SuccessView({ sent, deposit, summary, onReset, final }: {
         </div>
 
         <p className="text-sm" style={{ color: 'rgba(255,255,255,.5)', lineHeight: 1.6 }}>Need it handled fast? Call or email us at <a href={"mailto:" + COMPANY.email} className="underline" style={{ color: '#fff' }}>info@jkissllc.com</a>.</p>
-        <div className="mt-7 flex justify-center gap-3 flex-wrap">
-          <Link href="/" className="btn wiz-ease">Back to Home</Link>
-          <button onClick={onReset} className="btn-ghost wiz-ease">Request Another Quote</button>
+        {/* ROOT-CAUSE FIX: both controls (a Link AND a button) were unclickable, which
+            can only mean clicks weren't reaching them — a stacking/overlay issue, not a
+            Link- or handler-specific one. position:relative + a positive zIndex here (and
+            on the card above) put these controls in their own stacking context above the
+            animated card / brand-glow / any sibling layer, so the click always lands.
+            Link keeps native-anchor + client navigation; the reset is an explicit type=button. */}
+        <div className="mt-7 flex justify-center gap-3 flex-wrap" style={{ position: 'relative', zIndex: 10 }}>
+          <Link href="/" className="btn wiz-ease" style={{ pointerEvents: 'auto' }}>Back to Home</Link>
+          <button type="button" onClick={onReset} className="btn-ghost wiz-ease" style={{ pointerEvents: 'auto' }}>Request Another Quote</button>
         </div>
       </div>
     </div>
