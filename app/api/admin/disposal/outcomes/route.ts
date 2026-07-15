@@ -41,6 +41,21 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     estLaborCents: dollarsToCents(b.estLabor), actualLaborCents: dollarsToCents(b.actualLabor),
     estProfitCents: dollarsToCents(b.estProfit), actualProfitCents: dollarsToCents(b.actualProfit),
     finalPriceCents: dollarsToCents(b.finalPrice),
+    // Learning-loop provenance: persist the AI-vs-quoted snapshot so priceMape and
+    // overrideRate are computed from real numbers (previously always null / 0 because
+    // these were never written). All optional — only set when supplied by the caller
+    // (the outcome form prefills them from buildOutcomeFromBooking on a completed job).
+    aiRecommendedCents: b.aiRecommended != null ? dollarsToCents(b.aiRecommended) : undefined,
+    overridden: b.overridden === true ? true : undefined,
+    bookingId: typeof b.bookingId === 'string' ? b.bookingId.slice(0, 80) : undefined,
+    jobId: typeof b.jobId === 'string' ? b.jobId.slice(0, 80) : undefined,
+    adminQuotedCents: b.adminQuoted != null ? dollarsToCents(b.adminQuoted) : undefined,
+    acceptedQuoteCents: b.acceptedQuote != null ? dollarsToCents(b.acceptedQuote) : undefined,
+    finalInvoiceCents: b.finalInvoice != null ? dollarsToCents(b.finalInvoice) : undefined,
+    estimateVersion: b.estimateVersion != null && Number.isFinite(Number(b.estimateVersion)) ? Number(b.estimateVersion) : undefined,
+    promptVersion: typeof b.promptVersion === 'string' ? b.promptVersion.slice(0, 60) : undefined,
+    taxonomyVersion: typeof b.taxonomyVersion === 'string' ? b.taxonomyVersion.slice(0, 60) : undefined,
+    pricingRuleVersion: typeof b.pricingRuleVersion === 'string' ? b.pricingRuleVersion.slice(0, 60) : undefined,
     isTest: b.isTest === true, // sandbox outcomes never train the model
     notes: typeof b.notes === 'string' ? b.notes.slice(0, 300) : undefined,
   }

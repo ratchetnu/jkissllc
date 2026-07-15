@@ -24,6 +24,7 @@ import { ensureLoyaltyCode } from '../../../../lib/promo'
 import { getStripe, stripeConfigured } from '../../../../lib/stripe'
 import { getDisposalSettings } from '../../../../lib/disposal'
 import { getCalibration } from '../../../../lib/job-learning'
+import { buildOutcomeFromBooking } from '../../../../lib/outcome-capture'
 import { decideQuote } from '../../../../lib/pricing/quote-decision'
 import { onEstimateModified } from '../../../../lib/intake-workflow'
 import { validateEstimateModification } from '../../../../lib/estimate-modify'
@@ -522,6 +523,14 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
       }
       b.status = 'completed'
       b.completedAt = Date.now()
+      // Capture the AI-vs-quoted price SNAPSHOT for the learning loop (Phase 12).
+      // We only stash the price/version numbers — NOT an actual JobOutcome — so the
+      // admin outcome form can prefill them; recording an outcome with empty crew
+      // actuals would pollute the EWMA calibration bias. Cast keeps shared Booking
+      // types untouched; fail-soft so capture never blocks completion.
+      try {
+        ;(b as unknown as { learningSnapshot?: unknown }).learningSnapshot = buildOutcomeFromBooking(b)
+      } catch (e) { console.error('[mark-completed learning-snapshot]', e) }
       break
     }
     case 'cancel': {

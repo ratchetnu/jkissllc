@@ -10,6 +10,33 @@ the product is **Operion**. See `README.md` for the naming/source-of-truth note.
 
 ---
 
+## 2026-07-15 — Enterprise Vision Estimation: close the learning loop + photo-quality gate (shadow)
+
+Audit-then-connect pass over the EXISTING Book Now AI pipeline (reuse, not rebuild). Branch
+`feat/operion-enterprise-vision-estimation`; all enhancements SHADOW via new flag
+`VISION_ESTIMATION_SHADOW` (default off); `TENANCY_ENABLED` stayed false. Full program +
+verified audit + staged follow-ups: `vision-estimation/00-program.md`.
+
+- **Learning loop CLOSED (the emphasized fix):** verified the outcome writer never persisted
+  `aiRecommendedCents`/`overridden`, so `job-learning.accuracyStats.priceMape` was permanently
+  `null`. Extended `JobOutcome` with versioned enterprise fields (bookingId, adminQuoted/accepted/
+  finalInvoice cents, estimate/prompt/taxonomy/pricing versions, optional crew-measured actuals);
+  fixed the writer to persist the AI recommendation + override; added pure
+  `lib/outcome-capture.ts:buildOutcomeFromBooking()`; `mark-completed` now snapshots the AI-vs-quoted
+  numbers **without** auto-writing empty actuals (no calibration pollution). EWMA/bias math
+  unchanged; actuals never fabricated.
+- **Photo-quality gate (new backend contract):** pure `ai/photo-quality-gate.ts` classifies a
+  submission (sufficient / with-warnings / clarification-recommended / additional-photos-required /
+  manual-review) with configurable thresholds (`QUALITY_GATE_VERSION`) + targeted customer guidance;
+  biases toward warnings over hard blocks. Wiring into the wizard UI is a documented follow-up.
+- **Version stamping:** `INVENTORY_TAXONOMY_VERSION` added; estimates/outcomes now attributable to
+  the schema/prompt/taxonomy/pricing versions that produced them.
+- **Reused unchanged:** taxonomy, `junk-critic`, `quote-decision` (deterministic pricing — AI still
+  never sets price), confidence routing, `job-learning` calibration, `eval.ts`. No duplicate AI/
+  taxonomy/pricing system created.
+- **Baseline:** price MAPE was unmeasurable before (`null`); now measurable under shadow as outcomes
+  accrue — the reference for the promotion gates. **Not promoted; not authoritative.**
+
 ## 2026-07-15 — Tenant-safe storage + public/webhook tenant resolution (dark-launch)
 
 Built the multi-tenant boundaries that were the top remaining activation blockers, all

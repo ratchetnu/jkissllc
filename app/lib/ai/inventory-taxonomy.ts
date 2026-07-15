@@ -19,6 +19,11 @@
 import type { JunkCategory } from './analysis-schema'
 import type { DebrisCategory } from '../disposal'
 
+// Version of this governed taxonomy. Bump on any change to the category set or the
+// per-unit volume/weight/handling facts, so estimates + learning outcomes can be
+// attributed to the taxonomy that produced them (auditable calibration).
+export const INVENTORY_TAXONOMY_VERSION = 1
+
 // The governed customer-facing categories (request Part 4). Ordered as shown in UI.
 export type InventoryCategory =
   | 'furniture'
