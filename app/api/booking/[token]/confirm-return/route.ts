@@ -3,6 +3,8 @@ import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-ro
 import { getBookingByToken, saveBooking, customerView } from '../../../../lib/bookings'
 import { rateLimit } from '../../../../lib/rate-limit'
 import { notifyReturnConfirmed, notifyReturnChangeRequest } from '../../../../lib/notify'
+import { resolveTenantFromResource } from '../../../../lib/platform/tenancy/tenant-resolve'
+import { runWithTenant } from '../../../../lib/platform/tenancy/context'
 
 export const runtime = 'nodejs'
 
@@ -23,6 +25,18 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
   if (b.status !== 'continued' || !b.continuation) {
     return NextResponse.json({ error: 'There is no return visit to confirm on this booking.' }, { status: 409 })
   }
+  // Capture the narrowed (defined) continuation so TS keeps the narrowing inside the
+  // tenant-scope closure below — same object reference, so mutations still persist via saveBooking.
+  const continuation = b.continuation
+
+  // Tenant is derived from the RECORD the unguessable token binds to — never from a
+  // client param/query/body. Fail closed when tenancy is on and the record has no
+  // binding; reference tenant (no-op) while TENANCY_ENABLED=false → response
+  // unchanged. Booking has no tenantId field yet; the cast lets the resolver read it
+  // once bindings exist (today undefined → fallback off / fail-closed on).
+  const resolution = resolveTenantFromResource(b as { tenantId?: string | null }, { kind: 'booking', correlationId: token })
+  if (!resolution) return NextResponse.json({ error: 'This booking is temporarily unavailable. Please try again shortly.' }, { status: 503 })
+  return runWithTenant({ tenantId: resolution.tenantId }, async () => {
 
   const body = await req.json().catch(() => ({}))
 
@@ -32,19 +46,20 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
     if (!requestedDate && !note) {
       return NextResponse.json({ error: 'Tell us what date works better for you.' }, { status: 400 })
     }
-    b.continuation.returnChangeRequest = { requestedDate, note, at: Date.now() }
-    b.continuation.customerConfirmedReturn = false
-    b.continuation.customerConfirmedReturnAt = undefined
+    continuation.returnChangeRequest = { requestedDate, note, at: Date.now() }
+    continuation.customerConfirmedReturn = false
+    continuation.customerConfirmedReturnAt = undefined
     await saveBooking(b)
     await notifyReturnChangeRequest(b)
     return NextResponse.json({ ok: true, requested: true, booking: customerView(b) })
   }
 
   // mode 'confirm' — the proposed return date works.
-  b.continuation.customerConfirmedReturn = true
-  b.continuation.customerConfirmedReturnAt = Date.now()
-  b.continuation.returnChangeRequest = undefined
+  continuation.customerConfirmedReturn = true
+  continuation.customerConfirmedReturnAt = Date.now()
+  continuation.returnChangeRequest = undefined
   await saveBooking(b)
   await notifyReturnConfirmed(b)
   return NextResponse.json({ ok: true, confirmed: true, booking: customerView(b) })
+  })
 })

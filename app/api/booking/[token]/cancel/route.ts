@@ -4,6 +4,8 @@ import { COMPANY } from '../../../../lib/company'
 import { getBookingByToken, saveBooking, customerView, hoursUntilService, cancellationTier } from '../../../../lib/bookings'
 import { rateLimit } from '../../../../lib/rate-limit'
 import { notifyCancelledByCustomer } from '../../../../lib/notify'
+import { resolveTenantFromResource } from '../../../../lib/platform/tenancy/tenant-resolve'
+import { runWithTenant } from '../../../../lib/platform/tenancy/context'
 
 // POST /api/booking/[token]/cancel — customer self-cancels, applying the policy's
 // refund tier by how much notice they gave. Requires an explicit confirm flag.
@@ -17,6 +19,15 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
   if (!b) return NextResponse.json({ error: 'not_found' }, { status: 404 })
   if (b.status === 'cancelled') return NextResponse.json({ error: 'This booking is already cancelled.' }, { status: 409 })
   if (b.status === 'completed') return NextResponse.json({ error: 'This service is complete — please call us at ' + COMPANY.phoneDisplay + '.' }, { status: 409 })
+
+  // Tenant is derived from the RECORD the unguessable token binds to — never from a
+  // client param/query/body. Fail closed when tenancy is on and the record has no
+  // binding; reference tenant (no-op) while TENANCY_ENABLED=false → response
+  // unchanged. Booking has no tenantId field yet; the cast lets the resolver read it
+  // once bindings exist (today undefined → fallback off / fail-closed on).
+  const resolution = resolveTenantFromResource(b as { tenantId?: string | null }, { kind: 'booking', correlationId: token })
+  if (!resolution) return NextResponse.json({ error: 'This booking is temporarily unavailable. Please try again shortly.' }, { status: 503 })
+  return runWithTenant({ tenantId: resolution.tenantId }, async () => {
 
   const body = await req.json().catch(() => ({}))
   const now = Date.now()
@@ -36,4 +47,5 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
   await notifyCancelledByCustomer(b, tier.label)
 
   return NextResponse.json({ ok: true, tier, booking: customerView(b) })
+  })
 })

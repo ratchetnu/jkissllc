@@ -23,13 +23,14 @@ Built the multi-tenant boundaries that were the top remaining activation blocker
 **By blocker:**
 - **Blob storage (IMPLEMENTED + LEGACY-COMPATIBLE):** 5 write sites (quote/admin/uniform/careers/payment-proof) route through `scopeBlobPath`; filenames sanitized. Reads/deletes use stored absolute URLs → legacy objects stay readable; **bulk migration MIGRATION-REQUIRED** (plan in `tenant-isolation/08-blob-migration-plan.md`, not executed).
 - **Stripe webhook (IMPLEMENTED):** `tenantId` stamped into Checkout metadata at creation; webhook verifies signature → `resolveTenantFromStripe` → `withBackgroundTenant`; fail-closed + alert when unresolved; idempotency/dedup/200-contract preserved.
-- **Public token routes (PARTIAL):** `booking/[token]/verify` + `quote/status/[token]` derive tenant from the resource (never a client-supplied id); remaining token routes enumerated for a follow-up.
+- **Public token routes (COMPLETE):** all customer-token routes now derive tenant from the resource the token binds to (never a client-supplied id) — `booking/[token]` (base + verify/cancel/confirm-return/confirmation/manual-payment/pay/promo/reschedule/review/stripe-return), `invoice/[token]` (+ stripe-return), `quote/status/[token]`. `booking/stripe-return` derives from the server-fetched Stripe session metadata (same authority as the webhook). `review` GET intentionally skipped (no booking/invoice record to bind to).
+- **Dark-launch validation (PARTIAL, in progress):** telemetry mechanism confirmed firing on the isolated Preview; of the 20 workflows, the admin-dashboard read is exercised-and-clean — only benign `missing-tenant-copy` on the `pv:` analytics family (a documented migration item, DL-1), **zero** dangerous mismatches (`value`/`serialization`/`stale`/`cross-tenant-denial`). The other 19 workflows need Preview traffic (owner or a bypass-token Playwright run) → then the `tenancy:*` telemetry is read from Vercel runtime logs. Method + results: `tenant-isolation/09-dark-launch-validation.md`.
 - **AI audit read (IMPLEMENTED):** `listAiCalls`/`computeAiAnalytics` now filter by tenant when enabled (H-AI-2), inert when off; `ai:cost:{tid}` already isolated; prompts intentionally global.
 - **Name-derived keys (PARTIAL + MIGRATION-REQUIRED):** `biz:*`/`learn:*` Redis keys are already tenant-isolated by the chokepoint when enabled; the residual name-derived **value** key `Staff.payByBusiness` is migration-required (stable-id forward helpers added, inert; doc in `tenant-isolation/07-name-derived-key-migration.md`).
 
 **Status legend:** IMPLEMENTED (code + tests, inert off) · LEGACY-COMPATIBLE (old data still works) · PARTIAL (representative set done, rest enumerated) · MIGRATION-REQUIRED (planned, not executed) · DARK-LAUNCHED (Preview validation pending) · NOT-ENABLED (`TENANCY_ENABLED` stays false).
 
-**Gates:** `tsc` 0 · `npm test` **674/674** (+45) · `next build` OK · no new lint in changed files.
+**Gates:** `tsc` 0 · `npm test` **684/684** (+55) · `next build` OK · no new lint in changed files.
 
 ## 2026-07-15 — Production release of the hardening sprint 🚀
 
