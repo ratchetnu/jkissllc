@@ -1114,6 +1114,14 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
                 </button>
               ))}
             </div>
+            {/* Shown only when photos were stored as HEIC (unreadable by the vision model) —
+                converts them to JPEG in place, then re-runs analysis. */}
+            {isOwner && b.invoicePhotos.some((p) => /\.(heic|heif)(\?|#|$)/i.test(p.url)) && (
+              <button type="button" onClick={() => run('reconvert-photos')} disabled={busy === 'reconvert-photos'}
+                style={{ marginTop: 10, fontSize: 12.5, fontWeight: 700, padding: '7px 13px', borderRadius: 8, border: '1px solid #f59e0b', color: '#f59e0b', background: 'transparent', cursor: 'pointer' }}>
+                {busy === 'reconvert-photos' ? 'Reconverting…' : '🔄 Re-scan HEIC photos'}
+              </button>
+            )}
           </div>
         )}
       </div>
