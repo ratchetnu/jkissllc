@@ -4,11 +4,11 @@
 //   • unmatched — send SMS/email directly to the phone/email on the message and
 //                  log an outbound message (no booking link).
 //   • note      — internal note (no send); recorded into the thread for context.
-// Admin-only. Does not touch webhook/matching logic.
+// Gated on messages:send (admin + manager). Does not touch webhook/matching logic.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession } from '../../_lib/session'
+import { requirePermission } from '../../_lib/session'
 import { sendSmsDetailed, toE164 } from '../../../../lib/sms'
 import { COMPANY } from '../../../../lib/company'
 import { emailRaw } from '../../../../lib/booking-emails'
@@ -24,7 +24,8 @@ function esc(s: string): string {
 }
 
 export const POST = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'messages:send')
+  if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({}))
 
   const text = (typeof body.text === 'string' ? body.text : '').trim().slice(0, 2000)

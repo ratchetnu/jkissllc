@@ -1,9 +1,20 @@
-# 19 — Assessment Verification (Part 1)
+# 19 — Assessment Verification (Part 1) — Operion
 
-> Re-inspection of the blueprint's cited claims against live code on branch
-> `opspilot/platform-foundation`, 2026-07-12. **The blueprint is NOT materially
-> inaccurate** — it is confirmed on every load-bearing point, with two wording
-> corrections and a handful of precision notes. Safe to proceed.
+> Re-inspection of the blueprint's cited claims against live code, originally on
+> branch `opspilot/platform-foundation` (legacy internal identifier), 2026-07-12.
+> **The blueprint is NOT materially inaccurate** — it is confirmed on every
+> load-bearing point, with two wording corrections and a handful of precision
+> notes. Safe to proceed.
+>
+> _(Re-verified 2026-07-14 against `main` + prod: the tenant-context foundation
+> is now **shipped as S1** — `withTenantRoute` on **104 request handlers** +
+> `withBackgroundTenant` on **3 crons + 3 webhooks**, `app/lib/redis.ts`
+> `scopeKey()` fail-closed, `TENANCY_ENABLED=false` live no-op. CI is now a
+> **blocking** gate running the **full 586-case suite / 75 files** (tsc → npm test
+> → next build, Node 24 via `.nvmrc`) — up from the 239 cases noted in `20-...`.
+> The **Book Now admin redesign** (`/admin/operations/book-now`) shipped to prod
+> as an enterprise dashboard. Platform brand is now **Operion**; `opspilot:` /
+> `app/lib/platform/` / `docs/opspilot-os/` retained as legacy identifiers.)_
 
 ## Confirmed findings (spot-checked against code)
 
@@ -13,12 +24,12 @@
 | Blob storage for files | `@vercel/blob` usage; identity docs sealed in `app/lib/doc-crypto.ts` |
 | Auth = dual-path, HMAC cookie, 2h abs + 10min idle | `app/api/admin/_lib/session.ts:5-6,114-131` |
 | RBAC live: `admin/manager/crew`, ~50 perms, `can()` | `app/lib/rbac.ts:10,21-134` |
-| Session payload `{sub,role,staffId}`, **no tenant** (pre-change) | `session.ts` `SessionPayload` |
+| Session payload `{sub,role,staffId}` — **now also carries `tid`** (S1, 2026-07-14) | `session.ts` `SessionPayload`; `requireTenantSession` |
 | Redis isolation chokepoint = `call()` | `app/lib/redis.ts` `call()` |
-| Two Redis bypasses | `app/api/track/route.ts`, `app/api/admin/analytics/route.ts` (inline fetch) |
+| Redis bypasses (was 2) — **now guarded** by a blocking CI gate | `scripts/bypass-detection.test.ts` (asserts keys route through `scopeKey()`) |
 | AI governance = `runAiTask`, `writes:false` | `app/lib/ai/service.ts`, `app/lib/ai/registry.ts` |
 | Audit actor = coarse `'admin'` | `app/lib/routes.ts:334/358/377/386/461` |
-| CI advisory (does not gate deploy) | `.github/workflows/ai-regression.yml:6-10` |
+| CI **now blocking** (was advisory) — tsc → full 586-case suite → next build | `.github/workflows/ai-regression.yml` (Node via `.nvmrc`) |
 | Stripe key shared with ClaimGuard, customer-facing | `app/lib/stripe.ts:3` |
 | Route + Booking are separate money domains | `app/lib/routes.ts` vs `app/lib/bookings.ts` |
 | §1 defects (JK-INV, ID fallback, pwd compare, blob PII) FIXED | confirmed in prior recon; pwd `secretsMatch` at `auth/route.ts:64-75` |
@@ -69,3 +80,7 @@
   (tracked in `17-open-questions.md`).
 
 **Conclusion:** proceed. No blueprint claim required a material reversal.
+_(Updated 2026-07-14: the corrected per-handler tenant-context approach in
+finding #1 is now **shipped to prod as S1** and inert under `TENANCY_ENABLED=false`;
+the next verification is exercising the isolated dark-launch Preview telemetry —
+see `16-first-sprint-plan.md`.)_

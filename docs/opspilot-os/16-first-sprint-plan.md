@@ -1,17 +1,49 @@
-# 16 — First Implementation Sprint (Phase 15)
+# 16 — First Implementation Sprint (Phase 15) — **DONE as S1**
 
 > The safest first sprint. Foundational, not flashy. Cited to `~/jkissllc@main`,
-> 2026-07-12. **Do not execute until the owner approves.**
+> originally authored 2026-07-12.
+>
+> _(Updated 2026-07-14: **This sprint is EXECUTED — shipped to `main` + prod as
+> "S1".** The "do not execute until the owner approves" framing is removed: it was
+> approved and it happened. What actually shipped is captured in **§Executed (S1)**
+> below; the recommended-scope list that follows is retained as the historical
+> plan. The **new next Stage-0 sprint** is **dark-launch validation** — see §The
+> next Stage-0 sprint.)_
 
 ## Principle
 
-The first sprint must (a) change **nothing** users can see, (b) touch **no**
+The first sprint had to (a) change **nothing** users can see, (b) touch **no**
 existing Redis data, (c) leave every J KISS flow byte-identical, and (d) lay the
 load-bearing foundation (tenant identity + tenant-aware principal + closed
-security drift) that every later phase depends on. It is Roadmap **Phase 0 +
-Phase 1a**.
+security drift) that every later phase depends on. It was Roadmap **Phase 0 +
+Phase 1a**. _(All four held — see §Executed.)_
 
-## In scope (recommended)
+## Executed (S1) — what actually shipped _(Updated 2026-07-14)_
+
+Operion (legacy internal id: `opspilot:` Redis prefix + `app/lib/platform/`
+paths, retained for compatibility) tenant-context wiring is **live on `main` +
+prod** as a **byte-identical no-op** (`TENANCY_ENABLED=false`):
+
+- **Per-request tenant context on 104 request handlers** via the central wrapper
+  `app/lib/platform/tenancy/with-tenant-route.ts` (`withTenantRoute` +
+  `activeTenantIds()`), and **explicit per-tenant context on 3 crons + 3
+  webhooks** via `withBackgroundTenant` (`app/api/cron/{daily,reminders,ai-jobs}`,
+  `app/api/webhooks/{email,twilio/sms,twilio/status}`). This is the
+  **per-handler** `runWithTenant(...)` approach corrected in `19-...` (ALS cannot
+  bridge `proxy.ts`→handlers).
+- **Redis chokepoint fails CLOSED:** `app/lib/redis.ts` routes every key through
+  `scopeKey()` and throws if `TENANCY_ENABLED` is on without a tenant context.
+- **Bypass-detection is a blocking CI gate:** `scripts/bypass-detection.test.ts`.
+- **Anti-spoofing:** `proxy.ts` strips inbound `x-tenant-id`; identity comes only
+  from the signed session (`tid`) → `requireTenantSession`.
+- With the flag off, prod is **live no-op / byte-identical**; flipping it in the
+  isolated Preview is the next step (below), not a prod change.
+
+Remaining foundation items (seed types, ADRs, config sections) tracked under
+`15-migration-roadmap.md` S2. The security-drift fixes (M1/M2/L1/H2/H3
+groundwork) shipped — see `20-security-hardening-sprint.md`.
+
+## In scope (recommended) — _historical plan, now delivered_
 
 1. **ADRs** — `docs/adr/` with the first three decisions recorded:
    ADR-001 pooled multi-tenancy via Redis key prefix; ADR-002 `AsyncLocalStorage`
@@ -49,16 +81,19 @@ Phase 1a**.
 - **No industry-pack extraction**, no UI noun rename, no AI changes.
 - **No Postgres**, no schema, no destructive change.
 
-## Acceptance criteria
+## Acceptance criteria _(all MET as of S1, 2026-07-14)_
 
-- With `TENANCY_ENABLED=off` (default), production J KISS is **byte-identical** —
-  same routes, same auth, same data, same outputs.
-- Every admin/portal route resolves a tenant-scoped `Principal`; the
+- ✅ With `TENANCY_ENABLED=off` (default), production J KISS is **byte-identical** —
+  same routes, same auth, same data, same outputs. (104 handlers + 3 crons + 3
+  webhooks carry context that is inert while the flag is off.)
+- ✅ Every admin/portal route resolves a tenant-scoped principal; the
   authorization-coverage test passes and is blocking in CI.
-- `tsc --noEmit` + full `npm test` + AI regression all green in CI.
-- The three fail-open gates (Twilio, email, cron) are fail-closed; the reminder
+- ✅ `tsc --noEmit` + full `npm test` (now **586 cases / 75 files**) + AI
+  regression + **`next build`** all green in the blocking CI job
+  (`.github/workflows/ai-regression.yml`, Node 24 via `.nvmrc`).
+- ✅ The three fail-open gates (Twilio, email, cron) are fail-closed; the reminder
   ack token is CSPRNG.
-- `t:jkiss` tenant/membership seed exists and equals today's identity.
+- ✅ `t:jkiss` tenant/membership seed exists and equals today's identity.
 
 ## Rollback plan
 
@@ -78,21 +113,40 @@ security-drift fixes are surgical and independently valuable.
 Small-to-medium. Bulk of effort is the guard signature change (36 call sites,
 mechanical) + tests. The security fixes are hours each.
 
-## Suggested branch & flow
+## Branch & flow _(delivered)_
 
-Branch `opspilot/tenancy-foundation` off `main`, jkissllc only (no supercharged
-port this engagement). Show the diff before commit; do not deploy until reviewed.
+Shipped jkissllc-only (no supercharged port this engagement). The tenant-context
+wiring was reviewed as a diff and is now on `main` + prod as S1. Branch name
+`opspilot/tenancy-foundation` (legacy internal identifier) referenced the working
+branch; product-facing name is **Operion**.
 
-## The exact next prompt to start
+## The next Stage-0 sprint — **dark-launch validation** _(Updated 2026-07-14)_
 
-> "Approved. Begin OpsPilot First Sprint **Phase 0 + Phase 1a** per
-> `docs/opspilot-os/16-first-sprint-plan.md`, on a new branch
-> `opspilot/tenancy-foundation`, jkissllc only. Scope: (1) `docs/adr/` with
-> ADR-001..003; (2) flag/kill-switch module with `TENANCY_ENABLED` default off;
-> (3) `Tenant`/`User`/`Membership` seed with `t:jkiss` byte-identical to today;
-> (4) `requireTenantSession` principal + `AsyncLocalStorage` context in
-> `proxy.ts`, unused for prefixing; (5) fail-closed Twilio/email/cron gates +
-> CSPRNG reminder ack token + authorization-coverage test; (6) thread
-> `Principal.sub` into `pushAudit` defaulting `legacy:admin`. Do NOT prefix
-> Redis, migrate data, or change the DB. Typecheck + full test suite green; show
-> me the diff before committing; do not deploy."
+Tenant Context Wiring (the sprint above) is **complete**, so the next Stage-0
+step is **not** re-doing it — it is to **validate the isolated dark-launch
+Preview**. An isolated Preview environment already exists: a separate Upstash
+Redis (`OperionPreview`) + Blob (`operion-preview-blob`), with Preview-only flags
+`TENANCY_ENABLED=false` + `TENANCY_DARK_LAUNCH=true`, fully data-isolated from
+Production. Dark-launch **telemetry has not yet been exercised** — status is
+**DARK-LAUNCH READY, NOT YET VERIFIED**.
+
+**Scope of the validation sprint:**
+
+1. In the isolated Preview, exercise real workflows end-to-end (book-now intake,
+   admin operations, pay/claims reads, messaging) so the dark-launch comparator
+   (`app/lib/platform/tenancy/dark-launch.ts`) runs its legacy-vs-tenant key
+   compare on live paths.
+2. Inspect the `tenancy:dark-launch-mismatch` telemetry (legacy internal
+   identifier, retained for compatibility) for any divergence between the current
+   (unscoped) key and the would-be tenant-scoped key.
+3. Triage each mismatch class; feed the collision classes into S2
+   (`15-migration-roadmap.md`): Blob path scoping, `ai:*` prompt/telemetry
+   scoping, and the name-derived key collisions (`businesses.ts` bizKey→payroll,
+   `job-learning.ts`).
+4. **Only after** dark-launch is verified clean does S2 (data migration under
+   `DARK_LAUNCH`→`DUAL_WRITE`, public-route host-based tenant resolution) begin.
+
+**Acceptance:** dark-launch mismatch telemetry reviewed with every mismatch class
+either explained (safe) or ticketed into S2; Production untouched (flag stays
+off); Preview remains data-isolated. **Rollback:** none needed — Preview-only, no
+prod change, no data migration.

@@ -19,6 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { redis } from './redis'
+import { emailRaw } from './booking-emails'
 
 export type Severity = 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL'
 const SEVERITY_RANK: Record<Severity, number> = { INFO: 0, WARNING: 1, ERROR: 2, CRITICAL: 3 }
@@ -42,20 +43,43 @@ export type AlertInput = {
   meta?: Record<string, string | number | boolean>
 }
 
+export type Environment = 'prod' | 'preview' | 'development' | 'local'
+
 export type AlertPayload = {
   type: string
   severity: Severity
   message: string
   at: string                   // ISO
   build: string
+  environment: Environment     // prod vs preview (derived from VERCEL_ENV/VERCEL_URL)
+  correlationId: string        // always present — generated if the caller had none
   booking?: string
   tenantId?: string
   route?: string
   worker?: string
   errorClass?: string
   retryCount?: number
-  correlationId?: string
   meta?: Record<string, string | number | boolean>
+}
+
+// ── Environment + correlation id ─────────────────────────────────────────────
+// Prod vs preview so an alert reader instantly knows whether it's real traffic.
+export function envLabel(): Environment {
+  const e = process.env.VERCEL_ENV
+  if (e === 'production') return 'prod'
+  if (e === 'preview') return 'preview'
+  if (e === 'development') return 'development'
+  return process.env.VERCEL_URL ? 'preview' : 'local'
+}
+
+// Correlation id when the caller didn't supply one, so a single failure can be
+// traced across logs. Short + delimited so redaction never eats it.
+function genCorrelationId(): string {
+  try {
+    const g = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto
+    if (g?.randomUUID) return `cid_${g.randomUUID()}`
+  } catch { /* fall through */ }
+  return `cid_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
 }
 
 // ── Redaction (pure) ─────────────────────────────────────────────────────────
@@ -89,20 +113,22 @@ export function buildId(): string {
 }
 
 // ── Format (pure) ────────────────────────────────────────────────────────────
-export function formatAlert(input: AlertInput, ctx: { now: string; build: string }): AlertPayload {
+export function formatAlert(input: AlertInput, ctx: { now: string; build: string; environment?: Environment }): AlertPayload {
   return {
     type: redactString(input.type, 60),
     severity: input.severity,
     message: redactString(input.message ?? input.type, 200),
     at: ctx.now,
     build: ctx.build,
+    environment: ctx.environment ?? envLabel(),
+    // Always present: use the caller's id, otherwise mint one so the failure is traceable.
+    correlationId: redactString(input.correlationId ?? genCorrelationId(), 80),
     booking: input.booking ? redactString(input.booking, 40) : undefined,
     tenantId: input.tenantId ? redactString(input.tenantId, 40) : undefined,
     route: input.route ? redactString(input.route, 80) : undefined,
     worker: input.worker ? redactString(input.worker, 80) : undefined,
     errorClass: input.errorClass ? redactString(input.errorClass, 80) : undefined,
     retryCount: typeof input.retryCount === 'number' ? input.retryCount : undefined,
-    correlationId: input.correlationId ? redactString(input.correlationId, 80) : undefined,
     meta: redactMeta(input.meta),
   }
 }
@@ -115,37 +141,96 @@ export function dedupKey(input: AlertInput): string {
 // ── Provider abstraction ─────────────────────────────────────────────────────
 export type AlertProvider = 'slack' | 'email' | 'console' | 'none'
 
+// Recipient for the email fallback. ALERT_EMAIL_TO is the dedicated override;
+// OWNER_EMAIL is the sensible default. (Note: OWNER_ALERT_EMAIL in owner-alerts
+// is a boolean on/off flag, NOT an address — deliberately not used here.)
+export function alertEmailTo(): string | undefined {
+  return process.env.ALERT_EMAIL_TO || process.env.OWNER_EMAIL || undefined
+}
+
+// Reports the provider that will ACTUALLY be attempted first, in priority order:
+// Slack webhook → owner email (Resend) → structured console (always available).
 export function alertProviderStatus(): { provider: AlertProvider; configHint?: string } {
   if (process.env.ALERT_SLACK_WEBHOOK_URL) return { provider: 'slack' }
-  if (process.env.RESEND_API_KEY && (process.env.OWNER_ALERT_EMAIL || process.env.OWNER_EMAIL)) return { provider: 'email' }
-  return { provider: 'console', configHint: 'Set ALERT_SLACK_WEBHOOK_URL (Slack Incoming Webhook) to enable real-time alert delivery; falls back to structured console logs (Vercel logs) meanwhile.' }
+  if (process.env.RESEND_API_KEY && alertEmailTo()) return { provider: 'email' }
+  return { provider: 'console', configHint: 'Set ALERT_SLACK_WEBHOOK_URL (Slack Incoming Webhook), or RESEND_API_KEY + ALERT_EMAIL_TO/OWNER_EMAIL, to enable real-time alert delivery; falls back to structured console logs (Vercel logs) meanwhile.' }
+}
+
+function summaryLine(payload: AlertPayload): string {
+  return [
+    payload.booking && `booking ${payload.booking}`,
+    payload.tenantId && `tenant ${payload.tenantId}`,
+    payload.route && `route ${payload.route}`,
+    payload.worker && `worker ${payload.worker}`,
+    payload.errorClass && `class ${payload.errorClass}`,
+    payload.retryCount != null && `retry ${payload.retryCount}`,
+    `env ${payload.environment}`,
+    `build ${payload.build}`,
+    `cid ${payload.correlationId}`,
+  ].filter(Boolean).join(' · ')
 }
 
 async function deliverSlack(payload: AlertPayload, url: string): Promise<boolean> {
   const emoji = payload.severity === 'CRITICAL' ? '🔴' : payload.severity === 'ERROR' ? '🟠' : payload.severity === 'WARNING' ? '🟡' : '🔵'
   const lines = [
-    `${emoji} *${payload.severity}* · \`${payload.type}\``,
+    `${emoji} *${payload.severity}* · \`${payload.type}\` · _${payload.environment}_`,
     payload.message,
-    [payload.booking && `booking ${payload.booking}`, payload.route && `route ${payload.route}`, payload.worker && `worker ${payload.worker}`, payload.errorClass && `class ${payload.errorClass}`, payload.retryCount != null && `retry ${payload.retryCount}`, `build ${payload.build}`].filter(Boolean).join(' · '),
+    summaryLine(payload),
   ].filter(Boolean)
   const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: lines.join('\n') }) })
   return res.ok
 }
 
-// The default delivery: try the configured provider, always fall back to a
-// structured console line (captured by Vercel logs). Never throws.
-export async function defaultDeliver(payload: AlertPayload): Promise<AlertProvider> {
-  const status = alertProviderStatus()
+function esc(v: string): string {
+  return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+// Email fallback — reuses the existing Resend sender (emailRaw). The payload is
+// already redacted/truncated, so this can never leak secrets. Returns true only
+// if Resend actually accepted it (emailRaw inspects the provider {error}).
+async function deliverEmail(payload: AlertPayload, to: string): Promise<boolean> {
+  const subject = `[${payload.environment}] ${payload.severity} · ${payload.type}`
+  const html =
+    `<p style="font-size:15px;margin:0 0 6px"><strong>${esc(payload.severity)}</strong> · <code>${esc(payload.type)}</code> · ${esc(payload.environment)}</p>` +
+    `<p style="font-size:14px;color:#333;margin:0 0 12px">${esc(payload.message)}</p>` +
+    `<p style="font-size:12px;color:#666;white-space:pre-wrap;margin:0">${esc(summaryLine(payload))}<br/>at ${esc(payload.at)}</p>`
+  const res = await emailRaw({ to: [to], subject, html })
+  return res.ok
+}
+
+// Low-level senders are injectable so the delivery chain unit-tests without any
+// real Slack/email network (defaults are the real ones).
+export type DeliverIO = {
+  slack?: (p: AlertPayload, url: string) => Promise<boolean>
+  email?: (p: AlertPayload, to: string) => Promise<boolean>
+  log?: (line: string) => void
+}
+
+// The default delivery chain: Slack → email → structured console (captured by
+// Vercel logs). Never throws — a delivery failure at any step logs and falls
+// through, and the console line is ALWAYS emitted last as the durable record.
+export async function defaultDeliver(payload: AlertPayload, io: DeliverIO = {}): Promise<AlertProvider> {
+  const slack = io.slack ?? deliverSlack
+  const email = io.email ?? deliverEmail
+  const log = io.log ?? ((line: string) => console.error(line))
   try {
-    if (status.provider === 'slack' && process.env.ALERT_SLACK_WEBHOOK_URL) {
-      if (await deliverSlack(payload, process.env.ALERT_SLACK_WEBHOOK_URL)) return 'slack'
+    if (process.env.ALERT_SLACK_WEBHOOK_URL) {
+      if (await slack(payload, process.env.ALERT_SLACK_WEBHOOK_URL)) return 'slack'
     }
-    // (Email path intentionally routes through console until an alert-email
-    // sender is wired, to avoid an email-per-failure storm; Slack is preferred.)
-  } catch { /* fall through to console */ }
+  } catch (e) {
+    try { console.error('[ALERT] slack-delivery-failed', String(e).slice(0, 120)) } catch { /* noop */ }
+  }
+  try {
+    const to = alertEmailTo()
+    if (process.env.RESEND_API_KEY && to) {
+      if (await email(payload, to)) return 'email'
+    }
+  } catch (e) {
+    try { console.error('[ALERT] email-delivery-failed', String(e).slice(0, 120)) } catch { /* noop */ }
+  }
   // Structured, greppable fallback — always emitted.
-  console.error(`[ALERT] ${JSON.stringify(payload)}`)
-  return status.provider === 'slack' ? 'console' : status.provider
+  log(`[ALERT] ${JSON.stringify(payload)}`)
+  return 'console'
 }
 
 // ── Orchestration (fail-soft) ────────────────────────────────────────────────
@@ -168,7 +253,7 @@ async function defaultShouldSend(key: string, windowMs: number): Promise<boolean
 export async function alert(input: AlertInput, deps: AlertDeps = {}): Promise<{ sent: boolean; provider: AlertProvider; deduped: boolean }> {
   try {
     const nowIso = new Date(deps.now ? deps.now() : Date.now()).toISOString()
-    const payload = formatAlert(input, { now: nowIso, build: deps.build ?? buildId() })
+    const payload = formatAlert(input, { now: nowIso, build: deps.build ?? buildId(), environment: envLabel() })
     const gate = deps.shouldSend ?? defaultShouldSend
     const fresh = await gate(dedupKey(input), DEDUP_WINDOW_MS[input.severity])
     if (!fresh) return { sent: false, provider: 'none', deduped: true }

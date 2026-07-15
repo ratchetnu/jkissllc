@@ -1,17 +1,25 @@
-# 18 — Architecture Decisions Needed (owner)
+# 18 — Architecture Decisions Needed (owner) — Operion
 
 > Decisions only the owner can make. Each: the decision, options, the
 > recommendation, and what it blocks. Record chosen answers as ADRs in
 > `docs/adr/`.
+>
+> _(Updated 2026-07-14: platform is now **Operion**; example subdomains updated
+> accordingly. **D9 (CI as a hard deploy gate) is RESOLVED — CI is now blocking.**
+> D1's public-route host resolution is still open and is folded into S2 —
+> `15-migration-roadmap.md`.)_
 
 ## D1 — Tenant routing model
 - **Decision:** how does a request map to a tenant?
-- **Options:** (a) subdomain `acme.opspilot.app`; (b) custom domain per tenant;
+- **Options:** (a) subdomain `acme.operion.app`; (b) custom domain per tenant;
   (c) both.
 - **Recommendation:** **both**, subdomain first (zero DNS friction for onboarding),
   custom domain as an upgrade. Requires dropping the build-time `NEXT_PUBLIC_SITE_URL`
   (`05-...` §6) and generalizing `proxy.ts`'s host handling.
-- **Blocks:** Phase 1 tenant resolution, Phase 9 onboarding.
+- **Blocks:** public-route tenant resolution (now scheduled in S2,
+  `15-migration-roadmap.md`), Phase 9 onboarding. _(Per-request tenant **context**
+  is already shipped as S1; what remains is **host-based** resolution for
+  unauthenticated public routes.)_
 
 ## D2 — Stripe Connect model
 - **Decision:** how do tenants collect customer payments while the platform bills
@@ -67,8 +75,11 @@
   caps + kill switch.
 - **Blocks:** Phases 7–8.
 
-## D9 — CI as a hard deploy gate
-- **Decision:** make CI blocking (currently advisory — `ai-regression.yml:6-10`)?
-- **Recommendation:** **yes** — enable branch protection; add auth-coverage +
-  full test suite + (later) tenant-isolation as required checks.
-- **Blocks:** safe execution of the migration (prevents regressions).
+## D9 — CI as a hard deploy gate — ✅ RESOLVED _(Updated 2026-07-14)_
+- **Decision:** make CI blocking (was advisory)? **Decided: yes — done.**
+- **Delivered:** `.github/workflows/ai-regression.yml` is now a **blocking** job
+  (tsc → full **586-case** suite incl. auth-coverage, tenant-isolation,
+  bypass-detection, rbac, security-hardening, AI-regression → `next build`) on
+  Node 24 (pinned via `engines` + `.nvmrc`), on push/PR.
+- **Blocks:** nothing further — this gate is what makes safe execution of the
+  migration possible; it prevents regressions from shipping.

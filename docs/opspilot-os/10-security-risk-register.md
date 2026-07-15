@@ -1,8 +1,24 @@
-# 10 — Security Risk Register (Phase 9)
+# 10 — Security Risk Register (Phase 9) — Operion Platform
 
-> Threat-focused review, cited to `file:line` on `~/jkissllc@main`, 2026-07-12.
+> **Hardening update 2026-07-14** (branch `fix/operion-production-hardening`, not merged):
+> the manager-over-privilege gap (audit H-SEC-1) is **RESOLVED** — 38 admin routes moved
+> from coarse `requireSession` to `requirePermission`/`requireStaffSession`/`requireAdmin`,
+> so managers no longer reach admin-only pay/invoices/profitability/settings or decrypted
+> applicant documents at the API. Server-side enforced; `scripts/manager-authz.test.ts` +
+> `scripts/authorization-coverage.test.ts` prove it. Still open: single global
+> `ADMIN_SESSION_SECRET` + single shared owner `ADMIN_PASSWORD` (no per-owner identity),
+> and no CSP (M-SEC-2). See `CHANGELOG.md`.
+
+> Threat-focused review, cited to `file:line` on `~/jkissllc@main`.
 > Each risk: evidence · impact · exploitation · mitigation · priority · blocks
-> commercialization?
+> commercialization? · **status (2026-07-14)**.
+> _(Updated 2026-07-14: platform re-branded **Operion**; the `opspilot:*` Redis
+> family and `docs/opspilot-os/` path are kept as **legacy internal identifiers**.
+> Several tenancy risks below moved from OPEN to **PARTIAL** now that the tenant
+> context/chokepoint shipped — each item is tagged **resolved / partial / open**.
+> Identity risks that remain — single global HMAC secret and single shared owner
+> password — are still fully **OPEN**; do not read the tenancy progress as
+> "multi-tenant auth is done.")_
 
 ## 0. Fundamentals that are already SOLID (FACT — preserve)
 
@@ -23,32 +39,55 @@
 
 ### CRITICAL — all blockers for a second tenant on shared infra
 
-**C1 — No tenant isolation (all Redis keys global).**
-- Evidence: `redis.ts:4-12` (chokepoint un-prefixed); every namespace global.
-- Impact/exploit: any second tenant sharing the Redis instance → one tenant's
-  request can read/write another's bookings, pay, messages, claims by key.
-- Mitigation: key-prefix in `call()` + tenant context (`05`,`09`); hand-migrate
-  the two bypass files.
-- Priority: **P0.** Blocks commercialization: **Yes.**
+**C1 — Tenant isolation chokepoint — mechanism SHIPPED, activation pending.**
+_(Status 2026-07-14: **PARTIAL** — was OPEN "all keys global.")_
+- Evidence: `app/lib/redis.ts` now routes every key through `scopeKey()`
+  (`app/lib/platform/tenancy/keys.ts`), **fail-closed** when `TENANCY_ENABLED` is on
+  without a tenant context; the two former bypasses (`app/api/track`,
+  `app/api/admin/analytics`) are on the wrapper; a **blocking CI gate**
+  (`scripts/bypass-detection.test.ts`) forbids direct `KV_REST_API_*` use.
+- Residual exploit surface: the flag is **off** in prod (live no-op, byte-identical),
+  so at the data level keys are still physically un-prefixed until the migration runs.
+  Blob paths are **not** scoped (`app/api/upload/route.ts:27`) and `ai:*`/`opspilot:*`
+  stay platform-global — a second live tenant would still commingle files + AI state.
+- Mitigation remaining: run the data migration under DARK_LAUNCH→DUAL_WRITE;
+  tenant-scope Blob paths; validate the dark-launch preview telemetry.
+- Priority: **P0.** Blocks commercialization: **Yes (until activated).**
 
-**C2 — Session carries no tenant; cookie + HMAC secret are global.**
-- Evidence: `SessionPayload` has `{sub,role,staffId}` but no `tid`
-  (`session.ts:17-24`); `COOKIE_NAME='jk_admin_session'` global (`:4`); one
-  `ADMIN_SESSION_SECRET` (`:60`).
-- Impact/exploit: on a shared apex domain a token minted for tenant A is valid
-  for tenant B; no tenant scoping on any authorization decision.
-- Mitigation: add `tid` to payload; `requireTenantSession`; per-tenant cookie
-  name or path.
-- Priority: **P0.** Blocks: **Yes.**
+**C2 / R3 — Session tenant scoping — PARTIALLY RESOLVED; global secret + shared
+owner password REMAIN open.**
+_(Status 2026-07-14: **PARTIAL**.)_
+- Resolved: `SessionPayload` now carries a `tid` claim
+  (`app/api/admin/_lib/session.ts`); the resolved `Principal` carries `tenantId`
+  (pre-tenancy tokens resolve to `DEFAULT_TENANT_ID` for single-tenant continuity);
+  **104 request handlers establish per-request tenant context** via `withTenantRoute`.
+  The min-length guard on the signing secret is now **enforced** — `getSecret()`
+  throws if `ADMIN_SESSION_SECRET` is unset or `< 16` chars (`session.ts:67`).
+- **Still OPEN:** a **single global `ADMIN_SESSION_SECRET`** signs every tenant's
+  HMAC token (no per-tenant signing key), and a **single shared owner
+  `ADMIN_PASSWORD`** is the owner identity for all tenants (`app/api/admin/auth/route.ts`)
+  — there is **no per-owner identity**. On a shared apex domain a forged/leaked token
+  or the one owner password is still cross-tenant. Cookie name `jk_admin_session`
+  is also still global.
+- Note: doc-crypto prefers `DOC_ENCRYPTION_KEY` (set) then derives from
+  `ADMIN_SESSION_SECRET` via HKDF (`app/lib/doc-crypto.ts:16-17,45,53`) — so the
+  global secret also underpins document encryption when `DOC_ENCRYPTION_KEY` is absent.
+- Mitigation remaining: per-tenant (or rotated per-tenant-derived) signing key;
+  replace the shared owner password with per-owner identities; per-tenant cookie scope.
+- Priority: **P0.** Blocks: **Yes** (the identity half).
 
 **C3 — Cross-tenant data leak via name-derived keys & global AI calibration.**
+_(Status 2026-07-14: **OPEN** — chokepoint scopes id-keyed families, but these
+name-derived collisions are unfixed and are a named activation blocker.)_
 - Evidence: `biz:{name}` (`businesses.ts:41`) + `Staff.payByBusiness` map keys
-  (`staff.ts:36`); `msg:phone:{e164}`; `learn:*` global (`job-learning.ts:41-42`).
+  (`staff.ts:36`); `msg:phone:{e164}`; `learn:*` global (`job-learning.ts:41-42`);
+  `ai:*` prompts/telemetry platform-global by allowlist.
 - Impact/exploit: two tenants with the same client name overwrite each other's
   contract rates and payroll maps; two tenants texting the same consumer number
   merge threads; one tenant's job outcomes train another's pricing.
-- Mitigation: id-based keys + tenant prefix + `learn:*` scoping (data migration,
-  `09-...` §4b).
+- Mitigation: id-based keys + tenant prefix + `learn:*`/`ai:*` scoping (data
+  migration, `09-...` §4b). The `t:{tid}:` prefix alone does **not** fix these —
+  they need a data rewrite.
 - Priority: **P0.** Blocks: **Yes.**
 
 ### HIGH
@@ -137,13 +176,13 @@ fallback. **P3.**
 
 | Area | Status |
 |---|---|
-| Authentication / session | Solid; add MFA + revocation for enterprise |
+| Authentication / session | Solid; session now carries `tid` + min-16 secret enforced; **single global HMAC secret + single shared owner password remain (C2)**; add MFA + revocation for enterprise |
 | Authorization / role escalation | Solid mechanism; **enforcement drift (H2)** |
-| IDOR / RLS | Tokens CSPRNG (good); **no tenant RLS (C1)**; ack token weak (M2) |
+| IDOR / RLS | Tokens CSPRNG (good); **tenant chokepoint SHIPPED but flag-off / not activated (C1)**; ack token weak (M2) |
 | Secret handling | Clean (no logging) |
 | Webhook verification | Stripe good; **Twilio/email fail-open (M1)** |
 | File-upload validation | Type/size checked; no magic-byte sniff; store public (M4) |
-| Cross-tenant leakage | **Not prevented (C1/C3)** |
+| Cross-tenant leakage | **Chokepoint enforced in code (fail-closed), flag-off; not yet activated (C1)**; name-derived keys + Blob + `ai:*` still shared (C3) |
 | Prompt injection / AI abuse | **Undefended (M3)**; mitigated by `writes:false` today |
 | PII / financial / location exposure | Identity docs encrypted; rest plaintext; **GPS is worker PII** |
 | Rate limiting / abuse | Broad coverage, fail-open (L2) |
@@ -155,3 +194,10 @@ fallback. **P3.**
 C1, C2, C3 (isolation + tenant-aware auth), H1 (Stripe Connect), plus the cheap
 P1s (M1, M2, L1, H2). Retention/erasure (M4 + `09/12`) and MFA are required
 before **enterprise** buyers, not before the first small tenant.
+
+_(Updated 2026-07-14 — progress against the gate: **C1** mechanism is built and
+CI-enforced (activation still pending the migration + Blob scoping); **C2** is
+half-closed (session carries `tid`, 104 handlers scope context) with the global
+signing secret + shared owner password still to fix; **C3** unchanged. The gate is
+**materially advanced but not cleared** — data-level isolation is inactive and
+per-owner identity does not yet exist.)_

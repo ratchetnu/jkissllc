@@ -1,40 +1,78 @@
 # 08 — Event & Workflow Architecture (Phase 7)
 
-> RECOMMENDATION, grounded in cited current-state facts. Deliberately **modular
-> monolith + durable job queue**, not distributed events — the app can start
-> simple and already has the primitives.
+> Grounded in cited current-state facts. Deliberately **modular monolith +
+> durable outbox**, not distributed events — the app can start simple and already
+> has the primitives. Platform brand: **Operion**. Internal identifiers (the
+> `platform:` / `opspilot:` Redis key families, in-code event names, the
+> `docs/opspilot-os/` path) are retained verbatim as legacy identifiers.
+>
+> _(Updated 2026-07-14: the outbox + event-log + versioned catalog this doc
+> recommended are now **SCAFFOLDED** in `app/lib/platform/events/`, wired behind a
+> fail-soft, flag-gated producer. Sections below mark what is now FACT vs still
+> RECOMMENDATION.)_
 
 ## 1. Reality check (FACT)
 
-Today there is **no event bus and no outbox**. Side-effects are inline and
-fail-soft: booking flows call `notify()` directly, cron sweeps
+The **live** booking/dispatch paths still run side-effects inline and fail-soft:
+booking flows call `notify()` directly, cron sweeps
 (`app/api/cron/daily/route.ts`) poll Redis and act, per-record `audit[]`/
-`events[]` arrays are the only history, and the central attributed audit
-(`app/lib/audit.ts`) covers only comms/reminders. Idempotency exists where it
-matters (payment recording keyed by Stripe session, `record-payment.ts:14-62`;
-reminder occurrence dedup via `setNxPx`, `reminders.ts:212-214`; booking
-`idempotencyKey`).
+`events[]` arrays are the per-entity history, and the central attributed audit
+(`app/lib/audit.ts`) covers comms/reminders. Idempotency exists where it matters
+(payment recording keyed by Stripe session, `record-payment.ts`; reminder
+occurrence dedup via `setNxPx`, `reminders.ts`; booking `idempotencyKey`).
 
-This is fine for one tenant. It becomes fragile when (a) AI actions need an
-approval→execute→audit trail, (b) automations must be tenant-configurable, and
-(c) cross-domain reactions multiply. The minimal upgrade is a **durable outbox**,
-not Kafka.
+_(Updated 2026-07-14 — the recommended upgrade is now **built but inert**:
+`app/lib/platform/events/` ships the typed envelope + versioned catalog + a
+durable at-least-once event log + an in-process outbox + a single producer API
+(`publishEvent`). But **`publishEvent` is a no-op returning `null` unless
+`INTAKE_WORKFLOW_ENABLED` is on (it is OFF)** and it is **fail-soft — it never
+throws to the caller** — so nothing in the live booking path yet depends on, or is
+changed by, eventing.)_
+
+This inline model is fine for one tenant. It becomes fragile when (a) AI actions
+need an approval→execute→audit trail, (b) automations must be tenant-configurable,
+and (c) cross-domain reactions multiply — which is exactly why the durable outbox
+(not Kafka) now exists as scaffold, ready to be switched on.
 
 ## 2. Recommended model: modular monolith + transactional outbox
 
-- **In-process domain events** for synchronous, same-request reactions (already
-  effectively how it works — formalize with a typed `emit(event)`).
-- **Durable outbox** (a Redis list/zset `t:{tid}:outbox`) for anything that must
-  survive a crash, retry, or run async: notifications, AI actions, webhooks,
-  analytics. A worker (extend the existing 5-min cron) drains it.
+- **In-process domain events** for synchronous, same-request reactions. _(Updated
+  2026-07-14 — SCAFFOLDED: `InProcessOutbox` in `events/outbox.ts` — enqueue/drain
+  with idempotency-key dedupe (at-least-once + idempotent), behind the stable
+  `Outbox` interface so a Redis-backed impl can replace it with no call-site churn.)_
+- **Durable event log** for anything that must survive a crash, retry, or run
+  async. _(Updated 2026-07-14 — SCAFFOLDED: `events/event-log.ts` is a Redis-backed
+  at-least-once append log — `platform:events:e:{id}` envelopes, a capped global
+  index (`platform:events:log`, newest 10k), a per-entity timeline index
+  (`platform:events:entity:{tenantId}:{entityId}`), and a 30-day idempotency
+  marker (`platform:events:idem:{key}`, `SET NX PX`) so only the first writer of an
+  idempotency key proceeds. NOTE: these keys use the **`platform:` global prefix**,
+  so the tenancy chokepoint `scopeKey()` leaves them un-namespaced — the tenant
+  boundary is instead carried **inside** the (validated) envelope and embedded in
+  the per-entity index key.)_
 - **No distributed system.** Revisit only if a single tenant's volume outgrows
-  one worker — not before.
+  one worker — not before. (No message broker: delivery is via the in-process
+  outbox / durable log, not Kafka.)
 
-## 3. Business-event taxonomy (RECOMMENDATION)
+## 3. Business-event taxonomy (SCAFFOLDED)
 
 Every event carries a **standard envelope**: `{ id, tenantId, type, occurredAt,
 actor (userId|'system'|'ai:<feature>'), subjectId, payload, version }`. `tenantId`
 is mandatory and comes from the request context (`05-...`).
+
+_(Updated 2026-07-14 — FACT: this taxonomy is now realized in
+`app/lib/platform/events/`. `types.ts` defines the typed `EventEnvelope`
+(mandatory `tenantId`, `actor` of type `user|system|ai`, `correlationId` +
+optional `causationId` for chain reconstruction, `idempotencyKey`, `schemaVersion`)
+and the `BusinessEventType` union. `catalog.ts` is a **versioned registry of 37
+event types** (each `version: 1` today, with `entityType` + `requiredPayload`);
+`envelope.ts` `validateEnvelope()` rejects an unknown type, an unsupported
+version, a missing tenant/entity/actor/idempotency key, or a missing required
+payload key. The table below is that catalog — a few names were normalized in
+code: `WorkerClockedOut` is not yet emitted (only `WorkerClockedIn`),
+`UniformPhotoSubmitted` → `CompliancePhotoSubmitted`, and the AI-action family is
+`AIActionDrafted / AIActionApprovalRequested / AIActionApproved / AIActionRejected
+/ AIActionExecuted / AIActionFailed`.)_
 
 | Event | Producer | Consumers | Sync/Async | Idempotency key |
 |---|---|---|---|---|
@@ -95,3 +133,19 @@ is mandatory and comes from the request context (`05-...`).
   model. No sagas. The outbox + idempotent consumers cover every workflow in
   this product at its realistic scale; distributed infrastructure would add
   operational burden a founder-led team should not carry yet.
+
+## 7. Maturity (2026-07-14)
+
+| Element | Evidence | Maturity |
+|---|---|---|
+| Typed envelope + validation | `events/types.ts`, `events/envelope.ts` | **MVP** — mandatory tenant boundary, correlation/causation, runtime validation |
+| Versioned event catalog (37 types) | `events/catalog.ts` | **MVP** — versioned defs + required-payload checks |
+| Durable at-least-once event log | `events/event-log.ts` | **MVP** — Redis append log, idempotent, capped index, per-entity timeline; testable via injected client |
+| In-process outbox | `events/outbox.ts` | **Prototype** — interface + in-memory impl; Redis-backed durable impl still to build |
+| Producer API `publishEvent` | `events/publish.ts` | **Prototype** — fail-soft, flag-gated by `INTAKE_WORKFLOW_ENABLED` (OFF); no live producers wired |
+| Consumers / workers / dead-letter | — | **Planned** — §5 retry/dead-letter and §4 per-category consumers not yet built |
+
+Net: the event **spine** (envelope, catalog, durable log, producer) is scaffolded
+and unit-shaped, but **inert** — no live path publishes, no consumer drains, and
+the durable Redis outbox + retry/dead-letter machinery of §5 remain to build.
+Activation is deliberately a later, flag-gated step, not a silent default.

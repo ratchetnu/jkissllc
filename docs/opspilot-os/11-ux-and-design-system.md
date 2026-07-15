@@ -1,12 +1,18 @@
-# 11 — UX & Design-System Assessment (Phase 10)
+# 11 — UX & Design-System Assessment (Phase 10) — Operion Platform
 
-> Cited to `file:line` on `~/jkissllc@main`, 2026-07-12.
+> Cited to `file:line` on `~/jkissllc@main`.
+> _(Updated 2026-07-14: product branding is now **Operion** — the palette says
+> "Ask **Operion** AI" (`CommandPalette.tsx:87`) and platform surfaces read Operion.
+> User-facing "OpsPilot" text has been renamed; the **`OpsPilotMark` component**,
+> the `app/components/opspilot/` folder, and the `/admin/opspilot` waitlist route are
+> preserved verbatim as **legacy internal identifiers**.)_
 
 ## 1. Verdict (FACT)
 
 This is a **genuinely bespoke, product-minded system**, not a generic admin
-template: custom OpsPilot branding, a custom OS token layer
-(`--os-radius/--os-shadow/--os-spring`, `globals.css:468-472`), a role-adaptive
+template: custom **Operion** branding (rendered by the preserved `OpsPilotMark`
+component — legacy internal id), a custom OS token layer
+(`--os-radius/--os-shadow/--os-spring`, `globals.css:505-509`), a role-adaptive
 floating dock, a ⌘K command palette with AI, safe-area-aware mobile bottom bars,
 and skeleton/empty/error states on the core pages. The problems are **internal
 inconsistency**, not low quality.
@@ -16,18 +22,32 @@ inconsistency**, not low quality.
 - Token block `globals.css:4-31` — dark chrome (`--bg:#0b0b0c`,
   `--card:#121214`) + a parallel **light content ramp** (`--surface`, `--ink*`)
   with a stated WCAG-AA intent (`:23`). Brand `--red:#E0002A` (`:15`).
-- Second **OS token layer** `globals.css:468-472` (radius/shadow/spring ease).
+- Second **OS token layer** `globals.css:505-509` (radius/shadow/spring ease).
 - Fonts: Inter (body), Space Grotesk (display), JetBrains Mono
   (`layout.tsx:4,19-21`).
 - **Gap:** no numeric spacing scale — spacing is ad-hoc inline pixels everywhere.
   Only the marketing type ramp uses `clamp()`.
 
-## 3. The "design system" is a status+format module, not a component library (FACT)
+## 3. The "design system" is a status+format module — but a real primitive library now exists alongside it (FACT)
 
-`app/admin/operations/ui.tsx` (169 lines) exports **6 components**: `StatusChip`,
-`ClaimChip`, `Stat`, `Avatar`, `MoneyInput`, `Toggle` — plus status maps and
-formatters. There is **no `Button`, `Card`, `Modal`, `Drawer`, `Table`, `Input`,
-`Select`, `Tabs`, or `Badge`.** So:
+_(Updated 2026-07-14: recommendation #1 below is **partially realized**. A dedicated
+reference component library now lives at `app/components/ui/` —
+`primitives.tsx` (`Button`, `IconButton`, `Card`, `MetricCard`, `StatusBadge`,
+`Alert`, `EmptyState`, `Spinner`, `Skeleton`, `ErrorState`, `FormField`, `Select`,
+`TableShell`) and `overlays.tsx` (`Dialog`, `Drawer`, `Tabs`). It is gated by
+`DESIGN_SYSTEM_REFERENCE_ENABLED`, which is **still `false`** (`app/lib/platform/flags.ts:41`),
+so it is **not yet the site-wide enforced system** — but it is already being adopted
+incrementally: the redesigned Book Now dashboard imports `Drawer` and `EmptyState`
+from it directly (see §4). The legacy `app/admin/operations/ui.tsx` module and the
+four button variants below still coexist; consolidation onto `app/components/ui` is
+in progress, not complete.)_
+
+The legacy operations helper `app/admin/operations/ui.tsx` (169 lines) exports
+**6 components**: `StatusChip`, `ClaimChip`, `Stat`, `Avatar`, `MoneyInput`,
+`Toggle` — plus status maps and formatters. Historically there was **no `Button`,
+`Card`, `Modal`, `Drawer`, `Table`, `Input`, `Select`, `Tabs`, or `Badge`** here (all
+of those now exist in `app/components/ui`, above, but pages still reference the old
+patterns). So across the un-migrated surfaces:
 
 - "Card" = bare `.os-card` CSS class applied inline (`globals.css:478`).
 - "Button" = CSS `.btn`/`.btn-ghost` OR `.cc-action` OR `osMiniBtn` style object
@@ -44,7 +64,7 @@ formatters. There is **no `Button`, `Card`, `Modal`, `Drawer`, `Table`, `Input`,
   (managers lose Settings, `:49`) but only that one item is gated.
 - **Nested-tab depth spike:** the "Messages" tab (74-line shell) hides a 5-tab
   sub-app (Inbox/Crew/Reminders/Dispatch/Analytics). Three separate AI entry
-  points (AI page + ⌘K "Ask OpsPilot AI" + `ClaimGuardAssist`).
+  points (AI page + ⌘K "Ask **Operion** AI", `CommandPalette.tsx:87` + `ClaimGuardAssist`).
 - **Crew portal** (`PortalShell.tsx:12-18`): 7 tabs — Home, Routes, Messages,
   Availability, Time Off, Pay, Profile. Same dual-dock pattern, **own** helper
   module (`portal/ui.ts`) that re-implements `money/fmtDay/status` deliberately
@@ -52,6 +72,21 @@ formatters. There is **no `Button`, `Card`, `Modal`, `Drawer`, `Table`, `Input`,
 - **Customer surfaces:** `/booking/[token]` (Tailwind utilities), `/client/[token]`
   (inline styles, its own 3-value status map), `/quote` (**969-line single-file**
   wizard mixing 146 `className` + 125 `style={{`).
+- **Book Now admin dashboard — redesigned to the enterprise pattern (SHIPPED to
+  prod).** _(Updated 2026-07-14.)_ `app/admin/operations/book-now/page.tsx` is now a
+  full ops dashboard rather than a flat list: a **KPI row** (New, Awaiting AI, Quote
+  Ready, Pending Payment, Booked Today, Pending Revenue), a **toolbar**
+  (search / filter / sort / view toggle / refresh), **grouped-accordion filters**
+  (Services / AI Status / Sales Pipeline, with counts), a **full-width request table**
+  (Customer, Service, Location, Created, AI, Quote, Payment, Crew, Priority — sticky
+  header, sort, bulk select), and a **slide-over request drawer** (customer, photos,
+  AI analysis + confidence, quote + payment, notes, "Open full detail"). It is the
+  first surface built on the new library — it imports `Drawer`
+  (`app/components/ui/overlays.tsx:67`) and `EmptyState`
+  (`app/components/ui/primitives.tsx:90`). The change is **UI-only**: every API,
+  filter, and mutating action is preserved; the detail page + its 12 PATCH actions are
+  unchanged. This is BUILT, not a proposal — and a concrete template for how the rest
+  of the admin should consolidate onto `app/components/ui`.
 
 ## 5. States & accessibility (FACT)
 
@@ -82,11 +117,17 @@ staff 256, operation 166, client 83, contractor 43, customer 22.
 
 Ordered by leverage. None require a redesign — they consolidate what exists.
 
-1. **Promote real primitives into `ui.tsx`** (or a `packages/ui`): `Button`
-   (variant/size), `Card`, `Input/Field`, `Select`, `Modal`/`Drawer` (with
-   focus-trap + return-focus), `Table`, `Tabs`, `Badge`, `Empty`, `Skeleton`,
-   `ErrorState`. Migrate incrementally; delete the 4 button variants + copied
-   style objects.
+1. **Promote real primitives into a shared library — PARTIALLY DONE.**
+   _(Updated 2026-07-14: the library now exists at `app/components/ui`
+   — `Button`, `IconButton`, `Card`, `MetricCard`, `StatusBadge`, `Alert`,
+   `EmptyState`, `Spinner`, `Skeleton`, `ErrorState`, `FormField`, `Select`,
+   `TableShell`, `Dialog`, `Drawer`, `Tabs`. It is flag-gated by
+   `DESIGN_SYSTEM_REFERENCE_ENABLED` (**still off**) and adopted so far only by the
+   Book Now dashboard.)_ Remaining work: turn on the reference flag once vetted,
+   **migrate the other admin/portal/customer surfaces incrementally**, and delete the
+   4 legacy button variants + copied `osField`/`iStyle` style objects. Confirm the
+   `Drawer`/`Dialog` primitives implement focus-trap + return-focus before broad
+   rollout (see §5 A11y).
 2. **One status/format source of truth** — collapse the three route-status
    vocabularies (`operations/ui.tsx`, `portal/ui.ts`, `client/[token]`) into one
    shared module with role-appropriate projections.

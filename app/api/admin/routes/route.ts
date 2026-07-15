@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession } from '../_lib/session'
+import { requirePermission } from '../_lib/session'
 import {
   listRoutes, saveRoute, generateToken, nextRouteNumber, pushAudit,
   type RouteRecord,
@@ -17,7 +17,8 @@ import {
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'routes:manage')
+  if (who instanceof NextResponse) return who
   try {
     // One scan: load once, derive stats from the same list, return the newest 500.
     const routes = await listRoutes(1000)
@@ -32,7 +33,8 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
 })
 
 export const POST = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'routes:manage')
+  if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({}))
 
   const businessName = S(body.businessName, 200)

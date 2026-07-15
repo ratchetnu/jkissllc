@@ -169,7 +169,6 @@ async function downscaleToDataUrl(file: File, maxDim = 1280, quality = 0.7): Pro
 // ── Small shared styles (J Kiss brand) ──────────────────────────────────────
 const inp: React.CSSProperties = { width: '100%', padding: '13px 15px', background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.10)', borderRadius: 12, color: '#f3f4f6', fontSize: 16, outline: 'none' }
 const lbl: React.CSSProperties = { display: 'block', fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }
-
 export default function QuotePage() {
   // Flow state
   const [step, setStep] = useState(0)
@@ -908,29 +907,29 @@ function StepJob(props: {
 
       <div className="grid gap-4">
         <div>
-          <label style={lbl}>{singleSite ? 'Where is the job?' : 'Where are we picking up?'}</label>
+          <label htmlFor="q-pickup" style={lbl}>{singleSite ? 'Where is the job?' : 'Where are we picking up?'}</label>
           <div style={{ position: 'relative' }}>
-            <MapPin size={16} style={{ position: 'absolute', left: 14, top: 15, color: 'var(--muted)' }} />
-            <input value={props.pickupText} onChange={e => props.setPickupText(e.target.value)} placeholder="Address or ZIP — e.g. 123 Main St, Dallas 75201" style={{ ...inp, paddingLeft: 40 }} />
+            <MapPin size={16} style={{ position: 'absolute', left: 14, top: 15, color: 'var(--muted)' }} aria-hidden="true" />
+            <input id="q-pickup" aria-required="true" value={props.pickupText} onChange={e => props.setPickupText(e.target.value)} placeholder="Address or ZIP — e.g. 123 Main St, Dallas 75201" style={{ ...inp, paddingLeft: 40 }} />
           </div>
         </div>
         {!singleSite && (
           <div>
-            <label style={lbl}>Where are we delivering?</label>
+            <label htmlFor="q-delivery" style={lbl}>Where are we delivering?</label>
             <div style={{ position: 'relative' }}>
-              <MapPin size={16} style={{ position: 'absolute', left: 14, top: 15, color: 'var(--muted)' }} />
-              <input value={props.deliveryText} onChange={e => props.setDeliveryText(e.target.value)} placeholder="Address or ZIP — e.g. 456 Oak Ave, Fort Worth 76102" style={{ ...inp, paddingLeft: 40 }} />
+              <MapPin size={16} style={{ position: 'absolute', left: 14, top: 15, color: 'var(--muted)' }} aria-hidden="true" />
+              <input id="q-delivery" aria-required="true" value={props.deliveryText} onChange={e => props.setDeliveryText(e.target.value)} placeholder="Address or ZIP — e.g. 456 Oak Ave, Fort Worth 76102" style={{ ...inp, paddingLeft: 40 }} />
             </div>
           </div>
         )}
 
-        <div>
-          <label style={lbl}>How much are we moving?</label>
+        <div role="group" aria-labelledby="q-size-label">
+          <label id="q-size-label" style={lbl}>How much are we moving?</label>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {SIZES.map(s => {
               const active = props.sizeId === s.id
               return (
-                <button key={s.id} type="button" onClick={() => props.setSizeId(s.id)} className="text-left rounded-xl px-3 py-2.5 wiz-ease"
+                <button key={s.id} type="button" onClick={() => props.setSizeId(s.id)} aria-pressed={active} className="text-left rounded-xl px-3 py-2.5 wiz-ease"
                   style={{ border: `1px solid ${active ? RED : 'rgba(255,255,255,.08)'}`, background: active ? 'rgba(224,0,42,.07)' : 'rgba(255,255,255,.02)' }}>
                   <p className="text-sm font-bold text-white leading-tight">{s.label}</p>
                   <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>{s.hint}</p>
@@ -941,14 +940,14 @@ function StepJob(props: {
         </div>
 
         <div className="grid sm:grid-cols-3 gap-3">
-          <YesNo label="Large or heavy items?" value={props.heavy} onChange={props.setHeavy} />
-          <YesNo label="Any stairs?" value={props.stairs} onChange={props.setStairs} />
-          <YesNo label="Elevator access?" value={props.elevator} onChange={props.setElevator} />
+          <YesNo id="q-heavy" label="Large or heavy items?" value={props.heavy} onChange={props.setHeavy} />
+          <YesNo id="q-stairs" label="Any stairs?" value={props.stairs} onChange={props.setStairs} />
+          <YesNo id="q-elevator" label="Elevator access?" value={props.elevator} onChange={props.setElevator} />
         </div>
 
         <div>
-          <label style={lbl}>Preferred date <span style={{ textTransform: 'none', fontWeight: 400 }}>(optional)</span></label>
-          <input type="date" min={min} value={props.prefDate} onChange={e => props.setPrefDate(e.target.value)} style={{ ...inp, colorScheme: 'dark', cursor: 'pointer' }} />
+          <label htmlFor="q-prefdate" style={lbl}>Preferred date <span style={{ textTransform: 'none', fontWeight: 400 }}>(optional)</span></label>
+          <input id="q-prefdate" type="date" min={min} value={props.prefDate} onChange={e => props.setPrefDate(e.target.value)} style={{ ...inp, colorScheme: 'dark', cursor: 'pointer' }} />
         </div>
       </div>
     </>
@@ -958,10 +957,11 @@ function StepJob(props: {
 // Estate/cleanout intake — the service-specific structured detail. Shown only for
 // the Estate Cleanout family. Chip selectors keep typing to a minimum (premium feel).
 type EstateState = { subtype?: string; relationship?: string; occupancy?: string; deadlineType?: string; deadlineDate?: string }
-function EstateChips({ label, options, active, onPick }: { label: string; options: { id: string; label: string }[]; active?: string; onPick: (id: string) => void }) {
+function EstateChips({ groupId, label, options, active, onPick }: { groupId: string; label: string; options: { id: string; label: string }[]; active?: string; onPick: (id: string) => void }) {
+  const labelId = `${groupId}-label`
   return (
-    <div>
-      <label style={lbl}>{label}</label>
+    <div role="group" aria-labelledby={labelId}>
+      <label id={labelId} style={lbl}>{label}</label>
       <div className="flex flex-wrap gap-1.5">
         {options.map(o => {
           const on = active === o.id
@@ -977,34 +977,35 @@ function EstateIntakeBlock({ estate, setEstate }: { estate: EstateState; setEsta
   return (
     <div className="grid gap-4 mt-5 pt-5" style={{ borderTop: '1px solid var(--line)' }}>
       <p className="text-xs font-bold uppercase tracking-widest" style={{ color: RED }}>Estate & cleanout details</p>
-      <EstateChips label="What kind of cleanout?" options={CLEANOUT_SUBTYPES} active={estate.subtype} onPick={v => set('subtype', v)} />
-      <EstateChips label="Your relationship to the property" options={ESTATE_RELATIONSHIPS} active={estate.relationship} onPick={v => set('relationship', v)} />
-      <EstateChips label="Is the property occupied?" options={[{ id: 'vacant', label: 'Vacant' }, { id: 'partial', label: 'Partially' }, { id: 'occupied', label: 'Occupied' }]} active={estate.occupancy} onPick={v => set('occupancy', v)} />
+      <EstateChips groupId="q-estate-subtype" label="What kind of cleanout?" options={CLEANOUT_SUBTYPES} active={estate.subtype} onPick={v => set('subtype', v)} />
+      <EstateChips groupId="q-estate-relationship" label="Your relationship to the property" options={ESTATE_RELATIONSHIPS} active={estate.relationship} onPick={v => set('relationship', v)} />
+      <EstateChips groupId="q-estate-occupancy" label="Is the property occupied?" options={[{ id: 'vacant', label: 'Vacant' }, { id: 'partial', label: 'Partially' }, { id: 'occupied', label: 'Occupied' }]} active={estate.occupancy} onPick={v => set('occupancy', v)} />
       <div>
-        <label style={lbl}>Is there a deadline? <span style={{ textTransform: 'none', fontWeight: 400 }}>(optional)</span></label>
-        <div className="flex flex-wrap gap-1.5 mb-2">
+        <label id="q-estate-deadline-label" style={lbl}>Is there a deadline? <span style={{ textTransform: 'none', fontWeight: 400 }}>(optional)</span></label>
+        <div role="group" aria-labelledby="q-estate-deadline-label" className="flex flex-wrap gap-1.5 mb-2">
           {[{ id: 'none', label: 'No deadline' }, { id: 'closing', label: 'Closing' }, { id: 'listing', label: 'Listing' }, { id: 'probate', label: 'Probate' }, { id: 'eviction', label: 'Eviction' }, { id: 'turnover', label: 'Turnover' }].map(o => {
             const active = estate.deadlineType === o.id
             return <button key={o.id} type="button" onClick={() => set('deadlineType', o.id)} aria-pressed={active} className="rounded-xl wiz-ease" style={{ minHeight: 40, padding: '8px 12px', fontSize: 13, fontWeight: 700, border: `1px solid ${active ? RED : 'rgba(255,255,255,.12)'}`, background: active ? 'rgba(224,0,42,.1)' : 'rgba(255,255,255,.02)', color: active ? '#fff' : 'var(--muted)', cursor: 'pointer' }}>{o.label}</button>
           })}
         </div>
         {estate.deadlineType && estate.deadlineType !== 'none' && (
-          <input type="date" value={estate.deadlineDate ?? ''} onChange={e => setEstate({ ...estate, deadlineDate: e.target.value })} style={{ ...inp, colorScheme: 'dark', cursor: 'pointer' }} />
+          <input type="date" aria-label="Deadline date" value={estate.deadlineDate ?? ''} onChange={e => setEstate({ ...estate, deadlineDate: e.target.value })} style={{ ...inp, colorScheme: 'dark', cursor: 'pointer' }} />
         )}
       </div>
     </div>
   )
 }
 
-function YesNo({ label, value, onChange }: { label: string; value: boolean | null; onChange: (v: boolean) => void }) {
+function YesNo({ id, label, value, onChange }: { id: string; label: string; value: boolean | null; onChange: (v: boolean) => void }) {
+  const labelId = `${id}-label`
   return (
-    <div>
-      <label style={lbl}>{label}</label>
+    <div role="group" aria-labelledby={labelId}>
+      <label id={labelId} style={lbl}>{label}</label>
       <div className="flex gap-2">
         {[['Yes', true], ['No', false]].map(([t, v]) => {
           const active = value === v
           return (
-            <button key={String(v)} type="button" onClick={() => onChange(v as boolean)} className="flex-1 rounded-xl py-2.5 text-sm font-bold wiz-ease"
+            <button key={String(v)} type="button" onClick={() => onChange(v as boolean)} aria-pressed={active} className="flex-1 rounded-xl py-2.5 text-sm font-bold wiz-ease"
               style={{ border: `1px solid ${active ? RED : 'rgba(255,255,255,.1)'}`, background: active ? 'rgba(224,0,42,.10)' : 'rgba(255,255,255,.02)', color: active ? '#fff' : 'var(--muted)' }}>
               {t as string}
             </button>
@@ -1080,7 +1081,7 @@ function StepPhotos(props: {
         </span>
         <p className="font-bold text-white">Tap to take a photo or choose from your library</p>
         <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>JPG, PNG or HEIC · up to {MAX_PHOTOS} photos · ~6MB each</p>
-        <input type="file" accept="image/*" multiple onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; if (files.length) props.onAdd(files) }} style={{ display: 'none' }} />
+        <input type="file" aria-label="Upload photos of your items, junk, debris, rooms, or property" accept="image/*" multiple onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; if (files.length) props.onAdd(files) }} style={{ display: 'none' }} />
       </label>
 
       {/* How to take useful photos (helps the estimate). */}
@@ -1093,12 +1094,16 @@ function StepPhotos(props: {
         Uploaded photos may be analyzed using automated tools to estimate item type, volume, labor, and disposal needs. Final pricing may change if the actual items, quantity, weight, or access differ from the photos.
       </p>
 
-      {status && (
-        <p className="mt-3 text-sm font-semibold flex items-center gap-2" style={{ color: failed > 0 ? '#ffb3c0' : uploading > 0 ? 'var(--muted)' : '#34d399' }}>
-          {uploading > 0 ? <Loader2 size={15} className="animate-spin" /> : failed > 0 ? <X size={15} /> : <Check size={15} />}
-          {status}
-        </p>
-      )}
+      {/* Live status: upload progress / success / failure is announced to screen
+          readers as it changes. Always-present region so appearances announce too. */}
+      <div role="status" aria-live="polite" aria-atomic="true">
+        {status && (
+          <p className="mt-3 text-sm font-semibold flex items-center gap-2" style={{ color: failed > 0 ? '#ffb3c0' : uploading > 0 ? 'var(--muted)' : '#34d399' }}>
+            {uploading > 0 ? <Loader2 size={15} className="animate-spin" aria-hidden="true" /> : failed > 0 ? <X size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}
+            {status}
+          </p>
+        )}
+      </div>
 
       {total > 0 && (
         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5 mt-4">
@@ -1135,8 +1140,8 @@ function StepPhotos(props: {
       {/* "Is everything being removed shown?" — persisted with the request (Part 3). */}
       {props.jobBased && done > 0 && (
         <div className="mt-4 px-4 py-3.5 rounded-2xl" style={{ border: '1px solid rgba(255,255,255,.1)', background: 'rgba(255,255,255,.02)' }}>
-          <p className="font-bold text-white text-sm mb-2.5">Is everything being removed shown in these photos?</p>
-          <div className="flex gap-2">
+          <p id="q-everything-pictured-label" className="font-bold text-white text-sm mb-2.5">Is everything being removed shown in these photos?</p>
+          <div className="flex gap-2" role="group" aria-labelledby="q-everything-pictured-label">
             {[['Yes', true], ['Not all of it', false]].map(([t, v]) => {
               const active = props.everythingPictured === v
               return (
@@ -1201,21 +1206,21 @@ function StepContact(props: {
     <>
       <StepHeading kicker="Almost there" title="Where should we send your quote?" sub="We'll only use this to send your quote and coordinate the job." />
       <div className="grid sm:grid-cols-2 gap-4">
-        <div className="sm:col-span-2"><label style={lbl}>Full name</label><input value={props.name} onChange={e => props.setName(e.target.value)} autoCapitalize="words" placeholder="Jordan Kiss" style={inp} /></div>
-        <div><label style={lbl}>Company <span style={{ textTransform: 'none', fontWeight: 400 }}>(optional)</span></label><input value={props.company} onChange={e => props.setCompany(e.target.value)} placeholder="Company name" style={inp} /></div>
-        <div><label style={lbl}>Phone</label><input value={props.phone} onChange={e => props.setPhone(e.target.value)} type="tel" placeholder="(555) 000-0000" style={inp} /></div>
-        <div><label style={lbl}>Email</label><input value={props.email} onChange={e => props.setEmail(e.target.value)} type="email" placeholder="you@email.com" style={inp} /></div>
+        <div className="sm:col-span-2"><label htmlFor="q-name" style={lbl}>Full name</label><input id="q-name" aria-required="true" value={props.name} onChange={e => props.setName(e.target.value)} autoCapitalize="words" placeholder="Jordan Kiss" style={inp} /></div>
+        <div><label htmlFor="q-company" style={lbl}>Company <span style={{ textTransform: 'none', fontWeight: 400 }}>(optional)</span></label><input id="q-company" value={props.company} onChange={e => props.setCompany(e.target.value)} placeholder="Company name" style={inp} /></div>
+        <div><label htmlFor="q-phone" style={lbl}>Phone</label><input id="q-phone" aria-describedby="q-sms-consent" value={props.phone} onChange={e => props.setPhone(e.target.value)} type="tel" placeholder="(555) 000-0000" style={inp} /></div>
+        <div><label htmlFor="q-email" style={lbl}>Email</label><input id="q-email" aria-required="true" value={props.email} onChange={e => props.setEmail(e.target.value)} type="email" placeholder="you@email.com" style={inp} /></div>
         <div>
-          <label style={lbl}>Best way to reach you</label>
-          <select value={props.contactMethod} onChange={e => props.setContactMethod(e.target.value)} style={{ ...inp, cursor: 'pointer', colorScheme: 'dark' }}>
+          <label htmlFor="q-contact-method" style={lbl}>Best way to reach you</label>
+          <select id="q-contact-method" value={props.contactMethod} onChange={e => props.setContactMethod(e.target.value)} style={{ ...inp, cursor: 'pointer', colorScheme: 'dark' }}>
             <option>Text message</option>
             <option>Phone call</option>
             <option>Email</option>
           </select>
         </div>
-        <div className="sm:col-span-2"><label style={lbl}>Promo code <span style={{ textTransform: 'none', fontWeight: 400 }}>(optional)</span></label><input value={props.promo} onChange={e => props.setPromo(e.target.value.toUpperCase())} placeholder="Have a code?" style={{ ...inp, textTransform: 'uppercase' }} /></div>
+        <div className="sm:col-span-2"><label htmlFor="q-promo" style={lbl}>Promo code <span style={{ textTransform: 'none', fontWeight: 400 }}>(optional)</span></label><input id="q-promo" value={props.promo} onChange={e => props.setPromo(e.target.value.toUpperCase())} placeholder="Have a code?" style={{ ...inp, textTransform: 'uppercase' }} /></div>
       </div>
-      <p className="text-xs mt-4" style={{ color: 'rgba(255,255,255,.4)', lineHeight: 1.5 }}>
+      <p id="q-sms-consent" className="text-xs mt-4" style={{ color: 'rgba(255,255,255,.4)', lineHeight: 1.5 }}>
         By providing your phone number, you agree to receive booking and service-related text messages from {COMPANY.legalName} at the number provided, including messages sent by autodialer. Consent is not a condition of purchase. Message &amp; data rates may apply. Reply STOP to opt out, HELP for help.
       </p>
     </>
@@ -1333,33 +1338,33 @@ function StepReview(props: {
                 <p className="text-sm" style={{ color: 'var(--muted)' }}>No online dates are open for a job this size right now — request your quote above and we&apos;ll schedule you.</p>
               ) : (
                 <>
-                  <label style={lbl}>Open dates</label>
-                  <div className="flex flex-wrap gap-2 mb-4" style={{ maxHeight: 150, overflowY: 'auto' }}>
+                  <label id="q-bookdate-label" style={lbl}>Open dates</label>
+                  <div role="group" aria-labelledby="q-bookdate-label" className="flex flex-wrap gap-2 mb-4" style={{ maxHeight: 150, overflowY: 'auto' }}>
                     {props.avail.dates.map(d => {
                       const active = props.bookDate === d
-                      return <button key={d} type="button" onClick={() => props.setBookDate(d)} className="rounded-xl px-3 py-2 text-sm font-semibold wiz-ease" style={{ border: `1px solid ${active ? RED : 'rgba(255,255,255,.12)'}`, background: active ? RED : 'rgba(255,255,255,.04)', color: active ? '#fff' : 'var(--text)' }}>{fmtDateLabel(d)}</button>
+                      return <button key={d} type="button" onClick={() => props.setBookDate(d)} aria-pressed={active} className="rounded-xl px-3 py-2 text-sm font-semibold wiz-ease" style={{ border: `1px solid ${active ? RED : 'rgba(255,255,255,.12)'}`, background: active ? RED : 'rgba(255,255,255,.04)', color: active ? '#fff' : 'var(--text)' }}>{fmtDateLabel(d)}</button>
                     })}
                   </div>
                   {props.bookDate && (
                     <>
-                      <label style={lbl}>Arrival window</label>
-                      <div className="flex flex-wrap gap-2 mb-4">
+                      <label id="q-bookwin-label" style={lbl}>Arrival window</label>
+                      <div role="group" aria-labelledby="q-bookwin-label" className="flex flex-wrap gap-2 mb-4">
                         {WINDOWS.map(w => {
                           const active = props.bookWin === w
-                          return <button key={w} type="button" onClick={() => props.setBookWin(w)} className="rounded-xl px-3 py-2 text-sm font-semibold wiz-ease" style={{ border: `1px solid ${active ? RED : 'rgba(255,255,255,.12)'}`, background: active ? RED : 'rgba(255,255,255,.04)', color: active ? '#fff' : 'var(--text)' }}>{w}</button>
+                          return <button key={w} type="button" onClick={() => props.setBookWin(w)} aria-pressed={active} className="rounded-xl px-3 py-2 text-sm font-semibold wiz-ease" style={{ border: `1px solid ${active ? RED : 'rgba(255,255,255,.12)'}`, background: active ? RED : 'rgba(255,255,255,.04)', color: active ? '#fff' : 'var(--text)' }}>{w}</button>
                         })}
                       </div>
                     </>
                   )}
                   {props.bookDate && props.bookWin && (
                     <>
-                      <label style={lbl}>How would you like to pay the ${props.deposit} deposit?</label>
-                      <div className="grid grid-cols-1 gap-2 mb-3">
-                        <button type="button" onClick={() => props.setBookMethod('stripe')} className="rounded-2xl px-4 py-3 text-left wiz-ease" style={{ border: `1.5px solid ${props.bookMethod === 'stripe' ? RED : 'rgba(255,255,255,.12)'}`, background: props.bookMethod === 'stripe' ? 'rgba(224,0,42,.08)' : 'rgba(255,255,255,.03)' }}>
+                      <label id="q-bookmethod-label" style={lbl}>How would you like to pay the ${props.deposit} deposit?</label>
+                      <div role="group" aria-labelledby="q-bookmethod-label" className="grid grid-cols-1 gap-2 mb-3">
+                        <button type="button" onClick={() => props.setBookMethod('stripe')} aria-pressed={props.bookMethod === 'stripe'} className="rounded-2xl px-4 py-3 text-left wiz-ease" style={{ border: `1.5px solid ${props.bookMethod === 'stripe' ? RED : 'rgba(255,255,255,.12)'}`, background: props.bookMethod === 'stripe' ? 'rgba(224,0,42,.08)' : 'rgba(255,255,255,.03)' }}>
                           <p className="font-bold text-white text-sm">💳 Credit / Debit Card</p>
                           <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>Instant confirmation · secure checkout · booking confirmed right after payment.</p>
                         </button>
-                        <button type="button" onClick={() => props.setBookMethod('zelle')} className="rounded-2xl px-4 py-3 text-left wiz-ease" style={{ border: `1.5px solid ${props.bookMethod === 'zelle' ? RED : 'rgba(255,255,255,.12)'}`, background: props.bookMethod === 'zelle' ? 'rgba(224,0,42,.08)' : 'rgba(255,255,255,.03)' }}>
+                        <button type="button" onClick={() => props.setBookMethod('zelle')} aria-pressed={props.bookMethod === 'zelle'} className="rounded-2xl px-4 py-3 text-left wiz-ease" style={{ border: `1.5px solid ${props.bookMethod === 'zelle' ? RED : 'rgba(255,255,255,.12)'}`, background: props.bookMethod === 'zelle' ? 'rgba(224,0,42,.08)' : 'rgba(255,255,255,.03)' }}>
                           <p className="font-bold text-white text-sm">🏦 Zelle <span style={{ color: 'var(--muted)', fontWeight: 400 }}>· no processing fee</span></p>
                           <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>Send the deposit by Zelle, upload your confirmation, and we&apos;ll confirm after verifying it.</p>
                         </button>
@@ -1375,8 +1380,8 @@ function StepReview(props: {
                             </div>
                           ) : null}
                           <label className="flex items-center justify-center gap-2 rounded-xl px-4 py-3 cursor-pointer text-sm font-semibold" style={{ border: '1px dashed rgba(255,255,255,.25)', color: '#fff' }}>
-                            {props.proofReading ? 'Reading…' : props.bookProof ? '↻ Choose a different screenshot' : '📷 Upload payment screenshot'}
-                            <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" hidden onChange={e => { const f = e.target.files?.[0]; if (f) props.onBookProof(f) }} />
+                            <span role="status" aria-live="polite" aria-atomic="true">{props.proofReading ? 'Reading…' : props.bookProof ? '↻ Choose a different screenshot' : '📷 Upload payment screenshot'}</span>
+                            <input type="file" aria-label="Upload your Zelle payment screenshot" aria-busy={props.proofReading} accept="image/jpeg,image/png,image/webp,image/heic,image/heif" hidden onChange={e => { const f = e.target.files?.[0]; if (f) props.onBookProof(f) }} />
                           </label>
                         </div>
                       )}

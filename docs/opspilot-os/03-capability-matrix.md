@@ -1,9 +1,16 @@
 # 03 — Capability Matrix (Phase 2)
 
-> Cited to `file:line` on `~/jkissllc@main`, 2026-07-12. Status legend:
+> Cited to `file:line` on `~/jkissllc@main`, 2026-07-12; capability deltas
+> re-verified 2026-07-14. Status legend:
 > **Full** · **Partial** · **UI-only** · **Backend-only** · **Mocked** ·
 > **Absent** (planned but not present) · **Duplicated** · **High-risk** ·
 > **Unknown** (pending verification).
+>
+> _(Updated 2026-07-14: the platform is now branded **Operion** —
+> `PLATFORM.name='Operion'` in `app/lib/company.ts:104`, public page `/operion`,
+> `/opspilot`→301. Internal identifiers — the `opspilot:` Redis prefix,
+> `/api/opspilot/*` routes, `app/lib/platform/` paths, `OpsPilotMark` component —
+> are retained verbatim as **legacy internal ids** for compatibility.)_
 
 ## The 47-capability matrix
 
@@ -11,11 +18,11 @@
 |---|---|---|---|---|
 | 1 | Authentication | **Full** | `app/api/admin/_lib/session.ts`, `app/api/auth/login/route.ts` | Dual-path; no MFA; no session revocation list |
 | 2 | User profiles | **Full** | `app/lib/users.ts` | Distinct from Staff; owner is not a User row; no invite/verify flow |
-| 3 | Organizations | **Absent** | `app/lib/tenant.ts`, `company.ts` | No tenant/org record; single-tenant-per-deploy |
+| 3 | Organizations / tenancy | **Partial (context wired)** | `app/lib/platform/tenancy/with-tenant-route.ts`, `redis.ts:53`, `tenant.ts` | _(Updated 2026-07-14)_ No tenant/org **record** yet, but per-request tenant **context** is now wired: `withTenantRoute` on **104 API handlers** + `withBackgroundTenant` on **3 crons + 3 webhooks**; every Redis key routed via `scopeKey()` (fail-closed). Data-level isolation still **inactive** (`TENANCY_ENABLED=false` → live no-op). See doc 05 |
 | 4 | Roles | **Full** | `app/lib/rbac.ts:10` | `admin/manager/crew` only |
 | 5 | Permissions | **Partial (drift)** | `app/lib/rbac.ts:84-134` | Matrix defined; ~20 perms **never checked** (see §Enforcement) |
 | 6 | Customers | **Absent** | `app/lib/bookings.ts:181-184` | Only denormalized name/phone/email on bookings; no entity/index/history |
-| 7 | Leads | **Partial** | `app/api/quote/route.ts:250-311` | Emails ops; **not persisted** (no `lead:` store). OpsPilot waitlist is separate |
+| 7 | Leads | **Partial** | `app/api/quote/route.ts:250-311` | Emails ops; **not persisted** (no `lead:` store). The Operion early-access waitlist (legacy key prefix `opspilot:waitlist:*`) is a separate store |
 | 8 | Quotes/estimates | **Partial** | `app/api/quote/route.ts`, `estimate/route.ts` | Compute + email only; **no persisted Quote object / lifecycle** |
 | 9 | Bookings | **Full** | `app/lib/bookings.ts` | 17 statuses, idempotent online booking |
 | 10 | Jobs/Routes | **Full** | `app/lib/routes.ts` | Contractor dispatch; multi-assignee |
@@ -50,21 +57,42 @@
 | 39 | Mobile responsiveness | **Full (uneven)** | `OperationsShell.tsx:130`, `PortalShell.tsx:96` | Bottom tab bars, safe-area; no global overflow guard |
 | 40 | Accessibility | **Partial** | 113 `aria-*` app-wide (4 in crew portal) | No focus-trap on modals; 14 raw `<img>`; crew portal thin |
 | 41 | Error handling | **Full (conventions)** | `session.ts:200-235` | Consistent fail-open/closed decisions; silent-catch masks some UI errors |
-| 42 | Monitoring | **Absent** | — | No Sentry/APM; AI telemetry is the only substrate |
+| 42 | Monitoring | **Partial (substrate scaffolded)** | `app/lib/platform/observability/`, `alerts.ts`, `ai/telemetry` | _(Updated 2026-07-14)_ Still no external Sentry/APM. A structured logger/redact/tenant-telemetry layer is now scaffolded under `platform/observability/` but **DORMANT (0 importers)** — runtime logging remains raw `console`. AI telemetry + `/api/health` are the live substrate |
 | 43 | Data export | **Partial** | `app/api/admin/bookings/export/route.ts` | Bookings CSV + claims PDF only |
 | 44 | Data retention | **Absent** | — | No TTL/retention policy on PII |
 | 45 | Account deletion | **Absent** | `app/lib/users.ts:167` | Admin hard-delete CRUD only; no self-serve erasure |
-| 46 | Tenant isolation | **Absent** | `app/lib/redis.ts:4-12` | All keys global; the core migration |
+| 46 | Tenant isolation | **Partial (chokepoint wired, dormant)** | `app/lib/redis.ts:53`, `platform/tenancy/keys.ts:18`, `scripts/bypass-detection.test.ts` | _(Updated 2026-07-14)_ The `scopeKey()` chokepoint + `AsyncLocalStorage` context + platform-global allowlist (`opspilot:`, `ai:`) are IMPLEMENTED and fail-closed, guarded by a blocking `bypass-detection` CI gate. But keys resolve **unchanged** while `TENANCY_ENABLED=false`, so **data-level isolation is inactive** — the activation migration (Blob scoping, `ai:*`/name-key fixes) is still the core remaining work. See doc 05 |
 | 47 | (bonus) Careers/ATS | **Full** | `app/lib/applicants.ts`, `ats-scoring.ts` | Rich pipeline, encrypted identity docs |
 
 ## Status roll-up
 
-- **Full: 24** · **Partial: 9** · **Backend-only: 1** · **Duplicated: 1** ·
-  **Absent: 11** · (Enforcement-drift flagged on Permissions).
-- The absences cluster into three product gaps: **(a) CRM spine** (Customer,
-  Lead, Quote, Change-Order, Expense entities), **(b) SaaS spine** (Tenant/Org,
-  tenant isolation, billing), **(c) compliance spine** (retention, export,
-  erasure, monitoring).
+- _(Updated 2026-07-14)_ **Full: 24** · **Partial: 12** · **Backend-only: 1** ·
+  **Duplicated: 1** · **Absent: 8** · (Enforcement-drift flagged on Permissions).
+  Three capabilities moved **Absent → Partial** as the platform scaffolding
+  landed: **#3 Organizations/tenancy** (context wired), **#42 Monitoring**
+  (observability substrate scaffolded but dormant), **#46 Tenant isolation**
+  (chokepoint wired, dormant).
+- The remaining absences still cluster into three product gaps: **(a) CRM spine**
+  (Customer, Lead, Quote, Change-Order, Expense entities), **(b) SaaS spine**
+  (Tenant/Org *record* + billing + activation of the wired isolation),
+  **(c) compliance spine** (retention, export, erasure).
+
+## Admin operations UI — Book Now dashboard (SHIPPED) — FACT
+
+_(Updated 2026-07-14: `/admin/operations/book-now` was rebuilt from a 20-pill
+queue into an **enterprise operations dashboard** — commit `9b0ce99`.)_ It adds a
+**KPI overview row** (New, Awaiting AI, Quote Ready, Pending Payment, Booked
+Today, Pending Revenue — each click-to-filter), a **toolbar** (search / Filter /
+Sort / Table↔Cards toggle / Refresh), **grouped-accordion filters** (Services /
+AI Status / Sales Pipeline, with live counts), a **full-width request table**
+(Customer, Service, Location, Created, AI, Quote, Payment, Crew, Priority; sticky
+header, column sort, bulk select), and a **slide-over request drawer** (customer,
+photos, AI analysis + confidence + estimate breakdown, quote/payment, notes, plus
+quick Call/Email/Mark-read and "Open full detail"). This is **UI-only**: `GET
+/api/admin/book-now`, `matchesBookNowFilter`, the `?filter=` deep-link, 15s AI
+polling, the unread model, and all **12 PATCH mutating actions** on the
+`[token]` detail page are preserved unchanged. Maturity: **Production Functional**
+(no schema/API change).
 
 ## RBAC enforcement drift (the most important "Partial") — FACT
 

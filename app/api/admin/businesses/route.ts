@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession } from '../_lib/session'
+import { requirePermission } from '../_lib/session'
 import { listBusinesses, getBusiness, saveBusiness, deleteBusiness, bizKey, type Business, type RateHistoryEntry } from '../../../lib/businesses'
 import { parseMoneyCents } from '../../../lib/finance'
 import { repriceBusinessRoutes, repriceCandidates, isApplyTo, type ApplyTo } from '../../../lib/route-reprice'
@@ -9,7 +9,8 @@ const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim()
 const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s)
 
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'businesses:manage')
+  if (who instanceof NextResponse) return who
   try {
     // ?candidates=<business name> lists the live routes a rate change could apply
     // to, so the UI can offer "apply to selected upcoming routes".
@@ -24,9 +25,11 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
 })
 
 // Upsert a business's editable details + its route contract rate, keyed by its
-// (normalized) name. Admin-only — pricing never leaves this boundary.
+// (normalized) name. Gated on businesses:manage (admin + manager); the public
+// route projection never exposes this pricing.
 export const POST = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'businesses:manage')
+  if (who instanceof NextResponse) return who
   const b = await req.json().catch(() => ({}))
   const name = S(b.name, 200)
   if (!name) return NextResponse.json({ error: 'Business name is required.' }, { status: 400 })
@@ -103,7 +106,8 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
 })
 
 export const DELETE = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'businesses:manage')
+  if (who instanceof NextResponse) return who
   const key = new URL(req.url).searchParams.get('key')
   if (!key) return NextResponse.json({ error: 'key required' }, { status: 400 })
   await deleteBusiness(key)

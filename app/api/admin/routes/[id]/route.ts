@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession, getPrincipal } from '../../_lib/session'
+import { requirePermission } from '../../_lib/session'
 import {
   getRouteByToken, saveRoute, deleteRoute, setStatus, pushAudit,
   confirmVerbally, undoVerbalConfirm,
@@ -17,7 +17,8 @@ import {
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 
 export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'routes:manage')
+  if (who instanceof NextResponse) return who
   const { id } = await params
   const body = await req.json().catch(() => ({}))
   const action = S(body.action, 40)
@@ -55,9 +56,9 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
     }
   } else if (action === 'money') {
     // Role gates: business charge + the completed-route correction are ADMIN ONLY;
-    // a manager may edit crew pay only. (Crew never reach here — middleware blocks them.)
-    const who = await getPrincipal(req)
-    const admin = who?.role === 'admin'
+    // a manager may edit crew pay only. (Crew never reach here — the guard above
+    // requires routes:manage, which crew lack.) Reuse the principal the guard returned.
+    const admin = who.role === 'admin'
 
     // Settled routes are frozen. An admin may deliberately correct one with an
     // explicit override (e.g. a pay was entered wrong); everyone else is blocked.
@@ -156,7 +157,8 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
 })
 
 export const DELETE = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'routes:manage')
+  if (who instanceof NextResponse) return who
   const { id } = await params
   await deleteRoute(id)
   return NextResponse.json({ ok: true })

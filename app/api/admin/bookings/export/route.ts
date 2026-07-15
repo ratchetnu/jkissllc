@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession } from '../../_lib/session'
+import { requireStaffSession } from '../../_lib/session'
 import {
   listBookings, balanceDueCents, paymentSummaryStatus, confirmedFeesCents,
   SERVICE_LABELS, BOOKING_STATUS_LABEL, PAYMENT_SUMMARY_LABEL, type Booking,
@@ -18,7 +18,8 @@ function jobDate(b: Booking): string {
 
 // GET /api/admin/bookings/export?filter=all|paid|unpaid|completed&service=&from=&to=
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requireStaffSession(req)
+  if (who instanceof NextResponse) return who
   const { searchParams } = new URL(req.url)
   const filter = searchParams.get('filter') ?? 'all'
   const service = searchParams.get('service') ?? ''

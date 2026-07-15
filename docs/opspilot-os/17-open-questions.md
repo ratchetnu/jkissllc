@@ -1,15 +1,23 @@
-# 17 — Open Questions (needs verification)
+# 17 — Open Questions (needs verification) — Operion
 
 > Things this assessment could not fully confirm read-only, or that depend on
 > facts outside the repo. Each notes how to resolve it.
+>
+> _(Updated 2026-07-14: platform is now **Operion**; `opspilot:` and
+> `/opspilot`-family identifiers retained as legacy. Q1 is now **mitigated** —
+> the fail-closed webhook/cron changes shipped, so safety no longer depends on the
+> prod env being complete. The CI-hard-gate question (`18-...` D9) is **resolved
+> — CI is now blocking**.)_
 
 ## Verification needed (repo/runtime)
 
-- **Q1 — Prod env completeness.** Several fail-open paths (Twilio/email webhooks,
-  cron) are safe only if their secret env vars are set in prod. This assessment
-  read env var **names** only (never values). *Resolve:* confirm in Vercel that
-  `TWILIO_AUTH_TOKEN`/`TWILIO_WEBHOOK_SECRET`, `EMAIL_WEBHOOK_SECRET`, and
-  `CRON_SECRET` are set for Production. (Fixing fail-closed removes the dependency.)
+- **Q1 — Prod env completeness.** _(Updated 2026-07-14: **largely mitigated.**)_
+  These paths were made **fail-closed** (see `20-...`), so the safety property no
+  longer depends on the secrets being present — a misconfigured environment now
+  rejects (503/401) instead of processing. Residual: confirming the secrets ARE
+  set in Production is still worthwhile so legitimate traffic isn't rejected.
+  *Resolve:* confirm in Vercel that `TWILIO_AUTH_TOKEN`/`TWILIO_WEBHOOK_SECRET`,
+  `EMAIL_WEBHOOK_SECRET`, and `CRON_SECRET` are set for Production.
 - **Q2 — Backup/recovery reality.** Durability is assumed from Upstash + Vercel
   Blob defaults; no backup/restore was tested. *Resolve:* confirm Upstash
   persistence tier + any point-in-time recovery; test a Blob restore.
@@ -27,7 +35,7 @@
   and narrow-viewport overflow on dense pages are inferred from code. *Resolve:*
   device/browser test the heavy pages (`quote` 969, `employees` 682,
   `businesses` 621) and the crew portal.
-- **Q7 — ClaimGuard coupling scope.** Claims + shared Stripe key tie OpsPilot to
+- **Q7 — ClaimGuard coupling scope.** Claims + shared Stripe key tie Operion to
   ClaimGuard. *Resolve:* confirm whether ClaimGuard remains co-resident long-term
   or separates — it affects the Stripe Connect and claims-boundary design.
 - **Q8 — Actual tenant count trajectory.** The Redis-first / Postgres-later

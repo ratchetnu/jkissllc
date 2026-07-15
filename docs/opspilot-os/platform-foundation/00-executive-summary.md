@@ -1,6 +1,6 @@
 # 00 — Executive Summary
 
-The platform-foundation sprint converted the OpsPilot blueprint into working,
+The platform-foundation sprint converted the Operion blueprint into working,
 tested, typed scaffolding — the load-bearing layer every later phase depends on —
 **without changing a single production behavior**. All new code lives under
 `app/lib/platform/` and `app/components/ui/`, is imported by nothing live, and is

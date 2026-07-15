@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession } from '../_lib/session'
+import { requirePermission } from '../_lib/session'
 import {
   listClaims, saveClaim, getClaim, generateClaimId, nextClaimNumber,
   snapshotFromRoute, snapshotFromBusiness, pushClaimAudit,
@@ -36,7 +36,8 @@ function buildIntakeAttachments(raw: unknown): ClaimAttachment[] {
 }
 
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'claims:manage')
+  if (who instanceof NextResponse) return who
   try {
     const q = new URL(req.url).searchParams
     const claims = await listClaims(1000)
@@ -80,7 +81,8 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
 })
 
 export const POST = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'claims:manage')
+  if (who instanceof NextResponse) return who
   const b = await req.json().catch(() => ({}))
 
   const totalCents = parseMoneyCents(b.total)

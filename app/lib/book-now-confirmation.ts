@@ -8,7 +8,7 @@ import {
 } from './ai/confirmation-schema'
 import { detectPhotoTextConflicts } from './ai/photo-text-consistency'
 import { buildConfirmedPhotoEstimate } from './ai/confirmed-analysis'
-import { supportsPhotoAi } from './book-now-ai'
+import { supportsPhotoAi, isStaleProcessing, recoverStaleJob, processingLeaseMs } from './book-now-ai'
 
 // The confirmation + final-analysis writers serialize on the UNIFIED per-booking
 // write lease (bk:wlock) shared with the admin handler and the initial-AI worker,
@@ -146,12 +146,14 @@ export function enqueueFinalAiJob(
   return true
 }
 
-/** A final job the cron may pick up now (queued/retrying past its backoff). */
+/** A final job the cron may pick up now: queued/retrying past its backoff, OR a
+ *  crash-stranded 'processing' job older than the lease (recovered on pickup). */
 export function isFinalDue(b: Booking, at = now()): boolean {
   const j = b.finalAiJob
   if (!j || b.archived || b.isTest || !b.confirmation) return false
-  if (j.status !== 'queued' && j.status !== 'retrying') return false
-  return (j.nextRetryAt ?? 0) <= at
+  if (j.status === 'queued' || j.status === 'retrying') return (j.nextRetryAt ?? 0) <= at
+  if (j.status === 'processing') return isStaleProcessing(j, at)
+  return false
 }
 
 /** A completed final estimate is already attached for the current confirmation version. */
@@ -201,6 +203,25 @@ async function processFinalAiJobInner(
     b.finalAiJob = completeFinalJob(b, decision === 'manual_review' ? 'manual_review' : 'completed', opts.initiatedBy)
     await saveBooking(b)
     return { ok: true, status: b.finalAiJob.status, finalDecision: decision, tier: b.finalAiEstimate!.routingTier }
+  }
+
+  // Stale-'processing' recovery (crash/timeout mid final-analysis call). Runs INSIDE
+  // the per-booking write lease → two crons can't double-recover. Transition it
+  // (terminal manual_review if attempts are exhausted, else re-arm to 'retrying')
+  // WITHOUT burning a model call here; the re-armed job runs once more on next
+  // pickup. Attempts are never reset; terminal states are never resurrected.
+  if (isStaleProcessing(b.finalAiJob)) {
+    const recovered = recoverStaleJob(b.finalAiJob, now(), processingLeaseMs(), MAX_FINAL_ATTEMPTS)!
+    b.finalAiJob = recovered
+    pushBookingEvent(b, {
+      actor: opts.initiatedBy ?? 'cron',
+      action: recovered.status === 'manual_review' ? 'ai.final_manual_review' : 'ai.final_queued',
+      result: 'recovered_stale',
+      meta: { recovered: true, attempts: recovered.attempts, prior: 'processing', final: true },
+    })
+    console.log(`[book-now-final] recovered stale processing final-job token=${b.token.slice(0, 8)} attempts=${recovered.attempts} -> ${recovered.status}`)
+    await saveBooking(b)
+    return { ok: recovered.status !== 'manual_review', status: recovered.status, reason: 'recovered_stale' }
   }
 
   const prior = b.finalAiJob

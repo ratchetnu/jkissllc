@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession } from '../_lib/session'
+import { requirePermission } from '../_lib/session'
 import { listPromos, getPromo, savePromo, deletePromo, normalizeCode, type PromoCode, type PromoType } from '../../../lib/promo'
 
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'settings:manage')
+  if (who instanceof NextResponse) return who
   return NextResponse.json({ ok: true, items: await listPromos() })
 })
 
 export const POST = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'settings:manage')
+  if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({}))
   const code = normalizeCode(body.code)
   if (!code) return NextResponse.json({ error: 'A code is required.' }, { status: 400 })
@@ -37,7 +39,8 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
 })
 
 export const DELETE = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'settings:manage')
+  if (who instanceof NextResponse) return who
   const code = normalizeCode(new URL(req.url).searchParams.get('code'))
   if (!code) return NextResponse.json({ error: 'code required' }, { status: 400 })
   await deletePromo(code)

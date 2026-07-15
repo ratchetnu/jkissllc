@@ -15,6 +15,7 @@ import { SERVICE_LABELS, type Booking } from '../../../lib/bookings'
 import {
   bookNowStage, bookNowServiceGroup, matchesBookNowFilter, isEstateBooking,
   aiStatus, quoteStatus, paymentStatus, ownerAlertStatus, confirmationStatus,
+  isBookedOn,
   BOOK_NOW_STAGE_LABEL, type BookNowFilter, type BookNowStage,
 } from '../../../lib/book-now-queue'
 import { CLEANOUT_SUBTYPE_LABEL, type CleanoutSubtype } from '../../../lib/ai/confirmation-schema'
@@ -34,6 +35,7 @@ const STAGE_TONE: Record<BookNowStage, string> = {
 const FILTERS: [BookNowFilter, string][] = [
   ['all', 'All'], ['new', 'New'],
   ['junk', 'Junk Removal'], ['estate', 'Estate Cleanout'], ['moving', 'Moving'], ['delivery', 'Delivery'],
+  ['awaiting_ai', 'Awaiting AI'],
   ['awaiting_photos', 'Awaiting Photos'], ['ai_queued', 'AI Queued'], ['ai_processing', 'AI Processing'], ['ai_failed', 'AI Failed'],
   ['site_visit', 'Site Visit'], ['manual_review', 'Manual Review'], ['awaiting_approval', 'Awaiting Approval'], ['quote_ready', 'Quote Ready'], ['quote_sent', 'Quote Sent'],
   ['accepted', 'Accepted'], ['payment_pending', 'Payment Pending'], ['paid', 'Paid'], ['booked', 'Booked'], ['failed', 'Failed'],
@@ -71,12 +73,6 @@ function pendingRevenueCents(b: Booking): number {
   const rec = b.aiEstimate?.pricing?.recommendedUsd
   return rec ? Math.round(rec * 100) : 0
 }
-function isToday(ts?: number): boolean {
-  if (!ts) return false
-  const d = new Date(ts), n = new Date()
-  return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate()
-}
-
 // ── Rich AI status indicator ─────────────────────────────────────────────────
 function AiBadge({ b }: { b: Booking }) {
   const s = aiStatus(b)
@@ -232,7 +228,8 @@ function RequestDrawer({ b, unread, onToggleSeen, onClose }: { b: Booking; unrea
 function Queue() {
   const params = useSearchParams()
   const [items, setItems] = useState<Booking[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(true)      // FIRST load only — blanks to skeleton
+  const [refreshing, setRefreshing] = useState(false) // background poll / manual refresh — keeps data
   const [error, setError] = useState('')
   const [filter, setFilter] = useState<BookNowFilter>('all')
   const [search, setSearch] = useState('')
@@ -261,8 +258,11 @@ function Queue() {
     try { localStorage.setItem(SEEN_KEY, JSON.stringify([...next])) } catch { /* ignore */ }
   }, [])
 
-  const load = useCallback(async () => {
-    setLoading(true); setError('')
+  // background=true keeps the current table/KPIs on screen (poll or manual refresh);
+  // only the very first load shows the full "Loading…" state.
+  const load = useCallback(async (background = false) => {
+    if (background) setRefreshing(true); else setLoading(true)
+    setError('')
     try {
       const res = await fetch('/api/admin/book-now', { credentials: 'same-origin' })
       if (res.status === 401) { setError('Session expired — reload.'); return }
@@ -270,14 +270,14 @@ function Queue() {
       if (!res.ok) throw new Error(j.error ?? 'Failed to load')
       setItems(j.items ?? [])
     } catch (e) { setError(e instanceof Error ? e.message : 'Failed') }
-    finally { setLoading(false) }
+    finally { if (background) setRefreshing(false); else setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
 
   const hasActive = useMemo(() => items.some(b => { const s = bookNowStage(b); return s === 'ai_queued' || s === 'ai_processing' }), [items])
   useEffect(() => {
     if (!hasActive) return
-    const t = setInterval(() => { load() }, 15000)
+    const t = setInterval(() => { load(true) }, 15000)   // background poll — no blanking
     return () => clearInterval(t)
   }, [hasActive, load])
 
@@ -309,17 +309,17 @@ function Queue() {
   const markAllRead = () => persistSeen(new Set(items.map(b => b.token)))
 
   const count = useCallback((f: BookNowFilter) => base.filter(b => matchesBookNowFilter(b, f)).length, [base])
-  const stageCount = useCallback((stages: BookNowStage[]) => base.filter(b => stages.includes(bookNowStage(b))).length, [base])
 
-  // KPIs
+  // KPIs — every count derives from the SAME predicate its click filters by, so
+  // the number always equals the rows shown (see matchesBookNowFilter).
   const kpis = useMemo(() => ([
     { label: 'New Requests', value: String(count('new')), tone: '#f87171', filter: 'new' as BookNowFilter },
-    { label: 'Awaiting AI', value: String(stageCount(['awaiting_photos', 'awaiting_ai', 'ai_queued', 'ai_processing', 'ai_failed', 'manual_review'])), tone: '#60a5fa', filter: 'ai_processing' as BookNowFilter },
+    { label: 'Awaiting AI', value: String(count('awaiting_ai')), tone: '#60a5fa', filter: 'awaiting_ai' as BookNowFilter },
     { label: 'Quote Ready', value: String(count('quote_ready')), tone: '#c084fc', filter: 'quote_ready' as BookNowFilter },
     { label: 'Pending Payment', value: String(count('payment_pending')), tone: '#fbbf24', filter: 'payment_pending' as BookNowFilter },
-    { label: 'Booked Today', value: String(base.filter(b => bookNowStage(b) === 'booked' && isToday(b.createdAt)).length), tone: '#34d399', filter: 'booked' as BookNowFilter },
+    { label: 'Booked Today', value: String(base.filter(b => isBookedOn(b)).length), tone: '#34d399', filter: 'booked' as BookNowFilter },
     { label: 'Pending Revenue', value: money(base.reduce((s, b) => s + pendingRevenueCents(b), 0)), tone: '#34d399', filter: 'quote_ready' as BookNowFilter },
-  ]), [count, stageCount, base])
+  ]), [count, base])
 
   // bulk selection over the current filtered view
   const allSelected = filtered.length > 0 && filtered.every(b => selected.has(b.token))
@@ -346,6 +346,7 @@ function Queue() {
     <div>
       {/* animation for the processing dot */}
       <style>{`@keyframes bnpulse{0%,100%{opacity:1}50%{opacity:.35}} .bn-pulse{animation:bnpulse 1.2s ease-in-out infinite}
+        @keyframes bnspin{to{transform:rotate(360deg)}} .bn-spin{animation:bnspin 1s linear infinite}
         .bn-th{position:sticky;top:0;background:var(--bg);z-index:1;text-align:left;padding:10px 12px;border-bottom:1px solid var(--line)}
         .bn-td{padding:12px;border-bottom:1px solid var(--line);vertical-align:middle}
         .bn-tr{cursor:pointer}.bn-tr:hover{background:color-mix(in srgb,var(--card) 60%,transparent)}
@@ -357,8 +358,9 @@ function Queue() {
           <Zap size={22} style={{ color: 'var(--red)' }} /> Book Now Requests
         </h1>
         <div className="flex items-center gap-2">
+          {refreshing && !loading && <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--muted)' }}>Updating…</span>}
           {unreadCount > 0 && <span style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--red)' }}>{unreadCount} new</span>}
-          <button onClick={load} className="os-tap" title="Refresh" style={{ color: 'var(--muted)', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 10, padding: '8px 10px', cursor: 'pointer', display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12.5, fontWeight: 700 }}><RefreshCw size={14} /> Refresh</button>
+          <button onClick={() => load(true)} disabled={refreshing} className="os-tap" title="Refresh" style={{ color: 'var(--muted)', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 10, padding: '8px 10px', cursor: refreshing ? 'default' : 'pointer', display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12.5, fontWeight: 700 }}><RefreshCw size={14} className={refreshing ? 'bn-spin' : undefined} /> Refresh</button>
         </div>
       </div>
       <p style={{ color: 'var(--muted)', fontSize: 13.5, marginBottom: 14 }}>

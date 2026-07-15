@@ -1,7 +1,10 @@
 # 14 — Target Architecture (Phase 13)
 
-> Cited to `file:line` on `~/jkissllc@main`, 2026-07-12. Recommendation with
-> Mermaid diagrams (sources in `diagrams/`).
+> Product: **Operion** (J KISS LLC is the first production tenant). Cited to
+> `file:line` on `~/jkissllc@main`, baseline 2026-07-12, refreshed 2026-07-14.
+> Recommendation with Mermaid diagrams (sources in `diagrams/`). Internal
+> identifiers such as the `opspilot:` Redis key family and the `docs/opspilot-os/`
+> directory are retained verbatim as legacy compatibility ids.
 
 ## 1. Architecture choice: **Modular Monolith** (RECOMMENDATION)
 
@@ -18,17 +21,42 @@ outbox for async work, relational store added only for billing/analytics.
 ## 2. Three states
 
 ### Current (FACT)
-Single-tenant Next.js monolith · Upstash Redis (global keys) · Vercel Blob ·
-inline side-effects · multi-user RBAC without tenant · governed AI (advisory) ·
-no observability. Diagram: `diagrams/01-system-context.mmd`,
-`diagrams/09-multi-tenant-data-boundaries.mmd` (before).
+_(Updated 2026-07-14: single-tenant behavior unchanged, but tenant-context
+plumbing and baseline observability now exist under the hood.)_ Single-tenant
+Next.js 16 monolith · Upstash Redis (global keys, routed through `scopeKey()`) ·
+Vercel Blob · inline side-effects · multi-user RBAC (`app/lib/rbac.ts`) with a
+dormant `tid` session claim but a single shared owner identity · governed AI
+(advisory, `runAiTask`) · **baseline observability** (`/api/health`, `alerts.ts`,
+AI telemetry, `@vercel/analytics`) but **no external APM and a dormant structured
+logger** (`12-...`). Tenant context is wired (S1) but flag-off. Diagram:
+`diagrams/01-system-context.mmd`, `diagrams/09-multi-tenant-data-boundaries.mmd`
+(before).
 
-### Transitional (the migration target of Phases 1–5)
-Same monolith + **tenant context** (`AsyncLocalStorage`) established in `proxy.ts`
-· Redis keys prefixed `t:{tid}:` inside `call()` · `requireTenantSession`
-principal · per-tenant credentials via context · `hauling-boxtruck` industry
-pack extracted · durable outbox + typed events · flags/kill-switches · Sentry +
-structured logs. Still one deployment; `t:jkiss` byte-identical to today.
+### Transitional (the migration target of Phases 1–5) — **PARTLY REALIZED (S1)**
+_(Updated 2026-07-14: the first transitional step is no longer purely aspirational.
+**Tenant context wiring shipped as S1** — the recommended "first sprint" in
+`16-...` — and is on `main` + prod as a live no-op.)_
+
+Same monolith + **tenant context** (`AsyncLocalStorage`). What is **DONE**:
+per-request context is established by `withTenantRoute` (`app/lib/platform/tenancy/
+with-tenant-route.ts`) across **104 request handlers**, with explicit per-tenant
+context (`withBackgroundTenant`) on 3 crons + 3 webhooks; every Redis key routes
+through `scopeKey()` in `app/lib/redis.ts`, which **fails closed** if the flag is
+on without context; a typed flag module and the dark-launch compare
+(`tenancy/dark-launch.ts` → `dark-launch-mismatch` telemetry) exist. With
+`TENANCY_ENABLED=false` the wiring is a **byte-identical live no-op**, so `t:jkiss`
+behaves exactly like today.
+
+What is **NOT YET DONE** in this transitional state: key-prefix activation
+(`t:{tid}:` writes), `requireTenantSession` as the enforced principal (sessions now
+carry a `tid` claim but identity is still a single shared owner), per-tenant
+credentials, `hauling-boxtruck` industry-pack extraction, the durable outbox as the
+async backbone, and Sentry + adopted structured logging (the logger exists but is
+dormant — `12-...`). Activation remains **BLOCKED** on: Blob paths not tenant-scoped,
+`ai:*` prompts/telemetry being platform-global, name-derived key collisions
+(`businesses.ts` bizKey, `job-learning.ts`), the tenant data migration
+(DARK_LAUNCH→DUAL_WRITE), and host-based public-route resolution. Still one
+deployment.
 
 ### Target (multi-tenant AI Business OS)
 Pooled multi-tenant monolith · tenant resolution (subdomain/custom-domain) →
@@ -77,6 +105,13 @@ action executor + kill switch · Stripe Connect + platform billing · Postgres
 Mermaid sources are in `diagrams/`. Rendered inline here for the two most
 load-bearing views; the rest are referenced.
 
+_(Updated 2026-07-14: the inline diagram's product label reads **Operion**; the
+Mermaid **node id `OpsPilot` is preserved verbatim** as a legacy internal
+identifier so the source graphs stay stable. The `proxy.ts` node is a conceptual
+tenant-resolution boundary — in the shipped S1 wiring that role is played by
+`app/lib/platform/tenancy/with-tenant-route.ts` (`withTenantRoute`), with
+`redis.ts` `scopeKey()` doing the key prefixing shown as `call()`.)_
+
 ### System context (`diagrams/01-system-context.mmd`)
 ```mermaid
 flowchart LR
@@ -87,7 +122,7 @@ flowchart LR
     Cust[Customer]
     BizClient[B2B Client]
   end
-  subgraph OpsPilot[OpsPilot OS - Next.js 16 monolith]
+  subgraph OpsPilot[Operion OS - Next.js 16 monolith]
     Web[App Router UI]
     API[API routes]
     Ctx[AsyncLocalStorage tenant ctx]

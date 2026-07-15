@@ -38,3 +38,39 @@ test('every admin API route calls a server-side authorization guard', () => {
   }
   assert.deepEqual(unguarded, [], `these admin routes have no server-side guard: ${unguarded.join(', ')}`)
 })
+
+// Phase-2 authorization tightening: the coarse `requireSession` boolean (any live
+// session, INCLUDING crew) must not gate any admin API route. Every route now
+// resolves a *principal* through requirePermission / requireStaffSession /
+// requireAdmin, so a crew member cannot reach the operations surface. This turns
+// the migration into a permanent invariant — reintroducing requireSession fails CI.
+const COARSE = /\brequireSession\s*\(/           // the call, not requireStaffSession(...)
+const STRONG = /\b(requirePermission|requireStaffSession|requireAdmin)\b/
+
+// Identity/auth-state probes intentionally resolve the principal directly (via
+// getPrincipal) and serve ANY authed caller — they answer "am I signed in, and as
+// whom?" for the client shell, so they hold no permission/staff/admin requirement.
+const IDENTITY_PROBES = new Set([path.join('session', 'route.ts')])
+
+test('no admin API route uses the coarse requireSession gate', () => {
+  const files = walk(ADMIN_API)
+  const offenders: string[] = []
+  for (const f of files) {
+    const rel = path.relative(ADMIN_API, f)
+    if ([...ALLOWLIST].some((a) => rel.endsWith(a))) continue
+    if (COARSE.test(readFileSync(f, 'utf8'))) offenders.push(rel)
+  }
+  assert.deepEqual(offenders, [], `these routes still use the coarse requireSession gate: ${offenders.join(', ')}`)
+})
+
+test('every admin API route resolves a principal via permission/staff/admin guard', () => {
+  const files = walk(ADMIN_API)
+  const weak: string[] = []
+  for (const f of files) {
+    const rel = path.relative(ADMIN_API, f)
+    if ([...ALLOWLIST].some((a) => rel.endsWith(a))) continue
+    if ([...IDENTITY_PROBES].some((a) => rel.endsWith(a))) continue
+    if (!STRONG.test(readFileSync(f, 'utf8'))) weak.push(rel)
+  }
+  assert.deepEqual(weak, [], `these routes lack a permission/staff/admin guard: ${weak.join(', ')}`)
+})

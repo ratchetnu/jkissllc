@@ -1,7 +1,19 @@
 # 04 — Domain Model (Phase 3)
 
-> Cited to `file:line` on `~/jkissllc@main`, 2026-07-12. Current domains are
-> **FACT**; the target model is **RECOMMENDATION**.
+> Cited to `file:line` on `~/jkissllc@main`, 2026-07-12; platform-scaffolding
+> deltas re-verified 2026-07-14. Current domains are **FACT**; the target model
+> is **RECOMMENDATION**.
+>
+> _(Updated 2026-07-14: the platform is branded **Operion**
+> (`app/lib/company.ts:104`). Prose says "Operion"; the internal `opspilot:`
+> Redis prefix, `/api/opspilot/*` routes, and `app/lib/platform/` paths are kept
+> verbatim as **legacy internal ids** for compatibility.)_
+>
+> _(Updated 2026-07-14: several of the **Core platform domains** recommended in
+> §3 below are now **scaffolded** (flag-gated OFF / advisory) under
+> `app/lib/platform/*` — see the "Platform-domain scaffolding" note after §1.
+> They are structure, not yet the live source of truth; the FACT domains in §1
+> are still what production reads.)_
 
 ## 1. Current domains (as built)
 
@@ -27,6 +39,29 @@ coupling** at four seams (below). Current bounded contexts:
 | Identity/Config | `tenant.ts`, `company.ts`, `policy.ts` | `policy:*` |
 | AI | `ai/*` | `ai:*` |
 
+### Platform-domain scaffolding (as of 2026-07-14) — FACT
+
+The target Core domains are no longer purely on-paper: `app/lib/platform/*`
+now holds **10 scaffolded modules**, mostly flag-gated OFF (inert), that
+prefigure the domain boundaries recommended in §3:
+
+| Scaffolded module | Path | Maps to §3 domain | State |
+|---|---|---|---|
+| Tenancy | `platform/tenancy/` (context, keys/`scopeKey`, dark-launch, tenant-store, `with-tenant-route`) | Identity & Tenancy | **Context WIRED** (104 handlers + 3 crons + 3 webhooks); data-level OFF (`TENANCY_ENABLED=false`) |
+| Capabilities | `platform/capabilities/` (frozen 37-cap registry + DFS validate) | Industry/Tenant Config | Live but inert (`CAPABILITY_REGISTRY_ENABLED=true`, pure data) |
+| Events | `platform/events/` (versioned catalog, envelope, event-log, outbox, publish) | Automation & AI / cross-domain events | Scaffolded, OFF |
+| Approvals | `platform/approvals/` (state machine) | Automation & AI (ApprovalRequest) | Scaffolded, OFF (`APPROVAL_QUEUE_ENABLED=false`) |
+| Workspaces | `platform/workspaces/` (role-adaptive IA, route-map) | Identity & Tenancy (IA) | Scaffolded, OFF |
+| Industry packs | `platform/industry-packs/` (jkiss + example-cleaning + registry) | Industry Configuration | Scaffolded, OFF (`INDUSTRY_PACKS_ENABLED=false`) |
+| AI workers | `platform/ai-workers/` (0–5 autonomy ladder + fail-closed governance) | Automation & AI Intelligence | Scaffolded, OFF (`AI_WORKFORCE_ENABLED=false`) |
+| Intelligence | `platform/intelligence/` (4 insight generators) | Analytics & Reporting | Scaffolded, OFF (`INSIGHTS_UI_ENABLED=false`) |
+| Observability | `platform/observability/` (logger, redact, tenant-telemetry) | Audit & Governance / ops | Scaffolded, **DORMANT (0 importers)** |
+| Flags | `platform/flags.ts` | — | All OFF except `CAPABILITY_REGISTRY_ENABLED` |
+
+These are **additive structure**, not a cutover: production still reads the §1
+FACT domains. Deep dives: tenancy → `05-multi-tenant-architecture.md`; events →
+`08-event-and-workflow-architecture.md`; AI ladder → `07-ai-operating-layer.md`.
+
 ## 2. Improper coupling (the four seams to break) — FACT
 
 1. **Pricing ↔ tenancy (global learning).** `job-learning.ts:41-42` keeps
@@ -38,7 +73,8 @@ coupling** at four seams (below). Current bounded contexts:
    shape — prefixing the Redis key alone does not fix the embedded map keys.
 3. **Claims ↔ Compensation (product coupling).** `route-pay.ts` imports claim
    recovery to deduct from contractor pay — a live coupling between ClaimGuard
-   and OpsPilot payroll. Keep, but make the boundary explicit and event-driven.
+   and Operion payroll. Keep, but make the boundary explicit and event-driven
+   (the `platform/events/` catalog is now scaffolded for exactly this).
 4. **Payments ↔ ClaimGuard (shared Stripe key).** `stripe.ts:3` — one Stripe
    account for two products. Blocks SaaS billing; forces Stripe Connect.
 
@@ -150,7 +186,9 @@ produced · Permissions · Tenant-isolation. (Events cross-reference
 **Every tenant-owned record carries an explicit `tenantId`** (via key prefix in
 the Redis model — see `09-data-architecture.md`), with exactly these documented
 exceptions:
-- Platform-scoped: `Tenant`, `IndustryPack`, `opspilot:waitlist:*`, platform
-  billing, cross-tenant platform analytics, the global AI prompt built-ins.
+- Platform-scoped: `Tenant`, `IndustryPack`, the early-access waitlist
+  (`opspilot:waitlist:*` — legacy internal key prefix, on the platform-global
+  allowlist in `platform/tenancy/keys.ts:18`), platform billing, cross-tenant
+  platform analytics, and the platform-managed `ai:*` prompts/telemetry.
 - Everything else — bookings, routes, staff, claims, messages, invoices,
   pay, equipment, calibration, reminders, audit — is tenant-owned.

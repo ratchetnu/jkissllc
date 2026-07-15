@@ -11,6 +11,7 @@ import { sendSms, withSmsSuppressed } from '../../../lib/sms'
 import { getAutomationSettings } from '../../../lib/automation-settings'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
 import { activeTenantIds } from '../../../lib/platform/tenancy/tenant-store'
+import { alert } from '../../../lib/alerts'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -253,6 +254,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, dryRun, smsSuppressed: true, tenants })
   } catch (e) {
     console.error('[cron/daily] fatal', e)
+    // A whole-run failure means the day's reminders/route generation/claims may
+    // not have run — page the owner. Fail-soft: an alert throw can't mask the 500.
+    try {
+      await alert({
+        type: 'cron_job_failed', severity: 'CRITICAL', worker: 'daily', route: '/api/cron/daily',
+        errorClass: e instanceof Error ? e.name : 'unknown',
+      })
+    } catch (alertErr) {
+      console.error('[cron/daily] alert failed', alertErr)
+    }
     return NextResponse.json({ error: 'failed' }, { status: 500 })
   }
 }
