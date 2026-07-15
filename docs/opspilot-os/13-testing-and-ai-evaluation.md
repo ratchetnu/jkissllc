@@ -2,6 +2,11 @@
 
 > Product: **Operion** (J KISS LLC is the first production tenant). Cited to
 > `file:line` on `~/jkissllc@main`, baseline 2026-07-12, refreshed 2026-07-14.
+>
+> **Hardening update 2026-07-14** (branch `fix/operion-production-hardening`, not merged):
+> suite grew **586 → 629** cases with new `manager-authz`, `ai-reaper`, `ai-timeout`,
+> `alerts-delivery`, `book-now-kpi`, and `wizard-a11y` tests; `tsc` 0 · full suite green ·
+> `next build` OK. Still no browser/a11y-runtime/perf E2E (Playwright) — deferred.
 
 ## 1. What exists (FACT)
 

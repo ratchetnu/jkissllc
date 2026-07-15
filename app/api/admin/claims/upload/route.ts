@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client'
-import { requireSession } from '../../_lib/session'
+import { requirePermission } from '../../_lib/session'
 
 // Client-upload token broker for CLAIM EVIDENCE. The admin uploads on-scene photos,
 // videos, and documents straight to Vercel Blob; this route only mints a short-lived
@@ -19,7 +19,9 @@ export const POST = withTenantRoute(async (req: NextRequest): Promise<NextRespon
       body,
       request: req,
       onBeforeGenerateToken: async () => {
-        if (!(await requireSession(req))) throw new Error('unauthorized')
+        // The Blob onUploadCompleted webhook carries no cookie, so the token mint is
+        // the auth point. Gate it on claims:manage (admin + manager), not any session.
+        if ((await requirePermission(req, 'claims:manage')) instanceof NextResponse) throw new Error('unauthorized')
         return {
           allowedContentTypes: [
             // Photos (phone camera, screenshots)

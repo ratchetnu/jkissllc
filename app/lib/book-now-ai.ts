@@ -151,6 +151,26 @@ async function processAiJobInner(token: string, opts: { initiatedBy?: string; te
     return { ok: false, status: 'failed', errorCode: 'unsupported_image' }
   }
 
+  // Stale-'processing' recovery. This booking's job crash-stranded in 'processing'
+  // (a crash/timeout mid model-call). We run INSIDE the per-booking write lease, so
+  // two crons can never double-recover. Transition it (terminal if attempts are
+  // exhausted, else re-arm to 'retrying') WITHOUT burning a model call here; the
+  // re-armed job runs once more on the next normal pickup. The stale attempt counts
+  // — attempts are never reset, terminal states are never resurrected.
+  if (isStaleProcessing(b.aiJob)) {
+    const recovered = recoverStaleJob(b.aiJob)!
+    b.aiJob = recovered
+    pushBookingEvent(b, {
+      actor: opts.initiatedBy ?? 'cron',
+      action: recovered.status === 'manual_review' ? 'ai.manual_review' : 'ai.queued',
+      result: 'recovered_stale',
+      meta: { recovered: true, attempts: recovered.attempts, prior: 'processing' },
+    })
+    console.log(`[book-now-ai] recovered stale processing job token=${b.token.slice(0, 8)} attempts=${recovered.attempts} -> ${recovered.status}`)
+    await saveBooking(b)
+    return { ok: recovered.status !== 'manual_review', status: recovered.status, reason: 'recovered_stale' }
+  }
+
   // Persist "processing" BEFORE the slow call so a crash leaves a durable record.
   const prior = b.aiJob
   const attempts = (prior?.attempts ?? 0) + 1
@@ -259,12 +279,69 @@ function scheduleRetryOrFail(b: Booking, attempts: number, code: AiJobErrorCode,
   }
 }
 
-/** A job the cron may pick up right now (queued/retrying and past its backoff). */
+// ── Stale-`processing` recovery ──────────────────────────────────────────────
+// A crash/timeout DURING the model call strands a job in 'processing' forever,
+// because the normal due-check only re-picks queued/retrying. A 'processing' job
+// whose entered-processing timestamp (`lastAttemptAt`, stamped just before the slow
+// call in processAiJobInner) is older than this lease is treated as CRASHED and
+// recovered. The lease MUST be >> the 60s function maxDuration so a HEALTHY in-flight
+// job is NEVER reaped. Read from AI_PROCESSING_LEASE_MS; safe 5-minute default.
+export function processingLeaseMs(): number {
+  const raw = Number(process.env.AI_PROCESSING_LEASE_MS)
+  return Number.isFinite(raw) && raw > 0 ? raw : 5 * 60_000
+}
+
+/** True when a 'processing' job was stranded (entered processing more than the lease
+ *  ago and never advanced). Missing timestamp → never reaped (fail-safe). */
+export function isStaleProcessing(
+  j: Pick<AiJob, 'status' | 'lastAttemptAt'> | undefined,
+  at = now(),
+  leaseMs = processingLeaseMs(),
+): boolean {
+  if (!j || j.status !== 'processing') return false
+  const startedAt = j.lastAttemptAt ?? 0
+  if (!startedAt) return false
+  return at - startedAt > leaseMs
+}
+
+/**
+ * Recover a stale-'processing' job (crash/timeout mid model-call). Pure + idempotent.
+ * The stranded attempt ALREADY counted (attempts was incremented before the model
+ * call), so we NEVER reset attempts. If it already burned MAX_ATTEMPTS → terminal
+ * manual_review (an owner prices by hand; we don't spend another model call). Else
+ * re-arm it as 'retrying', due immediately, so the normal path runs it once more.
+ * Returns the new AiJob, or null when `j` is not a recoverable stale-'processing' job
+ * — terminal failed/manual_review states are never resurrected.
+ */
+export function recoverStaleJob(
+  j: AiJob | undefined,
+  at = now(),
+  leaseMs = processingLeaseMs(),
+  maxAttempts = MAX_ATTEMPTS,
+): AiJob | null {
+  if (!j || !isStaleProcessing(j, at, leaseMs)) return null
+  if (j.attempts >= maxAttempts) {
+    return {
+      ...j, status: 'manual_review', completedAt: at, updatedAt: at,
+      errorCode: 'retry_exhausted',
+      errorSummary: `Recovered a stranded AI job after ${j.attempts} attempt(s) — needs manual pricing.`,
+    }
+  }
+  return {
+    ...j, status: 'retrying', nextRetryAt: at, updatedAt: at,
+    errorCode: 'provider_unavailable',
+    errorSummary: 'Recovered a stranded AI job (interrupted mid-analysis) — re-queued for one more attempt.',
+  }
+}
+
+/** A job the cron may pick up right now: queued/retrying past its backoff, OR a
+ *  crash-stranded 'processing' job older than the lease (recovered on pickup). */
 export function isDue(b: Booking, at = now()): boolean {
   const j = b.aiJob
   if (!j || b.archived || b.isTest) return false
-  if (j.status !== 'queued' && j.status !== 'retrying') return false
-  return (j.nextRetryAt ?? 0) <= at
+  if (j.status === 'queued' || j.status === 'retrying') return (j.nextRetryAt ?? 0) <= at
+  if (j.status === 'processing') return isStaleProcessing(j, at)
+  return false
 }
 
 /** Cron entry point: process all due jobs (bounded). Returns a summary per booking. */

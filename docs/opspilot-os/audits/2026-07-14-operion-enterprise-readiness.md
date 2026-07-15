@@ -5,6 +5,27 @@
 > `TENANCY_ENABLED` remained `false`. Directory `docs/opspilot-os/` is retained as the
 > single authoritative blueprint source (legacy name; product = Operion).
 
+> **Resolution update — 2026-07-14 (branch `fix/operion-production-hardening`).** The
+> Production Hardening sprint has since resolved a set of these findings (code changed,
+> `tsc` 0 · **629/629 tests** · `next build` OK; `TENANCY_ENABLED` still `false`; not merged/deployed):
+> - **H-SEC-1 RESOLVED** — 38 admin routes migrated off coarse `requireSession` to
+>   `requirePermission`/`requireStaffSession`/`requireAdmin`; managers are now denied the
+>   admin-only surfaces (pay/invoices/profitability/settings/decrypted applicant docs) at the
+>   API, not just the edge. New `scripts/manager-authz.test.ts` + hardened `authorization-coverage.test.ts`.
+> - **H-AI-1 RESOLVED** — lease-based stale-`processing` reaper (`AI_PROCESSING_LEASE_MS`,
+>   idempotent under the write-lock, preserves attempts, terminal at MAX, never resurrects
+>   failed jobs). **M-AI-3 RESOLVED** — `AbortSignal.timeout` (`AI_CALL_TIMEOUT_MS`) classified transient.
+> - **M-OBS-1 / M-OBS-2 / M-MSG-1 RESOLVED** — Stripe webhook + daily/reminders cron failures
+>   now `alert()`; alert **email fallback wired** (Slack→email→console) with correlation IDs.
+> - **M-ADM-1/2/3 RESOLVED** — KPI "Awaiting AI" count==filter (shared predicate), "Booked
+>   Today" uses `confirmedAt`+`centralToday()`, poll `refreshing`-vs-`loading` split.
+> - **M-A11Y-1 RESOLVED** — wizard fields programmatically labeled (`htmlFor`/`id`,
+>   `aria-required`, group `aria-labelledby`, upload `aria-live`).
+>
+> Still open (not in this sprint): the tenant-activation blockers (H-AI-2, H-PAY-1, H-BLOB-1,
+> H-KEY-1/2, M-TEN-4/5), M-OBS-3 (logger adoption), M-SEC-2 (CSP), and the remaining MEDIUM/LOW
+> operational items. See `CHANGELOG.md` (2026-07-14 hardening entry).
+
 ## 1. Executive summary
 
 Operion, as run today by J KISS LLC (its first live tenant), is a **genuinely capable,

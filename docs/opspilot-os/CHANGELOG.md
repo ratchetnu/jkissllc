@@ -10,6 +10,22 @@ the product is **Operion**. See `README.md` for the naming/source-of-truth note.
 
 ---
 
+## 2026-07-14 — Production Hardening sprint (auth, worker recovery, failure visibility)
+
+Resolved the audit's live-and-near-term HIGH/MEDIUM issues on branch
+`fix/operion-production-hardening` (from the audit base `8b36a4d`). Code changed; **no
+schema, no auth re-architecture, no tenancy enablement** (`TENANCY_ENABLED` stayed `false`);
+not merged, not deployed.
+
+- **Gates:** `tsc` 0 errors · `npm test` **629/629 pass** (was 586; +43 new) · `next build` OK · no new lint errors in changed files.
+- **Authorization (H-SEC-1):** all **38** coarse `requireSession` admin routes → `requirePermission`/`requireStaffSession`/`requireAdmin` per a documented route-permission matrix; managers denied admin-only pay/invoices/profitability/settings/promos/waitlist and decrypted applicant docs (`careers/doc`→admin) at the API. Existing per-action `can()` checks preserved. Tests: new `manager-authz.test.ts`, hardened `authorization-coverage.test.ts`.
+- **AI recovery (H-AI-1) + timeout (M-AI-3):** lease-based stale-`processing` reaper (`AI_PROCESSING_LEASE_MS`, idempotent under write-lock, attempts preserved, terminal at MAX, never resurrects failed/manual_review); `AbortSignal.timeout` (`AI_CALL_TIMEOUT_MS`) classified transient. Tests: `ai-reaper.test.ts`, `ai-timeout.test.ts`.
+- **Failure visibility (M-OBS-1/2, M-MSG-1):** `alert()` added to Stripe-webhook + daily/reminders cron catches; alert **email fallback wired** (Slack→email→console) with truthful `alertProviderStatus()`, env/correlation-id/timestamp in payload, redaction + dedup kept. Test: `alerts-delivery.test.ts`.
+- **KPI accuracy (M-ADM-1/2/3):** shared `AWAITING_AI_STAGES` predicate (count == filter), "Booked Today" via `confirmedAt`+`centralToday()`, `refreshing`-vs-`loading` split. Test: `book-now-kpi.test.ts`.
+- **Wizard a11y (M-A11Y-1):** `htmlFor`/`id`, `aria-required`, group `aria-labelledby`/`aria-pressed`, upload `aria-live`; strictly additive. Test: `wizard-a11y.test.ts`.
+- **Env vars added (names only):** `AI_PROCESSING_LEASE_MS`, `AI_CALL_TIMEOUT_MS`, `ALERT_EMAIL_TO` (optional; falls back to `OWNER_EMAIL`).
+- **Still open:** tenant-activation blockers (Blob/`ai:*`/name-keys/public-route + Stripe-webhook tenant context), logger adoption (M-OBS-3), CSP (M-SEC-2), and the remaining MEDIUM/LOW items — deferred to their own sprints.
+
 ## 2026-07-14 — Enterprise readiness audit
 
 Ran an evidence-based end-to-end validation of the platform (customer intake → completed

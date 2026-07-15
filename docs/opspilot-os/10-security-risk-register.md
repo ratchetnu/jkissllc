@@ -1,5 +1,14 @@
 # 10 — Security Risk Register (Phase 9) — Operion Platform
 
+> **Hardening update 2026-07-14** (branch `fix/operion-production-hardening`, not merged):
+> the manager-over-privilege gap (audit H-SEC-1) is **RESOLVED** — 38 admin routes moved
+> from coarse `requireSession` to `requirePermission`/`requireStaffSession`/`requireAdmin`,
+> so managers no longer reach admin-only pay/invoices/profitability/settings or decrypted
+> applicant documents at the API. Server-side enforced; `scripts/manager-authz.test.ts` +
+> `scripts/authorization-coverage.test.ts` prove it. Still open: single global
+> `ADMIN_SESSION_SECRET` + single shared owner `ADMIN_PASSWORD` (no per-owner identity),
+> and no CSP (M-SEC-2). See `CHANGELOG.md`.
+
 > Threat-focused review, cited to `file:line` on `~/jkissllc@main`.
 > Each risk: evidence · impact · exploitation · mitigation · priority · blocks
 > commercialization? · **status (2026-07-14)**.

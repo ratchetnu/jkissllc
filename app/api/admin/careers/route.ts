@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession } from '../_lib/session'
+import { requirePermission } from '../_lib/session'
+import { can } from '../../../lib/rbac'
 import { str } from '../../../lib/validators'
 import { saveStaff, findStaffDuplicate } from '../../../lib/staff'
 import {
@@ -18,24 +19,31 @@ const REC_TO_STATUS: Record<Recommendation, ApplicantStatus> = {
   hire: 'hired', second_interview: 'second_interview', waitlist: 'waitlist', reject: 'rejected',
 }
 
-function unauthorized() { return NextResponse.json({ error: 'unauthorized' }, { status: 401 }) }
-
 // GET /api/admin/careers — list all applicants (newest first).
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return unauthorized()
+  const who = await requirePermission(req, 'applicants:review')
+  if (who instanceof NextResponse) return who
   const applicants = await listApplicants()
   return NextResponse.json({ applicants })
 })
 
 // PATCH /api/admin/careers — { id, action, value? } review actions.
 export const PATCH = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return unauthorized()
+  const who = await requirePermission(req, 'applicants:review')
+  if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
   const id = String(body.id || '')
   const a = await getApplicant(id)
   if (!a) return NextResponse.json({ error: 'not found' }, { status: 404 })
 
   const action = String(body.action || '')
+  // Terminal decisions (approving a hire, setting the final recommendation) are a
+  // decide-level action managers do NOT hold — hiring also mints a crew record.
+  // Review-level actions (notes, request info, non-terminal status, rescore,
+  // headshot approval) stay open to reviewers.
+  if ((action === 'hire' || action === 'recommendation') && !can(who.role, 'applicants:decide')) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
   let linkedExisting = false
   switch (action) {
     case 'status':
@@ -117,7 +125,8 @@ export const PATCH = withTenantRoute(async (req: NextRequest) => {
 
 // DELETE /api/admin/careers?id=... — remove an applicant record.
 export const DELETE = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return unauthorized()
+  const who = await requirePermission(req, 'applicants:decide')
+  if (who instanceof NextResponse) return who
   const id = new URL(req.url).searchParams.get('id') || ''
   await deleteApplicant(id)
   return NextResponse.json({ ok: true })

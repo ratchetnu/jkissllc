@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession } from '../_lib/session'
+import { requirePermission } from '../_lib/session'
 import { redis } from '../../../lib/redis'
 
 // Site analytics read. Previously used its own inline Upstash client (bypassing
@@ -16,9 +16,8 @@ function parseHash(arr: string[]): { key: string; total: number }[] {
 }
 
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const who = await requirePermission(req, 'reports:view')
+  if (who instanceof NextResponse) return who
 
   const { searchParams } = req.nextUrl
   const range = searchParams.get('range') ?? '30d'

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession } from '../../_lib/session'
+import { requirePermission } from '../../_lib/session'
 import {
   getTemplate, saveTemplate, deleteTemplate, materializeTemplate, parseWeekdays, parseCrewByWeekday,
 } from '../../../../lib/route-templates'
@@ -9,7 +9,8 @@ const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim()
 const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' })
 
 export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'recurring:manage')
+  if (who instanceof NextResponse) return who
   const { id } = await params
   const t = await getTemplate(id)
   if (!t) return NextResponse.json({ error: 'Template not found.' }, { status: 404 })
@@ -54,7 +55,8 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
 })
 
 export const DELETE = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'recurring:manage')
+  if (who instanceof NextResponse) return who
   const { id } = await params
   await deleteTemplate(id)
   return NextResponse.json({ ok: true })

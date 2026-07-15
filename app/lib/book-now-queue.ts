@@ -2,6 +2,7 @@ import {
   type Booking, type ServiceType,
   JUNK_SERVICE_TYPES,
 } from './bookings'
+import { centralToday } from './dates'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Book Now operations queue — the pre-job pipeline of online customer submissions.
@@ -197,10 +198,43 @@ export function confirmationStatus(b: Booking): ConfirmationStatusRead {
   return 'none'
 }
 
+// ── "Awaiting AI" composite — the KPI meaning of "still needs the AI pipeline" ──
+// The canonical set of stages the "Awaiting AI" KPI counts. Exported so the KPI
+// COUNT and the KPI-click FILTER consume ONE predicate and can never disagree
+// (the count === the rows shown). Any change here changes both in lockstep.
+export const AWAITING_AI_STAGES: readonly BookNowStage[] = [
+  'awaiting_photos', 'awaiting_ai', 'ai_queued', 'ai_processing', 'ai_failed', 'manual_review',
+] as const
+const AWAITING_AI_SET = new Set<BookNowStage>(AWAITING_AI_STAGES)
+
+/** True iff this request is in any of the AWAITING_AI_STAGES (canonical predicate). */
+export function isAwaitingAi(b: Booking): boolean {
+  return AWAITING_AI_SET.has(bookNowStage(b))
+}
+
+// ── Booked-date helpers — "Booked Today" must key off when the booking was
+// actually confirmed, not when the request was submitted. ──────────────────────
+/** The timestamp at which a request became a confirmed booking. Uses the durable
+ *  `confirmedAt` lifecycle stamp; falls back to `createdAt` for legacy records
+ *  that were confirmed before `confirmedAt` was tracked. */
+export function bookedAt(b: Booking): number | undefined {
+  return b.confirmedAt ?? b.createdAt
+}
+
+/** Whether this request is a confirmed booking dated on the given Central
+ *  (America/Chicago) calendar day — defaults to today. Uses the app-wide
+ *  `centralToday` day boundary so midnight cases match analytics/availability. */
+export function isBookedOn(b: Booking, day: string = centralToday()): boolean {
+  if (bookNowStage(b) !== 'booked') return false
+  const ts = bookedAt(b)
+  return ts != null && centralToday(ts) === day
+}
+
 // ── Queue filters (superset of stages + service groups + inclusion toggles) ─────
 export type BookNowFilter =
   | 'all' | 'new'
   | 'junk' | 'moving' | 'delivery' | 'estate'
+  | 'awaiting_ai'   // COMPOSITE — every stage in AWAITING_AI_STAGES (KPI parity)
   | 'awaiting_photos' | 'ai_queued' | 'ai_processing' | 'ai_failed'
   | 'awaiting_confirmation' | 'final_processing' | 'awaiting_owner_approval' | 'site_visit'
   | 'awaiting_approval' | 'quote_ready' | 'manual_review' | 'quote_sent'
@@ -215,6 +249,7 @@ export function matchesBookNowFilter(b: Booking, f: BookNowFilter): boolean {
     case 'moving': return bookNowServiceGroup(b.serviceType) === 'moving'
     case 'delivery': return bookNowServiceGroup(b.serviceType) === 'delivery'
     case 'estate': return isEstateBooking(b)
+    case 'awaiting_ai': return isAwaitingAi(b)          // composite — same set the KPI counts
     case 'site_visit': return stage === 'site_visit'
     case 'awaiting_photos': return stage === 'awaiting_photos'
     case 'ai_queued': return stage === 'ai_queued'

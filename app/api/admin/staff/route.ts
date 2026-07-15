@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession, requireAdmin } from '../_lib/session'
+import { requirePermission, requireAdmin } from '../_lib/session'
 import { listStaff, saveStaff, deleteStaff, type Staff, type PayKind, type PayHistoryEntry } from '../../../lib/staff'
 import { bizKey } from '../../../lib/businesses'
 import { parseMoneyCents } from '../../../lib/finance'
@@ -34,7 +34,9 @@ const sameRates = (a: Record<string, number> | undefined, b: Record<string, numb
 }
 
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Read the crew directory — admin + manager (crew:view). Writes below stay admin-only.
+  const who = await requirePermission(req, 'crew:view')
+  if (who instanceof NextResponse) return who
   // ?candidates=<staffId> lists the live routes a pay change could apply to.
   const candidatesFor = new URL(req.url).searchParams.get('candidates')
   if (candidatesFor) return NextResponse.json({ ok: true, items: await repriceCandidates({ staffId: candidatesFor }) })

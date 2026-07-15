@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession } from '../_lib/session'
+import { requireStaffSession } from '../_lib/session'
 import { getDisposalSettings, saveDisposalSettings, type DisposalSettings } from '../../../lib/disposal'
 
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requireStaffSession(req)
+  if (who instanceof NextResponse) return who
   return NextResponse.json({ ok: true, settings: await getDisposalSettings() })
 })
 
 export const POST = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requireStaffSession(req)
+  if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({})) as Partial<DisposalSettings>
   // Coerce numeric fields safely; ignore anything unexpected.
   const patch: Partial<DisposalSettings> = {}

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import type Stripe from 'stripe'
 import { getStripe, stripeConfigured } from '../../../lib/stripe'
 import { recordStripeSessionPayment } from '../../../lib/record-payment'
+import { alert } from '../../../lib/alerts'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -36,6 +37,24 @@ export async function POST(req: NextRequest) {
     }
   } catch (err) {
     console.error('[stripe-webhook] handler error:', err)
+    // Surface the failure to the alert pipeline. SAFE fields only — the event
+    // type and Stripe object id (session/paymentIntent), NEVER card data — and
+    // alert() is fail-soft, so a broken alert path can't break the webhook.
+    const obj = event.data.object as unknown as { id?: string; payment_intent?: string }
+    try {
+      await alert({
+        type: 'stripe_webhook_failed', severity: 'ERROR', route: '/api/webhooks/stripe',
+        errorClass: err instanceof Error ? err.name : 'unknown',
+        correlationId: event.id,
+        meta: {
+          eventType: event.type,
+          ...(obj?.id ? { sessionId: obj.id } : {}),
+          ...(typeof obj?.payment_intent === 'string' ? { paymentIntent: obj.payment_intent } : {}),
+        },
+      })
+    } catch (alertErr) {
+      console.error('[stripe-webhook] alert failed:', alertErr)
+    }
     // 200 anyway — the return-path/idempotent recorder will reconcile, and we
     // don't want Stripe to hammer retries on a transient KV blip.
   }

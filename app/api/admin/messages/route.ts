@@ -1,10 +1,11 @@
 // Admin: customer-message inbox API. GET lists/filters/searches; PATCH marks a
 // message read / unread / archived, sets a review state, attaches an unmatched
-// message to a booking, or dismisses it as not-customer. Admin-only.
+// message to a booking, or dismisses it as not-customer. Gated on messages:send
+// (admin + manager); crew never reach the ops inbox.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession } from '../_lib/session'
+import { requirePermission } from '../_lib/session'
 import {
   listRecent, listUnread, markRead, markUnread, archiveMessage, setReviewState,
   attachToBooking, dismissAsNotCustomer, unreadCount,
@@ -15,7 +16,8 @@ import { getBookingByToken } from '../../../lib/bookings'
 const REVIEW_STATES = new Set<MsgReviewState>(['needs_reply', 'customer_responded', 'waiting_on_customer', 'resolved'])
 
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'messages:send')
+  if (who instanceof NextResponse) return who
   const sp = new URL(req.url).searchParams
   const tab = sp.get('tab') || 'unread'                  // unread | all | archived
   const channel = sp.get('channel') || ''                // sms | email
@@ -43,7 +45,8 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
 })
 
 export const PATCH = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'messages:send')
+  if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({}))
   const id = typeof body.id === 'string' ? body.id : ''
   const action = typeof body.action === 'string' ? body.action : ''

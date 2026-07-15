@@ -3,6 +3,7 @@ import { runDueReminders, runEscalations } from '../../../lib/reminder-engine'
 import { withSmsSuppressed } from '../../../lib/sms'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
 import { activeTenantIds } from '../../../lib/platform/tenancy/tenant-store'
+import { alert } from '../../../lib/alerts'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -28,19 +29,34 @@ export async function GET(req: NextRequest) {
   // Per-tenant fan-out: each tenant runs in its own explicit context; one tenant's
   // failure is isolated and never executes under another. Counts only (no PII).
   const tenants: { tenant: string; evaluated: number; sent: number; escalated: number; error?: string }[] = []
-  for (const tenantId of activeTenantIds()) {
-    let due: { evaluated: number; sent: number } = { evaluated: 0, sent: 0 }
-    let esc: { escalated: number } = { escalated: 0 }
-    try {
-      await withBackgroundTenant('cron', () => withSmsSuppressed(async () => {
-        try { due = await runDueReminders(now) } catch (e) { console.error('[cron/reminders] due', e) }
-        try { esc = await runEscalations(now) } catch (e) { console.error('[cron/reminders] escalations', e) }
-      }), tenantId)
-      tenants.push({ tenant: tenantId, evaluated: due.evaluated, sent: due.sent, escalated: esc.escalated })
-    } catch (e) {
-      console.error('[cron/reminders] tenant', tenantId, e)
-      tenants.push({ tenant: tenantId, evaluated: due.evaluated, sent: due.sent, escalated: esc.escalated, error: e instanceof Error ? e.name : 'unknown' })
+  try {
+    for (const tenantId of activeTenantIds()) {
+      let due: { evaluated: number; sent: number } = { evaluated: 0, sent: 0 }
+      let esc: { escalated: number } = { escalated: 0 }
+      try {
+        await withBackgroundTenant('cron', () => withSmsSuppressed(async () => {
+          try { due = await runDueReminders(now) } catch (e) { console.error('[cron/reminders] due', e) }
+          try { esc = await runEscalations(now) } catch (e) { console.error('[cron/reminders] escalations', e) }
+        }), tenantId)
+        tenants.push({ tenant: tenantId, evaluated: due.evaluated, sent: due.sent, escalated: esc.escalated })
+      } catch (e) {
+        console.error('[cron/reminders] tenant', tenantId, e)
+        tenants.push({ tenant: tenantId, evaluated: due.evaluated, sent: due.sent, escalated: esc.escalated, error: e instanceof Error ? e.name : 'unknown' })
+      }
     }
+  } catch (e) {
+    console.error('[cron/reminders] fatal', e)
+    // Whole-pass failure means no reminders/escalations fired this run — page the
+    // owner. Fail-soft: an alert throw can't mask the 500 we return.
+    try {
+      await alert({
+        type: 'cron_job_failed', severity: 'CRITICAL', worker: 'reminders', route: '/api/cron/reminders',
+        errorClass: e instanceof Error ? e.name : 'unknown',
+      })
+    } catch (alertErr) {
+      console.error('[cron/reminders] alert failed', alertErr)
+    }
+    return NextResponse.json({ error: 'failed' }, { status: 500 })
   }
   return NextResponse.json({ ok: true, smsSuppressed: true, tenants, at: now })
 }

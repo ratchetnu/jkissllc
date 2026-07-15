@@ -4,11 +4,12 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession, requireAdmin } from '../_lib/session'
+import { requirePermission, requireAdmin } from '../_lib/session'
 import { getOwnerAlertConfig, setOwnerAlertConfig } from '../../../lib/owner-alerts'
 
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'settings:manage')
+  if (who instanceof NextResponse) return who
   return NextResponse.json({ config: await getOwnerAlertConfig() })
 })
 

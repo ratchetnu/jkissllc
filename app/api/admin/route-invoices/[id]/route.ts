@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { COMPANY } from '../../../../lib/company'
-import { requireSession } from '../../_lib/session'
+import { requirePermission } from '../../_lib/session'
 import {
   getInvoiceByToken, saveInvoice, deleteInvoice, voidInvoice, subtotalCents,
   type InvoiceLine,
@@ -29,7 +29,8 @@ function sanitizeLines(v: unknown): InvoiceLine[] {
 }
 
 export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'invoices:manage')
+  if (who instanceof NextResponse) return who
   const { id } = await params
   const inv = await getInvoiceByToken(id)
   if (!inv) return NextResponse.json({ error: 'Invoice not found.' }, { status: 404 })
@@ -93,7 +94,8 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
 })
 
 export const DELETE = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'invoices:manage')
+  if (who instanceof NextResponse) return who
   const { id } = await params
   await deleteInvoice(id)
   return NextResponse.json({ ok: true })

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession, getPrincipal } from '../../_lib/session'
+import { requireStaffSession, getPrincipal } from '../../_lib/session'
 import { can } from '../../../../lib/rbac'
 import {
   getBookingByToken, saveBooking, deleteBooking, recompute, balanceDueCents, dollarsToCents,
@@ -50,7 +50,8 @@ function addConfirmedPayment(b: Booking, p: { amountCents: number; method: Payme
 // GET — full booking (admin sees everything: payments, internal notes, the IP /
 // UA agreement audit trail) plus the exact accepted policy text for evidence.
 export const GET = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requireStaffSession(req)
+  if (who instanceof NextResponse) return who
   const { id } = await params
   const b = await getBookingByToken(id)
   if (!b) return NextResponse.json({ error: 'not_found' }, { status: 404 })
@@ -61,14 +62,16 @@ export const GET = withTenantRoute(async (req: NextRequest, { params }: { params
 })
 
 export const DELETE = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requireStaffSession(req)
+  if (who instanceof NextResponse) return who
   const { id } = await params
   await deleteBooking(id)
   return NextResponse.json({ ok: true })
 })
 
 export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requireStaffSession(req)
+  if (who instanceof NextResponse) return who
   const { id } = await params
   // Serialize every admin write to this booking with background workers + customer
   // writes on the unified per-booking lease (bk:wlock) — no last-write-wins clobber.

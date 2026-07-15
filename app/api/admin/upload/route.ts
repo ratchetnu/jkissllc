@@ -1,19 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { put } from '@vercel/blob'
-import { requireSession } from '../_lib/session'
+import { requireStaffSession } from '../_lib/session'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
 
-// POST /api/admin/upload — session-gated image upload for admin-only features (crew
-// badge photos, etc.). Same {image: dataURL} → {url} shape as the public /api/upload,
-// but behind requireSession instead of the rate-limit/bot-check the public form uses:
-// an admin-only feature should ride an authenticated path, not the anonymous uploader.
+// POST /api/admin/upload — staff-gated image upload for ops features (crew badge
+// photos, etc.). Same {image: dataURL} → {url} shape as the public /api/upload, but
+// behind requireStaffSession (admin + manager, not crew) instead of the
+// rate-limit/bot-check the public form uses: an ops feature should ride an
+// authenticated path, not the anonymous uploader.
 export const POST = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  const who = await requireStaffSession(req)
+  if (who instanceof NextResponse) return who
 
   const body = await req.json().catch(() => ({}))
   const image = typeof body.image === 'string' ? body.image : ''

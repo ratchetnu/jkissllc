@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession } from '../_lib/session'
+import { requirePermission } from '../_lib/session'
 import { listClientPortals, saveClientPortal, generateClientToken, type ClientPortal } from '../../../lib/client-portal'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'businesses:manage')
+  if (who instanceof NextResponse) return who
   try {
     return NextResponse.json({ items: await listClientPortals() })
   } catch (err) {
@@ -18,7 +19,8 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
 })
 
 export const POST = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'businesses:manage')
+  if (who instanceof NextResponse) return who
   const b = await req.json().catch(() => ({}))
   const businessName = S(b.businessName, 200)
   if (!businessName) return NextResponse.json({ error: 'Business/client name is required.' }, { status: 400 })

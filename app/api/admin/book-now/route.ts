@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession, getPrincipal } from '../_lib/session'
+import { requireStaffSession } from '../_lib/session'
 import { listBookings } from '../../../lib/bookings'
 import { isBookNow, summarizeBookNow } from '../../../lib/book-now-queue'
 
@@ -11,10 +11,9 @@ import { isBookNow, summarizeBookNow } from '../../../lib/book-now-queue'
 // owner/admin/manager only. Test + archived records are included in the payload and
 // filtered client-side by explicit toggles (so the counts of "real" work stay honest).
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  // Belt-and-suspenders: never serve intake data to a crew principal.
-  const who = await getPrincipal(req)
-  if (who?.role === 'crew') return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  // Staff-only (admin + manager). requireStaffSession rejects crew principals.
+  const who = await requireStaffSession(req)
+  if (who instanceof NextResponse) return who
   try {
     const all = await listBookings(500)
     const items = all.filter(isBookNow)

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession } from '../../_lib/session'
+import { requirePermission } from '../../_lib/session'
 import {
   getClaim, saveClaim, deleteClaim, pushClaimAudit, rollupClaimStatus,
   setResponsibility, startDeduction, pauseDeduction, waiveBalance, recordPayment, adjustBalance, closeClaim,
@@ -29,7 +29,8 @@ async function tell(c: ClaimRecord, staffId: string, event: CrewClaimEvent, noti
 }
 
 export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
-  if (!(await requireSession(req))) return bad('unauthorized', 401)
+  const who = await requirePermission(req, 'claims:manage')
+  if (who instanceof NextResponse) return who
   const { id } = await params
 
   const b = await req.json().catch(() => ({}))
@@ -236,7 +237,8 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
 })
 
 export const DELETE = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
-  if (!(await requireSession(req))) return bad('unauthorized', 401)
+  const who = await requirePermission(req, 'claims:manage')
+  if (who instanceof NextResponse) return who
   const { id } = await params
   const claim = await getClaim(id)
   if (!claim) return NextResponse.json({ ok: true })

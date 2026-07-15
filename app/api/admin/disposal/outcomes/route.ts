@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession } from '../../_lib/session'
+import { requireStaffSession } from '../../_lib/session'
 import { DEBRIS_CATEGORIES, type DebrisCategory } from '../../../../lib/disposal'
 import { listOutcomes, getCalibration, recordJobOutcome, accuracyStats, type JobOutcome } from '../../../../lib/job-learning'
 
@@ -8,7 +8,8 @@ export const dynamic = 'force-dynamic'
 
 // GET — recent completed-job history + the learned calibration + accuracy stats.
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requireStaffSession(req)
+  if (who instanceof NextResponse) return who
   const outcomes = await listOutcomes(50)
   return NextResponse.json({ ok: true, outcomes, calibration: await getCalibration(), stats: accuracyStats(outcomes) })
 })
@@ -19,7 +20,8 @@ const dollarsToCents = (v: unknown) => Math.round((Number(v) || 0) * 100)
 // POST — log what actually happened on a completed job. Dollar amounts come in as
 // dollars; fill % as whole numbers. This folds into the per-category fill bias.
 export const POST = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requireStaffSession(req)
+  if (who instanceof NextResponse) return who
   const b = await req.json().catch(() => ({}))
 
   const category: DebrisCategory = (DEBRIS_CATEGORIES as string[]).includes(b.category) ? b.category : 'general'

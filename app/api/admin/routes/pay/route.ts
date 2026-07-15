@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession } from '../../_lib/session'
+import { requirePermission } from '../../_lib/session'
 import { computePay, defaultPayPeriod } from '../../../../lib/route-pay'
 
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requirePermission(req, 'pay:view:all')
+  if (who instanceof NextResponse) return who
   const url = new URL(req.url)
   const def = defaultPayPeriod()
   const start = url.searchParams.get('start') || def.start

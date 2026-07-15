@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
-import { requireSession, getPrincipal } from '../_lib/session'
+import { requireStaffSession } from '../_lib/session'
 import {
   listBookings, saveBooking, generateToken, nextBookingNumber, nextInvoiceNumber, dollarsToCents, sanitizePhotos,
   SERVICE_TYPES, type Booking, type ServiceType,
@@ -10,7 +10,8 @@ import { sendConfirmationLink } from '../../../lib/notify'
 import { str, strList, num } from '../../../lib/validators'
 
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requireStaffSession(req)
+  if (who instanceof NextResponse) return who
   try {
     const items = await listBookings(500)
     return NextResponse.json({ items })
@@ -23,7 +24,8 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
 })
 
 export const POST = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await requireStaffSession(req)
+  if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({}))
 
   const customerName = str(body.customerName, 200)
@@ -34,8 +36,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
 
   // Owner-only "Create Test Booking": a sandbox record from the start, so it never
   // sends the ops-created email or auto customer confirmation link below.
-  const who = await getPrincipal(req)
-  const isTest = body.isTest === true && who?.role === 'admin'
+  const isTest = body.isTest === true && who.role === 'admin'
 
   try {
     const booking: Booking = {

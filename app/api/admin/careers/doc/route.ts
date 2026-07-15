@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { get } from '@vercel/blob'
-import { requireSession } from '../../_lib/session'
+import { requireAdmin } from '../../_lib/session'
 import { openDoc } from '../../../../lib/doc-crypto'
 
 export const runtime = 'nodejs'
@@ -24,9 +24,9 @@ const MEDIA: Record<string, string> = {
 }
 
 export const GET = withTenantRoute(async (req: NextRequest) => {
-  if (!(await requireSession(req))) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  // Decrypted identity documents (SS card, license, etc.) — admin only.
+  const who = await requireAdmin(req)
+  if (who instanceof NextResponse) return who
 
   const pathname = req.nextUrl.searchParams.get('p') ?? ''
   if (pathname.includes('..') || !SEALED_PATH.test(pathname)) {
