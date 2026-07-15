@@ -23,6 +23,7 @@
     "@vercel/blob": "^2.5.0",
     "ai": "^7.0.4",
     "botid": "^1.5.11",
+    "heic-convert": "^2.1.0",
     "lucide-react": "^1.17.0",
     "maplibre-gl": "^5.24.0",
     "next": "16.2.2",
