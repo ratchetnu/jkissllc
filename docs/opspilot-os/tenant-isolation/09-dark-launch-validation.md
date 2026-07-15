@@ -18,7 +18,36 @@ API/MCP). No browser is needed to *read* the telemetry — only to *generate* it
 division of labor is: **owner (or a Playwright run) exercises the Preview workflows; then the
 telemetry is read + analyzed from the logs.**
 
-## Result of the sweep so far (2026-07-15)
+## Correct-build sweep — COMPLETE (2026-07-15)
+
+Owner click-through on the tenant-boundaries Preview **`dpl_7U8amgqh2zTkNgopK3TnvwEZZt5r`**
+(commit `fcf0736`, branch alias `jkissllc-git-feat-operion-tenant-…`). Telemetry read from
+that deployment's Vercel runtime logs only.
+
+| Metric | Value |
+|---|---|
+| Traffic on the exact deployment | **95 requests** (`/quote` 30, `/` 13, box-truck landing pages, `/track` + `/api/track`, `/reviews`, `/api/intake/config`) |
+| HTTP status profile | 200 (67), 304 (42), 204 (3), + benign 3xx redirect — **zero 4xx, zero 5xx** |
+| `tenancy:*` events (dark-launch-mismatch, fail-closed, cross-tenant-denial, missing-tenant-context, key-gen-failure, legacy-fallback) | **0** |
+| warnings / errors / fatal | **0** |
+| **Dangerous mismatches** (value / serialization / stale / cross-tenant / unsafe-fallback / resolution-failure) | **0 — none** |
+| Preview using Production resources | none (isolated `OperionPreview` KV + `operion-preview-blob`) |
+| Verdict | ✅ **CLEAN — no blockers; byte-identical behavior confirmed on live traffic** |
+
+**Coverage note (honest scope):** the live sweep exercised the customer read paths + the
+`/quote` wizard load. The write/admin/payment boundaries (Book Now submit, photo upload, admin
+Book Now Requests, AI enqueue, Stripe checkout/webhook, token routes) are the ones this branch
+most changed — and by design dark-launch **read-compare** telemetry cannot surface write-path
+changes. Those boundaries are validated by the **684-case test suite** (blob-keys, tenant-resolve,
+stripe-tenant, public-route-tenant, public-token-routes, ai-tenant-scope, name-derived) + the
+fail-closed unit tests, and the live run confirms they run **without error or fail-closed
+warning while `TENANCY_ENABLED=false`**. An optional future admin-side pass (open Book Now
+Requests) would add read-compare coverage of the `bk:` booking-key family (expected: benign
+`missing-tenant-copy`, like `pv:`).
+
+**Sweep status: COMPLETE** — zero Critical/High/Medium/Low mismatches; zero errors. No fix required.
+
+## Earlier partial result (superseded — hardening-branch traffic)
 
 | Metric | Value |
 |---|---|
