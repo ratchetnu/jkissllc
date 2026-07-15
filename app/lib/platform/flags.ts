@@ -24,6 +24,7 @@ export type FeatureFlag =
   | 'INSIGHTS_UI_ENABLED'
   | 'DESIGN_SYSTEM_REFERENCE_ENABLED'
   | 'INTAKE_WORKFLOW_ENABLED'
+  | 'VISION_ESTIMATION_SHADOW'
 
 export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   TENANCY_ENABLED: false,
@@ -43,6 +44,12 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   // entities, and run the approval/AI-worker/timeline wiring as fail-soft
   // side-effects of the existing booking flow. OFF = byte-identical to today.
   INTAKE_WORKFLOW_ENABLED: false,
+  // Vision-estimation enhancements (photo-quality gate, richer inventory/version
+  // stamping, calibration signals) run in SHADOW: computed + recorded for admin
+  // comparison, NEVER authoritative over the live estimate/quote. OFF = byte-identical
+  // to today. Promote only after offline eval + shadow metrics clear (see
+  // docs/opspilot-os/vision-estimation/).
+  VISION_ESTIMATION_SHADOW: false,
 }
 
 export const ALL_FLAGS = Object.keys(FLAG_DEFAULTS) as FeatureFlag[]

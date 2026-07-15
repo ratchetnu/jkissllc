@@ -33,6 +33,32 @@ export type JobOutcome = {
   overridden?: boolean         // an admin manually overrode the AI number before quoting
   isTest?: boolean             // sandbox outcome — never trains the model or enters history
   notes?: string
+
+  // ── Enterprise learning-loop provenance (Phase 12, all OPTIONAL/additive) ────
+  // Captured automatically from a completed Booking so the AI-vs-quoted-vs-final
+  // price error (priceMape) and override rate are computed from REAL job data, not
+  // just the manual admin form. These never change the EWMA/bias math — they're the
+  // audit + accuracy layer. Actuals below stay undefined unless a human logs them
+  // (we NEVER fabricate crew measurements — an empty actual would pollute calibration).
+  bookingId?: string           // Booking.token / bookingNumber this outcome came from
+  jobId?: string               // optional external/ops job id
+  adminQuotedCents?: number    // the price the admin quoted (Booking.invoiceAmountCents)
+  acceptedQuoteCents?: number  // the quote the customer accepted, when distinct
+  finalInvoiceCents?: number   // the final invoiced total (Booking.invoiceAmountCents)
+  estimateVersion?: number     // ANALYSIS_SCHEMA_VERSION at capture time
+  promptVersion?: string       // vision-prompt version, when supplied
+  taxonomyVersion?: string     // item-taxonomy version, when supplied
+  pricingRuleVersion?: string  // PRICING_DECISION_VERSION at capture time
+  // Crew-measured actuals (filled in later by the admin outcome form; never faked):
+  actualVolume?: number
+  actualWeight?: number
+  actualLaborHours?: number
+  actualCrewSize?: number
+  actualTruckLoads?: number
+  inventoryCorrections?: string
+  reasonForDifference?: string
+  manualOverrideReason?: string
+  completionTimestamp?: number // when the job was marked completed
 }
 
 export type Calibration = CalibrationBias & {
