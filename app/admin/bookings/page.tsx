@@ -1145,6 +1145,39 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
         </div>
       )}
 
+      {/* AI-analysis controls — owner override for a photo-estimated (junk) booking so
+          a hung/queued analysis is never a dead end: run/retry, cancel a pending job, or
+          take it over via Send to Manual Review (which unblocks the workflow so the owner
+          can price + send by hand). Backend actions already exist; this surfaces them on
+          the page the owner actually uses. */}
+      {isOwner && serviceFamily(b.serviceType) === 'junk' && (
+        <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
+          <p className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: 'var(--muted)' }}>🤖 AI Analysis</p>
+          <KV k="Status" v={b.aiJob ? `${b.aiJob.status.replace(/_/g, ' ')}${b.aiJob.attempts ? ` · attempt ${b.aiJob.attempts}` : ''}` : (b.aiEstimate ? 'completed' : 'not started')} />
+          <div className="flex flex-wrap gap-2" style={{ marginTop: 10 }}>
+            {(!b.aiJob || b.aiJob.status === 'not_started' || b.aiJob.status === 'failed') && (b.invoicePhotos?.length ?? 0) > 0 && (
+              <button type="button" onClick={() => run(b.aiJob?.status === 'failed' ? 'retry-ai' : 'run-ai')} disabled={busy === 'run-ai' || busy === 'retry-ai'}
+                style={{ fontSize: 12.5, fontWeight: 700, padding: '7px 13px', borderRadius: 8, border: '1px solid var(--red)', color: '#fff', background: 'var(--red)', cursor: 'pointer' }}>
+                {busy === 'run-ai' || busy === 'retry-ai' ? 'Running…' : b.aiJob?.status === 'failed' ? 'Retry AI Analysis' : 'Run AI Analysis'}
+              </button>
+            )}
+            {(b.aiJob?.status === 'queued' || b.aiJob?.status === 'retrying') && (
+              <button type="button" onClick={() => run('cancel-ai')} disabled={busy === 'cancel-ai'}
+                style={{ fontSize: 12.5, fontWeight: 700, padding: '7px 13px', borderRadius: 8, border: '1px solid rgba(255,255,255,.15)', color: 'var(--text)', background: 'transparent', cursor: 'pointer' }}>
+                {busy === 'cancel-ai' ? 'Cancelling…' : 'Cancel Pending Analysis'}
+              </button>
+            )}
+            {b.aiJob?.status !== 'manual_review' && (
+              <button type="button" onClick={() => run('send-manual-review')} disabled={busy === 'send-manual-review'}
+                style={{ fontSize: 12.5, fontWeight: 700, padding: '7px 13px', borderRadius: 8, border: '1px solid #f59e0b', color: '#f59e0b', background: 'transparent', cursor: 'pointer' }}>
+                {busy === 'send-manual-review' ? 'Updating…' : 'Send to Manual Review'}
+              </button>
+            )}
+          </div>
+          <p className="text-xs mt-2" style={{ color: 'var(--muted)' }}>Send to Manual Review moves the workflow past AI so you can price and send the quote by hand.</p>
+        </div>
+      )}
+
       {b.aiEstimate && <AiEstimatePanel est={b.aiEstimate} busy={busy} run={run} />}
 
       {/* Owner quote action — GUIDED (customer-confirmed final estimate awaiting one-
