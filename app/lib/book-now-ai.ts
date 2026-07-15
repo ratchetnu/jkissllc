@@ -27,6 +27,24 @@ export const MAX_ATTEMPTS = 5
 // Backoff by attempt number (1-indexed). Beyond the array, the last value repeats.
 const BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000] // 1m, 5m, 15m, 1h
 
+// Per-job graceful deadline for the model analysis. If buildPhotoEstimate runs longer
+// than this we route the booking to manual_review (a terminal state the owner hand-
+// prices) BEFORE Vercel hard-kills the function at its maxDuration — otherwise the job
+// is left stuck in "processing" for the full stale lease and retries up to MAX_ATTEMPTS,
+// which the owner sees as a booking frozen in "AI analysis" (with the admin page polling
+// = "kept reloading"). Env-overridable; must stay comfortably below the cron route's
+// maxDuration (300s). Raising the worker budget from 60s→300s means most legitimate
+// heavy analyses now finish well within this deadline; only true hangs degrade.
+const DEFAULT_AI_JOB_DEADLINE_MS = 150_000
+function aiJobDeadlineMs(): number {
+  const raw = Number(process.env.AI_JOB_DEADLINE_MS)
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_AI_JOB_DEADLINE_MS
+}
+// The cron function's own wall-clock ceiling (maxDuration=300s minus margin). runDueAiJobs
+// won't START a new job unless a full per-job deadline can still elapse before this, so a
+// late job is never hard-killed mid-run and left stuck in "processing".
+const FUNCTION_BUDGET_MS = 285_000
+
 // Errors that will never succeed on retry — route straight to a terminal state.
 const PERMANENT: AiJobErrorCode[] = ['unsupported_image', 'bot_blocked', 'invalid_schema', 'pricing_validation_failed']
 
@@ -191,17 +209,43 @@ async function processAiJobInner(token: string, opts: { initiatedBy?: string; te
   await saveBooking(b)
 
   let res
+  const deadlineMs = aiJobDeadlineMs()
+  const DEADLINE = Symbol('ai-job-deadline')
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined
   try {
-    res = await buildPhotoEstimate({
+    const analysisP = buildPhotoEstimate({
       analysisId: `srv-${b.token}-${attempts}`, bookingId: b.token,
       photoUrls: (b.invoicePhotos ?? []).map(p => p.url), serviceType: b.serviceType,
     })
+    // If the deadline wins the race we abandon this promise; swallow any late rejection
+    // so it can't surface as an unhandledRejection after we've already moved on.
+    analysisP.catch(() => {})
+    res = await Promise.race([
+      analysisP,
+      new Promise<never>((_, reject) => { deadlineTimer = setTimeout(() => reject(DEADLINE), deadlineMs) }),
+    ])
   } catch (e) {
+    if (e === DEADLINE) {
+      // The analysis outran its time budget. Degrade gracefully to manual review so the
+      // booking reaches a TERMINAL state now — instead of a hard function kill that leaves
+      // it stuck in "processing" and retrying. The owner hand-prices from here.
+      b.aiJob = {
+        status: 'manual_review', idempotencyKey: b.aiJob.idempotencyKey, photoVersion: photoVersion(b), attempts,
+        lastAttemptAt: now(), completedAt: now(),
+        errorSummary: 'Photo analysis exceeded its time budget — routed to manual pricing.',
+        initiatedBy: opts.initiatedBy ?? b.aiJob.initiatedBy, updatedAt: now(),
+      }
+      pushBookingEvent(b, { actor: opts.initiatedBy ?? 'system', action: 'ai.manual_review', result: 'ai:deadline', meta: { attempts, deadlineMs } })
+      await saveBooking(b)
+      return { ok: false, status: 'manual_review', reason: 'deadline' }
+    }
     // The chain shouldn't throw (fail-soft), but if it does treat it as transient.
     const summary = e instanceof Error ? e.message.slice(0, 200) : 'processing error'
     b.aiJob = scheduleRetryOrFail(b, attempts, 'provider_unavailable', summary, opts.initiatedBy)
     await saveBooking(b)
     return { ok: false, status: b.aiJob.status, errorCode: 'provider_unavailable', reason: 'exception' }
+  } finally {
+    if (deadlineTimer) clearTimeout(deadlineTimer)
   }
 
   if (!res.analyzedOk) {
@@ -414,11 +458,17 @@ export async function runDueAiJobs(limit = 10): Promise<{ processed: number; res
   const all = await listBookings(500)
   const due = all.filter(b => isDue(b)).slice(0, limit)
   const results: { token: string; status: AiJobStatus }[] = []
+  const runStart = now()
+  const deadlineMs = aiJobDeadlineMs()
   for (const b of due) {
+    // Never start a job that can't finish its full deadline before the function's own
+    // wall-clock ceiling — a late job would be hard-killed mid-run and stick. It stays
+    // due and the next cron tick picks it up.
+    if (now() - runStart + deadlineMs > FUNCTION_BUDGET_MS) break
     const r = await processAiJob(b.token, { initiatedBy: 'cron' })
     results.push({ token: b.token, status: r.status })
   }
-  return { processed: due.length, results }
+  return { processed: results.length, results }
 }
 
 /** Dry-run backfill report: eligible records that WOULD be enqueued, no writes. */

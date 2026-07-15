@@ -9,7 +9,7 @@ import { alert } from '../../../lib/alerts'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 300 // heavy multi-photo vision + gateway retries can exceed 60s; the worker enforces a graceful per-job deadline (AI_JOB_DEADLINE_MS) below this so a job never gets hard-killed mid-run and stuck in "processing"
 
 // Durable Book Now AI worker. Runs every few minutes: picks up queued/retrying AI
 // jobs whose backoff has elapsed and advances each through the analysis→pricing
