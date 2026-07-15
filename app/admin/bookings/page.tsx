@@ -11,6 +11,7 @@ import WorkflowTimeline from './WorkflowTimeline'
 import ModifyEstimate from './ModifyEstimate'
 import type { Booking, Payment, InvoicePhoto } from '../../lib/bookings'
 import { serviceFamily } from '../../lib/bookings'
+import type { EstimationResult } from '../../lib/estimation/types'
 import type { StoredAiEstimate } from '../../lib/ai/estimate-store'
 import { guidedApprovalState } from '../../lib/ai/guided-approval'
 
@@ -1179,6 +1180,31 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
       )}
 
       {b.aiEstimate && <AiEstimatePanel est={b.aiEstimate} busy={busy} run={run} />}
+
+      {/* Shadow estimate (VISION_ESTIMATION_SHADOW) — the deterministic engine's parallel
+          result for owner comparison. INTERNAL, never authoritative, never shown to the
+          customer. Renders only when a shadow result was attached (i.e. the flag was on). */}
+      {(() => {
+        const shadow = (b as { shadowEstimate?: EstimationResult }).shadowEstimate
+        if (!shadow) return null
+        const items = shadow.inventory.map((i) => `${i.itemName}×${i.count}`).join(', ')
+        return (
+          <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px', border: '1px solid rgba(245,158,11,.35)' }}>
+            <p className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: '#f59e0b' }}>🧪 Shadow estimate · internal — not shown to customer</p>
+            <KV k="Engine recommended" v={usd(shadow.pricing.recommendedCents)} />
+            <KV k="Engine range" v={`${usd(shadow.pricing.rangeCents.low)} – ${usd(shadow.pricing.rangeCents.high)}`} />
+            <KV k="Inventory" v={items || 'none detected'} />
+            <KV k="Volume (cu yd)" v={`${shadow.volume.cubicYards.low}–${shadow.volume.cubicYards.high} (exp ${shadow.volume.cubicYards.expected})`} />
+            <KV k="Truck loads" v={String(shadow.volume.truckLoads.expected)} />
+            <KV k="Crew / labor" v={`${shadow.complexity.recommendedCrewSize} crew · ${shadow.complexity.laborHours.expected}h`} />
+            <KV k="Complexity / risk" v={`${shadow.complexity.level} / ${shadow.riskLevel}`} />
+            <KV k="Restricted items" v={shadow.restrictedItems.join(', ') || 'none'} />
+            <KV k="Manual review" v={shadow.manualReviewRequired ? (shadow.manualReviewReasons.join('; ') || 'required') : 'not required'} />
+            {shadow.clarificationQuestions.length > 0 && <KV k="Clarify" v={shadow.clarificationQuestions.map((q) => q.question).join(' | ')} />}
+            <KV k="Engine version" v={`v${shadow.engineVersion} · pricing ${shadow.pricingRuleVersion}`} />
+          </div>
+        )
+      })()}
 
       {/* Owner quote action — GUIDED (customer-confirmed final estimate awaiting one-
           click Approve & Send) or MANUAL (no guided estimate, e.g. the AI routed to

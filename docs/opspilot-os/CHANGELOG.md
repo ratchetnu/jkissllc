@@ -10,6 +10,25 @@ the product is **Operion**. See `README.md` for the naming/source-of-truth note.
 
 ---
 
+## 2026-07-15 — Vision estimation engine reconciled onto main (shadow, Claude — no OpenAI)
+
+Shipped the deterministic vision-estimation engine onto `main` (now with the tenant-boundary
+work the other session merged). Cherry-isolated the engine (tenant-independent) and re-applied
+onto current production. **Keeps** Vercel AI Gateway + Claude Sonnet vision, Upstash Redis,
+Vercel Blob, existing `priceJob` pricing, HEIC, AI-job lifecycle. **No OpenAI, no Supabase, no
+second pipeline, no new secrets.**
+
+- `estimation/*` (10 modules): all photos analyzed together + cross-photo dedup → volume/weight/
+  complexity bands → `pricing-explain` transforms the EXISTING `priceJob` breakdown (**model
+  never sets a price**). + `photo-quality-gate`, `outcome-capture` (learning loop), additive
+  supersets of `flags` (VISION_ESTIMATION_SHADOW), `inventory-taxonomy` version, `job-learning`
+  priceMape (tenant comment preserved), `disposal/outcomes` writer, `book-now-ai` shadow hook.
+  Admin shadow-display on `/admin/bookings`.
+- **Shadow only:** `VISION_ESTIMATION_SHADOW` defaults **off** → byte-identical; when on, runs
+  parallel in the durable worker, stashes result for admin comparison, records
+  `vision:shadow-comparison`. NEVER authoritative, never shown to customer. Not promoted.
+- Gates: tsc 0 · npm test PENDING · next build PENDING. Backward compatible; TENANCY_ENABLED stays false.
+
 ## 2026-07-15 — Tenant-safe storage + public/webhook tenant resolution (dark-launch)
 
 Built the multi-tenant boundaries that were the top remaining activation blockers, all
