@@ -91,6 +91,24 @@ authoritative, never shown to customers.
 Contract types: `app/lib/estimation/types.ts` (`ESTIMATION_ENGINE_VERSION`). Wired fail-soft into
 `book-now-ai.ts` under the flag — off ⇒ byte-identical.
 
+## 2c. Defect fixed — HEIC photos unreadable by the vision model (2026-07-15)
+
+**Owner-reported:** iPhone HEIC photos of tree-trimming piles → "couldn't identify … no accurate
+quote." **Root cause (confirmed in code):** the upload routes accepted `heic/heif` (iOS default)
+and stored them as `image/heic`; `junk-analysis.ts:66` handed that raw HEIC URL to the vision
+model, which decodes JPEG/PNG/WebP/GIF but **not HEIC** → the model saw nothing → `no_items` →
+manual-review fallback. Affected every iPhone-HEIC submission on the CURRENT (authoritative)
+estimator, not just shadow.
+
+**Fix (owner-approved: convert server-side at upload):** new `app/lib/image-convert.ts`
+(`toModelReadableImage` / `toModelReadableDataUrl`, using `heic-convert` — pure-JS/libheif wasm,
+externalized via `serverExternalPackages`). HEIC/HEIF → JPEG before storage / before the model
+call; non-HEIC passes through unchanged; an undecodable HEIC returns a clear "re-take / upload a
+JPG or PNG" message instead of a silent failure. Wired into `/api/upload` (customer),
+`/api/admin/upload`, and `/api/ai/photo-estimate`. Tests in `scripts/image-convert.test.ts`. On
+the branch → Preview; **no production change until owner approval.** The photo-quality gate's
+`heic_source` advisory is now backed by real conversion.
+
 ## 3. Staged follow-ups (contract defined, NOT built this sprint)
 
 Per the sprint's "complete the backend contract now, document UI/expansion later" guidance:

@@ -10,6 +10,21 @@ the product is **Operion**. See `README.md` for the naming/source-of-truth note.
 
 ---
 
+## 2026-07-15 — Fix: HEIC photos unreadable by the vision model (owner-reported)
+
+iPhone HEIC photos → the AI "couldn't identify" the items / no accurate quote. Root cause: upload
+accepted `heic/heif` (iOS default) and handed the raw HEIC URL to the vision model, which decodes
+JPEG/PNG/WebP/GIF but **not HEIC** → model saw nothing → manual-review fallback. Hit every
+iPhone-HEIC submission on the current authoritative estimator.
+
+- **Fix (owner-approved — server-side conversion):** `app/lib/image-convert.ts`
+  (`toModelReadableImage`/`toModelReadableDataUrl` via `heic-convert`, pure-JS/wasm, externalized).
+  HEIC/HEIF → JPEG before storage / model call; non-HEIC unchanged; undecodable HEIC → clear
+  "re-take / upload JPG-PNG" message. Wired into `/api/upload`, `/api/admin/upload`,
+  `/api/ai/photo-estimate`. `next.config` `serverExternalPackages: ['heic-convert']`.
+- Tests `scripts/image-convert.test.ts` (10). Gates: tsc 0 · npm test **743/743** · build OK · lint clean.
+- Branch `feat/operion-enterprise-vision-estimation`; Preview only; **no Production change** until approval.
+
 ## 2026-07-15 — Enterprise Vision Estimation Phases 2–10: deterministic engine (shadow)
 
 Built the deterministic estimation engine on top of the existing pipeline (reuse, not rebuild).
