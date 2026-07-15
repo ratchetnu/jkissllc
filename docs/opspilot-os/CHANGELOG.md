@@ -10,6 +10,43 @@ the product is **Operion**. See `README.md` for the naming/source-of-truth note.
 
 ---
 
+## 2026-07-15 — Enterprise Vision Estimation V2: multi-pass analysis engine (shadow, Claude)
+
+Built the full multi-pass junk-removal photo-estimation engine per the owner's 16-phase spec,
+provider-agnostic on the EXISTING Vercel AI Gateway (default Claude Sonnet; `openai/gpt-4o` via
+`AI_MODEL` — **no OpenAI SDK, no new secret**; storage stays Upstash Redis + Blob). Everything
+shadow-gated (`VISION_ESTIMATION_SHADOW` off → byte-identical). **The AI analyzes evidence; your
+deterministic code owns volume, load tier, and pricing (via the existing `priceJob`) — the model
+never sets a price.**
+
+- **Phase 3/4/5 — multi-pass + V2 schema + expert prompt** (`ai/analysis-schema-v2`, `ai/analysis-v2`,
+  `ai/analysis-v2-prompt`): one high-detail structured call yields per-image observations (Pass A) AND
+  a reconciled, deduplicated `unifiedInventory` (Pass B, `object_00N` + `sourceImageIds`, min/likely/max
+  qty). Conservative version-controlled prompt (never double-count; flag possible-hazard only; ask when
+  unsure). Repair-retry + fail-soft: malformed → manual-review shell, never a completed estimate.
+- **Phase 3C-E/6 — deterministic bridge** (`estimation/v2-bridge`, `load-tier`, `confidence`): V2 →
+  volume/weight/complexity bands → load tier (minimum…more-than-one-load…on-site) → pricing via
+  `priceJob` (model numbers are hints only); deterministic confidence bands + manual-review gating.
+- **Phase 11 — intelligent clarification** (`estimation/clarify-v2`): targeted, price-moving customer
+  questions (how many? / how heavy? / what is this? / stairs? / more behind the pile? / any hazards?),
+  ≤4, `[]` when confident; `applyAnswersV2` folds answers back into the deterministic re-estimate.
+- **Phase 8 — admin editing** (`V2EstimatePanel` + `v2-corrections`): owner reviews the deduplicated
+  inventory + evidence + itemized pricing, and corrects quantity / marks duplicates / sets tier /
+  adds surcharges / overrides the quote — admin-only, audited; $ only moves via explicit surcharge/override.
+- **Phase 7 — customer photo guidance**: fuller wizard tips + a coverage nudge.
+- **Phase 13/14 — eval harness**: `npm run eval:photo-estimator` — 19 anonymized fixtures + ground truth
+  + regression gates (dedup-error 0, hazard/manual-review recall 100%, load-tier within-one ≥90%);
+  exits non-zero on regression. **19/19 pass today.**
+- **Phase 15 — observability** (`estimator-diagnostics` + admin route): jobs created/completed/failed/
+  stuck, provider/schema failures, cost/latency, low-confidence rate; null-not-fabricated, owner-safe.
+- **Wired**: the V2 pipeline runs in the shadow block of `book-now-ai` (stashed as `b.v2Shadow`).
+
+**Gates:** tsc 0 · npm test **803/803** (+57) · next build OK · new modules lint clean.
+**Not built (documented):** pixel-level image analysis (EXIF-orientation/blur/perceptual-dedup) needs an
+image lib (`sharp`) — owner decision; extended internal job sub-states (current lifecycle is sufficient).
+**Next (owner-run):** flip `VISION_ESTIMATION_SHADOW=true` + process real bookings → read
+`vision:shadow-comparison` logs + the admin V2 panel to compare V2-vs-live before any promotion.
+
 ## 2026-07-15 — Vision estimation engine reconciled onto main (shadow, Claude — no OpenAI)
 
 Shipped the deterministic vision-estimation engine onto `main` (now with the tenant-boundary

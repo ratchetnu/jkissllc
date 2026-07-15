@@ -12,6 +12,9 @@ import ModifyEstimate from './ModifyEstimate'
 import type { Booking, Payment, InvoicePhoto } from '../../lib/bookings'
 import { serviceFamily } from '../../lib/bookings'
 import type { EstimationResult } from '../../lib/estimation/types'
+import type { EstimationResultV2 } from '../../lib/estimation/v2-bridge'
+import type { ClarificationV2 } from '../../lib/estimation/clarify-v2'
+import { LOAD_TIERS } from '../../lib/estimation/load-tier'
 import type { StoredAiEstimate } from '../../lib/ai/estimate-store'
 import { guidedApprovalState } from '../../lib/ai/guided-approval'
 
@@ -561,6 +564,241 @@ function AiEstimatePanel({ est, busy, run }: { est: StoredAiEstimate; busy: stri
             className="text-xs font-semibold px-3 py-2 rounded-lg" style={{ background: 'rgba(255,255,255,.08)', color: 'var(--muted)' }}>{modifying ? 'Close editor' : 'Modify estimate'}</button>
         </div>
         {modifying && <ModifyEstimate est={est} busy={busy} run={run} onClose={() => setModifying(false)} />}
+      </div>
+    </div>
+  )
+}
+
+// ── V2 multi-pass shadow estimate + owner corrections (Phase 8) ──────────────
+// INTERNAL, admin-only. Reads the stashed b.v2Shadow (deterministic multi-pass
+// estimate + targeted clarifications) and lets the OWNER correct it: item quantity,
+// mark a duplicate, retag the load tier, add/remove a surcharge, override the final $.
+// Every control posts to run(action, body) → the admin-only, audited route cases.
+// The model never re-prices: item/tier edits re-run only the governed volume/tier math.
+type V2ShadowStash = {
+  estimate: EstimationResultV2
+  questions?: ClarificationV2[]
+  ok?: boolean
+  model?: string
+  override?: { overriddenUsd: number; reason: string; by: string; at: string }
+}
+
+// Panel-side objectId (mirrors lib/estimation/v2-corrections.v2ObjectId).
+const v2ObjId = (i: number) => `object_${String(i + 1).padStart(3, '0')}`
+const v2Band = (c: number) => (c >= 0.8 ? 'high' : c >= 0.55 ? 'medium' : 'low')
+// Per-unit weight (lb) → a human weight class (taxonomy weightClass isn't retained in
+// the shadow stash, so we derive an honest hint from the engine's per-unit weight).
+const v2WeightHint = (lbPerUnit?: number) =>
+  lbPerUnit == null ? '—' : lbPerUnit >= 150 ? 'very heavy' : lbPerUnit >= 80 ? 'heavy' : lbPerUnit >= 25 ? 'medium' : 'light'
+const v2DisposalHint = (it: { hazardousOrRestricted?: boolean; recyclable?: boolean; donationCandidate?: boolean }) =>
+  it.hazardousOrRestricted ? 'hazardous / restricted' : it.recyclable ? 'recycling' : it.donationCandidate ? 'donation' : 'landfill'
+
+// One editable inventory row — self-contained qty input so typing doesn't re-render siblings.
+function V2ItemRow({ item, objectId, busy, run, canEdit }: {
+  item: EstimationResultV2['inventory'][number]; objectId: string; busy: string
+  run: (action: string, body?: Record<string, unknown>, confirmMsg?: string) => void; canEdit: boolean
+}) {
+  const [qty, setQty] = useState(String(item.count))
+  const special = [item.disassemblyRequired ? 'disassembly' : '', item.hazardousOrRestricted ? 'restricted' : ''].filter(Boolean)
+  return (
+    <div className="py-2" style={{ borderTop: '1px solid var(--line)' }}>
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-white break-words">
+            <span style={{ color: 'var(--muted)' }} className="text-[10px] font-mono mr-1">{objectId}</span>
+            {item.count}× {item.itemName}
+          </p>
+          <p className="text-[11px]" style={{ color: 'var(--muted)' }}>
+            {v2WeightHint(item.estimatedWeightPounds)} · {v2DisposalHint(item)} · {v2Band(item.countConfidence)} conf
+            {special.length ? ` · ${special.join(', ')}` : ''}
+            {item.sourceImageIds?.length ? ` · imgs: ${item.sourceImageIds.length}` : ''}
+          </p>
+          {item.uncertaintyNotes && <p className="text-[11px]" style={{ color: '#fbbf24' }}>⚠ {item.uncertaintyNotes}</p>}
+        </div>
+        {canEdit && (
+          <div className="flex items-center gap-1.5 shrink-0">
+            <input value={qty} onChange={e => setQty(e.target.value.replace(/[^0-9]/g, ''))} inputMode="numeric"
+              style={{ width: 48, background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', borderRadius: 7, color: '#fff', padding: '5px 6px', fontSize: 13, textAlign: 'center' }} />
+            <button type="button" disabled={busy === 'v2-correct-item' || qty === '' || Number(qty) === item.count}
+              onClick={() => run('v2-correct-item', { objectId, quantity: Number(qty) })}
+              className="text-[11px] font-bold px-2 py-1.5 rounded-md" style={{ background: 'rgba(129,140,248,.15)', border: '1px solid rgba(129,140,248,.4)', color: '#a5b4fc', opacity: (qty === '' || Number(qty) === item.count) ? 0.5 : 1 }}>
+              {busy === 'v2-correct-item' ? '…' : 'Save qty'}
+            </button>
+            <button type="button" disabled={busy === 'v2-mark-duplicate'}
+              onClick={() => run('v2-mark-duplicate', { objectId }, `Mark "${item.itemName}" as a duplicate and remove it from the V2 estimate? Volume + tier recompute.`)}
+              className="text-[11px] font-semibold px-2 py-1.5 rounded-md" style={{ background: 'rgba(224,0,42,.08)', border: '1px solid rgba(224,0,42,.3)', color: '#ff6680' }}>
+              {busy === 'v2-mark-duplicate' ? '…' : 'Dup'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function V2EstimatePanel({ shadow, busy, run, canEdit }: {
+  shadow: V2ShadowStash; busy: string
+  run: (action: string, body?: Record<string, unknown>, confirmMsg?: string) => void; canEdit: boolean
+}) {
+  const est = shadow.estimate
+  const v2 = est.v2
+  const [tier, setTier] = useState(v2.loadTier.key)
+  const [scLabel, setScLabel] = useState('')
+  const [scAmt, setScAmt] = useState('')
+  const [ovr, setOvr] = useState(String(shadow.override?.overriddenUsd ?? ''))
+  const [ovrReason, setOvrReason] = useState('')
+  const cy = est.volume.cubicYards
+  const rec = shadow.override?.overriddenUsd != null ? shadow.override.overriddenUsd * 100 : est.pricing.recommendedCents
+  // Owner-added surcharge lines (reason stamped by the correction) — removable.
+  const ownerSurcharges = est.pricing.adjustments.filter((a) => /owner surcharge/i.test(a.reason))
+  const decisionColor = v2.decision === 'instant_quote' ? '#34d399' : v2.decision === 'estimate_range' ? '#fbbf24' : '#f87171'
+
+  return (
+    <div className="glass-card mb-4" style={{ borderRadius: 16, border: '1px solid rgba(129,140,248,.4)', overflow: 'hidden' }}>
+      <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2" style={{ background: 'rgba(129,140,248,.08)', borderBottom: '1px solid var(--line)' }}>
+        <p className="text-xs font-bold uppercase tracking-wide" style={{ color: '#a5b4fc' }}>🧪 V2 estimate · internal — not shown to customer</p>
+        <span className="text-[11px]" style={{ color: 'var(--muted)' }}>
+          {shadow.model || 'model n/a'} · prompt v{est.promptVersion ?? '?'} · schema v{v2.analysisVersion ?? est.schemaVersion}
+          {shadow.ok === false ? ' · ⚠ fallback' : ''}
+        </span>
+      </div>
+
+      <div className="px-4 py-3 grid gap-4 sm:grid-cols-2">
+        {/* LEFT — deterministic operational read */}
+        <div>
+          <KV k="Images received" v={String(est.imageCount)} />
+          <KV k="Volume (cu yd)" v={`${cy.low}–${cy.high} (likely ${cy.expected})`} />
+          <KV k="Truck fill" v={`${Math.round(v2.truckFraction.expected * 100)}% (${Math.round(v2.truckFraction.low * 100)}–${Math.round(v2.truckFraction.high * 100)}%)`} />
+          <KV k="Recommended tier" v={`${v2.loadTier.label}`} />
+          <KV k="Crew · labor" v={`${est.complexity.recommendedCrewSize} crew · ${est.complexity.laborHours.expected}h`} />
+          <KV k="Equipment" v={est.complexity.recommendedEquipment.join(', ') || 'standard'} />
+          <KV k="Complexity · risk" v={`${est.complexity.level} · ${est.riskLevel}`} />
+          <KV k="Confidence" v={`${v2.confidence.band} · ${Math.round(est.confidenceScore * 100)}% (inv ${Math.round(est.confidenceByDimension.inventory * 100)}% · vol ${Math.round(est.confidenceByDimension.volume * 100)}% · access ${Math.round(est.confidenceByDimension.access * 100)}%)`} />
+          <KV k="Weight (lb)" v={`${Math.round(est.weight.pounds.expected).toLocaleString()}${est.weight.denseDebrisPresent ? ' · dense debris' : ''}`} />
+          {v2.volumeHintCubicYards != null && <KV k="Model volume hint" v={`${v2.volumeHintCubicYards} cu yd (advisory${v2.volumeHintDivergence != null ? ` · ${Math.round(v2.volumeHintDivergence * 100)}% off det.` : ''})`} />}
+        </div>
+
+        {/* RIGHT — disposal, surcharges, restricted, review */}
+        <div>
+          <KV k="Surcharge items" v={v2.surchargeItems.join(', ') || 'none'} />
+          <KV k="Specialty items" v={v2.specialtyItems.join(', ') || 'none'} />
+          <KV k="Restricted items" v={est.restrictedItems.join(', ') || 'none'} />
+          <KV k="Hazard possible" v={v2.disposalAssessment.hazardousPossible ? 'yes' : 'no'} />
+          <KV k="Labor flags" v={[v2.laborAssessment.disassemblyRequired && 'disassembly', v2.laborAssessment.heavyLifting && 'heavy lifting', v2.laborAssessment.oversizedItems && 'oversized', v2.laborAssessment.applianceHandling && 'appliance', v2.laborAssessment.potentialSecondTrip && '2nd trip'].filter(Boolean).join(', ') || 'none'} />
+          <KV k="Objects (pre-dedup)" v={String(v2.sourceObjectCount)} />
+          <KV k="Manual review" v={est.manualReviewRequired ? (est.manualReviewReasons.join('; ') || 'required') : 'not required'} />
+          <KV k="Engine versions" v={`bridge v${v2.bridgeVersion} · tier v${v2.loadTierVersion} · conf v${v2.confidenceVersion} · pricing ${est.pricingRuleVersion}`} />
+        </div>
+      </div>
+
+      {/* DEDUPLICATED INVENTORY + per-item corrections */}
+      <div className="px-4 pb-2">
+        <p className="text-[11px] font-bold uppercase tracking-wide mb-1" style={{ color: 'var(--muted)' }}>Deduplicated inventory ({est.inventory.length})</p>
+        {est.inventory.length === 0
+          ? <p className="text-sm" style={{ color: 'var(--muted)' }}>No items identified.</p>
+          : est.inventory.map((it, i) => <V2ItemRow key={v2ObjId(i)} item={it} objectId={v2ObjId(i)} busy={busy} run={run} canEdit={canEdit} />)}
+      </div>
+
+      {/* CLARIFICATION QUESTIONS (targeted, price-moving) */}
+      {(shadow.questions?.length ?? 0) > 0 && (
+        <div className="px-4 pb-2">
+          <p className="text-[11px] font-bold uppercase tracking-wide mb-1" style={{ color: 'var(--muted)' }}>Clarifications to ask ({shadow.questions!.length})</p>
+          <ul className="text-xs" style={{ color: 'var(--muted)', listStyle: 'none', padding: 0, margin: 0 }}>
+            {shadow.questions!.map((q) => (
+              <li key={q.id} className="py-0.5">
+                <span style={{ color: q.priceImpact === 'high' ? '#f87171' : q.priceImpact === 'medium' ? '#fbbf24' : 'var(--muted)' }}>●</span>{' '}
+                <span className="text-white">{q.question}</span> <span className="text-[10px]">({q.kind} · {q.priceImpact})</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* PRICING — deterministic, itemized */}
+      <div className="px-4 pb-2">
+        <p className="text-[11px] font-bold uppercase tracking-wide mb-1" style={{ color: 'var(--muted)' }}>Deterministic pricing ({est.pricingRuleVersion})</p>
+        {est.pricing.adjustments.map((a, i) => (
+          <div key={i} className="flex justify-between gap-3 py-0.5 text-xs">
+            <span style={{ color: 'var(--muted)' }}>{a.label}{a.reason ? <span className="text-[10px]"> — {a.reason}</span> : null}</span>
+            <span className="text-white text-right">{usd(a.cents)}</span>
+          </div>
+        ))}
+        <div className="mt-1 pt-1" style={{ borderTop: '1px solid var(--line)' }}>
+          <KV k="Recommended" v={usd(est.pricing.recommendedCents)} />
+          <KV k="Range" v={`${usd(est.pricing.rangeCents.low)} – ${usd(est.pricing.rangeCents.high)}`} />
+        </div>
+        {est.pricing.assumptions.length > 0 && (
+          <p className="text-[11px] mt-1" style={{ color: 'var(--muted)' }}>Assumptions: {est.pricing.assumptions.join(' · ')}</p>
+        )}
+      </div>
+
+      {/* FINAL QUOTE + owner override */}
+      <div className="px-4 py-3" style={{ borderTop: '1px solid var(--line)', background: 'rgba(255,255,255,.02)' }}>
+        <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
+          <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Final quote (internal)</span>
+          <span className="text-lg font-black" style={{ color: '#fff' }}>{usd(rec)}
+            <span className="text-xs font-bold px-2 py-0.5 rounded-full ml-2" style={{ background: 'rgba(255,255,255,.08)', color: decisionColor }}>{v2.decision}</span>
+            {shadow.override ? <span className="text-xs font-normal" style={{ color: 'var(--muted)' }}> · overridden</span> : null}
+          </span>
+        </div>
+        {shadow.override && <p className="text-xs mb-2" style={{ color: 'var(--muted)' }}>Overridden by {shadow.override.by}: {shadow.override.reason}</p>}
+
+        {canEdit && (
+          <div className="grid gap-2" style={{ marginTop: 8 }}>
+            {/* Load tier override */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="text-[11px] w-24 shrink-0" style={{ color: 'var(--muted)' }}>Load tier</label>
+              <select value={tier} onChange={e => setTier(e.target.value as typeof tier)}
+                style={{ flex: 1, minWidth: 140, background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', borderRadius: 8, color: '#fff', padding: '7px 10px', fontSize: 13 }}>
+                {LOAD_TIERS.map((t) => <option key={t.key} value={t.key} style={{ color: '#000' }}>{t.label}</option>)}
+              </select>
+              <button type="button" disabled={busy === 'v2-set-tier' || tier === v2.loadTier.key} onClick={() => run('v2-set-tier', { tierKey: tier })}
+                className="text-[11px] font-bold px-3 py-2 rounded-lg" style={{ background: 'rgba(129,140,248,.15)', border: '1px solid rgba(129,140,248,.4)', color: '#a5b4fc', opacity: tier === v2.loadTier.key ? 0.5 : 1 }}>
+                {busy === 'v2-set-tier' ? '…' : 'Set tier'}
+              </button>
+            </div>
+
+            {/* Surcharge add + existing owner surcharges */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="text-[11px] w-24 shrink-0" style={{ color: 'var(--muted)' }}>Surcharge</label>
+              <input value={scLabel} onChange={e => setScLabel(e.target.value)} placeholder="Label (e.g. mattress fee)"
+                style={{ flex: 1, minWidth: 120, background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', borderRadius: 8, color: '#fff', padding: '7px 10px', fontSize: 13 }} />
+              <input value={scAmt} onChange={e => setScAmt(e.target.value.replace(/[^0-9.]/g, ''))} inputMode="decimal" placeholder="$"
+                style={{ width: 70, background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', borderRadius: 8, color: '#fff', padding: '7px 10px', fontSize: 13 }} />
+              <button type="button" disabled={busy === 'v2-set-surcharge' || !scLabel.trim() || !scAmt}
+                onClick={() => { run('v2-set-surcharge', { label: scLabel.trim(), cents: Math.round(parseFloat(scAmt) * 100), add: true }); setScLabel(''); setScAmt('') }}
+                className="text-[11px] font-bold px-3 py-2 rounded-lg" style={{ background: 'rgba(129,140,248,.15)', border: '1px solid rgba(129,140,248,.4)', color: '#a5b4fc', opacity: (!scLabel.trim() || !scAmt) ? 0.5 : 1 }}>
+                {busy === 'v2-set-surcharge' ? '…' : 'Add'}
+              </button>
+            </div>
+            {ownerSurcharges.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {ownerSurcharges.map((a, i) => (
+                  <button key={i} type="button" onClick={() => run('v2-set-surcharge', { label: a.label, add: false })}
+                    className="text-[11px] font-semibold rounded-full" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', padding: '3px 9px', color: 'var(--muted)' }}>
+                    {a.label} {usd(a.cents)} ✕
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Final $ override */}
+            <div className="flex items-end gap-2 flex-wrap">
+              <div>
+                <label className="text-[11px]" style={{ color: 'var(--muted)' }}>Override $</label>
+                <input value={ovr} onChange={e => setOvr(e.target.value.replace(/[^0-9.]/g, ''))} inputMode="decimal" placeholder="0"
+                  style={{ display: 'block', width: 90, background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', borderRadius: 8, color: '#fff', padding: '7px 10px', fontSize: 14 }} />
+              </div>
+              <input value={ovrReason} onChange={e => setOvrReason(e.target.value)} placeholder="Reason (required)"
+                style={{ flex: 1, minWidth: 140, background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', borderRadius: 8, color: '#fff', padding: '7px 10px', fontSize: 14 }} />
+              <button type="button" disabled={busy === 'v2-override' || !ovr || !ovrReason.trim()}
+                onClick={() => run('v2-override', { overriddenUsd: parseFloat(ovr), reason: ovrReason.trim() })}
+                className="text-xs font-bold px-3 py-2 rounded-lg" style={{ background: 'var(--red)', color: '#fff', opacity: (!ovr || !ovrReason.trim()) ? 0.5 : 1 }}>
+                {busy === 'v2-override' ? '…' : 'Override quote'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -1204,6 +1442,15 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
             <KV k="Engine version" v={`v${shadow.engineVersion} · pricing ${shadow.pricingRuleVersion}`} />
           </div>
         )
+      })()}
+
+      {/* V2 multi-pass shadow estimate + owner corrections (VISION_ESTIMATION_SHADOW).
+          Admin-only, internal, never authoritative. Renders only when the V2 shadow
+          was attached (flag on) and the viewer is the owner. */}
+      {isOwner && (() => {
+        const v2s = (b as { v2Shadow?: V2ShadowStash }).v2Shadow
+        if (!v2s?.estimate) return null
+        return <V2EstimatePanel shadow={v2s} busy={busy} run={run} canEdit={!!isOwner} />
       })()}
 
       {/* Owner quote action — GUIDED (customer-confirmed final estimate awaiting one-
