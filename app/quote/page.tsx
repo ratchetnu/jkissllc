@@ -320,8 +320,13 @@ export default function QuotePage() {
   const size = SIZES.find(s => s.id === sizeId)
   const upgradeTotal = UPGRADES.filter(u => upgrades.includes(u.id)).reduce((s, u) => s + u.price, 0)
   const deposit = ((est?.depositCents ?? avail?.depositCents ?? 5000) / 100).toFixed(0)
-  const showLow = est?.hasPrice && est.low != null ? est.low + upgradeTotal : null
-  const showHigh = est?.hasPrice && est.high != null ? est.high + upgradeTotal : null
+  // When the photo analysis routes to manual review, our team hand-prices the job —
+  // so don't show the customer the size-based auto-range (it reads as a firm high
+  // quote next to "we'll review your photos"). Fall back to the "Priced by our team"
+  // copy the sidebar already renders when showLow is null.
+  const photoManualReview = estimate?.decision === 'manual_review'
+  const showLow = !photoManualReview && est?.hasPrice && est.low != null ? est.low + upgradeTotal : null
+  const showHigh = !photoManualReview && est?.hasPrice && est.high != null ? est.high + upgradeTotal : null
 
   function toggleUpgrade(id: string) {
     setUpgrades(u => u.includes(id) ? u.filter(x => x !== id) : [...u, id])
