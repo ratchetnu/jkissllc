@@ -7,6 +7,8 @@
 // so every photo the model sees is readable. Everything else passes through.
 
 import convert from 'heic-convert' // pure-JS + libheif wasm — serverless-safe
+import { put } from '@vercel/blob'
+import { scopeBlobPath } from './platform/tenancy/blob-keys'
 
 const HEIC_TYPES = new Set(['image/heic', 'image/heif'])
 
@@ -46,6 +48,51 @@ export async function toModelReadableImage(
 
 export function isHeic(contentType: string): boolean {
   return HEIC_TYPES.has((contentType || '').toLowerCase())
+}
+
+export function isHeicUrl(url: string): boolean {
+  return /\.(heic|heif)(\?|#|$)/i.test(url || '')
+}
+
+/**
+ * Retroactively convert already-STORED HEIC blobs to JPEG. For each url ending
+ * .heic/.heif, fetch the object, convert to JPEG, re-store it, and return the new
+ * url (same order + length; non-HEIC urls pass through). On a per-photo failure the
+ * original url is kept (never drops a photo). `fetchBlob`/`putJpeg`/`convertHeic`
+ * are injectable for tests. Used by the admin "Re-scan HEIC photos" action.
+ */
+export async function reconvertHeicUrls(
+  urls: string[],
+  deps: {
+    fetchBlob?: (url: string) => Promise<{ buffer: Buffer; contentType: string }>
+    putJpeg?: (buf: Buffer) => Promise<string>
+    convertHeic?: (buf: Buffer) => Promise<ArrayBuffer | Buffer>
+  } = {},
+): Promise<{ urls: string[]; converted: number }> {
+  const fetchBlob = deps.fetchBlob ?? (async (url: string) => {
+    const r = await fetch(url)
+    if (!r.ok) throw new Error(`fetch ${r.status}`)
+    return { buffer: Buffer.from(await r.arrayBuffer()), contentType: r.headers.get('content-type') || 'image/heic' }
+  })
+  const putJpeg = deps.putJpeg ?? (async (buf: Buffer) => {
+    const blob = await put(scopeBlobPath(`quote-photos/${crypto.randomUUID()}.jpg`), buf, { access: 'public', contentType: 'image/jpeg', addRandomSuffix: false })
+    return blob.url
+  })
+  let converted = 0
+  const out: string[] = []
+  for (const url of urls) {
+    if (!isHeicUrl(url)) { out.push(url); continue }
+    try {
+      const { buffer, contentType } = await fetchBlob(url)
+      const ct = HEIC_TYPES.has(contentType.toLowerCase()) ? contentType : 'image/heic'
+      const jpeg = await toModelReadableImage(buffer, ct, deps.convertHeic)
+      out.push(await putJpeg(jpeg.buffer))
+      converted++
+    } catch {
+      out.push(url) // keep the original on failure — never lose a photo
+    }
+  }
+  return { urls: out, converted }
 }
 
 /**

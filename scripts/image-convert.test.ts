@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  toModelReadableImage, toModelReadableDataUrl, isHeic, UnreadableImageError,
+  toModelReadableImage, toModelReadableDataUrl, isHeic, isHeicUrl, reconvertHeicUrls, UnreadableImageError,
 } from '../app/lib/image-convert'
 
 // A fake HEIC→JPEG converter so tests never need the wasm decoder or a real HEIC file.
@@ -65,4 +65,29 @@ test('toModelReadableDataUrl: HEIC data URL becomes a JPEG data URL', async () =
 
 test('toModelReadableDataUrl: non-data-url string passes through', async () => {
   assert.equal(await toModelReadableDataUrl('https://x/y.heic', okConvert), 'https://x/y.heic')
+})
+
+test('isHeicUrl detects stored HEIC/HEIF blob urls', () => {
+  assert.equal(isHeicUrl('https://x.blob/quote-photos/abc.heic'), true)
+  assert.equal(isHeicUrl('https://x.blob/abc.HEIF?token=1'), true)
+  assert.equal(isHeicUrl('https://x.blob/abc.jpg'), false)
+})
+
+test('reconvertHeicUrls: converts HEIC urls, keeps non-HEIC, preserves order + count', async () => {
+  const fetchBlob = async () => ({ buffer: Buffer.from([0, 0, 0, 24]), contentType: 'image/heic' })
+  let n = 0
+  const putJpeg = async () => `https://new/${++n}.jpg`
+  const { urls, converted } = await reconvertHeicUrls(
+    ['https://x/a.jpg', 'https://x/b.heic', 'https://x/c.heif'],
+    { fetchBlob, putJpeg, convertHeic: okConvert },
+  )
+  assert.equal(converted, 2)
+  assert.deepEqual(urls, ['https://x/a.jpg', 'https://new/1.jpg', 'https://new/2.jpg'])
+})
+
+test('reconvertHeicUrls: a per-photo failure keeps the original url (never drops a photo)', async () => {
+  const fetchBlob = async () => { throw new Error('gone') }
+  const { urls, converted } = await reconvertHeicUrls(['https://x/b.heic'], { fetchBlob, putJpeg: async () => 'x', convertHeic: okConvert })
+  assert.equal(converted, 0)
+  assert.deepEqual(urls, ['https://x/b.heic'])
 })

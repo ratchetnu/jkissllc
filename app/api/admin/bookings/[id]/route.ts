@@ -11,6 +11,7 @@ import {
 } from '../../../../lib/bookings'
 import { notifyCustomerZelleRejected, resendOwnerNotification, notifyOwnerAiOutcome } from '../../../../lib/booking-notify'
 import { processAiJob, enqueueAiJob, supportsPhotoAi, photoVersion } from '../../../../lib/book-now-ai'
+import { reconvertHeicUrls } from '../../../../lib/image-convert'
 import { submitConfirmation, processFinalAiJob, enqueueFinalAiJob } from '../../../../lib/book-now-confirmation'
 import { INFO_REQUEST_FIELD_LABEL, type InfoRequest, type InfoRequestField } from '../../../../lib/bookings'
 import { currentTenantId } from '../../../../lib/platform/tenancy/context'
@@ -233,6 +234,31 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
     // customer resubmit). They call processAiJob, which loads+saves its own copy,
     // so we RETURN here rather than fall through to the trailing save (which would
     // clobber the attached estimate with this stale record).
+    case 'reconvert-photos': {
+      // Retroactively convert already-STORED HEIC photos to JPEG so the vision model
+      // can read them, then re-run analysis. Fixes bookings whose iPhone HEIC photos
+      // were stored before the upload-time conversion existed.
+      if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
+      const photos = b.invoicePhotos ?? []
+      const { urls, converted } = await reconvertHeicUrls(photos.map((p) => p.url))
+      if (converted === 0) {
+        return NextResponse.json({ ok: true, converted: 0, message: 'No HEIC photos to reconvert.', booking: b })
+      }
+      b.invoicePhotos = photos.map((p, i) => ({ ...p, url: urls[i] }))
+      pushBookingEvent(b, { actor, action: 'ai.queued', result: `reconverted ${converted} HEIC photo(s) → JPEG, re-analyzing`, meta: { converted } })
+      let rcTenant: string | undefined
+      try { rcTenant = currentTenantId() } catch { /* ignore */ }
+      // Re-run AI on the now-readable JPEGs (fresh, full-budget attempt).
+      if (supportsPhotoAi(b)) { enqueueAiJob(b, { force: true, initiatedBy: actor, tenantId: rcTenant }); if (b.aiJob) b.aiJob.attempts = 0 }
+      await saveBooking(b)
+      let result: unknown = null
+      if (supportsPhotoAi(b)) {
+        result = await processAiJob(id, { initiatedBy: actor, tenantId: rcTenant, lockHeld: true })
+      }
+      const nb = await getBookingByToken(id)
+      return NextResponse.json({ ok: true, converted, booking: nb ?? b, aiJob: nb?.aiJob, result })
+    }
+
     case 'run-ai':
     case 'retry-ai': {
       if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
