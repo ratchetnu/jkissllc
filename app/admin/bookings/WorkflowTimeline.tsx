@@ -14,7 +14,10 @@ type StepDef = { key: string; label: string; done: (b: Booking, ev: Set<string>)
 
 const STEPS: StepDef[] = [
   { key: 'photos', label: 'Photos uploaded', done: (b, ev) => (b.invoicePhotos?.length ?? 0) > 0 || ev.has('LeadCreated') },
-  { key: 'analysis', label: 'AI analysis', done: (b, ev) => !!b.aiEstimate || ev.has('AIActionDrafted') },
+  // "AI analysis" resolves on an attached estimate OR once the owner has taken it over
+  // (manual review) or already priced/sent a quote — so it never hangs "in progress"
+  // forever after the owner handles it by hand.
+  { key: 'analysis', label: 'AI analysis', done: (b, ev) => !!b.aiEstimate || ev.has('AIActionDrafted') || b.aiJob?.status === 'manual_review' || (b.invoiceAmountCents ?? 0) > 0 || ev.has('QuoteSent') },
   { key: 'pricing', label: 'Pricing', done: (b, ev) => !!b.aiEstimate?.pricing || ev.has('QuoteGenerated') },
   {
     key: 'approval', label: 'Owner approval',
