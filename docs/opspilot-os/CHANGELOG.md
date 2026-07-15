@@ -10,6 +10,19 @@ the product is **Operion**. See `README.md` for the naming/source-of-truth note.
 
 ---
 
+## 2026-07-14 — Enterprise readiness audit
+
+Ran an evidence-based end-to-end validation of the platform (customer intake → completed
+operations) via nine parallel read-only reviewers + the project's own quality gates. Result:
+[`audits/2026-07-14-operion-enterprise-readiness.md`](audits/2026-07-14-operion-enterprise-readiness.md).
+
+- **Quality gates (executed):** `tsc` 0 errors · `npm test` **586/586 pass** · `next build` OK.
+- **Overall:** **PARTIALLY READY** — production-solid for the single J KISS tenant; NOT READY for multi-tenant activation.
+- **No live CRITICAL.** HIGH (7): manager over-privilege on ~31 admin routes (`requireSession` vs `requirePermission`); durable AI job can strand in `processing` (no reaper); global `ai:` audit-read (cross-tenant on activation); un-tenanted Stripe webhook; Blob paths not tenant-scoped; name-derived `bizKey`→payroll collision; global job-learning model.
+- **Analytics confirmed real** (computed from live data, not placeholders). **Dark-launch mismatch count = NOT VERIFIED** (BLOCKED — needs a browser against Preview).
+- **Recommended next sprint:** *Production Hardening — Auth Tightening, Worker Recovery & Failure Visibility* (no schema / no auth-rearchitecture / no tenancy).
+- Audit branch `audit/operion-enterprise-readiness`; documentation-only; no app code, env, deploy, or `TENANCY_ENABLED` change.
+
 ## 2026-07-14 — Reconciliation with shipped work (Operion rebrand + S1 tenancy foundation)
 
 **Trigger:** the 2026-07-12 baseline assessment had gone stale in several
