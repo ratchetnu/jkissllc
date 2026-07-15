@@ -3,6 +3,7 @@ import { rateLimit } from '../../../lib/rate-limit'
 import { isBlockedBot } from '../../../lib/botcheck'
 import { runAiTask } from '../../../lib/ai/service'
 import { ESTIMATE_SCHEMA } from '../../../lib/ai/schema'
+import { toModelReadableDataUrl } from '../../../lib/image-convert'
 
 export const maxDuration = 30
 
@@ -20,6 +21,13 @@ export async function POST(req: NextRequest) {
   if (!/^data:image\/(jpeg|png|webp|heic|heif);base64,/.test(image) || image.length > 8_000_000) {
     return NextResponse.json({ error: 'Please attach a clear photo (JPG/PNG, under ~6MB).' }, { status: 400 })
   }
+  // iPhone HEIC/HEIF → JPEG data URL so the vision model can read it (else it sees nothing).
+  let readable: string
+  try {
+    readable = await toModelReadableDataUrl(image)
+  } catch {
+    return NextResponse.json({ error: "We couldn't read that photo. Please re-take it or upload a JPG or PNG." }, { status: 400 })
+  }
 
   // Validation happens INSIDE runAiTask now (ESTIMATE_SCHEMA) — a malformed model
   // response is recorded as invalid_response, not silently logged as success (AUDIT-F1).
@@ -30,10 +38,10 @@ export async function POST(req: NextRequest) {
       role: 'user',
       content: [
         { type: 'text', text: 'Estimate the junk-removal load size and price for the items in this photo.' },
-        { type: 'image', image },
+        { type: 'image', image: readable },
       ],
     }],
-    maxOutputTokens: 300, temperature: 0.3, requestChars: image.length,
+    maxOutputTokens: 300, temperature: 0.3, requestChars: readable.length,
   })
   if (!result.ok) {
     // A schema failure (invalid_response, 502) reads to the customer as "couldn't read it".
