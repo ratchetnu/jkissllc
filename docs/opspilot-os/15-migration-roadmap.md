@@ -1,17 +1,43 @@
-# 15 — Migration Roadmap (Phase 14)
+# 15 — Migration Roadmap (Phase 14) — Operion
 
 > Preserves the current J KISS production app throughout. Cited to `~/jkissllc@main`,
-> 2026-07-12. **No schema migration authored or run.** Each phase: objective ·
-> scope · dependencies · data/code/security/UX implications · tests · acceptance ·
-> rollback · risks · complexity · what must NOT change yet.
+> originally 2026-07-12. **No schema migration authored or run.** Each phase:
+> objective · scope · dependencies · data/code/security/UX implications · tests ·
+> acceptance · rollback · risks · complexity · what must NOT change yet.
+>
+> _(Updated 2026-07-14: platform is now branded **Operion** (`PLATFORM.name =
+> 'Operion'` in `app/lib/company.ts`; public `/operion`, `/opspilot`→301). Internal
+> identifiers — `opspilot:` Redis prefix, `app/lib/platform/` paths, `docs/opspilot-os/`,
+> `/api/opspilot/*` — are preserved as **legacy identifiers** for compatibility.
+> **Phase 0 and the tenant identity/context phase are now COMPLETE — shipped to
+> `main` + prod as "S1"** (see status banner). The next verified step is
+> **dark-launch validation**, then the S2 group below.)_
+
+## Status banner _(2026-07-14)_
+
+- ✅ **Phase 0 — Stabilize & document: COMPLETE.** Security drift closed (M1/M2/L1
+  fail-closed, H2 coverage test), CI is a **blocking** gate.
+- ✅ **Phase 1 — Tenancy & authorization (identity + context): COMPLETE as S1.**
+  Per-request tenant context on **104 handlers** + `withBackgroundTenant` on **3
+  crons + 3 webhooks**; `app/lib/redis.ts` `scopeKey()` fails **closed**;
+  `TENANCY_ENABLED=false` → **live no-op / byte-identical**. Details:
+  `16-first-sprint-plan.md` §Executed.
+- ⏭️ **Next (Stage 0):** **dark-launch validation** in the isolated Preview
+  (`OperionPreview` Redis + `operion-preview-blob`) — exercise workflows, inspect
+  `tenancy:dark-launch-mismatch` telemetry. Status: **DARK-LAUNCH READY, NOT YET
+  VERIFIED.**
+- 🔜 **S2 (was Phase 2):** Blob path scoping · `ai:*` prompt/telemetry scoping ·
+  name-derived key-collision fixes (`businesses.ts` bizKey→payroll,
+  `job-learning.ts`) · tenant data migration under `DARK_LAUNCH`→`DUAL_WRITE` ·
+  public-route host-based tenant resolution.
 
 Ordering follows the standard sequence, adjusted for evidence: **the four §1
-defects are already fixed**, so Phase 0 is lighter than the old roadmap assumed;
+defects are already fixed**, so Phase 0 was lighter than the old roadmap assumed;
 and because storage is Redis, "row-level security" = key-prefix isolation.
 
 ---
 
-## Phase 0 — Stabilize & document
+## Phase 0 — Stabilize & document — ✅ COMPLETE (S1)
 - **Objective:** lock a clean baseline; close cheap security drift; no behavior change.
 - **Scope:** these docs (done); ADRs (`docs/adr/`); fix fail-open webhooks/cron
   (M1, L1); replace `Math.random` reminder ack token (M2); add the
@@ -22,33 +48,53 @@ and because storage is Redis, "row-level security" = key-prefix isolation.
 - **Rollback:** revert commits (isolated, no data touched).
 - **Risk:** minimal. **Complexity:** S. **Do NOT change yet:** data model, auth shape.
 
-## Phase 1 — Establish tenancy & authorization
-- **Objective:** model `Tenant` + `Membership`; make the session tenant-aware.
-- **Scope:** `Tenant`/`User`/`Membership` types + `t:jkiss` seed byte-identical to
-  today; `SessionPayload` gains `tid`; `requireTenantSession(req) →
-  {tenantId,userId,role}`; `getPrincipal` returns tenant-scoped principal;
-  `AsyncLocalStorage` tenant context set in `proxy.ts`. **Behind a
-  `TENANCY_ENABLED` flag defaulting off**; still one tenant, one row.
-- **Dependencies:** Phase 0 flags/kill-switch module.
-- **Data:** add tenant/membership keys under `platform:*`; **no rewrite of
-  existing keys yet.** **Code:** signature change to guards (36 call-sites) +
-  context plumbing. **Security:** fixes C2 mechanism; closes H2 (guards now
-  permission-checked); begins H3 (principal available to `pushAudit`).
-- **Tests:** principal tests, tenant-seed equality test, authorization-coverage.
-- **Acceptance:** with flag off, prod identical; with flag on in preview, `t:jkiss`
-  behaves identically and every guard resolves a tenant-scoped principal.
-- **Rollback:** flag off. **Risk:** medium (auth is critical path). **Complexity:** M.
-- **Do NOT change yet:** Redis key prefixing, credentials.
+## Phase 1 — Establish tenancy & authorization — ✅ COMPLETE (S1) _(Updated 2026-07-14)_
+- **Objective:** make the session tenant-aware and establish per-request tenant
+  context. **Done.**
+- **Delivered:** `SessionPayload` gained `tid`; `requireTenantSession` resolves a
+  tenant-scoped principal; **per-handler** tenant context via
+  `app/lib/platform/tenancy/with-tenant-route.ts` (`withTenantRoute` on **104
+  request handlers**) + `withBackgroundTenant` on **3 crons + 3 webhooks**. Behind
+  `TENANCY_ENABLED` (default **off**) → still one tenant, one row, byte-identical.
+  Note the `19-...` correction: ALS is established **per-handler** via
+  `runWithTenant`, **not** in `proxy.ts` (which only strips inbound `x-tenant-id`).
+- **Dependencies:** Phase 0 flags/kill-switch module. **Met.**
+- **Data:** tenant/membership keys additive under `platform:*`; **no rewrite of
+  existing keys.** **Code:** guard signature + context plumbing shipped.
+  **Security:** C2 mechanism **partially resolved** (session carries `tid`, 104
+  handlers establish context) — the shared global HMAC secret + single shared
+  owner `ADMIN_PASSWORD` **remain open** (`10-...`, `20-...`); H2 closed
+  (coverage gate); H3 groundwork in place (`pushAuditFor`).
+- **Tests:** principal + tenant-isolation + bypass-detection + authorization-coverage
+  — all in the 586-case blocking suite.
+- **Acceptance:** ✅ with flag off, prod identical; the isolated Preview is wired
+  for the flag-on dark-launch check (see §Status banner → Next).
+- **Rollback:** flag off (unchanged doctrine). **Risk:** was medium; delivered no-op.
+- **Still NOT changed (deliberately deferred to S2):** Redis key **prefixing of
+  existing data**, per-tenant credentials.
 
-## Phase 2 — Establish shared domain boundaries
+## Phase 2 (S2) — Establish shared domain boundaries + activate isolation _(Updated 2026-07-14)_
+> Begins **only after** dark-launch validation is verified clean. Absorbs the
+> remaining activation blockers: Blob path scoping, `ai:*` prompt/telemetry
+> scoping, name-derived key-collision fixes, and public-route host resolution.
 - **Objective:** thread the principal into audit + fix the isolation prerequisites
   that are data migrations, while still single-tenant.
 - **Scope:** attribute `pushAudit`/central audit to `Principal.sub` (H3);
   convert `biz:{name}` → `biz:{bizId}` + rewrite `Staff.payByBusiness` maps
-  (the seam-2 data migration) with a backfill script (direct-to-Upstash, no
-  SCAN in client); introduce the `LedgerEntry` boundary (emit only, read later).
-- **Data:** **first real data migration** (businesses + staff pay maps) — reversible,
-  dual-read during cutover. **Security:** completes H3.
+  (the seam-2 data migration, i.e. the `businesses.ts` bizKey→payroll
+  name-collision fix) with a backfill script (direct-to-Upstash, no SCAN in
+  client); fix the parallel name-derived collision in `job-learning.ts`;
+  **scope Blob paths per tenant** (today all-global namespace); **scope `ai:*`
+  prompts/telemetry per tenant** (today platform-global/shared); add **public-route
+  host-based tenant resolution** (drop build-time `NEXT_PUBLIC_SITE_URL`,
+  generalize `proxy.ts` host handling); run the tenant data migration **under
+  `DARK_LAUNCH`→`DUAL_WRITE`**; introduce the `LedgerEntry` boundary (emit only,
+  read later).
+- **Data:** **first real data migration** (businesses + staff pay maps + Blob
+  namespace + `ai:*` scope) — reversible, dual-read during cutover, gated by the
+  `TENANCY_DUAL_WRITE` flag. **Security:** completes H3.
+- **Gate:** dark-launch validation (`tenancy:dark-launch-mismatch` telemetry)
+  reviewed clean first — see §Status banner.
 - **Tests:** migration idempotency + equality (pay resolves identically), audit
   attribution.
 - **Acceptance:** pay/finance outputs unchanged; audit shows named actors.
@@ -120,11 +166,13 @@ and because storage is Redis, "row-level security" = key-prefix isolation.
 
 ## Work division
 
-| Immediate (now) | Next (1–2 sprints) | Later | Explicitly deferred |
+_(Updated 2026-07-14: the "Immediate" column is **done** — Phase 0 + Phase 1
+context wiring shipped as S1. "Now" is dark-launch validation.)_
+
+| Done (S1, shipped) | Immediate (now) | Next (S2) | Later / deferred |
 |---|---|---|---|
-| Phase 0; Phase 1a (tenant/user seed + principal) | Phase 1b (context + prefix dark-launch); Phase 2 | Phases 3–6 | Phases 7–10 until GA scope approved |
-| Close M1/M2/L1/H2 | Phase 2 data migration | Industry pack #2 | Postgres (until billing) |
-| Auth-coverage test | Redis prefixing behind flag | Event/outbox | Microservices (never, at this scale) |
+| ✅ Phase 0; Phase 1 tenant identity + per-handler context (104 handlers, 3 crons, 3 webhooks) | Dark-launch validation in isolated Preview (inspect `tenancy:dark-launch-mismatch`) | Redis prefixing activation; Blob + `ai:*` scoping; name-key fixes; data migration under DUAL_WRITE | Phases 3–6; then 7–10 until GA scope approved |
+| ✅ Close M1/M2/L1/H2; auth-coverage + bypass-detection CI gates | Triage mismatch classes into S2 | Public-route host-based tenant resolution | Industry pack #2; Postgres (until billing); Event/outbox; Microservices (never, at this scale) |
 
 ## Cross-cutting rollback doctrine
 Every phase is **flag-gated and dual-read where data changes**, so any phase can

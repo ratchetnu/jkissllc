@@ -1,6 +1,6 @@
 # Diagrams
 
-Mermaid sources for the OpsPilot OS blueprint. Render with any Mermaid tool
+Mermaid sources for the Operion Enterprise Blueprint. Render with any Mermaid tool
 (GitHub renders `.mmd` in Markdown fences; VS Code Mermaid preview; mermaid.live).
 
 | File | View | Referenced by |

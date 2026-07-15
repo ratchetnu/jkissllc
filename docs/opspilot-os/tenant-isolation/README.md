@@ -1,10 +1,10 @@
-# OpsPilot Tenant Isolation — Sprint Record
+# Operion Tenant Isolation — Sprint Record
 
 > Branch `opspilot/tenant-isolation` (from `c1c7591`), 2026-07-12.
 > **Not committed, not deployed, not merged, no production data touched.**
 > Gates: `tsc --noEmit` clean · **332/332 tests** · eslint clean.
 
-Moves OpsPilot from tenant-aware *scaffolding* to an **enforceable** tenant data
+Moves Operion from tenant-aware *scaffolding* to an **enforceable** tenant data
 boundary — while `TENANCY_ENABLED=false` keeps J KISS byte-identical to today.
 
 ## Index

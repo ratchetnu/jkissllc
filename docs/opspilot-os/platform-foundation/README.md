@@ -1,4 +1,4 @@
-# OpsPilot Platform Foundation — Sprint Record
+# Operion Platform Foundation — Sprint Record
 
 > Branch `opspilot/platform-foundation`, 2026-07-12. **Not committed, not
 > deployed, not merged.** Every gate green: `tsc --noEmit` clean · **296/296

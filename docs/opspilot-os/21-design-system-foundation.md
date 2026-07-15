@@ -1,6 +1,13 @@
-# 21 — Design System Foundation
+# 21 — Design System Foundation — Operion
 
-> Branch `opspilot/platform-foundation`, 2026-07-12.
+> Originally branch `opspilot/platform-foundation` (legacy internal identifier),
+> 2026-07-12.
+>
+> _(Updated 2026-07-14: the primitive library remains **reference-only** — the
+> `design-reference` gallery is still gated by `DESIGN_SYSTEM_REFERENCE_ENABLED`
+> (default **off**, 404 in prod). However, the design direction below now has a
+> **real applied example in production**: the **Book Now admin redesign** — see
+> §Applied example.)_
 
 ## Context (from the assessment)
 `11-ux-and-design-system.md` found the app is bespoke and product-minded but has
@@ -44,6 +51,20 @@ It is gated by `DESIGN_SYSTEM_REFERENCE_ENABLED` and returns **404** unless the
 flag is on — so it never appears in production and disturbs no navigation. This
 satisfies "convert exactly one low-risk internal screen" without risking a working
 screen.
+
+## Applied example — Book Now admin redesign _(Updated 2026-07-14)_
+`/admin/operations/book-now` shipped to **prod** as an enterprise operations
+dashboard, exercising this doc's design direction on a real, high-traffic screen:
+a **KPI row** (New, Awaiting AI, Quote Ready, Pending Payment, Booked Today,
+Pending Revenue), a **toolbar** (search / filter / sort / view toggle / refresh),
+**grouped-accordion filters** (Services / AI Status / Sales Pipeline with counts),
+a **full-width request table** (sticky header, sort, bulk select), and a
+**slide-over request drawer** (customer, photos, AI analysis + confidence, quote +
+payment, notes). It is **UI-only** — every API, filter, and action is preserved;
+the detail page and its 12 PATCH actions are unchanged. It does **not** yet consume
+the `app/components/ui/` primitives below (it uses the existing operations CSS/UI
+layer), but it validates the same restrained, status-consistent, keyboard-operable
+direction. Migrating it onto the primitives is a follow-up (see §Not done).
 
 ## Design direction (upheld)
 Restrained, disciplined, theme-aware; consistent status language; clear hierarchy

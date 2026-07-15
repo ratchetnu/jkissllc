@@ -1,7 +1,22 @@
-# 20 — Security Hardening Sprint (Part 5)
+# 20 — Security Hardening Sprint (Part 5) — Operion
 
-> Changes applied on branch `opspilot/platform-foundation`, 2026-07-12. No secrets
-> were rotated or displayed. Each item is surgical and independently revertible.
+> Changes applied originally on branch `opspilot/platform-foundation` (legacy
+> internal identifier), 2026-07-12. No secrets were rotated or displayed. Each item
+> is surgical and independently revertible.
+>
+> _(Updated 2026-07-14 — status since this sprint, verified on `main` + prod:)_
+> - ✅ **Shipped:** all items §1–§7 below are on `main` + prod. Additionally: a
+>   **min-16-char secret length check** on `ADMIN_SESSION_SECRET` is enforced
+>   (`app/api/admin/_lib/session.ts:67`); the CI job is now a **blocking** gate
+>   (`.github/workflows/ai-regression.yml`, tsc → full suite → `next build`); and
+>   **bypass-detection** (`scripts/bypass-detection.test.ts`) is a blocking gate
+>   proving every Redis key routes through `scopeKey()`.
+> - ⚠️ **Still open (identity gap):** a **single shared global HMAC secret**
+>   (`ADMIN_SESSION_SECRET`) and a **single shared owner `ADMIN_PASSWORD`** (no
+>   per-owner identity) remain — the C2/R3 risk is only **partially** resolved
+>   (sessions now carry `tid` and 104 handlers establish tenant context, but there
+>   is still one shared owner credential). See `10-security-risk-register.md`.
+>   `doc-crypto` derives from `DOC_ENCRYPTION_KEY` (set) then `ADMIN_SESSION_SECRET`.
 
 ## Webhook & cron endpoint inventory
 
@@ -72,5 +87,9 @@
 - Full `pushAudit` → `pushAuditFor` migration across all callers.
 
 ## Verification
-`tsc --noEmit` clean · full suite **239/239 green** (incl. 5 new fail-closed tests
-+ authorization-coverage) · eslint clean on all changed files.
+`tsc --noEmit` clean · full suite **239/239 green** at authoring time (incl. 5 new
+fail-closed tests + authorization-coverage) · eslint clean on all changed files.
+_(Updated 2026-07-14: the suite has since grown to **586 cases / 75 files** — now
+including tenant-isolation, bypass-detection, rbac, authorization-coverage,
+security-hardening and AI-regression tests — and runs as a **blocking** CI gate
+alongside `tsc` and `next build`.)_
