@@ -3,6 +3,11 @@ import {
   type Booking, type AiJob, type AiJobErrorCode, type AiJobStatus,
 } from './bookings'
 import { buildPhotoEstimate } from './ai/photo-estimate'
+import { isEnabled } from './platform/flags'
+import { runEstimationEngine } from './estimation/engine'
+import { clarificationsFor } from './estimation/clarify'
+import { buildShadowComparison, recordShadowComparison } from './estimation/shadow'
+import type { EstimationResult } from './estimation/types'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Durable, server-side Book Now AI processing — the RECOVERY path for the
@@ -223,6 +228,28 @@ async function processAiJobInner(token: string, opts: { initiatedBy?: string; te
   // Success — attach the estimate + advance the workflow. Never a price without a read.
   b.aiEstimate = res.stored
   b.disposalEstimateCents = res.stored.pricing.breakdown.disposalCents
+
+  // SHADOW (VISION_ESTIMATION_SHADOW, default OFF): run the deterministic estimation
+  // engine in parallel and stash the result for admin comparison + record the delta.
+  // NEVER authoritative, never shown to the customer, fail-soft — it can't affect the
+  // live estimate/quote. Off ⇒ this block does nothing (byte-identical to today).
+  if (isEnabled('VISION_ESTIMATION_SHADOW')) {
+    try {
+      const shadow = runEstimationEngine(res.stored.analysis, {
+        bookingId: b.token, serviceType: b.serviceType,
+        imageIds: (b.invoicePhotos ?? []).map((p) => p.url),
+      })
+      shadow.clarificationQuestions = clarificationsFor(shadow)
+      shadow.clarificationRequired = shadow.clarificationQuestions.length > 0
+      ;(b as { shadowEstimate?: EstimationResult }).shadowEstimate = shadow
+      recordShadowComparison(
+        buildShadowComparison(shadow, { recommendedUsd: res.stored.pricing.recommendedUsd, decision: res.stored.decision }),
+      )
+    } catch (e) {
+      console.error('[book-now-ai] shadow estimation (non-fatal)', e)
+    }
+  }
+
   const status: AiJobStatus = res.stored.decision === 'manual_review' ? 'manual_review' : 'completed'
   b.aiJob = {
     status, idempotencyKey: b.aiJob.idempotencyKey, photoVersion: photoVersion(b), attempts,

@@ -8,6 +8,7 @@ import OperationsShell from '../../OperationsShell'
 import WorkflowTimeline from '../../../bookings/WorkflowTimeline'
 import { fmtTs, money } from '../../ui'
 import { SERVICE_LABELS, INFO_REQUEST_FIELD_LABEL, type Booking, type InfoRequestField } from '../../../../lib/bookings'
+import type { EstimationResult } from '../../../../lib/estimation/types'
 import {
   bookNowStage, bookNowServiceGroup, aiStatus, quoteStatus, paymentStatus, ownerAlertStatus,
   confirmationStatus, BOOK_NOW_STAGE_LABEL,
@@ -204,6 +205,37 @@ function Detail({ token }: { token: string }) {
         ) : (
           <p style={{ fontSize: 12.5, color: 'var(--muted)' }}>No AI estimate yet{(b.invoicePhotos?.length ?? 0) > 0 ? ' — analysis pending.' : ' — no photos to analyze.'}</p>
         )}
+
+        {/* Shadow estimate (VISION_ESTIMATION_SHADOW) — the deterministic engine's
+            parallel result. INTERNAL only; never authoritative, never shown to the
+            customer. Renders only when a shadow result was attached (i.e. the flag was on). */}
+        {(() => {
+          const shadow = (b as { shadowEstimate?: EstimationResult }).shadowEstimate
+          if (!shadow) return null
+          const itemsLabel = shadow.inventory.map((i) => `${i.itemName}×${i.count}`).join(', ')
+          return (
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+              <p style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--muted)', marginBottom: 8 }}>
+                Shadow estimate · internal — not shown to customer
+              </p>
+              <KV k="Engine recommended" v={money(shadow.pricing.recommendedCents)} />
+              <KV k="Engine range" v={`${money(shadow.pricing.rangeCents.low)} – ${money(shadow.pricing.rangeCents.high)}`} />
+              <KV k="Inventory" v={itemsLabel || 'none detected'} />
+              <KV k="Volume (cu yd)" v={`${shadow.volume.cubicYards.low}–${shadow.volume.cubicYards.high} (exp ${shadow.volume.cubicYards.expected})`} />
+              <KV k="Truck loads" v={shadow.volume.truckLoads.expected} />
+              <KV k="Weight (lbs)" v={`${shadow.weight.pounds.low}–${shadow.weight.pounds.high}`} />
+              <KV k="Crew / labor" v={`${shadow.complexity.recommendedCrewSize} crew · ${shadow.complexity.laborHours.expected}h`} />
+              <KV k="Complexity" v={shadow.complexity.level} />
+              <KV k="Risk" v={shadow.riskLevel} />
+              <KV k="Restricted items" v={shadow.restrictedItems.join(', ') || 'none'} />
+              <KV k="Manual review" v={shadow.manualReviewRequired ? shadow.manualReviewReasons.join('; ') || 'required' : 'not required'} />
+              {shadow.clarificationQuestions.length > 0 && (
+                <KV k="Clarify" v={shadow.clarificationQuestions.map((q) => q.question).join(' | ')} />
+              )}
+              <KV k="Engine version" v={`v${shadow.engineVersion} · pricing ${shadow.pricingRuleVersion}`} />
+            </div>
+          )
+        })()}
 
         {/* Durable server-side processing job — real, persisted status + owner controls. */}
         {b.aiJob && (

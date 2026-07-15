@@ -10,6 +10,33 @@ the product is **Operion**. See `README.md` for the naming/source-of-truth note.
 
 ---
 
+## 2026-07-15 — Enterprise Vision Estimation Phases 2–10: deterministic engine (shadow)
+
+Built the deterministic estimation engine on top of the existing pipeline (reuse, not rebuild).
+`app/lib/estimation/*`; shadow only (`VISION_ESTIMATION_SHADOW`, off); `TENANCY_ENABLED` false;
+byte-identical while off. AI produces the structured inventory; **everything downstream is
+deterministic** and traces to the existing `priceJob` (AI still never sets a price).
+
+- **Contract** `estimation/types.ts` (`ESTIMATION_ENGINE_VERSION`). Modules: `inventory-extract`
+  (taxonomy-mapped items, cross-photo dedup, restricted-item safety upgrade), `volume-engine`
+  (cu ft/yd, truck fraction/loads, low/expected/high bands), `weight-engine` (governed density
+  map + dense-debris floor, min/exp/max, heavy flags), `complexity` (crew/labor/load-time/
+  equipment/PPE, low/med/high with explainable factors), `pricing-explain` (transforms the
+  existing `priceJob` breakdown into labeled adjustments+reasons — no new pricing math), `engine`
+  (orchestrator, fail-safe, versioned).
+- **Consumers:** `shadow` (current-vs-new delta, PII-safe `SHADOW_LOG_SAFE_KEYS`), `metrics`
+  (deterministic enterprise metrics, null-not-fabricated without ground truth), `clarify` (≤4
+  targeted questions reusing `followup-questions`).
+- **Wiring:** fail-soft, flag-guarded shadow invocation in `book-now-ai.ts` (stashes result on the
+  booking + records the delta); the admin Book Now detail page shows an INTERNAL "Shadow estimate"
+  block when present — not a redesign, never shown to customers.
+- **Reused unchanged:** taxonomy, `priceJob`/`quote-decision`, `junk-critic`, `followup-questions`.
+  No duplicate AI/taxonomy/pricing system.
+- **Shadow comparison:** available via the `book-now-ai` hook + `recordShadowComparison`; the
+  current estimate stays authoritative. Baseline/promotion still gated (§4 of the program doc).
+
+Gates: tsc 0 · npm test **733/733** (+23) · next build OK · lint clean on changed files.
+
 ## 2026-07-15 — Enterprise Vision Estimation: close the learning loop + photo-quality gate (shadow)
 
 Audit-then-connect pass over the EXISTING Book Now AI pipeline (reuse, not rebuild). Branch

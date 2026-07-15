@@ -59,6 +59,38 @@ review; shadow-mode comparison telemetry.
 - **Shadow flag (Phase 19):** `VISION_ESTIMATION_SHADOW` (default off) governs surfacing/using any
   enhancement; the current estimate stays authoritative.
 
+## 2b. Built in the follow-up sprint (Phases 2–10, shadow — 2026-07-15)
+
+The deterministic estimation ENGINE now exists (`app/lib/estimation/*`), reusing the taxonomy +
+`priceJob` (no new pricing math, no duplicate taxonomy). Shadow only (`VISION_ESTIMATION_SHADOW`,
+off): computed in parallel in the worker, stashed on the booking for admin comparison, never
+authoritative, never shown to customers.
+
+- **Structured inventory (Phase 2):** `inventory-extract.ts` maps vision observations →
+  `InventoryItem[]` (taxonomy-mapped, per-unit volume/weight, source images, uncertainty),
+  **dedups the same item across photos**, and safety-upgrades a mislabeled restricted item.
+- **Deterministic volume (Phase 3):** `volume-engine.ts` — cu ft/yd, truck fraction, loads as
+  low/expected/high bands (wider when confidence is lower). AI never gives these numbers.
+- **Deterministic weight (Phase 4):** `weight-engine.ts` — governed `WEIGHT_CLASS_LBS_PER_CUBIC_YARD`
+  (+ dense-debris floor); min/expected/max; heavy-item flags.
+- **Operational complexity (Phase 5):** `complexity.ts` — crew/truck/labor/load-time/equipment/PPE
+  and low/medium/high with explainable `factors[]`.
+- **Explainable pricing (Phase 6):** `pricing-explain.ts` — transforms the EXISTING `priceJob`
+  breakdown (`costLines`) into labeled `adjustments[]` with reasons; every number traces to the
+  deterministic engine.
+- **Admin explainability (Phase 7):** the existing Book Now request detail page shows an internal
+  "Shadow estimate" block (inventory, volume/weight/truck/crew/labor, risk, restricted, pricing,
+  clarifications, versions) when a shadow result is attached — not a redesign.
+- **Clarification (Phase 8):** `clarify.ts` reuses `followup-questions` to emit ≤4 targeted
+  questions on specific uncertainty (sectional sections, appliance disconnected, hidden items,
+  stairs) — [] when confident.
+- **Shadow + metrics (Phases 9/10):** `shadow.ts` records the current-vs-new delta with a
+  PII-safe allow-listed payload (`SHADOW_LOG_SAFE_KEYS`); `metrics.ts` aggregates enterprise
+  metrics deterministically, returning null (never fabricated) without ground truth.
+
+Contract types: `app/lib/estimation/types.ts` (`ESTIMATION_ENGINE_VERSION`). Wired fail-soft into
+`book-now-ai.ts` under the flag — off ⇒ byte-identical.
+
 ## 3. Staged follow-ups (contract defined, NOT built this sprint)
 
 Per the sprint's "complete the backend contract now, document UI/expansion later" guidance:
