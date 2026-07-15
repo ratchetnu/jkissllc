@@ -232,11 +232,30 @@ async function processAiJobInner(token: string, opts: { initiatedBy?: string; te
   b.aiEstimate = res.stored
   b.disposalEstimateCents = res.stored.pricing.breakdown.disposalCents
 
-  // SHADOW (VISION_ESTIMATION_SHADOW, default OFF): run the estimation engines in
-  // parallel and stash results for admin comparison + record the delta. NEVER
-  // authoritative, never shown to the customer, fail-soft — cannot affect the live
-  // estimate/quote. Off ⇒ this block does nothing (byte-identical to today).
+  const status: AiJobStatus = res.stored.decision === 'manual_review' ? 'manual_review' : 'completed'
+  b.aiJob = {
+    status, idempotencyKey: b.aiJob.idempotencyKey, photoVersion: photoVersion(b), attempts,
+    lastAttemptAt: b.aiJob.lastAttemptAt, completedAt: now(),
+    provider: res.stored.provider, model: res.model, providerTraceId: res.callId,
+    initiatedBy: opts.initiatedBy ?? b.aiJob.initiatedBy, updatedAt: now(),
+  }
+  pushBookingEvent(b, {
+    actor: opts.initiatedBy ?? 'system',
+    action: status === 'manual_review' ? 'ai.manual_review' : 'ai.analyzed',
+    result: `ai:${res.stored.decision}`,
+    meta: { recommendedUsd: res.stored.pricing.recommendedUsd, confidence: res.stored.analysis.confidence?.overall, attempts, model: res.model },
+  })
+  // Persist the AUTHORITATIVE estimate + completed status FIRST — before any shadow
+  // work — so a slow/failed shadow can never delay, lose, or block the live result.
+  await saveBooking(b)
+
+  // SHADOW (VISION_ESTIMATION_SHADOW, default OFF): runs AFTER the authoritative save.
+  // Stashes results for admin comparison + records the redacted delta. NEVER
+  // authoritative, never shown to the customer, fully fail-soft. Off ⇒ no-op
+  // (byte-identical to today). A V2 provider timeout/error only affects the shadow
+  // stash — the live estimate is already durably saved and the job already complete.
   if (isEnabled('VISION_ESTIMATION_SHADOW')) {
+    let shadowDirty = false
     // (a) v1 deterministic engine over the already-computed analysis (no extra AI call).
     try {
       const shadow = runEstimationEngine(res.stored.analysis, {
@@ -246,6 +265,7 @@ async function processAiJobInner(token: string, opts: { initiatedBy?: string; te
       shadow.clarificationQuestions = clarificationsFor(shadow)
       shadow.clarificationRequired = shadow.clarificationQuestions.length > 0
       ;(b as { shadowEstimate?: EstimationResult }).shadowEstimate = shadow
+      shadowDirty = true
       recordShadowComparison(
         buildShadowComparison(shadow, { recommendedUsd: res.stored.pricing.recommendedUsd, decision: res.stored.decision }),
       )
@@ -267,28 +287,21 @@ async function processAiJobInner(token: string, opts: { initiatedBy?: string; te
       const v2Questions = clarificationsForV2(v2.analysis)
       ;(b as { v2Shadow?: { estimate: EstimationResultV2; questions: ClarificationV2[]; ok: boolean; model?: string } }).v2Shadow =
         { estimate: v2Estimate, questions: v2Questions, ok: v2.ok, model: v2.model }
+      shadowDirty = true
       recordShadowComparison(
         buildShadowComparison(v2Estimate, { recommendedUsd: res.stored.pricing.recommendedUsd, decision: res.stored.decision }),
       )
     } catch (e) {
       console.error('[book-now-ai] shadow estimation v2 (non-fatal)', e)
     }
+    // Persist the stashed shadow separately (second write) — fail-soft; a failure here
+    // cannot affect the already-saved authoritative estimate. Re-load under the lock is
+    // unnecessary: we still hold the same booking object; saveBooking is last-write of
+    // the shadow-only fields.
+    if (shadowDirty) {
+      try { await saveBooking(b) } catch (e) { console.error('[book-now-ai] shadow persist (non-fatal)', e) }
+    }
   }
-
-  const status: AiJobStatus = res.stored.decision === 'manual_review' ? 'manual_review' : 'completed'
-  b.aiJob = {
-    status, idempotencyKey: b.aiJob.idempotencyKey, photoVersion: photoVersion(b), attempts,
-    lastAttemptAt: b.aiJob.lastAttemptAt, completedAt: now(),
-    provider: res.stored.provider, model: res.model, providerTraceId: res.callId,
-    initiatedBy: opts.initiatedBy ?? b.aiJob.initiatedBy, updatedAt: now(),
-  }
-  pushBookingEvent(b, {
-    actor: opts.initiatedBy ?? 'system',
-    action: status === 'manual_review' ? 'ai.manual_review' : 'ai.analyzed',
-    result: `ai:${res.stored.decision}`,
-    meta: { recommendedUsd: res.stored.pricing.recommendedUsd, confidence: res.stored.analysis.confidence?.overall, attempts, model: res.model },
-  })
-  await saveBooking(b)
   return { ok: true, status, decision: res.stored.decision }
 }
 
