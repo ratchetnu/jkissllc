@@ -235,3 +235,32 @@ test('a large model volumeHint does NOT change the deterministic volume', () => 
   assert.equal(withHint.v2.volumeHintCubicYards, 99)
   assert.ok((withHint.v2.volumeHintDivergence ?? 0) > 0.5, 'divergence is measured but not acted on for volume/price')
 })
+
+test('REGRESSION (real-photo defect): a bulk/loose pile uses the model per-object volume, not the taxonomy unit default', () => {
+  // A brush pile is NOT one taxonomy unit. Model sizes it at 80–160 cu ft (~4.4 cu yd).
+  // Before the fix, the engine read a yard_debris pile as ~0.6 cu yd → severe underquote.
+  const pile = obj({
+    objectId: 'object_001', category: 'yard_debris', description: 'large brush pile',
+    disposalClass: 'yard-waste', weightClass: 'light', confidence: 'medium',
+    estimatedVolumeCubicFeetLow: 80, estimatedVolumeCubicFeetHigh: 160,
+  })
+  const item = inventoryFromV2(v2Of({ unifiedInventory: [pile] }))[0]
+  assert.ok(item.explicitVolumeCubicYards != null, 'bulk pile carries an explicit total volume')
+  assert.ok(item.explicitVolumeCubicYards! >= 4 && item.explicitVolumeCubicYards! <= 6, `pile ~4.4 cu yd, got ${item.explicitVolumeCubicYards}`)
+  const vol = estimateVolume([item])
+  assert.ok(vol.cubicYards.expected >= 3.5, `pile volume must reflect the model estimate (>=3.5 cu yd), got ${vol.cubicYards.expected}`)
+
+  // A DISCRETE item (sofa, no model volume estimate) is UNCHANGED — taxonomy default only.
+  const sofaItem = inventoryFromV2(v2Of({ unifiedInventory: [obj({ description: 'sofa', category: 'furniture' })] }))[0]
+  assert.equal(sofaItem.explicitVolumeCubicYards, undefined, 'discrete item without a model volume gets no explicit override')
+
+  // Four big brush piles → a real, non-trivial load (not "1/8 load").
+  const piles = [1, 2, 3, 4].map((i) => obj({
+    objectId: `object_00${i}`, category: 'yard_debris', description: `brush pile ${i}`,
+    disposalClass: 'yard-waste', weightClass: 'light', sourceImageIds: [`img_${i}`],
+    estimatedVolumeCubicFeetLow: 60, estimatedVolumeCubicFeetHigh: 140,
+  }))
+  const est = estimateFromV2(v2Of({ unifiedInventory: piles }))
+  assert.ok(est.volume.cubicYards.expected >= 10, `four brush piles >= 10 cu yd, got ${est.volume.cubicYards.expected}`)
+  assert.ok(est.volume.truckFraction.expected > 0.2, `four brush piles > 20% of a truck, got ${est.volume.truckFraction.expected}`)
+})

@@ -172,14 +172,27 @@ function toInventoryItem(obj: UnifiedObject): InventoryItem {
   const spreadPenalty = Math.min(0.5, (maxQ - minQ) / Math.max(1, likely) * 0.5)
   const countConfidence = clamp01(BAND_BASE[obj.confidence] - spreadPenalty)
 
+  // Bulk/loose piles: a "pile" object is NOT one taxonomy unit. When the model sized
+  // the object's volume (estimatedVolumeCubicFeet low/high) LARGER than the taxonomy
+  // default × count, use that as the object's total volume — otherwise a big brush pile
+  // reads as ~0.8 cu yd and the job is badly underquoted. Safety-additive: only ever
+  // raises the estimate above the taxonomy floor, never shrinks it.
+  const lo = obj.estimatedVolumeCubicFeetLow, hi = obj.estimatedVolumeCubicFeetHigh
+  const modelCuFt = lo != null || hi != null ? ((lo ?? hi ?? 0) + (hi ?? lo ?? 0)) / 2 : 0
+  const modelCuYd = modelCuFt / 27
+  const taxonomyTotalCuYd = likely * perUnitCuYd
+  const explicitVolumeCubicYards = modelCuYd > taxonomyTotalCuYd ? round2(modelCuYd) : undefined
+  const usedPerObjectCuYd = explicitVolumeCubicYards ?? taxonomyTotalCuYd
+
   return {
     taxonomyId: cat,
     category: cat,
     itemName: (obj.description && obj.description.trim()) || (obj.category && obj.category.trim()) || e.label,
     count: likely,
     countConfidence,
-    estimatedVolumeCubicFeet: round2(perUnitCuYd * 27),
-    estimatedWeightPounds: Math.round(perUnitCuYd * densityForEntry(e)),
+    estimatedVolumeCubicFeet: round2(usedPerObjectCuYd * 27),
+    estimatedWeightPounds: Math.round(usedPerObjectCuYd * densityForEntry(e)),
+    explicitVolumeCubicYards,
     material: undefined,
     condition: undefined,
     disassemblyRequired: (obj.specialHandling ?? []).some((h) => /disassembl/i.test(h)) || e.requiresDisassembly,

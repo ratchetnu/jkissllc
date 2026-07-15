@@ -43,7 +43,9 @@ export function estimateVolume(items: InventoryItem[]): VolumeEstimate {
 
   for (const item of items) {
     const perUnit = taxonomyEntry(item.taxonomyId).perUnitVolumeCubicYards
-    const vol = item.count * perUnit
+    // Bulk/loose piles carry a model-estimated TOTAL volume — use it over count×taxonomy
+    // (a "pile" is not one unit). Discrete items have no explicit volume → unchanged.
+    const vol = item.explicitVolumeCubicYards != null ? item.explicitVolumeCubicYards : item.count * perUnit
     const w = widthFor(item.countConfidence)
     expected += vol
     low += vol * (1 - w)

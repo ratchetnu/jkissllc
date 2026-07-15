@@ -49,10 +49,12 @@ export { WEIGHT_CLASS_LBS_PER_CUBIC_YARD, DENSE_DEBRIS_LBS_PER_CUBIC_YARD }
 const round = (n: number) => Math.round(n)
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n))
 
-// A single item's expected weight (lbs) = count × per-unit volume × density.
+// A single item's expected weight (lbs) = total volume × density. Bulk piles use the
+// model-estimated total volume (explicitVolumeCubicYards); discrete items use count×taxonomy.
 function itemExpectedPounds(item: InventoryItem): number {
   const e = taxonomyEntry(item.taxonomyId)
-  return item.count * e.perUnitVolumeCubicYards * densityForEntry(e)
+  const volCuYd = item.explicitVolumeCubicYards != null ? item.explicitVolumeCubicYards : item.count * e.perUnitVolumeCubicYards
+  return volCuYd * densityForEntry(e)
 }
 
 export function estimateWeight(items: InventoryItem[]): WeightEstimate {

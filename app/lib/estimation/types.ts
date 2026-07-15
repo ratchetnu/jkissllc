@@ -30,6 +30,11 @@ export type InventoryItem = {
   dimensionConfidence?: Confidence
   estimatedVolumeCubicFeet?: number // per-unit, derived (taxonomy default unless refined)
   estimatedWeightPounds?: number    // per-unit, derived
+  // Model-estimated TOTAL volume (cu yd) for this object — set for BULK/LOOSE piles
+  // (brush, debris) where a "pile" is not one taxonomy unit. When present it overrides
+  // count×taxonomy in the volume/weight engines (safety-additive: only set when it
+  // EXCEEDS the taxonomy total, so it can only raise, never shrink, an estimate).
+  explicitVolumeCubicYards?: number
   material?: string
   condition?: string
   disassemblyRequired?: boolean
