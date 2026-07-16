@@ -36,7 +36,10 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     business.repoProvider = 'github'
   }
   business.lastVerificationAt = now
-  business.configurationStatus = result.ok && !!business.previewProjectId && !!business.automationWorkflowFile ? 'ready' : result.ok ? 'incomplete' : 'error'
+  // Vercel is the only Preview provider — auto-fill it when a preview project is set so the
+  // preflight "Preview provider configured" gate and configurationStatus agree.
+  if (business.previewProjectId && !business.previewDeploymentProvider) business.previewDeploymentProvider = 'vercel'
+  business.configurationStatus = result.ok && !!business.previewProjectId && !!business.previewDeploymentProvider && !!business.automationWorkflowFile ? 'ready' : result.ok ? 'incomplete' : 'error'
   business.updatedAt = now
   await saveBusiness(business)
 

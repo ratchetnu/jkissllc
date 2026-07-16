@@ -85,6 +85,8 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
   for (const k of ['requirePullRequest', 'requireOwnerApproval', 'requirePreview', 'requirePassingChecks', 'allowAutomatedMerge', 'allowProductionPromotion'] as const) {
     if (typeof f[k] === 'boolean') (next as Record<string, unknown>)[k] = f[k]
   }
+  // Vercel is the only Preview provider — default it when a preview project is configured.
+  if (next.previewProjectId && !next.previewDeploymentProvider) next.previewDeploymentProvider = 'vercel'
   next.updatedAt = Date.now()
   await saveBusiness(next)
   return NextResponse.json({ ok: true, business: next })
