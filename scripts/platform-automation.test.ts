@@ -12,7 +12,7 @@ import {
   evaluatePreflight, isRepoAllowed, isBranchAllowed, workBranchFor, commitDriftDetected, automaticRollbackEligible,
 } from '../app/lib/platform/automation/preflight'
 import { signCallback, verifyCallback, validateCallbackPayload } from '../app/lib/platform/automation/callback'
-import { StubProvider, getAutomationProvider } from '../app/lib/platform/automation/provider'
+import { StubProvider, getAutomationProvider, type UpdateAutomationProvider } from '../app/lib/platform/automation/provider'
 import { automationIdempotencyKey } from '../app/lib/platform/automation/orchestrator'
 import type { PlatformUpdate, PlatformBusiness, UpdateCompatibility, ValidationChecklist } from '../app/lib/platform/updates/types'
 
@@ -119,13 +119,13 @@ test('callback payload schema rejects malformed', () => {
 })
 
 // ── Provider fails closed ────────────────────────────────────────────────────
-test('StubProvider fails closed on every write op; getAutomationProvider returns stub without a GitHub App', async () => {
-  const p = new StubProvider()
+test('StubProvider fails closed on every write op; getAutomationProvider selects stub vs live by credentials', async () => {
+  const p: UpdateAutomationProvider = new StubProvider()
   const r = await p.dispatchWorkflow('1', { owner: 'o', name: 'n' }, 'wf.yml', 'main', {})
   assert.equal(r.ok, false)
   assert.equal((await p.promoteProduction('prj', 'dep')).ok, false)
-  assert.equal(getAutomationProvider({}).name, 'stub')                        // no GITHUB_APP_* → stub
-  assert.equal(getAutomationProvider({ GITHUB_APP_ID: '1', GITHUB_APP_PRIVATE_KEY: 'k' }).name, 'stub') // live provider deferred → still stub
+  assert.equal(getAutomationProvider({}).name, 'stub')                        // no GITHUB_APP_* → inert stub
+  assert.equal(getAutomationProvider({ GITHUB_APP_ID: '1', GITHUB_APP_PRIVATE_KEY: 'k' }).name, 'github') // creds present → live provider
 })
 
 test('idempotency key is deterministic per (business, update, commit)', () => {

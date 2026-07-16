@@ -349,6 +349,9 @@ function BusinessDetail({ id, onChanged }: { id: string; onChanged: () => void }
   const load = useCallback(async () => { const j = await pf(`/api/admin/platform/businesses/${id}`); setD(j); setF({ releaseChannel: j.business.releaseChannel, updatePolicy: j.business.updatePolicy, updatesPaused: j.business.updatesPaused, manualApprovalRequired: j.business.manualApprovalRequired, healthStatus: j.business.healthStatus, currentCommit: j.business.currentCommit ?? '', currentVersion: j.business.currentVersion ?? '', repoName: j.business.repoName ?? '', notes: j.business.notes ?? '' }) }, [id])
   useEffect(() => { load() }, [load])
   const save = async () => { if (!confirm('Save changes to this business?')) return; setBusy(true); setMsg(''); try { await pf(`/api/admin/platform/businesses/${id}`, { method: 'PATCH', body: JSON.stringify({ fields: f }) }); setMsg('Saved.'); await load(); onChanged() } catch { setMsg('Failed.') } finally { setBusy(false) } }
+  const [conn, setConn] = useState<{ ok: boolean; checks: { name: string; ok: boolean; detail?: string }[] } | null>(null)
+  const [connBusy, setConnBusy] = useState(false)
+  const validateConn = async () => { setConnBusy(true); setConn(null); try { const j = await pf(`/api/admin/platform/automation/validate`, { method: 'POST', body: JSON.stringify({ businessId: id }) }); setConn(j); await load() } catch (e) { setConn({ ok: false, checks: [{ name: 'Request', ok: false, detail: e instanceof Error ? e.message : 'failed' }] }) } finally { setConnBusy(false) } }
   if (!d) return <p style={{ color: 'var(--muted)' }}>Loading…</p>
   const set = (k: string, v: unknown) => setF(p => ({ ...p, [k]: v }))
   return (
@@ -371,6 +374,18 @@ function BusinessDetail({ id, onChanged }: { id: string; onChanged: () => void }
         <div><label style={{ ...lab, marginTop: 10 }}>Notes</label><input style={field} value={String(f.notes)} onChange={e => set('notes', e.target.value)} /></div>
         <button style={{ ...btn('primary'), marginTop: 10 }} disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save (confirmed + audited)'}</button>
         {msg && <span style={{ marginLeft: 10, fontSize: 12, color: '#34d399' }}>{msg}</span>}
+      </div>
+      <div style={{ ...card, border: '1px solid rgba(129,140,248,.35)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <p style={{ ...lab, margin: 0, color: '#a5b4fc' }}>🔌 GitHub connection {d.business.configurationStatus ? `· ${nice(d.business.configurationStatus)}` : ''}</p>
+          <button style={{ ...btn(), marginLeft: 'auto' }} disabled={connBusy} onClick={validateConn}>{connBusy ? 'Validating…' : 'Validate GitHub Connection'}</button>
+        </div>
+        {conn && (
+          <div style={{ marginTop: 8, display: 'grid', gap: 3 }}>
+            {conn.checks.map((c, i) => <div key={i} style={{ fontSize: 12, color: c.ok ? '#34d399' : '#f87171' }}>{c.ok ? '✓' : '✗'} {c.name}{c.detail ? ` — ${c.detail}` : ''}</div>)}
+            <p style={{ fontSize: 11, marginTop: 4, color: 'var(--muted)' }}>Read-only — no repository was modified. Write actions stay disabled until the automation flags are on.</p>
+          </div>
+        )}
       </div>
       <div style={card}>
         <p style={{ ...lab, marginBottom: 8 }}>Pending updates for {d.business.name} ({d.pendingUpdates.length})</p>

@@ -9,6 +9,8 @@
 // The browser NEVER calls a provider. Only the server orchestrator does, and only with
 // values pulled from the registered PlatformBusiness record (never user input).
 
+import { GitHubActionsProvider } from './github-provider'
+
 export type RepoRef = { owner: string; name: string }
 export type ProviderResult<T> = { ok: true; data: T } | { ok: false; error: string; category?: string }
 
@@ -64,7 +66,8 @@ export class StubProvider implements UpdateAutomationProvider {
  */
 export function getAutomationProvider(env: Record<string, string | undefined> = process.env): UpdateAutomationProvider {
   const provisioned = !!env.GITHUB_APP_ID && !!env.GITHUB_APP_PRIVATE_KEY
-  if (!provisioned) return new StubProvider()
-  // TODO(go-live): return new GitHubActionsProvider(env) once the App + Vercel token exist.
-  return new StubProvider()
+  if (!provisioned) return new StubProvider()   // no credentials → inert, fails closed
+  // Live GitHub App provider. READ ops work; WRITE ops still self-gate on
+  // OPERION_GITHUB_ACTIONS_ENABLED (off) — so this is read-only validation mode.
+  return new GitHubActionsProvider(env)
 }
