@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import OperationsShell from '../OperationsShell'
 import { fmtTs } from '../ui'
+import { parseRepoName } from '../../../lib/platform/automation/repo-identity'
 import type {
   PlatformBusiness, PlatformUpdate, UpdateCompatibility, DeploymentRecord, UpdateStatus, CheckStatus,
 } from '../../../lib/platform/updates/types'
@@ -418,7 +419,18 @@ function BusinessDetail({ id, onChanged }: { id: string; onChanged: () => void }
           <div><label style={lab}>Health</label><select style={field} value={String(f.healthStatus)} onChange={e => set('healthStatus', e.target.value)}>{['unknown', 'healthy', 'degraded', 'down'].map(s => <option key={s} value={s}>{s}</option>)}</select></div>
           <div><label style={lab}>Current commit</label><input style={field} value={String(f.currentCommit)} onChange={e => set('currentCommit', e.target.value)} /></div>
           <div><label style={lab}>Current version</label><input style={field} value={String(f.currentVersion)} onChange={e => set('currentVersion', e.target.value)} /></div>
-          <div><label style={lab}>Repo name</label><input style={field} value={String(f.repoName)} onChange={e => set('repoName', e.target.value)} /></div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label style={lab}>Repository (owner/name)</label>
+            <input style={field} placeholder="ratchetnu/supercharged" value={String(f.repoName)} onChange={e => set('repoName', e.target.value)} />
+            {(() => {
+              const raw = String(f.repoName ?? '').trim()
+              if (!raw) return <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>Format: <code>owner/name</code> — a GitHub URL is accepted and normalized.</p>
+              const ref = parseRepoName(raw)
+              return ref
+                ? <p style={{ fontSize: 11, color: '#34d399', marginTop: 3 }}>✓ {ref.owner}/{ref.name}</p>
+                : <p style={{ fontSize: 11, color: '#f87171', marginTop: 3 }}>✗ needs owner/name (e.g. ratchetnu/supercharged) — a bare name, URL, or path is rejected on save.</p>
+            })()}
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 14, marginTop: 10, fontSize: 12 }}>
           <label style={{ display: 'flex', gap: 5, alignItems: 'center', color: 'var(--muted)' }}><input type="checkbox" checked={!!f.updatesPaused} onChange={e => set('updatesPaused', e.target.checked)} />Updates paused</label>

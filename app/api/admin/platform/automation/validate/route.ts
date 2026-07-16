@@ -29,6 +29,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     business.githubInstallationId = d.installationId
     business.repositoryOwner = d.repositoryOwner
     business.repositoryNameOnly = d.repositoryNameOnly
+    business.repoName = d.repoName          // keep the canonical owner/name in sync
     business.defaultBranch = d.defaultBranch
     if (!business.allowedTargetBranches?.length) business.allowedTargetBranches = [d.defaultBranch]
     if (!business.automationWorkflowFile) business.automationWorkflowFile = 'operion-update.yml'

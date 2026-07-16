@@ -8,6 +8,7 @@ import { isEnabled } from '../flags'
 import type { PlatformUpdate, PlatformBusiness, UpdateCompatibility } from '../updates/types'
 import { AUTOMATION_JOB_VERSION, type UpdateAutomationJob, type ExecutionStrategy } from './types'
 import { evaluatePreflight, workBranchFor, commitDriftDetected, type PreflightResult } from './preflight'
+import { businessRepoRef } from './repo-identity'
 import { isProductionApprovalTransition } from './machine'
 import { getAutomationProvider } from './provider'
 import * as store from './store'
@@ -59,9 +60,10 @@ export async function preparePreview(input: {
 
     // Dispatch only when preview automation + GitHub Actions are both enabled AND a
     // provider is provisioned. The Stub fails closed → the job is blocked, not run.
-    if (flag('OPERION_PREVIEW_AUTOMATION_ENABLED', env) && flag('OPERION_GITHUB_ACTIONS_ENABLED', env) && business.githubInstallationId && business.repositoryOwner && business.repositoryNameOnly && business.automationWorkflowFile) {
+    const repoRef = businessRepoRef(business)
+    if (flag('OPERION_PREVIEW_AUTOMATION_ENABLED', env) && flag('OPERION_GITHUB_ACTIONS_ENABLED', env) && business.githubInstallationId && repoRef && business.automationWorkflowFile) {
       const provider = getAutomationProvider(env)
-      const res = await provider.dispatchWorkflow(business.githubInstallationId, { owner: business.repositoryOwner, name: business.repositoryNameOnly }, business.automationWorkflowFile, business.defaultBranch, { deploymentRequestId: id, updateId: update.key, targetBranch: job.workBranch!, executionStrategy: job.strategy })
+      const res = await provider.dispatchWorkflow(business.githubInstallationId, repoRef, business.automationWorkflowFile, business.defaultBranch, { deploymentRequestId: id, updateId: update.key, targetBranch: job.workBranch!, executionStrategy: job.strategy })
       if (res.ok) { job.status = 'creating_branch'; job.currentStep = 'branch'; job.startedAt = now() }
       else { job.status = 'blocked'; job.failureCategory = 'provider_error'; job.failureSummary = res.error }
     } else {

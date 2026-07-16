@@ -3,6 +3,7 @@ import { withTenantRoute } from '../../../../../lib/platform/tenancy/with-tenant
 import { requirePlatformOwner } from '../../../_lib/session'
 import { getBusiness, saveBusiness, listUpdates, listDeployments } from '../../../../../lib/platform/updates/store'
 import type { PlatformBusiness, ReleaseChannel, UpdatePolicy, HealthStatus, BusinessStatus } from '../../../../../lib/platform/updates/types'
+import { parseRepoName } from '../../../../../lib/platform/automation/repo-identity'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -44,8 +45,19 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
   if (typeof f.updatesPaused === 'boolean') next.updatesPaused = f.updatesPaused
   if (typeof f.manualApprovalRequired === 'boolean') next.manualApprovalRequired = f.manualApprovalRequired
   if (typeof f.autoDeployAllowed === 'boolean') next.autoDeployAllowed = f.autoDeployAllowed // inert in Phase 1 (no auto-deploy exists)
-  for (const k of ['name', 'industry', 'edition', 'repoName', 'defaultBranch', 'deployProject', 'productionUrl', 'healthEndpoint', 'currentVersion', 'currentCommit', 'latestVerifiedVersion', 'notes'] as const) {
+  for (const k of ['name', 'industry', 'edition', 'defaultBranch', 'deployProject', 'productionUrl', 'healthEndpoint', 'currentVersion', 'currentCommit', 'latestVerifiedVersion', 'notes'] as const) {
     if (typeof f[k] === 'string') (next as Record<string, unknown>)[k] = s(f[k], 400)
+  }
+  // Repository identity is canonicalized on save: accept only "owner/name" (a GitHub URL is
+  // normalized). Reject a bare name / URL / path / junk so bad data never reaches dispatch.
+  // Persist the canonical repoName AND derive repositoryOwner/repositoryNameOnly in lockstep.
+  if (typeof f.repoName === 'string' && f.repoName.trim()) {
+    const ref = parseRepoName(f.repoName)
+    if (!ref) return NextResponse.json({ error: 'invalid repository — use "owner/name" (e.g. ratchetnu/supercharged)' }, { status: 400 })
+    next.repoName = `${ref.owner}/${ref.name}`
+    next.repositoryOwner = ref.owner
+    next.repositoryNameOnly = ref.name
+    next.repoProvider = next.repoProvider ?? 'github'
   }
   next.updatedAt = Date.now()
   await saveBusiness(next)

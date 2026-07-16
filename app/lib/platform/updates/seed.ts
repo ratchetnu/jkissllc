@@ -21,7 +21,7 @@ export async function seedPlatform(now: number, opts: { force?: boolean } = {}):
   const jkiss: PlatformBusiness = {
     recordVersion: PLATFORM_UPDATE_VERSION, id: 'jkiss', name: 'J KISS LLC', slug: 'jkiss',
     industry: 'Junk removal / moving', edition: 'internal', status: 'active', role: 'source_and_target',
-    repoProvider: 'github', repoName: 'ratchetnu/jkissllc', defaultBranch: 'main',
+    repoProvider: 'github', repoName: 'ratchetnu/jkissllc', repositoryOwner: 'ratchetnu', repositoryNameOnly: 'jkissllc', defaultBranch: 'main',
     deployProvider: 'vercel', deployProject: 'jkissllc', productionUrl: 'https://jkissllc.com', healthEndpoint: '/api/health',
     currentCommit: '14827b7', releaseChannel: 'internal', updatePolicy: 'owner_approval',
     updatesPaused: false, manualApprovalRequired: true, autoDeployAllowed: false, healthStatus: 'healthy',
@@ -30,7 +30,7 @@ export async function seedPlatform(now: number, opts: { force?: boolean } = {}):
   const supercharged: PlatformBusiness = {
     recordVersion: PLATFORM_UPDATE_VERSION, id: 'supercharged', name: 'Supercharged Enterprises', slug: 'supercharged',
     industry: 'Junk removal / moving', edition: 'standard', status: 'active', role: 'target',
-    repoProvider: 'github', repoName: '(separate repo — verify)', defaultBranch: 'main',
+    repoProvider: 'github', repoName: 'ratchetnu/supercharged', repositoryOwner: 'ratchetnu', repositoryNameOnly: 'supercharged', defaultBranch: 'main',
     deployProvider: 'vercel', deployProject: 'supercharged', productionUrl: 'https://superchargedenterprise.com', healthEndpoint: '/api/health',
     releaseChannel: 'beta', updatePolicy: 'owner_approval',
     updatesPaused: false, manualApprovalRequired: true, autoDeployAllowed: false, healthStatus: 'unknown',

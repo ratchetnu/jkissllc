@@ -4,6 +4,7 @@
 // checks that keep browser input from ever choosing a repo, branch, or workflow.
 
 import type { PlatformUpdate, PlatformBusiness, UpdateCompatibility } from '../updates/types'
+import { businessRepoRef } from './repo-identity'
 
 export type PreflightGate = { id: string; label: string; ok: boolean; blocking: boolean; reason?: string }
 export type PreflightResult = { ok: boolean; gates: PreflightGate[] }
@@ -27,7 +28,7 @@ export function evaluatePreflight(x: PreflightInput): PreflightResult {
   add('automation_enabled', 'Automation enabled', x.flags.automation, true, 'OPERION_AUTOMATION_ENABLED is off')
   add('target_is_target', 'Selected business is a deploy target', x.business.role === 'target' || x.business.role === 'source_and_target', true, 'business is not a target')
   add('target_configured', 'Target automation configured', x.business.configurationStatus === 'ready'
-    && !!x.business.repositoryOwner && !!x.business.repositoryNameOnly && !!x.business.githubInstallationId && !!x.business.automationWorkflowFile,
+    && !!businessRepoRef(x.business) && !!x.business.githubInstallationId && !!x.business.automationWorkflowFile,
     true, 'target GitHub App install / repo / workflow not configured (status must be "ready")')
   add('preview_provider', 'Preview provider configured', !!x.business.previewProjectId && !!x.business.previewDeploymentProvider, true, 'no preview project configured')
 
@@ -62,8 +63,10 @@ export function evaluatePreflight(x: PreflightInput): PreflightResult {
 }
 
 // ── Server-side allowlist / drift / rollback validators ──────────────────────
+// Allowlist matches against the business's CANONICAL owner/name — never browser input.
 export function isRepoAllowed(b: PlatformBusiness, owner: string, name: string): boolean {
-  return !!b.repositoryOwner && !!b.repositoryNameOnly && b.repositoryOwner === owner && b.repositoryNameOnly === name
+  const ref = businessRepoRef(b)
+  return !!ref && ref.owner === owner && ref.name === name
 }
 export function isBranchAllowed(b: PlatformBusiness, branch: string, kind: 'source' | 'target'): boolean {
   const list = kind === 'source' ? b.allowedSourceBranches : b.allowedTargetBranches
