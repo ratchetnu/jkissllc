@@ -339,6 +339,16 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed'); setReady(false) } finally { setChecking(false) }
   }, [updateKey, target])
   useEffect(() => { check() }, [check])
+  // Live-poll a running job so the stepper advances when the CI callback lands (the workflow
+  // reports once at the end, so this flips creating_branch → its final state without a refresh).
+  const TERMINAL_STATUSES = ['awaiting_owner_review', 'approved_for_production', 'completed', 'failed', 'build_failed', 'tests_failed', 'preview_failed', 'blocked', 'cancelled', 'rolled_back']
+  const jobId = job?.id; const jobStatus = job?.status
+  useEffect(() => {
+    if (!jobId || !jobStatus || TERMINAL_STATUSES.includes(jobStatus)) return
+    const t = setInterval(async () => { try { const r = await pf(`/api/admin/platform/automation/${jobId}`); if (r.job) setJob(r.job) } catch { /* keep polling */ } }, 8000)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId, jobStatus])
 
   const prepare = async () => {
     setBusy(true); setErr('')

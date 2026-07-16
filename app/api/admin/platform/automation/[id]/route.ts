@@ -3,7 +3,7 @@ import { withTenantRoute } from '../../../../../lib/platform/tenancy/with-tenant
 import { requirePlatformOwner, getPrincipal } from '../../../_lib/session'
 import { getJob } from '../../../../../lib/platform/automation/store'
 import { getBusiness } from '../../../../../lib/platform/updates/store'
-import { approveProduction, transitionJob } from '../../../../../lib/platform/automation/orchestrator'
+import { approveProduction, transitionJob, retryPreview } from '../../../../../lib/platform/automation/orchestrator'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -38,7 +38,7 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
     }
     case 'request-changes': return NextResponse.json(await transitionJob(id, 'failed', actor, `changes requested: ${typeof body.reason === 'string' ? body.reason.slice(0, 500) : ''}`))
     case 'cancel': return NextResponse.json(await transitionJob(id, 'cancelled', actor, typeof body.reason === 'string' ? body.reason : 'cancelled by owner'))
-    case 'retry': return NextResponse.json(await transitionJob(id, 'queued', actor))
+    case 'retry': { const r = await retryPreview({ jobId: id }); return NextResponse.json(r, { status: r.ok ? 200 : 400 }) }
     case 'request-rollback': return NextResponse.json(await transitionJob(id, 'rollback_required', actor, typeof body.reason === 'string' ? body.reason : 'rollback requested'))
     default: return NextResponse.json({ error: 'unknown action' }, { status: 400 })
   }

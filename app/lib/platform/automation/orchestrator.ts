@@ -11,6 +11,7 @@ import { evaluatePreflight, workBranchFor, commitDriftDetected, automaticRollbac
 import { businessRepoRef } from './repo-identity'
 import { isProductionApprovalTransition } from './machine'
 import { getAutomationProvider } from './provider'
+import { getBusiness, getUpdate } from '../updates/store'
 import * as store from './store'
 
 const flag = (f: Parameters<typeof isEnabled>[0], env?: Record<string, string | undefined>) => isEnabled(f, env)
@@ -132,6 +133,29 @@ export async function approveProduction(input: {
     await store.saveJob(j)
     // Merge/promote is gated + provider-driven; with the stub it fails closed → blocked.
     // (Live merge/deploy is the deferred go-live wiring.)
+    return { ok: true, job: j }
+  }, { onBusy: () => ({ ok: false, reason: 'target_locked' }), token: `${job.businessId}:${now()}` })
+}
+
+const RETRYABLE = new Set(['failed', 'build_failed', 'tests_failed', 'preview_failed', 'blocked'])
+/** Re-dispatch a failed job's workflow (same manifest/branch). Owner-only via the route. */
+export async function retryPreview(input: { jobId: string; env?: Record<string, string | undefined> }): Promise<ApproveResult> {
+  const env = input.env ?? process.env
+  const job = await store.getJob(input.jobId)
+  if (!job) return { ok: false, reason: 'no_job' }
+  if (!RETRYABLE.has(job.status)) return { ok: false, reason: `job is ${job.status}, not retryable` }
+  const [business, update] = await Promise.all([getBusiness(job.businessId), getUpdate(job.updateId)])
+  const repoRef = business ? businessRepoRef(business) : null
+  if (!business || !update || !repoRef || !business.githubInstallationId || !business.automationWorkflowFile) return { ok: false, reason: 'target not configured' }
+  if (!(flag('OPERION_PREVIEW_AUTOMATION_ENABLED', env) && flag('OPERION_GITHUB_ACTIONS_ENABLED', env))) return { ok: false, reason: 'preview automation not enabled' }
+  return store.withBusinessLock<ApproveResult>(job.businessId, async () => {
+    const j = await store.getJob(input.jobId)
+    if (!j || !RETRYABLE.has(j.status)) return { ok: false, reason: 'job changed' }
+    const provider = getAutomationProvider(env)
+    const res = await provider.dispatchWorkflow(business.githubInstallationId!, repoRef, business.automationWorkflowFile!, business.defaultBranch, { deploymentRequestId: j.id, updateId: update.key, targetBranch: j.workBranch!, executionStrategy: j.strategy })
+    if (!res.ok) { j.status = 'blocked'; j.failureCategory = 'provider_error'; j.failureSummary = res.error; j.updatedAt = now(); await store.saveJob(j); return { ok: false, job: j, reason: res.error } }
+    j.status = 'creating_branch'; j.currentStep = 'branch'; j.attemptCount = (j.attemptCount ?? 0) + 1; j.startedAt = now(); j.failureCategory = undefined; j.failureSummary = undefined; j.updatedAt = now()
+    await store.saveJob(j)
     return { ok: true, job: j }
   }, { onBusy: () => ({ ok: false, reason: 'target_locked' }), token: `${job.businessId}:${now()}` })
 }

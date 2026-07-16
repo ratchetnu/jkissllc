@@ -65,9 +65,13 @@ jobs:
         id: typecheck
         run: npx tsc --noEmit
 
-      - name: Lint
+      # Lint ONLY the transferred files — the target repo's pre-existing lint debt must not
+      # fail an unrelated preview. (Typecheck + tests + build still run whole-repo.)
+      - name: Lint (changed files)
         id: lint
-        run: npm run lint
+        run: |
+          CHANGED=$(git diff --name-only HEAD -- '*.ts' '*.tsx' '*.js' '*.jsx' '*.mjs' | tr '\n' ' ')
+          if [ -n "$CHANGED" ]; then echo "linting: $CHANGED"; npx eslint $CHANGED; else echo "no lintable files changed"; fi
 
       - name: Test
         id: test
