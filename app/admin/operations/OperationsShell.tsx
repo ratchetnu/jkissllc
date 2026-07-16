@@ -4,26 +4,29 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import { useAdminSession } from '../useAdminSession'
-import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, Settings, LogOut, Search, Plus, Zap, Rocket } from 'lucide-react'
+import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, Settings, LogOut, Search, Plus, Zap, Rocket, Wallet, MoreHorizontal, X } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import CommandPalette from './CommandPalette'
 import LastLogin from './LastLogin'
 import Image from 'next/image'
 import { OpsPilotWordmark } from '../../components/opspilot/OpsPilotMark'
+import { NAV_ITEMS, visibleNav, primaryNav, moreGroups } from './nav-config'
 
-// `adminOnly` tabs are hidden from managers in the UI AND gated server-side on the
-// matching route (hiding is never the control — see the API guards).
-const NAV = [
-  { href: '/admin/operations', label: 'Home', Icon: Home },
-  { href: '/admin/operations/book-now', label: 'Book Now', Icon: Zap },
-  { href: '/admin/operations/list', label: 'Operations', Icon: ClipboardList },
-  { href: '/admin/operations/employees', label: 'Crew', Icon: Users },
-  { href: '/admin/operations/businesses', label: 'Businesses', Icon: Building2 },
-  { href: '/admin/operations/equipment', label: 'Equipment', Icon: Truck },
-  { href: '/admin/operations/claims', label: 'Claims', Icon: ShieldAlert },
-  { href: '/admin/operations/messages', label: 'Messages', Icon: MessageSquare },
-  { href: '/admin/operations/settings', label: 'Settings', Icon: Settings, adminOnly: true },
-  { href: '/admin/operations/platform', label: 'Platform', Icon: Rocket, adminOnly: true, ownerOnly: true },
-]
+// Icons live here (by href) so the nav model stays pure + testable. `adminOnly`/`ownerOnly`
+// tabs are hidden by role AND gated server-side on the matching route (hiding is never the control).
+const ICONS: Record<string, LucideIcon> = {
+  '/admin/operations': Home,
+  '/admin/operations/book-now': Zap,
+  '/admin/operations/list': ClipboardList,
+  '/admin/operations/employees': Users,
+  '/admin/operations/businesses': Building2,
+  '/admin/operations/equipment': Truck,
+  '/admin/operations/claims': ShieldAlert,
+  '/admin/operations/pay-statements': Wallet,
+  '/admin/operations/messages': MessageSquare,
+  '/admin/operations/settings': Settings,
+  '/admin/operations/platform': Rocket,
+}
 
 const iStyle: React.CSSProperties = {
   width: '100%', padding: '13px 15px', background: 'color-mix(in srgb, var(--card) 90%, transparent)',
@@ -73,12 +76,19 @@ export default function OperationsShell({ children }: { children: React.ReactNod
     return () => { live = false }
   }, [authed])
 
-  // Managers don't see admin-only tabs (Settings). Platform is owner-only. The matching
-  // APIs are gated server-side too — this only tidies the dock.
-  const nav = NAV.filter(n => (!n.adminOnly || role !== 'manager') && (!('ownerOnly' in n && n.ownerOnly) || isPlatformOwner))
+  // Role-aware nav model: managers don't see admin-only tabs; Platform is owner-only. The
+  // matching APIs are gated server-side too — this only tidies the dock. Mobile shows the
+  // primary destinations + a More sheet; desktop shows the full dock.
+  const [moreOpen, setMoreOpen] = useState(false)
+  const nav = visibleNav(NAV_ITEMS, { role: role ?? undefined, isOwner: isPlatformOwner })
+  const primary = primaryNav(nav)
+  const groups = moreGroups(nav, primary)
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- close the More sheet on navigation
+  useEffect(() => { setMoreOpen(false) }, [pathname])
 
   // Longest-prefix match so /admin/routes/invoices highlights Businesses, not Operations.
   const activeHref = [...nav].filter(n => pathname === n.href || pathname.startsWith(n.href + '/')).sort((a, b) => b.href.length - a.href.length)[0]?.href
+  const inMoreActive = !!activeHref && !primary.some(p => p.href === activeHref)
 
   // The create action is reachable from every tab, not just Home — one persistent
   // "+" that follows you. Hidden only on the builder itself (you're already there).
@@ -146,10 +156,10 @@ export default function OperationsShell({ children }: { children: React.ReactNod
       {/* Desktop floating dock */}
       <nav className="os-glass" style={{ position: 'fixed', bottom: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 50, display: 'none', gap: 2, padding: 7, borderRadius: 999, boxShadow: 'var(--os-shadow)' }} data-dock="desktop">
         {nav.map(n => {
-          const active = n.href === activeHref
+          const active = n.href === activeHref; const Icon = ICONS[n.href] ?? Home
           return (
             <Link key={n.href} href={n.href} className="os-dock-item" style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 999, fontSize: 13.5, fontWeight: 700, textDecoration: 'none', color: active ? '#fff' : 'var(--muted)', background: active ? 'var(--red)' : 'transparent' }}>
-              <n.Icon size={17} /> {n.label}
+              <Icon size={17} /> {n.label}
               {n.href === '/admin/operations/book-now' && bookNowNew > 0 && (
                 <span aria-label={`${bookNowNew} new`} style={{ marginLeft: 2, fontSize: 10.5, fontWeight: 800, background: active ? '#fff' : 'var(--red)', color: active ? 'var(--red)' : '#fff', borderRadius: 999, minWidth: 17, height: 17, padding: '0 5px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{bookNowNew}</span>
               )}
@@ -158,13 +168,13 @@ export default function OperationsShell({ children }: { children: React.ReactNod
         })}
       </nav>
 
-      {/* Mobile bottom nav — same dock look: icon-only inactive, red pill for the active tab */}
+      {/* Mobile bottom nav — max 5: the primary destinations + a More button (never overcrowded) */}
       <nav className="os-glass" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'space-around', alignItems: 'center', padding: '10px 8px calc(10px + env(safe-area-inset-bottom))', borderLeft: 'none', borderRight: 'none', borderBottom: 'none' }} data-dock="mobile">
-        {nav.map(n => {
-          const active = n.href === activeHref
+        {primary.map(n => {
+          const active = n.href === activeHref; const Icon = ICONS[n.href] ?? Home
           return (
             <Link key={n.href} href={n.href} aria-label={n.label} className="os-dock-item" style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: active ? 7 : 0, padding: active ? '9px 15px' : '9px', borderRadius: 999, textDecoration: 'none', color: active ? '#fff' : 'var(--muted)', background: active ? 'var(--red)' : 'transparent' }}>
-              <n.Icon size={20} />
+              <Icon size={20} />
               {active && <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>{n.label}</span>}
               {n.href === '/admin/operations/book-now' && bookNowNew > 0 && (
                 <span aria-label={`${bookNowNew} new`} style={{ position: 'absolute', top: 2, right: 2, fontSize: 9.5, fontWeight: 800, background: 'var(--red)', color: '#fff', borderRadius: 999, minWidth: 15, height: 15, padding: '0 4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1.5px solid var(--card)' }}>{bookNowNew}</span>
@@ -172,7 +182,47 @@ export default function OperationsShell({ children }: { children: React.ReactNod
             </Link>
           )
         })}
+        {/* More — opens the grouped sheet; active-highlighted when the current page lives inside it */}
+        <button aria-label="More" aria-expanded={moreOpen} onClick={() => setMoreOpen(v => !v)} className="os-dock-item os-tap" style={{ display: 'inline-flex', alignItems: 'center', gap: (moreOpen || inMoreActive) ? 7 : 0, padding: (moreOpen || inMoreActive) ? '9px 15px' : '9px', borderRadius: 999, border: 'none', cursor: 'pointer', color: (moreOpen || inMoreActive) ? '#fff' : 'var(--muted)', background: (moreOpen || inMoreActive) ? 'var(--red)' : 'transparent' }}>
+          <MoreHorizontal size={20} />
+          {(moreOpen || inMoreActive) && <span style={{ fontSize: 13, fontWeight: 700 }}>More</span>}
+        </button>
       </nav>
+
+      {/* More sheet — grouped secondary modules, role-filtered, safe-area padded, large tap targets */}
+      {moreOpen && (
+        <>
+          <div onClick={() => setMoreOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 58, background: 'rgba(0,0,0,.45)' }} data-dock="mobile-more-overlay" />
+          <div role="dialog" aria-label="More navigation" style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 59, maxHeight: '82vh', overflowY: 'auto', background: 'var(--card)', borderTop: '1px solid var(--line)', borderTopLeftRadius: 20, borderTopRightRadius: 20, boxShadow: 'var(--os-shadow)', padding: '10px 16px calc(20px + env(safe-area-inset-bottom))' }} data-dock="mobile-more">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0 12px' }}>
+              <div style={{ width: 36, height: 4, borderRadius: 999, background: 'var(--line)', margin: '0 auto', position: 'absolute', left: 0, right: 0, top: 8 }} />
+              <div style={{ flex: 1 }}>
+                <p style={{ fontWeight: 800, fontSize: 15 }}>More</p>
+                <p style={{ fontSize: 12, color: 'var(--muted)' }}>{role === 'manager' ? 'Manager' : isPlatformOwner ? 'Owner' : 'Admin'}</p>
+              </div>
+              <button onClick={() => { setMoreOpen(false); window.dispatchEvent(new Event('jkos-open-search')) }} aria-label="Search" className="os-tap" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 999, fontSize: 13, fontWeight: 700, color: 'var(--muted)', background: 'transparent', border: '1px solid var(--line)', cursor: 'pointer' }}><Search size={15} /> Search</button>
+              <button onClick={() => setMoreOpen(false)} aria-label="Close" className="os-tap" style={{ display: 'inline-flex', padding: 9, borderRadius: 999, color: 'var(--muted)', background: 'transparent', border: '1px solid var(--line)', cursor: 'pointer' }}><X size={16} /></button>
+            </div>
+            {groups.map(g => (
+              <div key={g.group} style={{ marginBottom: 14 }}>
+                <p style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--muted)', margin: '0 0 6px 2px' }}>{g.label}</p>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  {g.items.map(n => {
+                    const active = n.href === activeHref; const Icon = ICONS[n.href] ?? Home
+                    return (
+                      <Link key={n.href} href={n.href} onClick={() => setMoreOpen(false)} className="os-tap" style={{ display: 'flex', alignItems: 'center', gap: 12, minHeight: 50, padding: '0 14px', borderRadius: 14, textDecoration: 'none', color: active ? '#fff' : 'var(--text)', background: active ? 'var(--red)' : 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)' }}>
+                        <Icon size={19} /> <span style={{ fontSize: 15, fontWeight: 600 }}>{n.label}</span>
+                        {n.href === '/admin/operations/book-now' && bookNowNew > 0 && <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 800, background: 'var(--red)', color: '#fff', borderRadius: 999, minWidth: 18, height: 18, padding: '0 5px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{bookNowNew}</span>}
+                      </Link>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+            <button onClick={() => { setMoreOpen(false); signOut() }} className="os-tap" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', minHeight: 48, borderRadius: 14, marginTop: 4, color: '#ff6680', background: 'transparent', border: '1px solid rgba(224,0,42,.4)', fontSize: 14.5, fontWeight: 700, cursor: 'pointer' }}><LogOut size={16} /> Sign out</button>
+          </div>
+        </>
+      )}
 
       <style>{`
         /* 900px, not 768: the desktop dock is a fixed row of up to 8 pills (~800px)
