@@ -17,6 +17,15 @@ export type BusinessStatus = 'active' | 'onboarding' | 'paused' | 'archived'
 export type BusinessRole = 'source' | 'target' | 'source_and_target'
 export type HealthStatus = 'unknown' | 'healthy' | 'degraded' | 'down'
 
+// Controlled automation modes (no unrestricted autonomous production mode exists).
+export type AutomationMode =
+  | 'manual_prompt'            // current behavior — generate a prompt, owner runs it
+  | 'automated_preparation'    // branch + apply + tests; production needs owner approval
+  | 'automated_preview'        // + preview deploy/verify automatically; production manual
+  | 'approved_production'      // owner explicitly approves a verified preview → merge+deploy
+  | 'fully_manual'             // Operion only records external work
+export type ConfigurationStatus = 'not_configured' | 'incomplete' | 'validating' | 'ready' | 'error'
+
 export type PlatformBusiness = {
   recordVersion: number
   id: string                       // slug, e.g. 'jkiss' | 'supercharged'
@@ -47,6 +56,27 @@ export type PlatformBusiness = {
   lastVerificationAt?: number
   enabledModules?: string[]
   notes?: string
+  // ── Controlled automation config (Phase 5) — NON-SECRET only. The GitHub App private
+  // key + Vercel token live in env; here we store the installation id + allowlists +
+  // gate booleans. Nothing here lets the browser choose a repo/branch/workflow at run time.
+  automationMode?: AutomationMode              // default manual_prompt
+  githubInstallationId?: string                // GitHub App installation (non-secret)
+  repositoryOwner?: string                     // e.g. 'ratchetnu'
+  repositoryNameOnly?: string                  // e.g. 'supercharged' (repoName kept for display)
+  allowedSourceBranches?: string[]             // allowlist
+  allowedTargetBranches?: string[]             // allowlist (work branches are derived, prefix-checked)
+  automationWorkflowFile?: string              // e.g. 'operion-update.yml' (server-configured, not user input)
+  rollbackWorkflowFile?: string
+  previewDeploymentProvider?: string           // 'vercel'
+  previewProjectId?: string
+  productionProjectId?: string
+  requirePullRequest?: boolean
+  requireOwnerApproval?: boolean               // default true
+  requirePreview?: boolean                     // default true
+  requirePassingChecks?: boolean               // default true
+  allowAutomatedMerge?: boolean                // default false
+  allowProductionPromotion?: boolean           // default false
+  configurationStatus?: ConfigurationStatus    // default not_configured
   createdAt: number
   updatedAt: number
 }

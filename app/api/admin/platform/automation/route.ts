@@ -1,0 +1,35 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
+import { requirePlatformOwner, getPrincipal } from '../../_lib/session'
+import { getUpdate, getBusiness, getCompatMap } from '../../../../lib/platform/updates/store'
+import { listJobs } from '../../../../lib/platform/automation/store'
+import { preparePreview } from '../../../../lib/platform/automation/orchestrator'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+// GET — list automation jobs. Platform-owner only.
+export const GET = withTenantRoute(async (req: NextRequest) => {
+  const who = await requirePlatformOwner(req)
+  if (who instanceof NextResponse) return who
+  return NextResponse.json({ jobs: await listJobs() })
+})
+
+// POST — Prepare Preview for an update × target. Owner only. Validates preflight and
+// creates a job; dispatch happens only when automation is fully enabled + provisioned.
+export const POST = withTenantRoute(async (req: NextRequest) => {
+  const who = await requirePlatformOwner(req)
+  if (who instanceof NextResponse) return who
+  const body = await req.json().catch(() => ({}))
+  const updateKey = typeof body.updateKey === 'string' ? body.updateKey : ''
+  const businessId = typeof body.businessId === 'string' ? body.businessId : ''
+  const [update, business] = await Promise.all([getUpdate(updateKey), getBusiness(businessId)])
+  if (!update || !business) return NextResponse.json({ error: 'unknown update or business' }, { status: 400 })
+  const compat = (await getCompatMap(updateKey))[businessId]
+  const actor = (await getPrincipal(req))?.sub || 'owner'
+  const result = await preparePreview({
+    update, business, compat, actor,
+    strategy: body.strategy, approvals: body.approvals && typeof body.approvals === 'object' ? { migration: body.approvals.migration === true, environment: body.approvals.environment === true } : undefined,
+  })
+  return NextResponse.json(result, { status: result.ok ? 200 : 400 })
+})

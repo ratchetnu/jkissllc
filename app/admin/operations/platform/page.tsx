@@ -254,6 +254,59 @@ function UpdateDetail({ k, businesses, onChanged }: { k: string; businesses: Pla
         ))}
         <RecordDeployment businesses={businesses} onSave={(body) => act({ action: 'record-deployment', ...body }, 'record')} busy={busy === 'record'} />
       </div>
+
+      <AutomationPanel updateKey={k} businesses={businesses} />
+    </div>
+  )
+}
+
+// ── Automation panel: Prepare Preview → gates → stepper → owner approval ──────
+const AUTO_STEPS = ['preflight', 'branch', 'implementation', 'tests', 'build', 'preview', 'owner_review', 'production', 'verification']
+function AutomationPanel({ updateKey, businesses }: { updateKey: string; businesses: PlatformBusiness[] }) {
+  const targets = businesses.filter(b => b.role === 'target' || b.role === 'source_and_target')
+  const [target, setTarget] = useState(targets[0]?.id ?? '')
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
+  const [gates, setGates] = useState<{ id: string; label: string; ok: boolean; blocking: boolean; reason?: string }[] | null>(null)
+  const [job, setJob] = useState<{ id: string; status: string; currentStep: string; previewUrl?: string; pullRequestUrl?: string; failureSummary?: string } | null>(null)
+  const prepare = async () => {
+    setBusy(true); setErr(''); setGates(null)
+    try {
+      const j = await pf('/api/admin/platform/automation', { method: 'POST', body: JSON.stringify({ updateKey, businessId: target }) })
+      setGates(j.preflight?.gates ?? null); setJob(j.job ?? null)
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') } finally { setBusy(false) }
+  }
+  const act = async (action: string, confirmMsg?: string) => {
+    if (!job) return; if (confirmMsg && !confirm(confirmMsg)) return
+    setBusy(true); setErr('')
+    try { const j = await pf(`/api/admin/platform/automation/${job.id}`, { method: 'POST', body: JSON.stringify({ action }) }); if (j.job) setJob(j.job) } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') } finally { setBusy(false) }
+  }
+  return (
+    <div style={{ ...card, border: '1px solid rgba(129,140,248,.35)' }}>
+      <p style={{ ...lab, marginBottom: 8, color: '#a5b4fc' }}>⚙️ Automation — Prepare Preview → Review → Approve Production (owner-gated)</p>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <select style={{ ...field, width: 'auto' }} value={target} onChange={e => setTarget(e.target.value)}>{targets.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
+        <button style={btn('primary')} disabled={busy || !target} onClick={prepare}>{busy ? '…' : 'Prepare Preview'}</button>
+      </div>
+      {err && <p style={{ color: '#f87171', fontSize: 12, marginTop: 6 }}>{err}</p>}
+      {gates && (
+        <div style={{ marginTop: 10, display: 'grid', gap: 3 }}>
+          <p style={{ fontSize: 11, color: 'var(--muted)' }}>Preflight gates:</p>
+          {gates.map(g => <div key={g.id} style={{ fontSize: 12, color: g.ok ? '#34d399' : g.blocking ? '#f87171' : '#fbbf24' }}>{g.ok ? '✓' : g.blocking ? '✗' : '⚠'} {g.label}{g.reason ? ` — ${g.reason}` : ''}</div>)}
+        </div>
+      )}
+      {job && (
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+            {AUTO_STEPS.map(s => <span key={s} style={{ fontSize: 10.5, padding: '2px 7px', borderRadius: 6, background: job.currentStep === s ? 'var(--red)' : 'rgba(255,255,255,.05)', color: job.currentStep === s ? '#fff' : 'var(--muted)' }}>{nice(s)}</span>)}
+          </div>
+          <p style={{ fontSize: 12 }}>Job <span style={{ fontFamily: 'monospace' }}>{job.id}</span> · <span style={{ fontWeight: 700, color: job.status.includes('fail') || job.status === 'blocked' ? '#f87171' : job.status === 'completed' ? '#34d399' : '#fbbf24' }}>{nice(job.status)}</span>{job.failureSummary ? ` — ${job.failureSummary}` : ''}</p>
+          {job.previewUrl && <a href={job.previewUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#a5b4fc' }}>Preview →</a>}
+          <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+            {job.status === 'awaiting_owner_review' && <button style={btn('primary')} disabled={busy} onClick={() => act('approve-production', 'Approve this verified preview for PRODUCTION? This is the owner promotion gate.')}>Approve Production</button>}
+            <button style={btn()} disabled={busy} onClick={() => act('cancel', 'Cancel this automation job?')}>Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

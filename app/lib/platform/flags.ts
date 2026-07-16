@@ -30,7 +30,16 @@ export type FeatureFlag =
   | 'VISION_SHADOW_QUEUE_ENABLED'   // allow enqueueing shadow jobs after authoritative terminal
   | 'VISION_SHADOW_AUTO_ENQUEUE'    // auto-enqueue ALL eligible bookings (off ⇒ selected-only)
   | 'VISION_SHADOW_SELECTED_ONLY'   // only owner-selected bookings are eligible (safe default ON)
-  | 'VISION_SHADOW_WORKER_ENABLED'  // the independent shadow cron actually processes jobs
+  | 'VISION_SHADOW_WORKER_ENABLED'
+  // Operion Update Center automation (controlled release orchestration). ALL default
+  // OFF — the control plane deploys inert; live GitHub/Vercel execution needs the owner
+  // to provision the GitHub App + Vercel token + add the target-repo workflow first.
+  | 'OPERION_AUTOMATION_ENABLED'          // master switch for any automation orchestration
+  | 'OPERION_GITHUB_ACTIONS_ENABLED'      // allow dispatching the target GitHub Actions workflow
+  | 'OPERION_PREVIEW_AUTOMATION_ENABLED'  // allow automated preview prep (branch→tests→preview)
+  | 'OPERION_PRODUCTION_PROMOTION_ENABLED'// allow owner-approved production promotion
+  | 'OPERION_AI_ADAPTATION_ENABLED'       // allow the AI-assisted source→target adaptation strategy
+  | 'OPERION_AUTOMATIC_ROLLBACK_ENABLED'  // allow automatic rollback (only where a verified path exists)  // the independent shadow cron actually processes jobs
 
 export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   TENANCY_ENABLED: false,
@@ -66,6 +75,14 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   VISION_SHADOW_AUTO_ENQUEUE: false,
   VISION_SHADOW_SELECTED_ONLY: true,
   VISION_SHADOW_WORKER_ENABLED: false,
+  // Operion automation — every switch OFF. The foundation is inert until the owner
+  // completes external setup (GitHub App, Vercel token, target workflow) and flips these.
+  OPERION_AUTOMATION_ENABLED: false,
+  OPERION_GITHUB_ACTIONS_ENABLED: false,
+  OPERION_PREVIEW_AUTOMATION_ENABLED: false,
+  OPERION_PRODUCTION_PROMOTION_ENABLED: false,
+  OPERION_AI_ADAPTATION_ENABLED: false,
+  OPERION_AUTOMATIC_ROLLBACK_ENABLED: false,
 }
 
 export const ALL_FLAGS = Object.keys(FLAG_DEFAULTS) as FeatureFlag[]
