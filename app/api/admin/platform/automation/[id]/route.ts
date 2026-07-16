@@ -34,7 +34,11 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
       const business = await getBusiness(job.businessId)
       if (!business) return NextResponse.json({ error: 'business missing' }, { status: 400 })
       const r = await approveProduction({ jobId: id, business, actor })
-      return NextResponse.json(r, { status: r.ok ? 200 : 400 })
+      // Clear, owner-facing message when promotion is gated off (this is by design for now).
+      const error = r.ok ? undefined : /promotion disabled/.test(r.reason ?? '')
+        ? 'Production promotion isn’t enabled yet. The Preview is verified and approved for review — deploying it to production is a separate, deliberate step that turns on in the production-promotion sprint.'
+        : (r.reason ?? 'Approve failed')
+      return NextResponse.json(r.ok ? r : { ...r, error }, { status: r.ok ? 200 : 400 })
     }
     case 'request-changes': return NextResponse.json(await transitionJob(id, 'failed', actor, `changes requested: ${typeof body.reason === 'string' ? body.reason.slice(0, 500) : ''}`))
     case 'cancel': return NextResponse.json(await transitionJob(id, 'cancelled', actor, typeof body.reason === 'string' ? body.reason : 'cancelled by owner'))

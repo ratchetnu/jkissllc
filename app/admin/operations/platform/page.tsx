@@ -451,13 +451,17 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
             </p>
           )}
 
-          {/* Review actions (owner-only; production stays disabled unless the promotion flag is on) */}
+          {/* Review actions (owner-only; production promotion stays gated off until its sprint) */}
           {reviewMode && (
-            <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-              {job.previewUrl && <a href={job.previewUrl} target="_blank" rel="noreferrer" style={{ ...btn('primary'), textDecoration: 'none' }}>Open Preview →</a>}
-              <button style={btn()} disabled={busy} onClick={() => act('request-changes', 'Send this back for changes?')}>Request Changes</button>
-              <button style={btn('danger')} disabled={busy} onClick={() => act('cancel', 'Reject and close this preview?')}>Reject</button>
-              <button style={btn()} disabled={busy} onClick={() => act('approve-production', 'Approve this verified preview for PRODUCTION? (blocked unless production promotion is enabled)')}>Approve</button>
+            <div style={{ marginTop: 8 }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {job.previewUrl && <a href={job.previewUrl} target="_blank" rel="noreferrer" style={{ ...btn('primary'), textDecoration: 'none' }}>Open Preview →</a>}
+                {job.pullRequestUrl && <a href={job.pullRequestUrl} target="_blank" rel="noreferrer" style={{ ...btn(), textDecoration: 'none' }}>Open PR →</a>}
+                <button style={btn()} disabled={busy} onClick={() => act('request-changes', 'Send this back for changes?')}>Request Changes</button>
+                <button style={btn('danger')} disabled={busy} onClick={() => act('cancel', 'Reject and close this preview?')}>Reject</button>
+                <button style={{ ...btn(), opacity: 0.7 }} disabled={busy} onClick={() => act('approve-production', 'Promote this verified Preview to PRODUCTION? (currently disabled — the production sprint isn’t enabled)')}>Approve → Production</button>
+              </div>
+              <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>“Approve → Production” promotes to production and is <strong>owner-gated + currently OFF</strong> (it turns on in the production-promotion sprint). Reviewing, Request Changes, and Reject are available now.</p>
             </div>
           )}
 
