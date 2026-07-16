@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePlatformOwner, getPrincipal } from '../../_lib/session'
-import { listUpdates, saveUpdate, nextUpdateKey } from '../../../../lib/platform/updates/store'
+import { listUpdates, saveUpdate, nextUpdateKey, getBusiness } from '../../../../lib/platform/updates/store'
 import { computeUpdateKpis } from '../../../../lib/platform/updates/policy'
 import { PLATFORM_UPDATE_VERSION, type PlatformUpdate, type ValidationChecklist } from '../../../../lib/platform/updates/types'
 
@@ -52,6 +52,12 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     validation: BLANK_VALIDATION, risks: s(body.risks, 2000), limitations: s(body.limitations, 2000),
     exclusions: s(body.exclusions, 2000), ownerNotes: s(body.ownerNotes, 4000),
     createdBy: actor, createdAt: now, updatedAt: now,
+  }
+  // Derive the source repo from the source business when not given — commit transfer reads
+  // files from this repo at sourceCommit, so the update must carry it.
+  if (!u.sourceRepo && u.sourceBusinessId) {
+    const sb = await getBusiness(u.sourceBusinessId)
+    if (sb?.repoName) u.sourceRepo = sb.repoName
   }
   await saveUpdate(u)
   return NextResponse.json({ ok: true, update: u })
