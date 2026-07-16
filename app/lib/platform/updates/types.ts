@@ -46,6 +46,7 @@ export type PlatformBusiness = {
   currentVersion?: string
   currentCommit?: string
   latestVerifiedVersion?: string
+  latestVerifiedCommit?: string    // commit of the last VERIFIED production deployment (set by reconciliation)
   releaseChannel: ReleaseChannel
   updatePolicy: UpdatePolicy
   updatesPaused: boolean
@@ -228,6 +229,7 @@ export type DeploymentRecord = {
   provider?: string
   deploymentId?: string            // Vercel deployment id
   deploymentUrl?: string
+  automationJobId?: string         // the UpdateAutomationJob that produced this deployment (idempotency key for reconciliation)
   environment?: string
   status: DeploymentStatus
   buildStatus?: CheckStatus

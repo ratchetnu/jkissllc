@@ -6,6 +6,7 @@ import { getAutomationProvider } from '../../../lib/platform/automation/provider
 import { businessRepoRef } from '../../../lib/platform/automation/repo-identity'
 import { retryPreview, finalizePreview, advancePromotion, advanceRollback } from '../../../lib/platform/automation/orchestrator'
 import { reconcileDecision } from '../../../lib/platform/automation/reconcile'
+import { reconcileCompletedJobs } from '../../../lib/platform/automation/reconcile-records'
 import { isTransientFailure, artifactsComplete } from '../../../lib/platform/automation/deploy-view'
 import { PROMOTION_ACTIVE } from '../../../lib/platform/automation/promotion'
 import { AUTOMATION_ACTIVE } from '../../../lib/platform/automation/types'
@@ -80,5 +81,15 @@ export async function GET(req: NextRequest) {
     }
     results.push({ jobId: job.id, action: decision.action, reason: decision.reason })
   }
-  return NextResponse.json({ ok: true, reconciled: results.length, results })
+
+  // Fallback for the automatic post-deployment reconciliation: finalize any job that reached
+  // `completed` but whose related records were not propagated inline (a lost inline call / a
+  // promotion completed by an earlier cron pass). Idempotent — a finalized job is skipped.
+  const finalized = await reconcileCompletedJobs({ actor: 'system', source: 'reconciler' })
+  for (const f of finalized) {
+    const detail = [f.updateStatus && `${f.updateStatus.key}→${f.updateStatus.to}`, f.businessCommit && `commit ${String(f.businessCommit).slice(0, 10)}`].filter(Boolean).join(', ')
+    results.push({ jobId: f.jobId, action: `finalize_records:${f.action}`, reason: f.reason ?? (detail || 'reconciled') })
+  }
+
+  return NextResponse.json({ ok: true, reconciled: results.length, finalized: finalized.filter(f => f.action === 'finalized').length, results })
 }
