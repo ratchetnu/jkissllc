@@ -615,6 +615,12 @@ h1, h2, h3, .display { font-family: var(--font-display); font-feature-settings: 
   border-color: var(--line-ink);
 }
 
+/* Two-up split used on the /operion product tour + industry panels.
+   Single column on phones, side-by-side once there's room. minmax(0,1fr)
+   so long data strings truncate/wrap instead of forcing horizontal scroll. */
+.tour-split { display: grid; gap: clamp(22px, 4vw, 44px); grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 860px) { .tour-split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+
 /* Instrument grid — the faint backdrop behind OpsPilot bands. Decorative. */
 .ops-grid {
   background-image:
