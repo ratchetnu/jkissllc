@@ -134,6 +134,25 @@ export class VercelPreviewProvider {
     return { ok: true, data: { deploymentId: id, url: absUrl(match.url), inspectorUrl: match.uid || match.id ? this.inspector(id) : undefined, state, ready: state === 'ready', failed: state === 'error' || state === 'canceled' } }
   }
 
+  // ── Find the production deployment (optionally for a specific commit) ────────
+  async findProductionDeployment(project: string, commitSha?: string, teamId?: string): Promise<ProviderResult<PreviewDeployment | null>> {
+    if (!this.configured) return { ok: false, error: 'VERCEL_TOKEN not configured', category: 'not_configured' }
+    if (!project) return { ok: false, error: 'project required', category: 'config' }
+    const scope = (explicit?: string) => { const id = explicit || this.teamId; return id ? `&teamId=${encodeURIComponent(id)}` : '' }
+    let res
+    try { res = await this.fetch(`${API}/v6/deployments?projectId=${encodeURIComponent(project)}&target=production${scope(teamId)}&limit=20`, { headers: this.headers() }) }
+    catch { return { ok: false, error: 'Vercel API unreachable', category: 'network' } }
+    if (res.status === 401 || res.status === 403) return { ok: false, error: 'Vercel auth/permission denied', category: 'permission' }
+    if (!res.ok) return { ok: false, error: `list deployments failed (${res.status})`, category: 'api' }
+    const b = (await res.json().catch(() => null)) as { deployments?: Array<{ uid?: string; id?: string; url?: string; readyState?: string; state?: string; meta?: { githubCommitSha?: string } }> } | null
+    const list = b?.deployments ?? []
+    const match = commitSha ? list.find(d => (d.meta?.githubCommitSha ?? '').startsWith(commitSha) || commitSha.startsWith(d.meta?.githubCommitSha ?? '\0')) : list[0]
+    if (!match) return { ok: true, data: null }
+    const state = mapReadyState(match.readyState ?? match.state)
+    const id = match.uid ?? match.id ?? ''
+    return { ok: true, data: { deploymentId: id, url: absUrl(match.url), inspectorUrl: this.inspector(id), state, ready: state === 'ready', failed: state === 'error' || state === 'canceled' } }
+  }
+
   // ── Read a Preview deployment's current state ───────────────────────────────
   async readPreviewDeployment(deploymentId: string, teamId?: string): Promise<ProviderResult<PreviewDeployment>> {
     if (!this.configured) return { ok: false, error: 'VERCEL_TOKEN not configured', category: 'not_configured' }
@@ -214,6 +233,7 @@ export class StubPreviewProvider {
   private fail<T>() { return Promise.resolve({ ok: false as const, error: 'Vercel preview not configured (VERCEL_TOKEN missing)', category: 'not_configured' }) as Promise<ProviderResult<T>> }
   createPreviewDeployment() { return this.fail<PreviewDeployment>() }
   findPreviewByBranch() { return this.fail<PreviewDeployment | null>() }
+  findProductionDeployment() { return this.fail<PreviewDeployment | null>() }
   readPreviewDeployment() { return this.fail<PreviewDeployment>() }
   waitForPreviewReady() { return this.fail<PreviewDeployment>() }
   cancelPreviewDeployment() { return this.fail<{ canceled: boolean }>() }

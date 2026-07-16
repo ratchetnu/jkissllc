@@ -9,6 +9,7 @@ import type { PlatformUpdate, PlatformBusiness, UpdateCompatibility } from '../u
 import { AUTOMATION_JOB_VERSION, type UpdateAutomationJob, type ExecutionStrategy } from './types'
 import { evaluatePreflight, workBranchFor, commitDriftDetected, automaticRollbackEligible, type PreflightResult } from './preflight'
 import { businessRepoRef } from './repo-identity'
+import { canPromote } from './promotion'
 import { isProductionApprovalTransition } from './machine'
 import { getAutomationProvider } from './provider'
 import { getPreviewProvider } from './vercel-provider'
@@ -121,20 +122,65 @@ export async function approveProduction(input: {
   const env = input.env ?? process.env
   const job = await store.getJob(input.jobId)
   if (!job) return { ok: false, reason: 'no_job' }
-  if (job.status !== 'awaiting_owner_review') return { ok: false, reason: `job is ${job.status}, not awaiting_owner_review` }
+  const gate = canPromote({ status: job.status, approvedCommit: job.approvedCommit, targetCommit: job.targetCommit, pullRequestNumber: job.pullRequestNumber, flagEnabled: flag('OPERION_PRODUCTION_PROMOTION_ENABLED', env), businessAllows: !!input.business.allowProductionPromotion })
+  if (!gate.ok) return { ok: false, reason: gate.reason }
   if (!isProductionApprovalTransition('awaiting_owner_review', 'approved_for_production')) return { ok: false, reason: 'illegal_transition' }
-  if (!flag('OPERION_PRODUCTION_PROMOTION_ENABLED', env) || !input.business.allowProductionPromotion) {
-    return { ok: false, reason: 'production promotion disabled (flag or business setting)' }
-  }
   return store.withBusinessLock<ApproveResult>(job.businessId, async () => {
     const j = await store.getJob(input.jobId)
     if (!j || j.status !== 'awaiting_owner_review') return { ok: false, reason: 'job changed' }
     // Commit-drift lock: never promote a commit different from the one the owner reviewed.
-    if (commitDriftDetected(j.approvedCommit, j.targetCommit)) { j.status = 'failed'; j.failureCategory = 'commit_drift'; j.failureSummary = 'approved commit drifted from PR head'; j.updatedAt = now(); await store.saveJob(j); return { ok: false, job: j, reason: 'commit_drift' } }
+    if (commitDriftDetected(j.approvedCommit ?? j.targetCommit, j.targetCommit)) { j.status = 'failed'; j.failureCategory = 'commit_drift'; j.failureSummary = 'approved commit drifted from PR head'; j.updatedAt = now(); await store.saveJob(j); return { ok: false, job: j, reason: 'commit_drift' } }
     j.status = 'approved_for_production'; j.approvedBy = input.actor; j.approvedAt = now(); j.approvedCommit = j.targetCommit; j.updatedAt = now()
     await store.saveJob(j)
-    // Merge/promote is gated + provider-driven; with the stub it fails closed → blocked.
-    // (Live merge/deploy is the deferred go-live wiring.)
+
+    // Execute the merge (owner-approved, flag-gated). The production DEPLOY happens on the
+    // target repo's git integration after the merge; advancePromotion() confirms + verifies it.
+    const repoRef = businessRepoRef(input.business)
+    if (!repoRef || !input.business.githubInstallationId || !j.pullRequestNumber) {
+      j.status = 'failed'; j.failureCategory = 'internal_error'; j.failureSummary = 'missing repo/PR for merge'; j.updatedAt = now(); await store.saveJob(j)
+      return { ok: false, job: j, reason: 'missing repo/PR for merge' }
+    }
+    j.status = 'merging'; j.updatedAt = now(); await store.saveJob(j)
+    const provider = getAutomationProvider(env)
+    const merged = await provider.mergePullRequest(input.business.githubInstallationId, repoRef, j.pullRequestNumber, j.approvedCommit ?? j.targetCommit ?? '')
+    if (!merged.ok) {
+      j.status = 'failed'; j.failureCategory = merged.category === 'commit_drift' ? 'commit_drift' : 'merge_conflict'; j.failureSummary = merged.error; j.updatedAt = now(); await store.saveJob(j)
+      return { ok: false, job: j, reason: merged.error }
+    }
+    j.mergeCommit = merged.data.mergeCommit; j.status = 'production_deploying'; j.updatedAt = now(); await store.saveJob(j)
+    return { ok: true, job: j }
+  }, { onBusy: () => ({ ok: false, reason: 'target_locked' }), token: `${job.businessId}:${now()}` })
+}
+
+/** Confirm the post-merge production deployment + health, then complete. Reconciler-driven so
+ *  it survives the browser closing. Never merges again; only advances a promoting job. */
+export async function advancePromotion(input: { jobId: string; env?: Record<string, string | undefined> }): Promise<ApproveResult> {
+  const env = input.env ?? process.env
+  const job = await store.getJob(input.jobId)
+  if (!job) return { ok: false, reason: 'no_job' }
+  if (job.status !== 'production_deploying' && job.status !== 'verifying') return { ok: false, reason: `job is ${job.status}, not deploying` }
+  const business = await getBusiness(job.businessId)
+  if (!business) return { ok: false, reason: 'business missing' }
+  const projectId = business.productionProjectId || business.previewProjectId
+  return store.withBusinessLock<ApproveResult>(job.businessId, async () => {
+    const j = await store.getJob(input.jobId); if (!j) return { ok: false, reason: 'no_job' }
+    if (j.status === 'production_deploying') {
+      const vercel = getPreviewProvider(env)
+      const prod = projectId ? await vercel.findProductionDeployment(projectId, j.mergeCommit) : { ok: false as const, error: 'no project', category: 'config' }
+      if (!prod.ok || !prod.data) return { ok: true, job: j, reason: 'awaiting production deployment' }
+      if (prod.data.failed) { j.status = 'rollback_required'; j.failureCategory = 'promotion_failed'; j.failureSummary = 'production build failed'; j.updatedAt = now(); await store.saveJob(j); return { ok: false, job: j, reason: 'production deploy failed' } }
+      if (!prod.data.ready) return { ok: true, job: j, reason: 'production build in progress' }
+      j.productionDeploymentId = prod.data.deploymentId; j.productionUrl = prod.data.url; j.status = 'verifying'; j.updatedAt = now(); await store.saveJob(j)
+    }
+    if (j.status === 'verifying') {
+      const provider = getAutomationProvider(env)
+      const base = j.productionUrl || business.productionUrl
+      const healthUrl = base ? base.replace(/\/$/, '') + (business.healthEndpoint ?? '/') : undefined
+      const health = healthUrl ? await provider.runHealthCheck(healthUrl) : { ok: false as const, error: 'no url', category: 'config' }
+      if (health.ok && health.data.ok) { j.status = 'completed'; j.completedAt = now(); j.updatedAt = now(); await store.saveJob(j); return { ok: true, job: j } }
+      j.status = 'rollback_required'; j.failureCategory = 'health_failed'; j.failureSummary = 'production health check failed'; j.updatedAt = now(); await store.saveJob(j)
+      return { ok: false, job: j, reason: 'production health check failed' }
+    }
     return { ok: true, job: j }
   }, { onBusy: () => ({ ok: false, reason: 'target_locked' }), token: `${job.businessId}:${now()}` })
 }

@@ -38,10 +38,10 @@ jobs:
 
       - name: Create work branch
         run: |
-          # Commit as the real github-actions bot so Vercel's git-author check accepts the
-          # Preview (a made-up bot email is rejected as "not a valid GitHub account").
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Author as the owner's GitHub account — Vercel's git-author check only builds
+          # previews whose author is a connected team account (no bot identity qualifies).
+          git config user.name "ratchetnu"
+          git config user.email "272044755+ratchetnu@users.noreply.github.com"
           git checkout -b "${{ inputs.targetBranch }}" || git checkout "${{ inputs.targetBranch }}"
 
       - name: Setup Node
