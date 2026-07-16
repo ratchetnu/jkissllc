@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import { useAdminSession } from '../useAdminSession'
-import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, Settings, LogOut, Search, Plus, Zap } from 'lucide-react'
+import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, Settings, LogOut, Search, Plus, Zap, Rocket } from 'lucide-react'
 import CommandPalette from './CommandPalette'
 import LastLogin from './LastLogin'
 import Image from 'next/image'
@@ -22,6 +22,7 @@ const NAV = [
   { href: '/admin/operations/claims', label: 'Claims', Icon: ShieldAlert },
   { href: '/admin/operations/messages', label: 'Messages', Icon: MessageSquare },
   { href: '/admin/operations/settings', label: 'Settings', Icon: Settings, adminOnly: true },
+  { href: '/admin/operations/platform', label: 'Platform', Icon: Rocket, adminOnly: true, ownerOnly: true },
 ]
 
 const iStyle: React.CSSProperties = {
@@ -59,9 +60,22 @@ export default function OperationsShell({ children }: { children: React.ReactNod
     }
   }
 
-  // Managers don't see admin-only tabs (Settings). The matching APIs are gated
-  // server-side too — this only tidies the dock.
-  const nav = NAV.filter(n => !n.adminOnly || role !== 'manager')
+  // Platform (Operion Update Center) is platform-owner-only. Ask the server; the real
+  // gate is requirePlatformOwner on every platform route — this just hides the link.
+  const [isPlatformOwner, setIsPlatformOwner] = useState(false)
+  useEffect(() => {
+    if (!authed) return
+    let live = true
+    fetch('/api/admin/platform/whoami', { credentials: 'same-origin' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => { if (live) setIsPlatformOwner(!!j?.owner) })
+      .catch(() => {})
+    return () => { live = false }
+  }, [authed])
+
+  // Managers don't see admin-only tabs (Settings). Platform is owner-only. The matching
+  // APIs are gated server-side too — this only tidies the dock.
+  const nav = NAV.filter(n => (!n.adminOnly || role !== 'manager') && (!('ownerOnly' in n && n.ownerOnly) || isPlatformOwner))
 
   // Longest-prefix match so /admin/routes/invoices highlights Businesses, not Operations.
   const activeHref = [...nav].filter(n => pathname === n.href || pathname.startsWith(n.href + '/')).sort((a, b) => b.href.length - a.href.length)[0]?.href

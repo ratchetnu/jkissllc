@@ -258,3 +258,25 @@ export async function requireTenantSession(req: NextRequest): Promise<TenantPrin
     { tenantId: who.tenantId, authSource: who.sub === 'owner' ? 'legacy-admin' : 'password' },
   )
 }
+
+// ── Platform owner (Operion Update Center) ─────────────────────────────────────
+// A tier ABOVE admin. Only the legacy owner session (sub==='owner') OR a named admin
+// listed in PLATFORM_OWNER_SUBS (comma-separated) may reach the platform Update Center.
+// Normal J KISS admins are NOT granted access. Server-enforced — hiding UI is never the
+// control. `isPlatformOwner` is pure so it can be unit-tested.
+export function platformOwnerSubs(env: Record<string, string | undefined> = process.env): string[] {
+  return (env.PLATFORM_OWNER_SUBS ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+}
+export function isPlatformOwner(
+  who: Pick<Principal, 'sub' | 'role'> | null | undefined,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  if (!who || who.role !== 'admin') return false
+  return who.sub === 'owner' || platformOwnerSubs(env).includes(who.sub)
+}
+export async function requirePlatformOwner(req: NextRequest): Promise<Principal | NextResponse> {
+  const who = await getPrincipal(req)
+  if (!who) return unauthorized()
+  if (!isPlatformOwner(who)) return forbidden()
+  return who
+}

@@ -15,7 +15,7 @@ const ALLOWLIST = new Set([
 ])
 
 // Any of these being present means the route resolves a principal server-side.
-const GUARD = /\b(requireSession|requirePermission|requireAdmin|requireStaffSession|requirePrincipal|requireTenantSession|getPrincipal)\b/
+const GUARD = /\b(requireSession|requirePermission|requireAdmin|requireStaffSession|requirePrincipal|requireTenantSession|requirePlatformOwner|getPrincipal)\b/
 
 function walk(dir: string): string[] {
   const out: string[] = []
@@ -45,7 +45,7 @@ test('every admin API route calls a server-side authorization guard', () => {
 // requireAdmin, so a crew member cannot reach the operations surface. This turns
 // the migration into a permanent invariant — reintroducing requireSession fails CI.
 const COARSE = /\brequireSession\s*\(/           // the call, not requireStaffSession(...)
-const STRONG = /\b(requirePermission|requireStaffSession|requireAdmin)\b/
+const STRONG = /\b(requirePermission|requireStaffSession|requireAdmin|requirePlatformOwner)\b/
 
 // Identity/auth-state probes intentionally resolve the principal directly (via
 // getPrincipal) and serve ANY authed caller — they answer "am I signed in, and as
