@@ -83,6 +83,7 @@ export type UpdateAutomationJob = {
   completedAt?: number
   approvedAt?: number
   approvedBy?: string
+  recordsFinalizedAt?: number    // when post-deploy reconciliation propagated this job to all related records (idempotency marker)
   // production promotion (Sprint 2)
   mergeCommit?: string
   rollbackTargetDeploymentId?: string   // the known-good production deployment captured before promoting
