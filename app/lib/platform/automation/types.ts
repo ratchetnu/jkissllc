@@ -82,6 +82,7 @@ export type UpdateAutomationJob = {
   // failure / rollback
   failureCategory?: AutomationFailure
   failureSummary?: string
+  automaticRollbackEligible?: boolean   // computed at prepare from OPERION_AUTOMATIC_ROLLBACK_ENABLED + a verified rollback path
   rollbackJobId?: string
   traceId?: string
   idempotencyKey: string

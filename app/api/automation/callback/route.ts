@@ -41,9 +41,13 @@ export async function POST(req: NextRequest) {
     job.previewDeploymentId = p.previewDeploymentId; job.previewUrl = p.previewUrl
     job.status = 'awaiting_owner_review'; job.currentStep = 'owner_review'   // never auto-promotes
   } else {
-    job.status = p.status === 'build_failed' ? 'build_failed' : 'failed'
     job.failureCategory = (p.status === 'tests_failed' ? 'tests_failed' : p.status === 'build_failed' ? 'build_failed' : p.status === 'apply_failed' ? 'apply_failed' : p.status === 'preview_failed' ? 'preview_failed' : 'provider_error')
     job.failureSummary = p.errorSummary ?? p.status
+    // OPERION_AUTOMATIC_ROLLBACK_ENABLED consumer: when the job was flagged eligible at
+    // prepare (flag on + verified rollback path), a failure auto-routes to rollback_required
+    // instead of a plain terminal failure. Off ⇒ eligible=false ⇒ unchanged behavior.
+    const failed = p.status === 'build_failed' ? 'build_failed' : 'failed'
+    job.status = job.automaticRollbackEligible ? 'rollback_required' : failed
   }
   job.updatedAt = now
   await saveJob(job)

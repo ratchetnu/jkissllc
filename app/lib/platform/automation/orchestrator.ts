@@ -7,7 +7,7 @@
 import { isEnabled } from '../flags'
 import type { PlatformUpdate, PlatformBusiness, UpdateCompatibility } from '../updates/types'
 import { AUTOMATION_JOB_VERSION, type UpdateAutomationJob, type ExecutionStrategy } from './types'
-import { evaluatePreflight, workBranchFor, commitDriftDetected, type PreflightResult } from './preflight'
+import { evaluatePreflight, workBranchFor, commitDriftDetected, automaticRollbackEligible, type PreflightResult } from './preflight'
 import { businessRepoRef } from './repo-identity'
 import { isProductionApprovalTransition } from './machine'
 import { getAutomationProvider } from './provider'
@@ -18,6 +18,16 @@ const now = () => Date.now()
 
 export function automationIdempotencyKey(businessId: string, updateKey: string, sourceCommit: string | undefined): string {
   return `auto:${businessId}:${updateKey}:${sourceCommit ?? 'nocommit'}`
+}
+
+/** The strategy a job actually runs with. The AI-assisted `ai_adaptation` strategy requires
+ *  OPERION_AI_ADAPTATION_ENABLED; when that flag is off it downgrades to the deterministic,
+ *  non-AI `commit_transfer` strategy. Other strategies pass through unchanged. This is the
+ *  live consumer of OPERION_AI_ADAPTATION_ENABLED — the dispatched workflow receives the
+ *  effective strategy. */
+export function effectiveStrategy(requested: ExecutionStrategy, env: Record<string, string | undefined> = process.env): ExecutionStrategy {
+  if (requested === 'ai_adaptation' && !flag('OPERION_AI_ADAPTATION_ENABLED', env)) return 'commit_transfer'
+  return requested
 }
 
 export type PrepareResult = { ok: boolean; preflight: PreflightResult; job?: UpdateAutomationJob; reason?: string }
@@ -60,12 +70,24 @@ export async function preparePreview(input: {
     if (dup) return { ok: true, preflight, job: dup, reason: 'idempotent_existing' }
     const id = await store.nextJobId()
     const t = now()
+    // Live consumers of the two remaining flags:
+    //  • strategy — ai_adaptation downgrades to commit_transfer unless AI adaptation is on.
+    //  • autoRollback — whether a later failure auto-routes to rollback_required (only when
+    //    the flag is on AND a verified rollback path exists). Off ⇒ failures stay `failed`.
+    const strategy = effectiveStrategy(input.strategy ?? 'ai_adaptation', env)
+    const autoRollback = automaticRollbackEligible({
+      enabled: flag('OPERION_AUTOMATIC_ROLLBACK_ENABLED', env),
+      rollbackWorkflowFile: business.rollbackWorkflowFile,
+      irreversibleMigration: !!update.migrationRequired && !update.rollbackSupported,
+      previousVerifiedCommit: business.currentCommit,
+    })
     const job: UpdateAutomationJob = {
       jobVersion: AUTOMATION_JOB_VERSION, id, updateId: update.key, businessId: business.id,
-      mode: business.automationMode ?? 'manual_prompt', strategy: input.strategy ?? 'ai_adaptation',
+      mode: business.automationMode ?? 'manual_prompt', strategy,
       status: 'queued', currentStep: 'branch', attemptCount: 0, idempotencyKey: idem,
       sourceRepository: update.sourceRepo, sourceCommit: update.sourceCommit,
       targetRepository: business.repoName, baseBranch: business.defaultBranch, workBranch: workBranchFor(update.key),
+      automaticRollbackEligible: autoRollback,
       createdBy: actor, queuedAt: t, createdAt: t, updatedAt: t,
     }
     await store.saveJob(job); await store.bindIdempotency(idem, id)
