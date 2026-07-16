@@ -100,7 +100,7 @@ ${line('Project', target.deployProject)}
 - Deploy ${target.name} ONLY. Do not touch any other business's repo or deployment.
 
 ## 20. Health checks
-- After deploy: production READY, ${target.healthEndpoint ?? '/api/health'} returns 200, admin loads, critical modules load, no new 5xx.
+- After deploy: production READY, ${target.healthEndpoint ? `${target.healthEndpoint} returns 200` : `${target.productionUrl ?? 'the production URL'} returns 200 (this business has no dedicated /api/health endpoint)`}, admin loads, critical modules load, no new 5xx.
 
 ## 21. Rollback
 ${updates.some((u) => u.rollbackSupported) ? '- Rollback supported. Record the previous commit before deploying so a revert is one step.' : '- No rollback plan on record — capture the previous commit and document a revert path before deploying.'}

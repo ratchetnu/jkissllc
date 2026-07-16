@@ -139,6 +139,9 @@ test('deployment prompt embeds metadata + safety guardrails, excludes flagged co
   assert.ok(p.includes('jkiss-logo'))                          // excluded component surfaced
   assert.ok(p.includes('do NOT deploy if any fails') || p.includes('do NOT deploy'))
   assert.ok(!p.includes('${'))                                 // no un-interpolated template holes
+  // target has no healthEndpoint → prompt must NOT tell the session to check a bogus /api/health
+  assert.ok(p.includes('no dedicated /api/health'))
+  assert.ok(p.includes('https://sc.com'))
 })
 
 // ── Owner gate ───────────────────────────────────────────────────────────────
