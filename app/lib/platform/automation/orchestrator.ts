@@ -11,6 +11,8 @@ import { evaluatePreflight, workBranchFor, commitDriftDetected, automaticRollbac
 import { businessRepoRef } from './repo-identity'
 import { isProductionApprovalTransition } from './machine'
 import { getAutomationProvider } from './provider'
+import { getPreviewProvider } from './vercel-provider'
+import { artifactsComplete } from './deploy-view'
 import { getBusiness, getUpdate } from '../updates/store'
 import * as store from './store'
 
@@ -157,6 +159,52 @@ export async function retryPreview(input: { jobId: string; env?: Record<string, 
     j.status = 'creating_branch'; j.currentStep = 'branch'; j.attemptCount = (j.attemptCount ?? 0) + 1; j.startedAt = now(); j.failureCategory = undefined; j.failureSummary = undefined; j.updatedAt = now()
     await store.saveJob(j)
     return { ok: true, job: j }
+  }, { onBusy: () => ({ ok: false, reason: 'target_locked' }), token: `${job.businessId}:${now()}` })
+}
+
+export type FinalizeResult = { ok: boolean; job?: UpdateAutomationJob; artifactsComplete?: boolean; needsAttention?: string; reason?: string }
+/** Recover a review-ready job that is missing its PR and/or Preview URL. Idempotent:
+ *  discovers existing artifacts before creating, never duplicates, never touches production. */
+export async function finalizePreview(input: { jobId: string; env?: Record<string, string | undefined> }): Promise<FinalizeResult> {
+  const env = input.env ?? process.env
+  const job = await store.getJob(input.jobId)
+  if (!job) return { ok: false, reason: 'no_job' }
+  const business = await getBusiness(job.businessId)
+  const repoRef = business ? businessRepoRef(business) : null
+  if (!business || !repoRef || !business.githubInstallationId || !job.workBranch) return { ok: false, reason: 'target not configured' }
+
+  return store.withBusinessLock<FinalizeResult>(job.businessId, async () => {
+    const j = await store.getJob(input.jobId); if (!j) return { ok: false, reason: 'no_job' }
+    const provider = getAutomationProvider(env)
+    let needsAttention: string | undefined
+
+    // 1) Pull request — discover, then create only if permitted.
+    if (!j.pullRequestUrl) {
+      const found = await provider.findPullRequest(business.githubInstallationId!, repoRef, j.workBranch!)
+      if (found.ok && found.data) { j.pullRequestNumber = found.data.number; j.pullRequestUrl = found.data.url }
+      else if (business.requirePullRequest !== false && flag('OPERION_GITHUB_ACTIONS_ENABLED', env)) {
+        const update = await getUpdate(j.updateId)
+        const created = await provider.createPullRequest(business.githubInstallationId!, repoRef, j.workBranch!, business.defaultBranch, `Operion: ${update?.title ?? j.updateId}`, `Automated Operion commit-transfer preview for ${j.updateId} (job ${j.id}). Preview-only — do not merge until owner review in Operion.`)
+        if (created.ok) { j.pullRequestNumber = created.data.number; j.pullRequestUrl = created.data.url }
+        else needsAttention = `Pull request could not be created (${created.error}). In the Supercharged repo: Settings → Actions → General → Workflow permissions → allow GitHub Actions to create pull requests.`
+      }
+    }
+
+    // 2) Preview — discover the branch's Vercel deployment, then create only if configured.
+    if (!j.previewUrl && business.previewProjectId) {
+      const vercel = getPreviewProvider(env)
+      const found = await vercel.findPreviewByBranch(business.previewProjectId, j.workBranch!)
+      if (found.ok && found.data) { j.previewDeploymentId = found.data.deploymentId; j.previewUrl = found.data.url }
+      else if (found.ok && !found.data && business.previewRepoId) {
+        const created = await vercel.createPreviewDeployment({ project: business.previewProjectId, ref: j.workBranch!, repoId: business.previewRepoId })
+        if (created.ok) { j.previewDeploymentId = created.data.deploymentId; j.previewUrl = created.data.url }
+        else needsAttention = needsAttention ?? `Preview could not be created (${created.error}).`
+      }
+    }
+
+    j.updatedAt = now(); await store.saveJob(j)
+    const complete = artifactsComplete(j, { requirePr: business.requirePullRequest, requirePreview: business.requirePreview })
+    return { ok: true, job: j, artifactsComplete: complete, needsAttention }
   }, { onBusy: () => ({ ok: false, reason: 'target_locked' }), token: `${job.businessId}:${now()}` })
 }
 

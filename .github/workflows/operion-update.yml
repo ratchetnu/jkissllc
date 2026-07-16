@@ -85,7 +85,7 @@ jobs:
         id: push
         if: success()
         run: |
-          git add -A
+          git add -A -- ':!apply-result.json'   # keep the runner's result file out of the commit
           git commit -m "chore(operion): apply update ${{ inputs.updateId }} (job ${{ inputs.deploymentRequestId }})" || echo "nothing to commit"
           git push --force origin "${{ inputs.targetBranch }}"   # automation-owned branch; retries overwrite cleanly
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"

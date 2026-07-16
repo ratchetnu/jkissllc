@@ -31,6 +31,8 @@ export interface UpdateAutomationProvider {
   readWorkflowRun(installationId: string, repo: RepoRef, runId: string): Promise<ProviderResult<{ status: string; conclusion?: string; url?: string }>>
   readCheckResults(installationId: string, repo: RepoRef, ref: string): Promise<ProviderResult<{ passed: boolean; total: number; failed: number }>>
   readPullRequest(installationId: string, repo: RepoRef, number: number): Promise<ProviderResult<{ headSha: string; mergeable: boolean; url: string }>>
+  /** Find an existing PR for a head branch (any state) — for artifact recovery. */
+  findPullRequest(installationId: string, repo: RepoRef, head: string): Promise<ProviderResult<{ number: number; url: string } | null>>
   createPullRequest(installationId: string, repo: RepoRef, head: string, base: string, title: string, body: string): Promise<ProviderResult<{ number: number; url: string }>>
   mergePullRequest(installationId: string, repo: RepoRef, number: number, expectedHeadSha: string): Promise<ProviderResult<{ merged: boolean; mergeCommit?: string }>>
   readDeployment(project: string, deploymentId: string): Promise<ProviderResult<{ state: string; url?: string }>>
@@ -58,6 +60,7 @@ export class StubProvider implements UpdateAutomationProvider {
   readWorkflowRun() { return fail<{ status: string; conclusion?: string; url?: string }>() }
   readCheckResults() { return fail<{ passed: boolean; total: number; failed: number }>() }
   readPullRequest() { return fail<{ headSha: string; mergeable: boolean; url: string }>() }
+  findPullRequest() { return fail<{ number: number; url: string } | null>() }
   createPullRequest() { return fail<{ number: number; url: string }>() }
   mergePullRequest() { return fail<{ merged: boolean; mergeCommit?: string }>() }
   readDeployment() { return fail<{ state: string; url?: string }>() }

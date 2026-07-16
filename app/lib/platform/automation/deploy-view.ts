@@ -3,7 +3,14 @@
 // primary action, the friendly 6-stage progress, and the retry classification (which
 // failures are transient/auto-retryable vs owner-actionable). No I/O — fully testable.
 
-export type DeployActionKind = 'deploy' | 'fix' | 'running' | 'retry' | 'regenerate' | 'review' | 'approved' | 'none'
+export type DeployActionKind = 'deploy' | 'fix' | 'running' | 'retry' | 'regenerate' | 'finalize' | 'review' | 'approved' | 'none'
+
+// A review-ready job isn't truly ready until its required artifacts (PR + Preview) exist.
+export function artifactsComplete(job: { pullRequestUrl?: string | null; previewUrl?: string | null }, opts: { requirePr?: boolean; requirePreview?: boolean }): boolean {
+  if (opts.requirePr !== false && !job.pullRequestUrl) return false
+  if (opts.requirePreview !== false && !job.previewUrl) return false
+  return true
+}
 
 // Transient categories the reconciler may AUTO-retry (bounded). Everything else is an
 // owner decision — code/transfer/security failures are never silently retried.
@@ -51,12 +58,14 @@ export function deployStage(job: JobLike): { reached: number; failedAt: number |
   return { reached: 0, failedAt: null }  // cancelled / unknown
 }
 
-/** The single primary action the owner sees, computed from job + readiness. */
-export function deployPrimary(job: JobLike | null, ready: boolean): { kind: DeployActionKind; label: string } {
+/** The single primary action the owner sees, computed from job + readiness + artifacts.
+ *  `artifactsOk` = required PR/Preview exist; a review-ready job missing them shows
+ *  "Complete Preview" instead of a review it can't actually perform. */
+export function deployPrimary(job: JobLike | null, ready: boolean, artifactsOk = true): { kind: DeployActionKind; label: string } {
   if (!job) return ready ? { kind: 'deploy', label: 'Deploy Preview' } : { kind: 'fix', label: 'Fix configuration' }
   const s = job.status
   if (ACTIVE.has(s)) return { kind: 'running', label: 'Deploying…' }
-  if (REVIEW.has(s)) return { kind: 'review', label: 'Review Preview' }
+  if (REVIEW.has(s)) return artifactsOk ? { kind: 'review', label: 'Review Preview' } : { kind: 'finalize', label: 'Complete Preview' }
   if (s === 'approved_for_production') return { kind: 'approved', label: 'Approved for production' }
   if (s === 'cancelled') return ready ? { kind: 'deploy', label: 'Deploy Preview' } : { kind: 'fix', label: 'Fix configuration' }
   if (job.failureCategory === 'commit_drift') return { kind: 'regenerate', label: 'Regenerate manifest' }

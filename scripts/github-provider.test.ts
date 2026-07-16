@@ -78,6 +78,16 @@ test('getRepoInstallation discovers the installation id (200) and fails closed w
   assert.equal(r2.ok, false); assert.ok(!r2.ok && r2.category === 'installation')
 })
 
+test('findPullRequest discovers an existing PR (or null) — read-only, for recovery', async () => {
+  const has = mockFetch([tokenRoute, ['/pulls?head=', () => ({ status: 200, body: [{ number: 1, html_url: 'https://github.com/ratchetnu/supercharged/pull/1' }] })]])
+  const r1 = await new GitHubActionsProvider(ENV, { fetch: has.fetch, now: () => T }).findPullRequest('999', REPO, 'operion/upd-1006')
+  assert.equal(r1.ok && r1.data?.number, 1)
+  assert.equal(r1.ok && r1.data?.url, 'https://github.com/ratchetnu/supercharged/pull/1')
+  const none = mockFetch([tokenRoute, ['/pulls?head=', () => ({ status: 200, body: [] })]])
+  const r2 = await new GitHubActionsProvider(ENV, { fetch: none.fetch, now: () => T }).findPullRequest('999', REPO, 'operion/x')
+  assert.equal(r2.ok && r2.data, null)
+})
+
 test('WRITE ops fail closed while OPERION_GITHUB_ACTIONS_ENABLED is off (default)', async () => {
   const m = mockFetch([tokenRoute])
   const p = new GitHubActionsProvider(ENV, { fetch: m.fetch, now: () => T })

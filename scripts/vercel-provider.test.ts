@@ -105,6 +105,19 @@ test('waitForPreviewReady: times out while still building', async () => {
   assert.ok(!r.ok && r.category === 'timeout')
 })
 
+test('findPreviewByBranch: matches a preview by git branch, ignores production, null when none', async () => {
+  const m = mockFetch([['/v6/deployments', () => ({ status: 200, body: { deployments: [
+    { uid: 'dpl_prod', url: 'prod.vercel.app', readyState: 'READY', target: 'production', meta: { githubCommitRef: 'operion/upd-1006' } },
+    { uid: 'dpl_prev', url: 'prev-abc.vercel.app', readyState: 'READY', target: null, meta: { githubCommitRef: 'operion/upd-1006' } },
+  ] } })]])
+  const r = await new VercelPreviewProvider(ENV, { fetch: m.fetch }).findPreviewByBranch('proj', 'operion/upd-1006')
+  assert.equal(r.ok && r.data?.deploymentId, 'dpl_prev')       // the preview, not the production one
+  assert.equal(r.ok && r.data?.url, 'https://prev-abc.vercel.app')
+  const none = mockFetch([['/v6/deployments', () => ({ status: 200, body: { deployments: [] } })]])
+  const r2 = await new VercelPreviewProvider(ENV, { fetch: none.fetch }).findPreviewByBranch('proj', 'operion/x')
+  assert.equal(r2.ok && r2.data, null)
+})
+
 test('cancelPreviewDeployment PATCHes the cancel endpoint', async () => {
   const m = mockFetch([['/cancel', () => ({ status: 200, body: { state: 'CANCELED' } })]])
   const p = new VercelPreviewProvider(ENV, { fetch: m.fetch })

@@ -1,7 +1,7 @@
 // Operion one-click deploy view model + reconciler — pure tests.
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { deployPrimary, deployStage, isTransientFailure, isOwnerRetryable, failureExplanation, DEPLOY_STAGES } from '../app/lib/platform/automation/deploy-view'
+import { deployPrimary, deployStage, isTransientFailure, isOwnerRetryable, failureExplanation, artifactsComplete, DEPLOY_STAGES } from '../app/lib/platform/automation/deploy-view'
 import { reconcileDecision } from '../app/lib/platform/automation/reconcile'
 
 test('isTransientFailure: only infra categories auto-retry', () => {
@@ -28,6 +28,17 @@ test('deployPrimary: one adaptive action per state', () => {
   assert.deepEqual(deployPrimary({ status: 'failed', failureCategory: 'preview_failed' }, true), { kind: 'retry', label: 'Retry Preview' })
   assert.equal(deployPrimary({ status: 'failed', failureCategory: 'commit_drift' }, true).kind, 'regenerate')
   assert.equal(deployPrimary({ status: 'approved_for_production' }, true).kind, 'approved')
+})
+
+test('artifactsComplete + deployPrimary: review-ready but missing PR/Preview → Complete Preview', () => {
+  const both = { pullRequestUrl: 'https://pr', previewUrl: 'https://prev' }
+  assert.equal(artifactsComplete(both, {}), true)
+  assert.equal(artifactsComplete({ pullRequestUrl: 'https://pr' }, {}), false)            // no preview
+  assert.equal(artifactsComplete({ previewUrl: 'https://prev' }, {}), false)              // no PR
+  assert.equal(artifactsComplete({ pullRequestUrl: 'https://pr' }, { requirePreview: false }), true)
+  // review state + artifacts present → Review; missing → Complete Preview (the AUTO-1001 case)
+  assert.deepEqual(deployPrimary({ status: 'awaiting_owner_review' }, true, true), { kind: 'review', label: 'Review Preview' })
+  assert.deepEqual(deployPrimary({ status: 'awaiting_owner_review' }, true, false), { kind: 'finalize', label: 'Complete Preview' })
 })
 
 test('deployStage: friendly 6-stage mapping incl. failed-at from lint result', () => {

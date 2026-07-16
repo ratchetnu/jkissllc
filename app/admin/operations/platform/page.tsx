@@ -355,9 +355,11 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
   const nextStep = firstBlock ? (GATE_NEXT[firstBlock.id] ?? firstBlock.reason ?? firstBlock.label) : null
   const inline = firstBlock ? inlineActions?.[firstBlock.id] : undefined
 
-  // ── One primary action, computed from job + readiness ──
-  const primary = deployPrimary(job, ready)
+  // ── One primary action, computed from job + readiness + artifacts ──
+  const artifactsOk = !!job?.pullRequestUrl && !!job?.previewUrl   // review needs PR + Preview
+  const primary = deployPrimary(job, ready, artifactsOk)
   const running = primary.kind === 'running'
+  const finalizeMode = primary.kind === 'finalize'                 // review-ready but missing PR/Preview
   const reviewMode = primary.kind === 'review' || primary.kind === 'approved'
   const isFail = !!job && ['failed', 'build_failed', 'tests_failed', 'preview_failed', 'blocked'].includes(job.status)
   const dim = { opacity: 0.5, cursor: 'not-allowed' as const }
@@ -365,11 +367,15 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
     switch (primary.kind) {
       case 'deploy': return prepare()
       case 'retry': case 'regenerate': return act('retry')
+      case 'finalize': return act('complete-preview')
       case 'fix': return inline?.run()
       default: return undefined
     }
   }
-  const { reached, failedAt } = job ? deployStage(job) : { reached: -1, failedAt: null }
+  const stage = job ? deployStage(job) : { reached: -1, failedAt: null }
+  // Don't mark "Ready for review" done until artifacts exist.
+  const reached = finalizeMode ? Math.min(stage.reached, 4) : stage.reached
+  const failedAt = stage.failedAt
 
   return (
     <div style={{ ...card, border: '1px solid rgba(129,140,248,.35)' }}>
@@ -389,7 +395,7 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
               ? (job?.previewUrl ? <a href={job.previewUrl} target="_blank" rel="noreferrer" style={{ ...btn('primary'), textDecoration: 'none' }}>Open Preview →</a> : <button style={{ ...btn('primary'), ...dim }} disabled>Preview building…</button>)
               : (primary.kind === 'fix' && !inline)
                 ? <button style={{ ...btn('primary'), ...dim }} disabled title="Resolve the readiness check below">Deploy Preview</button>
-                : <button style={{ ...btn('primary'), ...(busy || checking ? dim : {}) }} disabled={busy || checking} onClick={runPrimary}>{busy ? '…' : primary.label}</button>}
+                : <button style={{ ...btn('primary'), ...(busy || checking ? dim : {}) }} disabled={busy || checking} onClick={runPrimary} title={finalizeMode ? 'Discover/create the PR + Preview links' : undefined}>{busy ? '…' : primary.label}</button>}
         {!running && <button style={{ ...btn(), ...(checking || busy ? dim : {}) }} disabled={checking || busy} onClick={() => { check(); loadJob() }}>{checking ? 'Checking…' : 'Refresh'}</button>}
       </div>
 
@@ -437,8 +443,8 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
 
           {/* Plain-English status line */}
           {running && <p style={{ fontSize: 12.5, color: '#fbbf24' }}>Operion is deploying the Preview — this runs in the background (safe to leave; it’ll be here when you return).</p>}
-          {reviewMode && job.previewUrl && <p style={{ fontSize: 12.5, color: '#34d399' }}>✓ Preview ready for your review.</p>}
-          {reviewMode && !job.previewUrl && <p style={{ fontSize: 12.5, color: '#fbbf24' }}>Verified — the Vercel Preview is finishing; the link will appear shortly.</p>}
+          {finalizeMode && <p style={{ fontSize: 12.5, color: '#fbbf24' }}>Finalizing Preview — code verification passed{job.pullRequestUrl ? ', PR ready' : ', PR link pending'}{job.previewUrl ? ', Preview ready' : ', Preview link pending'}. Click <strong>Complete Preview</strong> to fetch the missing links.</p>}
+          {reviewMode && <p style={{ fontSize: 12.5, color: '#34d399' }}>✓ Preview ready for your review.</p>}
           {isFail && <p style={{ fontSize: 12.5, color: '#f87171' }}>Preview could not be created — {failureExplanation(job)}</p>}
 
           {/* Transfer + result summary */}

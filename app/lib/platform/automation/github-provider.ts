@@ -151,6 +151,12 @@ export class GitHubActionsProvider implements UpdateAutomationProvider {
   readPullRequest(installationId: string, repo: RepoRef, number: number) {
     return this.get(installationId, `/repos/${repo.owner}/${repo.name}/pulls/${number}`, (b) => { const r = b as { head: { sha: string }; mergeable: boolean; html_url: string }; return { headSha: r.head.sha, mergeable: !!r.mergeable, url: r.html_url } })
   }
+  findPullRequest(installationId: string, repo: RepoRef, head: string) {
+    return this.get(installationId, `/repos/${repo.owner}/${repo.name}/pulls?head=${encodeURIComponent(repo.owner)}:${encodeURIComponent(head)}&state=all&per_page=1`, (b) => {
+      const arr = (b as { number: number; html_url: string }[]) ?? []
+      return arr[0] ? { number: arr[0].number, url: arr[0].html_url } : null
+    })
+  }
   readWorkflowRun(installationId: string, repo: RepoRef, runId: string) {
     return this.get(installationId, `/repos/${repo.owner}/${repo.name}/actions/runs/${encodeURIComponent(runId)}`, (b) => { const r = b as { status: string; conclusion?: string; html_url: string }; return { status: r.status, conclusion: r.conclusion, url: r.html_url } })
   }
