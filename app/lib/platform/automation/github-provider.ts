@@ -12,6 +12,7 @@
 import crypto from 'node:crypto'
 import { isEnabled } from '../flags'
 import type { UpdateAutomationProvider, RepoRef, ProviderResult } from './provider'
+import { getPreviewProvider, type PreviewProvider } from './vercel-provider'
 
 const API = 'https://api.github.com'
 type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{ status: number; ok: boolean; json: () => Promise<unknown>; text: () => Promise<string> }>
@@ -28,6 +29,7 @@ export class GitHubActionsProvider implements UpdateAutomationProvider {
   private privateKey?: string
   private fetch: FetchLike
   private now: () => number
+  private preview: PreviewProvider
   private tokenCache = new Map<string, { token: string; expiresAt: number }>()
 
   constructor(env: Record<string, string | undefined> = process.env, deps: GitHubProviderDeps = {}) {
@@ -37,6 +39,8 @@ export class GitHubActionsProvider implements UpdateAutomationProvider {
     this.privateKey = raw && !raw.includes('BEGIN') && /^[A-Za-z0-9+/=\s]+$/.test(raw) ? Buffer.from(raw, 'base64').toString('utf8') : raw
     this.fetch = deps.fetch ?? ((globalThis.fetch as unknown) as FetchLike)
     this.now = deps.now ?? (() => Date.now())
+    // Vercel Preview stage — server-side, preview-only. Fail-closed stub when no token.
+    this.preview = getPreviewProvider(env, { fetch: deps.fetch, now: deps.now })
   }
 
   // ── App JWT (RS256) ────────────────────────────────────────────────────────
@@ -197,8 +201,19 @@ export class GitHubActionsProvider implements UpdateAutomationProvider {
     } catch { return { ok: false, error: 'GitHub API unreachable', category: 'network' } }
   }
 
-  // ── Vercel (deferred — deployment integration is the next task) ─────────────
-  readDeployment() { return Promise.resolve({ ok: false as const, error: 'Vercel deployment integration not implemented', category: 'not_configured' }) }
-  createPreviewDeployment() { return Promise.resolve({ ok: false as const, error: 'Vercel preview integration not implemented', category: 'not_configured' }) }
-  promoteProduction() { return Promise.resolve({ ok: false as const, error: 'Vercel production promotion not implemented', category: 'not_configured' }) }
+  // ── Vercel Preview (delegated to the server-side Vercel provider; preview-only) ──
+  async readDeployment(_project: string, deploymentId: string): Promise<ProviderResult<{ state: string; url?: string }>> {
+    const r = await this.preview.readPreviewDeployment(deploymentId)
+    return r.ok ? { ok: true, data: { state: r.data.state, url: r.data.url } } : r
+  }
+  async createPreviewDeployment(project: string, ref: string): Promise<ProviderResult<{ deploymentId: string; url: string }>> {
+    // repoId is required to create a git preview; the primary pilot path is git-push
+    // auto-deploy (Vercel creates the preview on branch push) with server-side polling via
+    // the Vercel provider. This explicit-create path needs previewRepoId wired through.
+    const r = await this.preview.createPreviewDeployment({ project, ref })
+    return r.ok ? { ok: true, data: { deploymentId: r.data.deploymentId, url: r.data.url ?? '' } } : r
+  }
+  // Production promotion stays fail-closed here — promotion is gated by the owner approval
+  // path + OPERION_PRODUCTION_PROMOTION_ENABLED, never by this provider.
+  promoteProduction() { return Promise.resolve({ ok: false as const, error: 'production promotion is owner-gated and disabled for the preview pilot', category: 'disabled' }) }
 }

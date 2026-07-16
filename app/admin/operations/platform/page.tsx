@@ -261,13 +261,40 @@ function UpdateDetail({ k, businesses, onChanged }: { k: string; businesses: Pla
 }
 
 // ── Automation panel: Prepare Preview → gates → stepper → owner approval ──────
-const AUTO_STEPS = ['preflight', 'branch', 'implementation', 'tests', 'build', 'preview', 'owner_review', 'production', 'verification']
+// Preview-pilot progress stepper. Each job status maps to the furthest stage reached and
+// (for failures) the stage that failed.
+const PILOT_STAGES = [
+  { key: 'preflight', label: 'Preflight' },
+  { key: 'branch', label: 'Branch' },
+  { key: 'workflow', label: 'Workflow' },
+  { key: 'tests', label: 'Tests' },
+  { key: 'build', label: 'Build' },
+  { key: 'preview', label: 'Preview' },
+  { key: 'owner_review', label: 'Owner Review' },
+] as const
+function pilotStage(status: string): { reached: number; failedAt: number | null } {
+  switch (status) {
+    case 'queued': return { reached: 0, failedAt: null }
+    case 'blocked': return { reached: 0, failedAt: 0 }
+    case 'creating_branch': return { reached: 1, failedAt: null }
+    case 'dispatched': case 'running': case 'applying': return { reached: 2, failedAt: null }
+    case 'tests_failed': return { reached: 3, failedAt: 3 }
+    case 'build_failed': return { reached: 4, failedAt: 4 }
+    case 'preview_deploying': return { reached: 5, failedAt: null }
+    case 'preview_failed': return { reached: 5, failedAt: 5 }
+    case 'preview_ready': return { reached: 6, failedAt: null }
+    case 'awaiting_owner_review': case 'approved_for_production': return { reached: 6, failedAt: null }
+    case 'failed': return { reached: 6, failedAt: 6 }
+    case 'cancelled': return { reached: 0, failedAt: null }
+    default: return { reached: 0, failedAt: null }
+  }
+}
 function AutomationPanel({ updateKey, businesses }: { updateKey: string; businesses: PlatformBusiness[] }) {
   const targets = businesses.filter(b => b.role === 'target' || b.role === 'source_and_target')
   const [target, setTarget] = useState(targets[0]?.id ?? '')
   const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
   const [gates, setGates] = useState<{ id: string; label: string; ok: boolean; blocking: boolean; reason?: string }[] | null>(null)
-  const [job, setJob] = useState<{ id: string; status: string; currentStep: string; previewUrl?: string; pullRequestUrl?: string; failureSummary?: string } | null>(null)
+  const [job, setJob] = useState<{ id: string; status: string; currentStep: string; previewUrl?: string; pullRequestUrl?: string; pullRequestNumber?: number; workflowRunId?: string; failureSummary?: string } | null>(null)
   const prepare = async () => {
     setBusy(true); setErr(''); setGates(null)
     try {
@@ -294,19 +321,45 @@ function AutomationPanel({ updateKey, businesses }: { updateKey: string; busines
           {gates.map(g => <div key={g.id} style={{ fontSize: 12, color: g.ok ? '#34d399' : g.blocking ? '#f87171' : '#fbbf24' }}>{g.ok ? '✓' : g.blocking ? '✗' : '⚠'} {g.label}{g.reason ? ` — ${g.reason}` : ''}</div>)}
         </div>
       )}
-      {job && (
+      {job && (() => {
+        const { reached, failedAt } = pilotStage(job.status)
+        const failed = job.status.includes('fail') || job.status === 'blocked'
+        const isTerminalFail = ['failed', 'build_failed', 'tests_failed', 'preview_failed', 'blocked'].includes(job.status)
+        return (
         <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
-            {AUTO_STEPS.map(s => <span key={s} style={{ fontSize: 10.5, padding: '2px 7px', borderRadius: 6, background: job.currentStep === s ? 'var(--red)' : 'rgba(255,255,255,.05)', color: job.currentStep === s ? '#fff' : 'var(--muted)' }}>{nice(s)}</span>)}
+          {/* Preflight → Branch → Workflow → Tests → Build → Preview → Owner Review */}
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
+            {PILOT_STAGES.map((s, i) => {
+              const isFail = failedAt === i
+              const done = i < reached && failedAt == null
+              const current = i === reached && !isTerminalFail
+              const bg = isFail ? '#7f1d1d' : done ? 'rgba(52,211,153,.18)' : current ? 'var(--red)' : 'rgba(255,255,255,.05)'
+              const col = isFail ? '#fecaca' : done ? '#34d399' : current ? '#fff' : 'var(--muted)'
+              return (
+                <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center' }}>
+                  <span style={{ fontSize: 10.5, padding: '2px 7px', borderRadius: 6, background: bg, color: col, fontWeight: current || isFail ? 700 : 400 }}>{done ? '✓ ' : isFail ? '✗ ' : ''}{s.label}</span>
+                  {i < PILOT_STAGES.length - 1 && <span style={{ color: 'var(--muted)', fontSize: 10, margin: '0 2px' }}>→</span>}
+                </span>
+              )
+            })}
           </div>
-          <p style={{ fontSize: 12 }}>Job <span style={{ fontFamily: 'monospace' }}>{job.id}</span> · <span style={{ fontWeight: 700, color: job.status.includes('fail') || job.status === 'blocked' ? '#f87171' : job.status === 'completed' ? '#34d399' : '#fbbf24' }}>{nice(job.status)}</span>{job.failureSummary ? ` — ${job.failureSummary}` : ''}</p>
-          {job.previewUrl && <a href={job.previewUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#a5b4fc' }}>Preview →</a>}
+          <p style={{ fontSize: 12 }}>Job <span style={{ fontFamily: 'monospace' }}>{job.id}</span> · <span style={{ fontWeight: 700, color: failed ? '#f87171' : job.status === 'completed' ? '#34d399' : '#fbbf24' }}>{nice(job.status)}</span>{job.failureSummary ? ` — ${job.failureSummary}` : ''}</p>
+          <div style={{ display: 'flex', gap: 10, marginTop: 4, flexWrap: 'wrap', fontSize: 12 }}>
+            {job.pullRequestUrl && <a href={job.pullRequestUrl} target="_blank" rel="noreferrer" style={{ color: '#a5b4fc' }}>View PR{job.pullRequestNumber ? ` #${job.pullRequestNumber}` : ''} →</a>}
+            {job.previewUrl && <a href={job.previewUrl} target="_blank" rel="noreferrer" style={{ color: '#a5b4fc' }}>View Preview →</a>}
+            {job.workflowRunId && <span style={{ color: 'var(--muted)' }}>run {job.workflowRunId}</span>}
+          </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+            {/* Approve Production is owner-gated + also flag-gated server-side; it stays inert
+                (returns "promotion disabled") while OPERION_PRODUCTION_PROMOTION_ENABLED is off. */}
             {job.status === 'awaiting_owner_review' && <button style={btn('primary')} disabled={busy} onClick={() => act('approve-production', 'Approve this verified preview for PRODUCTION? This is the owner promotion gate.')}>Approve Production</button>}
-            <button style={btn()} disabled={busy} onClick={() => act('cancel', 'Cancel this automation job?')}>Cancel</button>
+            {job.status === 'awaiting_owner_review' && <button style={btn()} disabled={busy} onClick={() => act('request-changes', 'Send this back for changes?')}>Request Changes</button>}
+            {isTerminalFail && <button style={btn()} disabled={busy} onClick={() => act('retry', 'Retry this automation job from the start?')}>Retry Failed Step</button>}
+            {job.status !== 'cancelled' && job.status !== 'completed' && <button style={btn()} disabled={busy} onClick={() => act('cancel', 'Cancel this automation job?')}>Cancel Automation</button>}
           </div>
         </div>
-      )}
+        )
+      })()}
     </div>
   )
 }

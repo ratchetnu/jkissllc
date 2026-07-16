@@ -69,6 +69,7 @@ export type PlatformBusiness = {
   rollbackWorkflowFile?: string
   previewDeploymentProvider?: string           // 'vercel'
   previewProjectId?: string
+  previewRepoId?: string                       // numeric GitHub repo id for Vercel git preview
   productionProjectId?: string
   requirePullRequest?: boolean
   requireOwnerApproval?: boolean               // default true
