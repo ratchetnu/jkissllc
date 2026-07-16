@@ -87,7 +87,7 @@ jobs:
         run: |
           git add -A
           git commit -m "chore(operion): apply update ${{ inputs.updateId }} (job ${{ inputs.deploymentRequestId }})" || echo "nothing to commit"
-          git push origin "${{ inputs.targetBranch }}"
+          git push --force origin "${{ inputs.targetBranch }}"   # automation-owned branch; retries overwrite cleanly
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Create or update pull request
@@ -148,7 +148,7 @@ jobs:
               pullRequestNumber:$prn, pullRequestUrl:$prurl,
               result:{testsPassed:$tp, buildPassed:$bp, lintPassed:$lp, changedFiles:$ap, filesApplied:$ap, filesSkipped:$sk, filesFailed:$fl}}')
           SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$OPERION_CALLBACK_SECRET" | sed 's/^.*= *//')
-          curl -sS -X POST "$OPERION_CALLBACK_URL" \
+          curl -sSL -X POST "$OPERION_CALLBACK_URL" \
             -H "content-type: application/json" \
             -H "x-operion-timestamp: $TS" \
             -H "x-operion-signature: $SIG" \

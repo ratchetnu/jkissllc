@@ -14,12 +14,14 @@ export type ReconcileInput = {
   now: number
   staleMs?: number              // job with no progress past this is finalized (default 20 min)
   maxAutoRetries?: number       // bounded auto-retry for transient failures (default 2)
+  callbackGraceMs?: number      // wait for a success callback before repairing (default 90s)
 }
 
 export type ReconcileDecision =
   | { action: 'none'; reason: string }
   | { action: 'finalize'; status: 'failed'; failureCategory: string; reason: string }
-  | { action: 'await_callback'; reason: string }          // run finished OK, callback should land soon
+  | { action: 'repair_success'; reason: string }          // run succeeded but callback lost → move to review
+  | { action: 'await_callback'; reason: string }          // run finished OK, callback likely landing
   | { action: 'auto_retry'; reason: string }              // transient failure within retry budget
 
 const ACTIVE = new Set(['queued', 'creating_branch', 'dispatched', 'running', 'applying', 'preview_deploying'])
@@ -39,7 +41,14 @@ export function reconcileDecision(input: ReconcileInput): ReconcileDecision {
 
   // We can see the real GitHub run.
   if (ghRun && ghRun.status === 'completed') {
-    if (ghRun.conclusion === 'success') return { action: 'await_callback', reason: 'run succeeded; awaiting signed callback' }
+    const last = job.heartbeatAt ?? job.startedAt ?? 0
+    const graceMs = input.callbackGraceMs ?? 90_000
+    if (ghRun.conclusion === 'success') {
+      // Callback should land within a short grace; if the job is still active past it, the
+      // callback was lost (e.g. a redirect) — repair the job to owner review.
+      if (last && now - last > graceMs) return { action: 'repair_success', reason: 'run succeeded but no callback within grace — moving to owner review' }
+      return { action: 'await_callback', reason: 'run succeeded; awaiting signed callback' }
+    }
     // Run failed/cancelled but the job is still "active" → a callback was missed. Repair it.
     return { action: 'finalize', status: 'failed', failureCategory: 'provider_error', reason: `run concluded ${ghRun.conclusion ?? 'failure'} but no callback arrived — repairing` }
   }

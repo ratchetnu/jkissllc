@@ -49,8 +49,10 @@ test('failureExplanation: plain-English, no raw field names', () => {
 
 // ── reconciler ──
 const base = { status: 'creating_branch', startedAt: 1000, heartbeatAt: 1000, attemptCount: 0 }
-test('reconcile: run succeeded → await callback', () => {
+test('reconcile: run succeeded, within grace → await callback; past grace → repair_success', () => {
   assert.equal(reconcileDecision({ job: base, ghRun: { status: 'completed', conclusion: 'success' }, now: 2000 }).action, 'await_callback')
+  // callback lost (redirect) — past the 90s grace the job is repaired to owner review
+  assert.equal(reconcileDecision({ job: base, ghRun: { status: 'completed', conclusion: 'success' }, now: 1000 + 120_000 }).action, 'repair_success')
 })
 test('reconcile: run failed but job still active → finalize (missed callback repair)', () => {
   const d = reconcileDecision({ job: base, ghRun: { status: 'completed', conclusion: 'failure' }, now: 2000 })

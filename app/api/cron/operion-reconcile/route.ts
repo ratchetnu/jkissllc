@@ -46,6 +46,12 @@ export async function GET(req: NextRequest) {
       job.failureSummary = decision.reason
       job.updatedAt = now
       await saveJob(job)
+    } else if (decision.action === 'repair_success') {
+      // The run succeeded but the callback was lost — advance to owner review (never production).
+      job.status = 'awaiting_owner_review'
+      job.currentStep = 'owner_review'
+      job.updatedAt = now
+      await saveJob(job)
     } else if (decision.action === 'auto_retry') {
       await retryPreview({ jobId: job.id })   // bounded by attemptCount inside reconcileDecision
     }
