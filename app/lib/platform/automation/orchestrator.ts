@@ -130,7 +130,7 @@ export async function approveProduction(input: {
     if (!j || j.status !== 'awaiting_owner_review') return { ok: false, reason: 'job changed' }
     // Commit-drift lock: never promote a commit different from the one the owner reviewed.
     if (commitDriftDetected(j.approvedCommit ?? j.targetCommit, j.targetCommit)) { j.status = 'failed'; j.failureCategory = 'commit_drift'; j.failureSummary = 'approved commit drifted from PR head'; j.updatedAt = now(); await store.saveJob(j); return { ok: false, job: j, reason: 'commit_drift' } }
-    j.status = 'approved_for_production'; j.approvedBy = input.actor; j.approvedAt = now(); j.approvedCommit = j.targetCommit; j.updatedAt = now()
+    j.status = 'approved_for_production'; j.currentStep = 'production'; j.approvedBy = input.actor; j.approvedAt = now(); j.approvedCommit = j.targetCommit; j.updatedAt = now()
     await store.saveJob(j)
 
     // Execute the merge (owner-approved, flag-gated). The production DEPLOY happens on the
@@ -147,14 +147,14 @@ export async function approveProduction(input: {
       const cur = await getPreviewProvider(env).findProductionDeployment(projectId)
       if (cur.ok && cur.data && cur.data.ready) j.rollbackTargetDeploymentId = cur.data.deploymentId
     }
-    j.status = 'merging'; j.updatedAt = now(); await store.saveJob(j)
+    j.status = 'merging'; j.currentStep = 'production'; j.updatedAt = now(); await store.saveJob(j)
     const provider = getAutomationProvider(env)
     const merged = await provider.mergePullRequest(input.business.githubInstallationId, repoRef, j.pullRequestNumber, j.approvedCommit ?? j.targetCommit ?? '')
     if (!merged.ok) {
       j.status = 'failed'; j.failureCategory = merged.category === 'commit_drift' ? 'commit_drift' : 'merge_conflict'; j.failureSummary = merged.error; j.updatedAt = now(); await store.saveJob(j)
       return { ok: false, job: j, reason: merged.error }
     }
-    j.mergeCommit = merged.data.mergeCommit; j.status = 'production_deploying'; j.updatedAt = now(); await store.saveJob(j)
+    j.mergeCommit = merged.data.mergeCommit; j.status = 'production_deploying'; j.currentStep = 'production'; j.updatedAt = now(); await store.saveJob(j)
     return { ok: true, job: j }
   }, { onBusy: () => ({ ok: false, reason: 'target_locked' }), token: `${job.businessId}:${now()}` })
 }
@@ -177,14 +177,27 @@ export async function advancePromotion(input: { jobId: string; env?: Record<stri
       if (!prod.ok || !prod.data) return { ok: true, job: j, reason: 'awaiting production deployment' }
       if (prod.data.failed) { j.status = 'rollback_required'; j.failureCategory = 'promotion_failed'; j.failureSummary = 'production build failed'; j.updatedAt = now(); await store.saveJob(j); return { ok: false, job: j, reason: 'production deploy failed' } }
       if (!prod.data.ready) return { ok: true, job: j, reason: 'production build in progress' }
-      j.productionDeploymentId = prod.data.deploymentId; j.productionUrl = prod.data.url; j.status = 'verifying'; j.updatedAt = now(); await store.saveJob(j)
+      j.productionDeploymentId = prod.data.deploymentId; j.productionUrl = prod.data.url; j.status = 'verifying'; j.currentStep = 'verification'; j.updatedAt = now(); await store.saveJob(j)
     }
     if (j.status === 'verifying') {
       const provider = getAutomationProvider(env)
       const base = j.productionUrl || business.productionUrl
       const healthUrl = base ? base.replace(/\/$/, '') + (business.healthEndpoint ?? '/') : undefined
       const health = healthUrl ? await provider.runHealthCheck(healthUrl) : { ok: false as const, error: 'no url', category: 'config' }
-      if (health.ok && health.data.ok) { j.status = 'completed'; j.completedAt = now(); j.updatedAt = now(); await store.saveJob(j); return { ok: true, job: j } }
+      if (health.ok && health.data.ok) {
+        j.status = 'completed'; j.currentStep = 'verification'; j.completedAt = now(); j.updatedAt = now(); await store.saveJob(j)
+        // Automatic post-deployment reconciliation: propagate this verified promotion to
+        // ALL related records (deployment, update, business version, release, audit) so the
+        // owner never hand-sets a status. FAIL-SOFT — a hiccup here must not undo a live,
+        // verified deploy; the reconciler cron retries any job left completed-but-unfinalized.
+        try {
+          const { reconcileJobRecords } = await import('./reconcile-records')
+          await reconcileJobRecords({ job: j, actor: j.approvedBy ?? 'owner', actorType: 'owner', source: 'advancePromotion' })
+        } catch (err) {
+          console.warn('[operion] inline record reconciliation failed (cron will retry):', err instanceof Error ? err.message : err)
+        }
+        return { ok: true, job: j }
+      }
       j.status = 'rollback_required'; j.failureCategory = 'health_failed'; j.failureSummary = 'production health check failed'; j.updatedAt = now(); await store.saveJob(j)
       return { ok: false, job: j, reason: 'production health check failed' }
     }
