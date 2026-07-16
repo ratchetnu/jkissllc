@@ -367,19 +367,25 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <select style={{ ...field, width: 'auto' }} value={target} onChange={e => setTarget(e.target.value)}>{targets.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
-        <button style={btn('primary')} disabled={busy || checking || !target || !ready || !!job} onClick={prepare} title={ready ? 'All checks pass' : 'Resolve the readiness checks first'}>{busy ? '…' : 'Prepare Preview'}</button>
-        <button style={btn()} disabled={checking || busy} onClick={check}>{checking ? 'Checking…' : 'Re-check'}</button>
+        {(() => {
+          const canPrepare = !busy && !checking && !!target && ready && !job
+          return <button style={{ ...btn('primary'), ...(canPrepare ? {} : { opacity: 0.45, cursor: 'not-allowed' }) }} disabled={!canPrepare} onClick={prepare} title={ready ? 'All checks pass' : 'Prepare Preview is disabled until every readiness check passes'}>{busy ? '…' : 'Prepare Preview'}</button>
+        })()}
+        <button style={{ ...btn(), ...(checking || busy ? { opacity: 0.45, cursor: 'not-allowed' } : {}) }} disabled={checking || busy} onClick={check}>{checking ? 'Checking…' : 'Re-check'}</button>
       </div>
 
-      {/* One clear next step (or a ready confirmation) */}
-      {!job && gates && (ready
-        ? <p style={{ fontSize: 12.5, color: '#34d399', marginTop: 10 }}>✓ All checks pass — you can prepare a Preview.</p>
-        : nextStep && (
+      {/* One clear next step (or a ready confirmation) — always tells the owner why it's gated */}
+      {!job && (
+        checking ? <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 10 }}>Checking readiness…</p>
+        : !gates ? <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 10 }}>Click <strong>Re-check</strong> to evaluate readiness for this target.</p>
+        : ready ? <p style={{ fontSize: 12.5, color: '#34d399', marginTop: 10 }}>✓ All checks pass — Prepare Preview is enabled.</p>
+        : (
           <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 12.5, color: '#fbbf24' }}><strong>Next step:</strong> {nextStep}</span>
+            <span style={{ fontSize: 12.5, color: '#fbbf24' }}>⚠ <strong>Prepare Preview is disabled — next step:</strong> {nextStep ?? 'resolve the failing readiness checks below'}</span>
             {inline && <button style={btn()} disabled={busy} onClick={inline.run}>{inline.label}</button>}
           </div>
-        ))}
+        )
+      )}
       {err && <p style={{ color: '#f87171', fontSize: 12, marginTop: 6 }}>{err}</p>}
 
       {/* Full readiness list — collapsed once ready, expanded while blocked */}
