@@ -339,6 +339,19 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed'); setReady(false) } finally { setChecking(false) }
   }, [updateKey, target])
   useEffect(() => { check() }, [check])
+  // Recover the in-flight/last job for this update × target on load — so a refresh or the
+  // idle auto-logout doesn't lose the running job's stepper. Reads the jobs list (owner-gated).
+  const loadJob = useCallback(async () => {
+    if (!target) return
+    try {
+      const r = await pf('/api/admin/platform/automation')
+      const mine = ((r.jobs ?? []) as Array<{ id: string; status: string; currentStep: string; updateId: string; businessId: string; updatedAt?: number; previewUrl?: string; previewDeploymentId?: string; pullRequestUrl?: string; pullRequestNumber?: number; workflowRunId?: string; targetCommit?: string; failureSummary?: string; result?: { filesApplied?: number; filesSkipped?: number; filesFailed?: number } }>)
+        .filter(j => j.updateId === updateKey && j.businessId === target)
+        .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+      if (mine[0]) setJob(mine[0])
+    } catch { /* readiness still renders */ }
+  }, [updateKey, target])
+  useEffect(() => { loadJob() }, [loadJob])
   // Live-poll a running job so the stepper advances when the CI callback lands (the workflow
   // reports once at the end, so this flips creating_branch → its final state without a refresh).
   const TERMINAL_STATUSES = ['awaiting_owner_review', 'approved_for_production', 'completed', 'failed', 'build_failed', 'tests_failed', 'preview_failed', 'blocked', 'cancelled', 'rolled_back']
