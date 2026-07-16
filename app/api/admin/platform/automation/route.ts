@@ -31,5 +31,8 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     update, business, compat, actor,
     strategy: body.strategy, approvals: body.approvals && typeof body.approvals === 'object' ? { migration: body.approvals.migration === true, environment: body.approvals.environment === true } : undefined,
   })
-  return NextResponse.json(result, { status: result.ok ? 200 : 400 })
+  // A blocked preflight is a VALID outcome to render (the client shows which gates failed) —
+  // not an HTTP error. Return 200 so the gates + reason reach the UI. `error` is included so
+  // any generic client still has a human message instead of a bare "Request failed".
+  return NextResponse.json(result.ok ? result : { ...result, error: result.reason === 'preflight_failed' ? 'Preflight blocked — resolve the failed gates below.' : (result.reason ?? 'Preview not prepared') })
 })

@@ -301,6 +301,7 @@ function AutomationPanel({ updateKey, businesses }: { updateKey: string; busines
     try {
       const j = await pf('/api/admin/platform/automation', { method: 'POST', body: JSON.stringify({ updateKey, businessId: target }) })
       setGates(j.preflight?.gates ?? null); setJob(j.job ?? null)
+      if (!j.ok) setErr(j.error ?? 'Preview not prepared — see gates below.')   // blocked preflight is a valid, shown result
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') } finally { setBusy(false) }
   }
   const act = async (action: string, confirmMsg?: string) => {
