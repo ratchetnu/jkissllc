@@ -5,6 +5,7 @@ import OperationsShell from '../OperationsShell'
 import { fmtTs } from '../ui'
 import { parseRepoName } from '../../../lib/platform/automation/repo-identity'
 import { businessReadiness, businessNextStep, groupUpdates, BUCKET_ORDER } from '../../../lib/platform/updates/business-view'
+import { deployPrimary, deployStage, DEPLOY_STAGES, failureExplanation } from '../../../lib/platform/automation/deploy-view'
 import type {
   PlatformBusiness, PlatformUpdate, UpdateCompatibility, DeploymentRecord, UpdateStatus, CheckStatus,
 } from '../../../lib/platform/updates/types'
@@ -292,42 +293,14 @@ const GATE_NEXT: Record<string, string> = {
   env_approved: 'This update changes env/flags — it needs explicit env approval.',
 }
 
-// ── Automation panel: Prepare Preview → gates → stepper → owner approval ──────
-// Preview-pilot progress stepper. Each job status maps to the furthest stage reached and
-// (for failures) the stage that failed.
-const PILOT_STAGES = [
-  { key: 'preflight', label: 'Preflight' },
-  { key: 'branch', label: 'Branch' },
-  { key: 'workflow', label: 'Workflow' },
-  { key: 'tests', label: 'Tests' },
-  { key: 'build', label: 'Build' },
-  { key: 'preview', label: 'Preview' },
-  { key: 'owner_review', label: 'Owner Review' },
-] as const
-function pilotStage(status: string): { reached: number; failedAt: number | null } {
-  switch (status) {
-    case 'queued': return { reached: 0, failedAt: null }
-    case 'blocked': return { reached: 0, failedAt: 0 }
-    case 'creating_branch': return { reached: 1, failedAt: null }
-    case 'dispatched': case 'running': case 'applying': return { reached: 2, failedAt: null }
-    case 'tests_failed': return { reached: 3, failedAt: 3 }
-    case 'build_failed': return { reached: 4, failedAt: 4 }
-    case 'preview_deploying': return { reached: 5, failedAt: null }
-    case 'preview_failed': return { reached: 5, failedAt: 5 }
-    case 'preview_ready': return { reached: 6, failedAt: null }
-    case 'awaiting_owner_review': case 'approved_for_production': return { reached: 6, failedAt: null }
-    case 'failed': return { reached: 6, failedAt: 6 }
-    case 'cancelled': return { reached: 0, failedAt: null }
-    default: return { reached: 0, failedAt: null }
-  }
-}
+// ── Deploy Preview panel: one action → live stages → owner review ─────────────
 type Gate = { id: string; label: string; ok: boolean; blocking: boolean; reason?: string }
 function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: string; businesses: PlatformBusiness[]; inlineActions?: Record<string, { label: string; run: () => void }> }) {
   const targets = businesses.filter(b => b.role === 'target' || b.role === 'source_and_target')
   const [target, setTarget] = useState(targets[0]?.id ?? '')
   const [busy, setBusy] = useState(false); const [checking, setChecking] = useState(false); const [err, setErr] = useState('')
   const [gates, setGates] = useState<Gate[] | null>(null); const [ready, setReady] = useState(false)
-  const [job, setJob] = useState<{ id: string; status: string; currentStep: string; previewUrl?: string; previewDeploymentId?: string; pullRequestUrl?: string; pullRequestNumber?: number; workflowRunId?: string; targetCommit?: string; failureSummary?: string; result?: { filesApplied?: number; filesSkipped?: number; filesFailed?: number } } | null>(null)
+  const [job, setJob] = useState<{ id: string; status: string; currentStep: string; failureCategory?: string; previewUrl?: string; previewDeploymentId?: string; pullRequestUrl?: string; pullRequestNumber?: number; workflowRunId?: string; targetCommit?: string; failureSummary?: string; result?: { filesApplied?: number; filesSkipped?: number; filesFailed?: number; lintPassed?: boolean; testsPassed?: boolean; buildPassed?: boolean } } | null>(null)
 
   // Read-only readiness on mount + whenever the target changes. Never creates a job.
   const check = useCallback(async () => {
@@ -345,7 +318,7 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
     if (!target) return
     try {
       const r = await pf('/api/admin/platform/automation')
-      const mine = ((r.jobs ?? []) as Array<{ id: string; status: string; currentStep: string; updateId: string; businessId: string; updatedAt?: number; previewUrl?: string; previewDeploymentId?: string; pullRequestUrl?: string; pullRequestNumber?: number; workflowRunId?: string; targetCommit?: string; failureSummary?: string; result?: { filesApplied?: number; filesSkipped?: number; filesFailed?: number } }>)
+      const mine = ((r.jobs ?? []) as Array<{ id: string; status: string; currentStep: string; failureCategory?: string; updateId: string; businessId: string; updatedAt?: number; previewUrl?: string; previewDeploymentId?: string; pullRequestUrl?: string; pullRequestNumber?: number; workflowRunId?: string; targetCommit?: string; failureSummary?: string; result?: { filesApplied?: number; filesSkipped?: number; filesFailed?: number; lintPassed?: boolean; testsPassed?: boolean; buildPassed?: boolean } }>)
         .filter(j => j.updateId === updateKey && j.businessId === target)
         .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
       if (mine[0]) setJob(mine[0])
@@ -382,38 +355,60 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
   const nextStep = firstBlock ? (GATE_NEXT[firstBlock.id] ?? firstBlock.reason ?? firstBlock.label) : null
   const inline = firstBlock ? inlineActions?.[firstBlock.id] : undefined
 
+  // ── One primary action, computed from job + readiness ──
+  const primary = deployPrimary(job, ready)
+  const running = primary.kind === 'running'
+  const reviewMode = primary.kind === 'review' || primary.kind === 'approved'
+  const isFail = !!job && ['failed', 'build_failed', 'tests_failed', 'preview_failed', 'blocked'].includes(job.status)
+  const dim = { opacity: 0.5, cursor: 'not-allowed' as const }
+  const runPrimary = () => {
+    switch (primary.kind) {
+      case 'deploy': return prepare()
+      case 'retry': case 'regenerate': return act('retry')
+      case 'fix': return inline?.run()
+      default: return undefined
+    }
+  }
+  const { reached, failedAt } = job ? deployStage(job) : { reached: -1, failedAt: null }
+
   return (
     <div style={{ ...card, border: '1px solid rgba(129,140,248,.35)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
-        <p style={{ ...lab, margin: 0, color: '#a5b4fc' }}>⚙️ Preview automation</p>
-        <span style={{ fontSize: 11.5, color: 'var(--muted)', marginLeft: 'auto' }}>Prepare Preview → Review → Approve Production (owner-gated)</span>
-      </div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <select style={{ ...field, width: 'auto' }} value={target} onChange={e => setTarget(e.target.value)}>{targets.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
-        {(() => {
-          const canPrepare = !busy && !checking && !!target && ready && !job
-          return <button style={{ ...btn('primary'), ...(canPrepare ? {} : { opacity: 0.45, cursor: 'not-allowed' }) }} disabled={!canPrepare} onClick={prepare} title={ready ? 'All checks pass' : 'Prepare Preview is disabled until every readiness check passes'}>{busy ? '…' : 'Prepare Preview'}</button>
-        })()}
-        <button style={{ ...btn(), ...(checking || busy ? { opacity: 0.45, cursor: 'not-allowed' } : {}) }} disabled={checking || busy} onClick={check}>{checking ? 'Checking…' : 'Re-check'}</button>
+        <p style={{ ...lab, margin: 0, color: '#a5b4fc' }}>🚀 Deploy Preview</p>
+        <span style={{ fontSize: 11.5, color: 'var(--muted)', marginLeft: 'auto' }}>Operion handles it → you review (production stays owner-gated)</span>
       </div>
 
-      {/* One clear next step (or a ready confirmation) — always tells the owner why it's gated */}
+      {/* ── One primary action ── */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <select style={{ ...field, width: 'auto' }} value={target} onChange={e => setTarget(e.target.value)} disabled={running}>{targets.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
+        {primary.kind === 'running'
+          ? <button style={{ ...btn('primary'), ...dim }} disabled>Deploying…</button>
+          : primary.kind === 'approved'
+            ? <button style={{ ...btn('primary'), ...dim }} disabled>Approved for production</button>
+            : primary.kind === 'review'
+              ? (job?.previewUrl ? <a href={job.previewUrl} target="_blank" rel="noreferrer" style={{ ...btn('primary'), textDecoration: 'none' }}>Open Preview →</a> : <button style={{ ...btn('primary'), ...dim }} disabled>Preview building…</button>)
+              : (primary.kind === 'fix' && !inline)
+                ? <button style={{ ...btn('primary'), ...dim }} disabled title="Resolve the readiness check below">Deploy Preview</button>
+                : <button style={{ ...btn('primary'), ...(busy || checking ? dim : {}) }} disabled={busy || checking} onClick={runPrimary}>{busy ? '…' : primary.label}</button>}
+        {!running && <button style={{ ...btn(), ...(checking || busy ? dim : {}) }} disabled={checking || busy} onClick={() => { check(); loadJob() }}>{checking ? 'Checking…' : 'Refresh'}</button>}
+      </div>
+
+      {/* ── Not-started guidance: readiness in plain English ── */}
       {!job && (
         checking ? <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 10 }}>Checking readiness…</p>
-        : !gates ? <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 10 }}>Click <strong>Re-check</strong> to evaluate readiness for this target.</p>
-        : ready ? <p style={{ fontSize: 12.5, color: '#34d399', marginTop: 10 }}>✓ All checks pass — Prepare Preview is enabled.</p>
-        : (
+        : ready ? <p style={{ fontSize: 12.5, color: '#34d399', marginTop: 10 }}>✓ Everything is ready — click <strong>Deploy Preview</strong>.</p>
+        : gates ? (
           <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 12.5, color: '#fbbf24' }}>⚠ <strong>Prepare Preview is disabled — next step:</strong> {nextStep ?? 'resolve the failing readiness checks below'}</span>
+            <span style={{ fontSize: 12.5, color: '#fbbf24' }}>⚠ <strong>Next step:</strong> {nextStep ?? 'resolve the checks below'}</span>
             {inline && <button style={btn()} disabled={busy} onClick={inline.run}>{inline.label}</button>}
           </div>
-        )
+        ) : null
       )}
       {err && <p style={{ color: '#f87171', fontSize: 12, marginTop: 6 }}>{err}</p>}
 
-      {/* Full readiness list — collapsed once ready, expanded while blocked */}
-      {gates && (
-        <details open={!ready && !job} style={{ marginTop: 10 }}>
+      {/* ── Readiness checklist — collapsed once ready ── */}
+      {!job && gates && (
+        <details open={!ready} style={{ marginTop: 10 }}>
           <summary style={{ listStyle: 'none', cursor: 'pointer', fontSize: 11.5, color: 'var(--muted)' }}>▸ Readiness checks ({passCount}/{gates.length} pass)</summary>
           <div style={{ marginTop: 6, display: 'grid', gap: 3 }}>
             {gates.map(g => <div key={g.id} style={{ fontSize: 12, color: g.ok ? '#34d399' : g.blocking ? '#f87171' : '#fbbf24' }}>{g.ok ? '✓' : g.blocking ? '✗' : '⚠'} {g.label}{!g.ok && (GATE_NEXT[g.id] || g.reason) ? ` — ${GATE_NEXT[g.id] ?? g.reason}` : ''}</div>)}
@@ -421,50 +416,70 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
         </details>
       )}
 
-      {job && (() => {
-        const { reached, failedAt } = pilotStage(job.status)
-        const failed = job.status.includes('fail') || job.status === 'blocked'
-        const isTerminalFail = ['failed', 'build_failed', 'tests_failed', 'preview_failed', 'blocked'].includes(job.status)
-        return (
+      {/* ── Live deployment screen (friendly 6-stage) ── */}
+      {job && (
         <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
-          {/* Preflight → Branch → Workflow → Tests → Build → Preview → Owner Review */}
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
-            {PILOT_STAGES.map((s, i) => {
-              const isFail = failedAt === i
+            {DEPLOY_STAGES.map((label, i) => {
+              const fail = failedAt === i
               const done = i < reached && failedAt == null
-              const current = i === reached && !isTerminalFail
-              const bg = isFail ? '#7f1d1d' : done ? 'rgba(52,211,153,.18)' : current ? 'var(--red)' : 'rgba(255,255,255,.05)'
-              const col = isFail ? '#fecaca' : done ? '#34d399' : current ? '#fff' : 'var(--muted)'
+              const current = i === reached && !isFail
+              const bg = fail ? '#7f1d1d' : done ? 'rgba(52,211,153,.18)' : current ? 'var(--red)' : 'rgba(255,255,255,.05)'
+              const col = fail ? '#fecaca' : done ? '#34d399' : current ? '#fff' : 'var(--muted)'
               return (
-                <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center' }}>
-                  <span style={{ fontSize: 10.5, padding: '2px 7px', borderRadius: 6, background: bg, color: col, fontWeight: current || isFail ? 700 : 400 }}>{done ? '✓ ' : isFail ? '✗ ' : ''}{s.label}</span>
-                  {i < PILOT_STAGES.length - 1 && <span style={{ color: 'var(--muted)', fontSize: 10, margin: '0 2px' }}>→</span>}
+                <span key={label} style={{ display: 'inline-flex', alignItems: 'center' }}>
+                  <span style={{ fontSize: 10.5, padding: '2px 7px', borderRadius: 6, background: bg, color: col, fontWeight: current || fail ? 700 : 400 }}>{done ? '✓ ' : fail ? '✗ ' : ''}{label}</span>
+                  {i < DEPLOY_STAGES.length - 1 && <span style={{ color: 'var(--muted)', fontSize: 10, margin: '0 2px' }}>→</span>}
                 </span>
               )
             })}
           </div>
-          <p style={{ fontSize: 12 }}>Job <span style={{ fontFamily: 'monospace' }}>{job.id}</span> · <span style={{ fontWeight: 700, color: failed ? '#f87171' : job.status === 'completed' ? '#34d399' : '#fbbf24' }}>{nice(job.status)}</span>{job.failureSummary ? ` — ${job.failureSummary}` : ''}</p>
-          {job.result && (job.result.filesApplied != null || job.result.filesFailed != null) && (
-            <p style={{ fontSize: 12, marginTop: 2, color: 'var(--muted)' }}>Transfer: <span style={{ color: '#34d399' }}>{job.result.filesApplied ?? 0} applied</span>{job.result.filesSkipped ? ` · ${job.result.filesSkipped} skipped` : ''}{job.result.filesFailed ? <span style={{ color: '#f87171' }}> · {job.result.filesFailed} failed</span> : ''}</p>
+
+          {/* Plain-English status line */}
+          {running && <p style={{ fontSize: 12.5, color: '#fbbf24' }}>Operion is deploying the Preview — this runs in the background (safe to leave; it’ll be here when you return).</p>}
+          {reviewMode && job.previewUrl && <p style={{ fontSize: 12.5, color: '#34d399' }}>✓ Preview ready for your review.</p>}
+          {reviewMode && !job.previewUrl && <p style={{ fontSize: 12.5, color: '#fbbf24' }}>Verified — the Vercel Preview is finishing; the link will appear shortly.</p>}
+          {isFail && <p style={{ fontSize: 12.5, color: '#f87171' }}>Preview could not be created — {failureExplanation(job)}</p>}
+
+          {/* Transfer + result summary */}
+          {job.result && (job.result.filesApplied != null) && (
+            <p style={{ fontSize: 12, marginTop: 6, color: 'var(--muted)' }}>
+              {job.result.filesApplied ?? 0} file{(job.result.filesApplied ?? 0) === 1 ? '' : 's'} transferred{job.result.filesFailed ? <span style={{ color: '#f87171' }}> · {job.result.filesFailed} failed</span> : ''}
+              {job.result.testsPassed != null && <> · tests {job.result.testsPassed ? '✓' : '✗'}</>}
+              {job.result.buildPassed != null && <> · build {job.result.buildPassed ? '✓' : '✗'}</>}
+              {job.pullRequestNumber ? ` · PR #${job.pullRequestNumber}` : ''}
+            </p>
           )}
-          <div style={{ display: 'flex', gap: 10, marginTop: 4, flexWrap: 'wrap', fontSize: 12 }}>
-            {job.targetCommit && <span style={{ color: 'var(--muted)', fontFamily: 'monospace' }}>{job.targetCommit.slice(0, 7)}</span>}
-            {job.pullRequestUrl && <a href={job.pullRequestUrl} target="_blank" rel="noreferrer" style={{ color: '#a5b4fc' }}>View PR{job.pullRequestNumber ? ` #${job.pullRequestNumber}` : ''} →</a>}
-            {job.previewUrl && <a href={job.previewUrl} target="_blank" rel="noreferrer" style={{ color: '#a5b4fc' }}>View Preview →</a>}
-            {job.previewDeploymentId && <span style={{ color: 'var(--muted)' }}>{job.previewDeploymentId}</span>}
-            {job.workflowRunId && <span style={{ color: 'var(--muted)' }}>run {job.workflowRunId}</span>}
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-            {/* Approve Production is owner-gated + also flag-gated server-side; it stays inert
-                (returns "promotion disabled") while OPERION_PRODUCTION_PROMOTION_ENABLED is off. */}
-            {job.status === 'awaiting_owner_review' && <button style={btn('primary')} disabled={busy} onClick={() => act('approve-production', 'Approve this verified preview for PRODUCTION? This is the owner promotion gate.')}>Approve Production</button>}
-            {job.status === 'awaiting_owner_review' && <button style={btn()} disabled={busy} onClick={() => act('request-changes', 'Send this back for changes?')}>Request Changes</button>}
-            {isTerminalFail && <button style={btn()} disabled={busy} onClick={() => act('retry', 'Retry this automation job from the start?')}>Retry Failed Step</button>}
-            {job.status !== 'cancelled' && job.status !== 'completed' && <button style={btn()} disabled={busy} onClick={() => act('cancel', 'Cancel this automation job?')}>Cancel Automation</button>}
-          </div>
+
+          {/* Review actions (owner-only; production stays disabled unless the promotion flag is on) */}
+          {reviewMode && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+              {job.previewUrl && <a href={job.previewUrl} target="_blank" rel="noreferrer" style={{ ...btn('primary'), textDecoration: 'none' }}>Open Preview →</a>}
+              <button style={btn()} disabled={busy} onClick={() => act('request-changes', 'Send this back for changes?')}>Request Changes</button>
+              <button style={btn('danger')} disabled={busy} onClick={() => act('cancel', 'Reject and close this preview?')}>Reject</button>
+              <button style={btn()} disabled={busy} onClick={() => act('approve-production', 'Approve this verified preview for PRODUCTION? (blocked unless production promotion is enabled)')}>Approve</button>
+            </div>
+          )}
+
+          {/* Technical details — collapsed */}
+          <details style={{ marginTop: 10 }}>
+            <summary style={{ listStyle: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--muted)' }}>▸ Technical details</summary>
+            <div style={{ marginTop: 4, display: 'grid', gap: 2, fontSize: 11, fontFamily: 'monospace', color: 'var(--muted)' }}>
+              <div>job {job.id} · {nice(job.status)}{job.failureSummary ? ` — ${job.failureSummary}` : ''}</div>
+              {job.workflowRunId && <div>run {job.workflowRunId}</div>}
+              {job.targetCommit && <div>commit {job.targetCommit.slice(0, 10)}</div>}
+              {job.previewDeploymentId && <div>preview {job.previewDeploymentId}</div>}
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontFamily: 'inherit' }}>
+                {job.pullRequestUrl && <a href={job.pullRequestUrl} target="_blank" rel="noreferrer" style={{ color: '#a5b4fc' }}>Pull request →</a>}
+                {job.previewUrl && <a href={job.previewUrl} target="_blank" rel="noreferrer" style={{ color: '#a5b4fc' }}>Preview →</a>}
+              </div>
+              <div style={{ marginTop: 4 }}>
+                <button style={{ ...btn(), padding: '4px 9px' }} disabled={busy || running} onClick={() => act('cancel', 'Cancel this automation job?')}>Cancel job</button>
+              </div>
+            </div>
+          </details>
         </div>
-        )
-      })()}
+      )}
     </div>
   )
 }
