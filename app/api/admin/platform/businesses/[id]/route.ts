@@ -4,6 +4,7 @@ import { requirePlatformOwner } from '../../../_lib/session'
 import { getBusiness, saveBusiness, listUpdates, listDeployments } from '../../../../../lib/platform/updates/store'
 import type { PlatformBusiness, ReleaseChannel, UpdatePolicy, HealthStatus, BusinessStatus, AutomationMode } from '../../../../../lib/platform/updates/types'
 import { parseRepoName } from '../../../../../lib/platform/automation/repo-identity'
+import { isEnabled } from '../../../../../lib/platform/flags'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -26,7 +27,17 @@ export const GET = withTenantRoute(async (req: NextRequest, { params }: { params
   const bizDeployments = deployments.filter((d) => d.businessId === id)
   const installedKeys = new Set(bizDeployments.filter((d) => d.status === 'deployed').flatMap((d) => d.updateKeys))
   const pendingUpdates = updates.filter((u) => u.status !== 'archived' && u.status !== 'cancelled' && !installedKeys.has(u.key))
-  return NextResponse.json({ business: biz, deployments: bizDeployments, pendingUpdates })
+  // Booleans only — the resolved on/off state of the automation flags for the owner UI.
+  // These are NOT secrets; no credential values are ever returned here.
+  const operionFlags = {
+    automation: isEnabled('OPERION_AUTOMATION_ENABLED'),
+    githubActions: isEnabled('OPERION_GITHUB_ACTIONS_ENABLED'),
+    preview: isEnabled('OPERION_PREVIEW_AUTOMATION_ENABLED'),
+    productionPromotion: isEnabled('OPERION_PRODUCTION_PROMOTION_ENABLED'),
+    aiAdaptation: isEnabled('OPERION_AI_ADAPTATION_ENABLED'),
+    automaticRollback: isEnabled('OPERION_AUTOMATIC_ROLLBACK_ENABLED'),
+  }
+  return NextResponse.json({ business: biz, deployments: bizDeployments, pendingUpdates, operionFlags })
 })
 
 // PATCH — owner controls. Every change is confirmed client-side + audited via updatedAt/notes.

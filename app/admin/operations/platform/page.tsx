@@ -493,8 +493,9 @@ function ReadinessCard({ title, tone, status, sub, onClick }: { title: string; t
 }
 const secHead = { ...lab, marginBottom: 8 } as const
 
+type OperionFlags = { automation: boolean; githubActions: boolean; preview: boolean; productionPromotion: boolean; aiAdaptation: boolean; automaticRollback: boolean }
 function BusinessDetail({ id, onChanged, onOpenUpdate }: { id: string; onChanged: () => void; onOpenUpdate: (key: string) => void }) {
-  const [d, setD] = useState<{ business: PlatformBusiness; deployments: DeploymentRecord[]; pendingUpdates: PlatformUpdate[] } | null>(null)
+  const [d, setD] = useState<{ business: PlatformBusiness; deployments: DeploymentRecord[]; pendingUpdates: PlatformUpdate[]; operionFlags?: OperionFlags } | null>(null)
   const [f, setF] = useState<Record<string, unknown>>({}); const [busy, setBusy] = useState(false); const [msg, setMsg] = useState('')
   const [editBiz, setEditBiz] = useState(false); const [editAuto, setEditAuto] = useState(false); const [showHistory, setShowHistory] = useState(false)
   const load = useCallback(async () => {
@@ -545,6 +546,10 @@ function BusinessDetail({ id, onChanged, onOpenUpdate }: { id: string; onChanged
   const groupOrder = BUCKET_ORDER
   const groups = groupUpdates(pending)
 
+  // ── Resolved automation-flag state (booleans only; plain-English in the UI) ──
+  const flags = d.operionFlags
+  const previewAutomationOn = !!flags && flags.automation && flags.githubActions && flags.preview
+
   // Inline field renderers for the editors (closures over f/set).
   const Txt = (k: string, label: string, ph?: string) => <div><label style={lab}>{label}</label><input style={field} placeholder={ph} value={String(f[k] ?? '')} onChange={e => set(k, e.target.value)} /></div>
   const Sel = (k: string, label: string, opts: string[]) => <div><label style={lab}>{label}</label><select style={field} value={String(f[k])} onChange={e => set(k, e.target.value)}>{opts.map(o => <option key={o} value={o}>{nice(o)}</option>)}</select></div>
@@ -586,6 +591,25 @@ function BusinessDetail({ id, onChanged, onOpenUpdate }: { id: string; onChanged
         <ReadinessCard title="Production Protection" tone={protectedProd ? 'green' : 'amber'} status={protectedProd ? 'Protected' : 'Promotion enabled'} sub={protectedProd ? 'Promotion disabled' : 'Owner promotion allowed'} onClick={() => scrollTo('sec-automation')} />
         <ReadinessCard title="Pending Updates" tone={pending.length ? 'blue' : 'gray'} status={String(pending.length)} sub={pending.length ? `${groups['Ready for Preview'].length} ready for preview` : 'Nothing pending'} onClick={() => scrollTo('sec-updates')} />
       </div>
+
+      {/* ── Automation status (plain-English flag state; raw names in diagnostics) ── */}
+      {flags && (
+        <div style={card}>
+          <p style={secHead}>Automation status</p>
+          <MetaRow label="Preview Automation" value={<Badge tone={previewAutomationOn ? 'green' : 'gray'}>{previewAutomationOn ? 'Enabled' : 'Disabled'}</Badge>} />
+          <MetaRow label="Production Promotion" value={<Badge tone={flags.productionPromotion ? 'amber' : 'green'}>{flags.productionPromotion ? 'Enabled' : 'Disabled'}</Badge>} />
+          <MetaRow label="AI Adaptation" value={<Badge tone={flags.aiAdaptation ? 'amber' : 'green'}>{flags.aiAdaptation ? 'Enabled' : 'Disabled'}</Badge>} />
+          <MetaRow label="Automatic Rollback" value={<Badge tone={flags.automaticRollback ? 'amber' : 'green'}>{flags.automaticRollback ? 'Enabled' : 'Disabled'}</Badge>} />
+          <details style={{ marginTop: 8 }}>
+            <summary style={{ cursor: 'pointer', fontSize: 11.5, color: 'var(--muted)' }}>▸ Diagnostics (environment flags)</summary>
+            <div style={{ marginTop: 4, display: 'grid', gap: 2, fontFamily: 'monospace', fontSize: 11 }}>
+              {([['OPERION_AUTOMATION_ENABLED', flags.automation], ['OPERION_GITHUB_ACTIONS_ENABLED', flags.githubActions], ['OPERION_PREVIEW_AUTOMATION_ENABLED', flags.preview], ['OPERION_PRODUCTION_PROMOTION_ENABLED', flags.productionPromotion], ['OPERION_AI_ADAPTATION_ENABLED', flags.aiAdaptation], ['OPERION_AUTOMATIC_ROLLBACK_ENABLED', flags.automaticRollback]] as const).map(([n, on]) => (
+                <div key={n} style={{ color: on ? '#34d399' : 'var(--muted)' }}>{on ? '✓' : '·'} {n}={String(on)}</div>
+              ))}
+            </div>
+          </details>
+        </div>
+      )}
 
       {/* ── 4. Primary actions ── */}
       <div style={card}>
