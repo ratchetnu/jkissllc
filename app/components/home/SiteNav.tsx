@@ -7,6 +7,7 @@ const LINKS: [string, string][] = [
   ['Services', '#services'],
   ['How it works', '#how'],
   ['Coverage', '#coverage'],
+  ['Operion', '/operion'],
   ['Reviews', '/reviews'],
   ['Track', '/track'],
 ];
@@ -64,6 +65,7 @@ export default function SiteNav() {
         <div className="md:hidden px-6 pb-6 flex flex-col gap-4" style={{ background: 'rgba(11,11,12,0.98)' }}>
           {([
             ['Services', '#services'], ['How it works', '#how'], ['Coverage', '#coverage'],
+            ['Operion — our platform', '/operion'],
             ['Track a job', '/track'], ['Reviews', '/reviews'], ['Safety / FMCSA', '/safety'], ['Request COI', '/coi'],
           ] as [string, string][]).map(([label, href]) => (
             <a key={href} href={href} className="text-base font-medium py-2" style={{ color: 'var(--muted)' }} onClick={() => setOpen(false)}>{label}</a>
