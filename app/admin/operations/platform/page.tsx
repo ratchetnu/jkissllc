@@ -6,6 +6,7 @@ import { fmtTs } from '../ui'
 import { parseRepoName } from '../../../lib/platform/automation/repo-identity'
 import { businessReadiness, businessNextStep, groupUpdates, BUCKET_ORDER } from '../../../lib/platform/updates/business-view'
 import { deployPrimary, deployStage, DEPLOY_STAGES, failureExplanation } from '../../../lib/platform/automation/deploy-view'
+import { PROMOTION_STAGES, promotionStage } from '../../../lib/platform/automation/promotion'
 import type {
   PlatformBusiness, PlatformUpdate, UpdateCompatibility, DeploymentRecord, UpdateStatus, CheckStatus,
 } from '../../../lib/platform/updates/types'
@@ -300,7 +301,7 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
   const [target, setTarget] = useState(targets[0]?.id ?? '')
   const [busy, setBusy] = useState(false); const [checking, setChecking] = useState(false); const [err, setErr] = useState('')
   const [gates, setGates] = useState<Gate[] | null>(null); const [ready, setReady] = useState(false)
-  const [job, setJob] = useState<{ id: string; status: string; currentStep: string; failureCategory?: string; previewUrl?: string; previewDeploymentId?: string; pullRequestUrl?: string; pullRequestNumber?: number; workflowRunId?: string; targetCommit?: string; failureSummary?: string; result?: { filesApplied?: number; filesSkipped?: number; filesFailed?: number; lintPassed?: boolean; testsPassed?: boolean; buildPassed?: boolean } } | null>(null)
+  const [job, setJob] = useState<{ id: string; status: string; currentStep: string; failureCategory?: string; previewUrl?: string; previewDeploymentId?: string; pullRequestUrl?: string; pullRequestNumber?: number; workflowRunId?: string; targetCommit?: string; productionUrl?: string; failureSummary?: string; result?: { filesApplied?: number; filesSkipped?: number; filesFailed?: number; lintPassed?: boolean; testsPassed?: boolean; buildPassed?: boolean } } | null>(null)
 
   // Read-only readiness on mount + whenever the target changes. Never creates a job.
   const check = useCallback(async () => {
@@ -318,7 +319,7 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
     if (!target) return
     try {
       const r = await pf('/api/admin/platform/automation')
-      const mine = ((r.jobs ?? []) as Array<{ id: string; status: string; currentStep: string; failureCategory?: string; updateId: string; businessId: string; updatedAt?: number; previewUrl?: string; previewDeploymentId?: string; pullRequestUrl?: string; pullRequestNumber?: number; workflowRunId?: string; targetCommit?: string; failureSummary?: string; result?: { filesApplied?: number; filesSkipped?: number; filesFailed?: number; lintPassed?: boolean; testsPassed?: boolean; buildPassed?: boolean } }>)
+      const mine = ((r.jobs ?? []) as Array<{ id: string; status: string; currentStep: string; failureCategory?: string; updateId: string; businessId: string; updatedAt?: number; previewUrl?: string; previewDeploymentId?: string; pullRequestUrl?: string; pullRequestNumber?: number; workflowRunId?: string; targetCommit?: string; productionUrl?: string; failureSummary?: string; result?: { filesApplied?: number; filesSkipped?: number; filesFailed?: number; lintPassed?: boolean; testsPassed?: boolean; buildPassed?: boolean } }>)
         .filter(j => j.updateId === updateKey && j.businessId === target)
         .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
       if (mine[0]) setJob(mine[0])
@@ -376,6 +377,9 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
   // Don't mark "Ready for review" done until artifacts exist.
   const reached = finalizeMode ? Math.min(stage.reached, 4) : stage.reached
   const failedAt = stage.failedAt
+  // Production promotion (Sprint 2) — a separate pipeline shown once the owner approves.
+  const promoting = !!job && ['approved_for_production', 'merging', 'production_deploying', 'verifying', 'completed', 'rollback_required', 'rolling_back', 'rolled_back'].includes(job.status)
+  const promo = job && promoting ? promotionStage(job.status) : { reached: -1, failedAt: null }
 
   return (
     <div style={{ ...card, border: '1px solid rgba(129,140,248,.35)' }}>
@@ -422,8 +426,33 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
         </details>
       )}
 
+      {/* ── Production promotion pipeline (owner-approved; shown after Approve) ── */}
+      {job && promoting && (
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
+          <p style={{ ...lab, margin: '0 0 8px', color: job.status === 'completed' ? '#34d399' : '#f87171' }}>🚀 Production promotion</p>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
+            {PROMOTION_STAGES.map((label, i) => {
+              const fail = promo.failedAt === i
+              const done = i < promo.reached && promo.failedAt == null
+              const current = i === promo.reached && promo.failedAt == null
+              const bg = fail ? '#7f1d1d' : done ? 'rgba(52,211,153,.18)' : current ? 'var(--red)' : 'rgba(255,255,255,.05)'
+              const col = fail ? '#fecaca' : done ? '#34d399' : current ? '#fff' : 'var(--muted)'
+              return (
+                <span key={label} style={{ display: 'inline-flex', alignItems: 'center' }}>
+                  <span style={{ fontSize: 10.5, padding: '2px 7px', borderRadius: 6, background: bg, color: col, fontWeight: current || fail ? 700 : 400 }}>{done ? '✓ ' : fail ? '✗ ' : ''}{label}</span>
+                  {i < PROMOTION_STAGES.length - 1 && <span style={{ color: 'var(--muted)', fontSize: 10, margin: '0 2px' }}>→</span>}
+                </span>
+              )
+            })}
+          </div>
+          {job.status === 'completed' && <p style={{ fontSize: 12.5, color: '#34d399' }}>✓ Live in production.{job.productionUrl ? ' ' : ''}{job.productionUrl && <a href={job.productionUrl} target="_blank" rel="noreferrer" style={{ color: '#a5b4fc' }}>Open production →</a>}</p>}
+          {(job.status === 'rollback_required' || job.status === 'rolled_back') && <p style={{ fontSize: 12.5, color: '#f87171' }}>Production verification failed — rollback required. Production promotion is otherwise gated.</p>}
+          {['approved_for_production', 'merging', 'production_deploying', 'verifying'].includes(job.status) && <p style={{ fontSize: 12.5, color: '#fbbf24' }}>Promoting to production — merging the PR and deploying (runs in the background).</p>}
+        </div>
+      )}
+
       {/* ── Live deployment screen (friendly 6-stage) ── */}
-      {job && (
+      {job && !promoting && (
         <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
             {DEPLOY_STAGES.map((label, i) => {

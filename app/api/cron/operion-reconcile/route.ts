@@ -4,9 +4,10 @@ import { listJobs, saveJob } from '../../../lib/platform/automation/store'
 import { getBusiness } from '../../../lib/platform/updates/store'
 import { getAutomationProvider } from '../../../lib/platform/automation/provider'
 import { businessRepoRef } from '../../../lib/platform/automation/repo-identity'
-import { retryPreview, finalizePreview } from '../../../lib/platform/automation/orchestrator'
+import { retryPreview, finalizePreview, advancePromotion } from '../../../lib/platform/automation/orchestrator'
 import { reconcileDecision } from '../../../lib/platform/automation/reconcile'
 import { isTransientFailure, artifactsComplete } from '../../../lib/platform/automation/deploy-view'
+import { PROMOTION_ACTIVE } from '../../../lib/platform/automation/promotion'
 import { AUTOMATION_ACTIVE } from '../../../lib/platform/automation/types'
 
 export const runtime = 'nodejs'
@@ -28,11 +29,18 @@ export async function GET(req: NextRequest) {
   const now = Date.now()
   const all = await listJobs()
   const jobs = all.filter(j => AUTOMATION_ACTIVE.includes(j.status) || isTransientFailure(j.failureCategory)
-    || (j.status === 'awaiting_owner_review' && (!j.pullRequestUrl || !j.previewUrl)))
+    || (j.status === 'awaiting_owner_review' && (!j.pullRequestUrl || !j.previewUrl))
+    || (j.status === 'production_deploying' || j.status === 'verifying'))
   const provider = getAutomationProvider()
   const results: { jobId: string; action: string; reason: string }[] = []
 
   for (const job of jobs) {
+    // Production promotion in flight → confirm deploy + health, then complete.
+    if (PROMOTION_ACTIVE.has(job.status) && (job.status === 'production_deploying' || job.status === 'verifying')) {
+      const p = await advancePromotion({ jobId: job.id })
+      results.push({ jobId: job.id, action: 'advance_promotion', reason: p.job?.status ?? p.reason ?? 'advanced' })
+      continue
+    }
     const business = await getBusiness(job.businessId)
     // Review-ready but missing artifacts → discover/create PR + Preview (idempotent).
     if (job.status === 'awaiting_owner_review' && business && !artifactsComplete(job, { requirePr: business.requirePullRequest, requirePreview: business.requirePreview })) {

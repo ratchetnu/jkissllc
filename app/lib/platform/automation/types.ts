@@ -83,6 +83,8 @@ export type UpdateAutomationJob = {
   completedAt?: number
   approvedAt?: number
   approvedBy?: string
+  // production promotion (Sprint 2)
+  mergeCommit?: string
   // failure / rollback
   failureCategory?: AutomationFailure
   failureSummary?: string
