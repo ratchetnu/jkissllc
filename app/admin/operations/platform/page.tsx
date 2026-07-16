@@ -202,7 +202,7 @@ function UpdateDetail({ k, businesses, onChanged }: { k: string; businesses: Pla
       </div>
 
       {/* ── PRIMARY: Preview automation (target + readiness + next step + action) ── */}
-      <AutomationPanel updateKey={k} businesses={businesses} inlineActions={{ update_approved: { label: 'Approve update', run: () => act({ action: 'approve' }, 'approve') } }} />
+      <AutomationPanel updateKey={k} businesses={businesses} requiresEnv={!!(u.environmentChangeRequired || u.secretRequired)} requiresMigration={!!u.migrationRequired} inlineActions={{ update_approved: { label: 'Approve update', run: () => act({ action: 'approve' }, 'approve') } }} />
 
       {/* ── Progressive disclosure: everything else, collapsed ── */}
       <Section title="Update actions" hint="approve · status · archive">
@@ -296,10 +296,16 @@ const GATE_NEXT: Record<string, string> = {
 
 // ── Deploy Preview panel: one action → live stages → owner review ─────────────
 type Gate = { id: string; label: string; ok: boolean; blocking: boolean; reason?: string }
-function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: string; businesses: PlatformBusiness[]; inlineActions?: Record<string, { label: string; run: () => void }> }) {
+function AutomationPanel({ updateKey, businesses, requiresEnv = false, requiresMigration = false, inlineActions }: { updateKey: string; businesses: PlatformBusiness[]; requiresEnv?: boolean; requiresMigration?: boolean; inlineActions?: Record<string, { label: string; run: () => void }> }) {
   const targets = businesses.filter(b => b.role === 'target' || b.role === 'source_and_target')
   const [target, setTarget] = useState(targets[0]?.id ?? '')
   const [busy, setBusy] = useState(false); const [checking, setChecking] = useState(false); const [err, setErr] = useState('')
+  // Owner approvals for the risky-change gates. These are the ONLY way to satisfy the
+  // env/secret + migration preflight gates — the approval is explicit + owner-driven, never
+  // implied by a click. Passed into both readiness (evaluateOnly) and prepare.
+  const [approveEnv, setApproveEnv] = useState(false)
+  const [approveMigration, setApproveMigration] = useState(false)
+  const approvals = (requiresEnv || requiresMigration) ? { environment: approveEnv, migration: approveMigration } : undefined
   const [gates, setGates] = useState<Gate[] | null>(null); const [ready, setReady] = useState(false)
   const [job, setJob] = useState<{ id: string; status: string; currentStep: string; failureCategory?: string; previewUrl?: string; previewDeploymentId?: string; pullRequestUrl?: string; pullRequestNumber?: number; workflowRunId?: string; targetCommit?: string; productionUrl?: string; failureSummary?: string; result?: { filesApplied?: number; filesSkipped?: number; filesFailed?: number; lintPassed?: boolean; testsPassed?: boolean; buildPassed?: boolean } } | null>(null)
 
@@ -308,10 +314,12 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
     if (!target) { setGates(null); setReady(false); return }
     setChecking(true); setErr('')
     try {
-      const j = await pf('/api/admin/platform/automation', { method: 'POST', body: JSON.stringify({ updateKey, businessId: target, evaluateOnly: true }) })
+      const j = await pf('/api/admin/platform/automation', { method: 'POST', body: JSON.stringify({ updateKey, businessId: target, evaluateOnly: true, approvals }) })
       setGates(j.preflight?.gates ?? null); setReady(!!j.ok)
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed'); setReady(false) } finally { setChecking(false) }
-  }, [updateKey, target])
+    // `approvals` is derived from the primitive deps below (a fresh object each render would loop).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [updateKey, target, approveEnv, approveMigration, requiresEnv, requiresMigration])
   useEffect(() => { check() }, [check])
   // Recover the in-flight/last job for this update × target on load — so a refresh or the
   // idle auto-logout doesn't lose the running job's stepper. Reads the jobs list (owner-gated).
@@ -340,7 +348,7 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
   const prepare = async () => {
     setBusy(true); setErr('')
     try {
-      const j = await pf('/api/admin/platform/automation', { method: 'POST', body: JSON.stringify({ updateKey, businessId: target }) })
+      const j = await pf('/api/admin/platform/automation', { method: 'POST', body: JSON.stringify({ updateKey, businessId: target, approvals }) })
       setGates(j.preflight?.gates ?? null); setJob(j.job ?? null); setReady(!!j.ok)
       if (!j.ok) setErr(j.error ?? 'Preview not prepared — see readiness below.')
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') } finally { setBusy(false) }
@@ -415,6 +423,26 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
         ) : null
       )}
       {err && <p style={{ color: '#f87171', fontSize: 12, marginTop: 6 }}>{err}</p>}
+
+      {/* ── Owner approvals for risky-change gates (the ONLY way to clear them) ── */}
+      {!job && (requiresEnv || requiresMigration) && (
+        <div style={{ marginTop: 10, padding: '10px 12px', border: '1px solid var(--line)', borderRadius: 8, background: 'rgba(251,191,36,.06)', display: 'grid', gap: 6 }}>
+          <p style={{ ...lab, margin: 0, color: '#fbbf24' }}>⚠ Owner approval required</p>
+          {requiresEnv && (
+            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12.5, cursor: 'pointer' }}>
+              <input type="checkbox" checked={approveEnv} disabled={busy} onChange={e => setApproveEnv(e.target.checked)} style={{ marginTop: 2 }} />
+              <span>I’ve set the required env vars / feature flags on <strong>{targets.find(b => b.id === target)?.name ?? 'the target'}</strong> and approve this env/secret change.</span>
+            </label>
+          )}
+          {requiresMigration && (
+            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12.5, cursor: 'pointer' }}>
+              <input type="checkbox" checked={approveMigration} disabled={busy} onChange={e => setApproveMigration(e.target.checked)} style={{ marginTop: 2 }} />
+              <span>I approve running the required database migration for this update.</span>
+            </label>
+          )}
+          <span style={{ fontSize: 11, color: 'var(--muted)' }}>This is an explicit, owner-only approval — it clears the corresponding readiness gate. It does not deploy anything.</span>
+        </div>
+      )}
 
       {/* ── Readiness checklist — collapsed once ready ── */}
       {!job && gates && (
