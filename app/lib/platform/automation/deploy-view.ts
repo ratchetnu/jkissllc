@@ -5,6 +5,13 @@
 
 export type DeployActionKind = 'deploy' | 'fix' | 'running' | 'retry' | 'regenerate' | 'finalize' | 'review' | 'approved' | 'none'
 
+/** The target already carries this update (compat = already_present) — Operion must treat it
+ *  as satisfied and NOT offer a transfer. Re-transferring identical files just fails at the
+ *  commit step ("nothing to commit"); already-present code is a success, not a deploy. */
+export function isAlreadyDeployed(compatStatus: string | undefined | null): boolean {
+  return compatStatus === 'already_present'
+}
+
 // A review-ready job isn't truly ready until its required artifacts (PR + Preview) exist.
 export function artifactsComplete(job: { pullRequestUrl?: string | null; previewUrl?: string | null }, opts: { requirePr?: boolean; requirePreview?: boolean }): boolean {
   if (opts.requirePr !== false && !job.pullRequestUrl) return false

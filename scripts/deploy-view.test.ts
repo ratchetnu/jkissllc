@@ -1,7 +1,7 @@
 // Operion one-click deploy view model + reconciler — pure tests.
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { deployPrimary, deployStage, isTransientFailure, isOwnerRetryable, failureExplanation, artifactsComplete, DEPLOY_STAGES } from '../app/lib/platform/automation/deploy-view'
+import { deployPrimary, deployStage, isTransientFailure, isOwnerRetryable, failureExplanation, artifactsComplete, isAlreadyDeployed, DEPLOY_STAGES } from '../app/lib/platform/automation/deploy-view'
 import { reconcileDecision } from '../app/lib/platform/automation/reconcile'
 
 test('isTransientFailure: only infra categories auto-retry', () => {
@@ -81,4 +81,11 @@ test('reconcile: transient failure within budget → auto_retry; exhausted → n
   assert.equal(reconcileDecision({ job: { ...base, status: 'failed', failureCategory: 'timeout', attemptCount: 2 }, ghRun: null, now: 2000 }).action, 'none')
   // non-transient failure is never auto-retried
   assert.equal(reconcileDecision({ job: { ...base, status: 'failed', failureCategory: 'tests_failed', attemptCount: 0 }, ghRun: null, now: 2000 }).action, 'none')
+})
+
+test('isAlreadyDeployed: only already_present is satisfied (no transfer offered)', () => {
+  assert.equal(isAlreadyDeployed('already_present'), true)
+  for (const s of ['compatible', 'compatible_with_changes', 'under_review', 'unknown', 'incompatible', 'blocked', 'not_applicable', undefined, null]) {
+    assert.equal(isAlreadyDeployed(s as string | undefined | null), false, String(s))
+  }
 })
