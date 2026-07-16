@@ -95,6 +95,7 @@ const SCENARIOS: Scenario[] = [
 
 function Sample() {
   const [active, setActive] = useState('standard')
+  const [variant, setVariant] = useState<'standard' | 'verification'>('standard')
   const scenario = SCENARIOS.find(s => s.key === active) ?? SCENARIOS[0]
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -117,7 +118,17 @@ function Sample() {
         ))}
       </div>
 
-      <PayStatementDoc s={scenario.s} meta={scenario.meta} />
+      <div className="no-print" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 700 }}>Document:</span>
+        {(['standard', 'verification'] as const).map(v => (
+          <button key={v} onClick={() => setVariant(v)} className="os-tap" aria-pressed={variant === v}
+            style={{ padding: '7px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--line)', color: variant === v ? '#fff' : 'var(--text)', background: variant === v ? 'var(--red)' : 'transparent' }}>
+            {v === 'standard' ? 'Standard' : 'Verification copy'}
+          </button>
+        ))}
+      </div>
+
+      <PayStatementDoc s={scenario.s} meta={scenario.meta} variant={variant} verifyUrl={`https://www.jkissllc.com/verify/SAMPLE`} />
     </div>
   )
 }

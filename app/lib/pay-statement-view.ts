@@ -50,6 +50,25 @@ export function summaryRows(s: PayStatement, meta: PayStatementMeta = {}): Summa
   return rows
 }
 
+// ── Public authenticity view (for the /verify page) ──────────────────────────
+// Confirms a statement is GENUINE without exposing sensitive pay data. Amounts and the full
+// contractor name stay OFF the public page — they're on the document the contractor shares.
+export type PublicStatement = {
+  statementNumber: string
+  business: string
+  periodStart: string
+  periodEnd: string
+  issuedAt: number
+  status: 'issued' | 'void'
+  contractorInitials: string
+}
+export function initialsOf(name: string): string {
+  return name.trim().split(/\s+/).map(p => p[0]?.toUpperCase() ?? '').join('').slice(0, 3) || '—'
+}
+export function publicStatement(s: PayStatement, business: string): PublicStatement {
+  return { statementNumber: s.statementNumber, business, periodStart: s.periodStart, periodEnd: s.periodEnd, issuedAt: s.issuedAt, status: s.status, contractorInitials: initialsOf(s.staffName) }
+}
+
 /** Deterministic reconciliation over the snapshot — surfaces any inconsistency without altering it. */
 export function reconcile(s: PayStatement, meta: PayStatementMeta = {}): { ok: boolean; issues: string[] } {
   const issues: string[] = []

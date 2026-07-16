@@ -1,7 +1,7 @@
 // Premium pay-statement view model — pure tests (grouping, summary, reconciliation).
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { groupEarnings, summaryRows, reconcile, DEFAULT_CLASSIFICATION } from '../app/lib/pay-statement-view'
+import { groupEarnings, summaryRows, reconcile, DEFAULT_CLASSIFICATION, publicStatement, initialsOf } from '../app/lib/pay-statement-view'
 import type { PayStatement } from '../app/lib/pay-statements'
 
 function mk(p: Partial<PayStatement> = {}): PayStatement {
@@ -45,6 +45,26 @@ test('reconcile: passes on a consistent snapshot, flags inconsistencies', () => 
   const r = reconcile(bad); assert.equal(r.ok, false); assert.match(r.issues.join(), /net/)
   const badGross = mk(); badGross.grossCents = 999
   assert.equal(reconcile(badGross).ok, false)
+})
+
+test('publicStatement: authenticity fields only — no amounts, no full name', () => {
+  const s = mk({ deductions: [{ label: 'x', amountCents: 1000 }] })
+  const pub = publicStatement(s, 'J Kiss LLC')
+  assert.equal(pub.statementNumber, 'JK-PS-1001')
+  assert.equal(pub.business, 'J Kiss LLC')
+  assert.equal(pub.contractorInitials, 'JR')                 // initials, not "Jordan Rivera"
+  assert.equal(pub.status, 'issued')
+  // the public shape must NOT carry any monetary field
+  const keys = Object.keys(pub)
+  assert.ok(!keys.some(k => /gross|net|deduction|amount|cents|pay/i.test(k)), 'no money fields leaked')
+  assert.ok(!keys.includes('staffName'), 'no full name leaked')
+})
+
+test('initialsOf handles one/many names + empty', () => {
+  assert.equal(initialsOf('Jordan Rivera'), 'JR')
+  assert.equal(initialsOf('Sam'), 'S')
+  assert.equal(initialsOf('Ana Maria De La Cruz'), 'AMD')   // capped at 3
+  assert.equal(initialsOf('   '), '—')
 })
 
 test('never fabricates: default classification is a 1099 contractor (not employee)', () => {
