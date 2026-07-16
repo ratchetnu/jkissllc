@@ -3,7 +3,7 @@ import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-ro
 import { requirePlatformOwner, getPrincipal } from '../../_lib/session'
 import { getUpdate, getBusiness, getCompatMap } from '../../../../lib/platform/updates/store'
 import { listJobs } from '../../../../lib/platform/automation/store'
-import { preparePreview } from '../../../../lib/platform/automation/orchestrator'
+import { preparePreview, evaluatePreviewReadiness } from '../../../../lib/platform/automation/orchestrator'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -26,11 +26,16 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   const [update, business] = await Promise.all([getUpdate(updateKey), getBusiness(businessId)])
   if (!update || !business) return NextResponse.json({ error: 'unknown update or business' }, { status: 400 })
   const compat = (await getCompatMap(updateKey))[businessId]
+  const approvals = body.approvals && typeof body.approvals === 'object' ? { migration: body.approvals.migration === true, environment: body.approvals.environment === true } : undefined
+
+  // Read-only readiness (no job created) — the UI calls this to render gates + gate the button.
+  if (body.evaluateOnly === true) {
+    const preflight = await evaluatePreviewReadiness({ update, business, compat, approvals })
+    return NextResponse.json({ ok: preflight.ok, preflight, evaluateOnly: true })
+  }
+
   const actor = (await getPrincipal(req))?.sub || 'owner'
-  const result = await preparePreview({
-    update, business, compat, actor,
-    strategy: body.strategy, approvals: body.approvals && typeof body.approvals === 'object' ? { migration: body.approvals.migration === true, environment: body.approvals.environment === true } : undefined,
-  })
+  const result = await preparePreview({ update, business, compat, actor, strategy: body.strategy, approvals })
   // A blocked preflight is a VALID outcome to render (the client shows which gates failed) —
   // not an HTTP error. Return 200 so the gates + reason reach the UI. `error` is included so
   // any generic client still has a human message instead of a bare "Request failed".

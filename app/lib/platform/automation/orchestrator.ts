@@ -22,6 +22,23 @@ export function automationIdempotencyKey(businessId: string, updateKey: string, 
 
 export type PrepareResult = { ok: boolean; preflight: PreflightResult; job?: UpdateAutomationJob; reason?: string }
 
+export type ReadinessInput = {
+  update: PlatformUpdate; business: PlatformBusiness; compat?: UpdateCompatibility
+  approvals?: { migration?: boolean; environment?: boolean }; env?: Record<string, string | undefined>
+}
+
+/** READ-ONLY preflight evaluation — no job is created, nothing is dispatched. The UI calls
+ *  this to render readiness + disable "Prepare Preview" until every blocking gate passes. */
+export async function evaluatePreviewReadiness(input: ReadinessInput): Promise<PreflightResult> {
+  const env = input.env ?? process.env
+  const hasActiveJob = !!(await store.activeJobForBusiness(input.business.id))
+  return evaluatePreflight({
+    update: input.update, business: input.business, compat: input.compat, hasActiveJob,
+    flags: { automation: flag('OPERION_AUTOMATION_ENABLED', env), preview: flag('OPERION_PREVIEW_AUTOMATION_ENABLED', env), githubActions: flag('OPERION_GITHUB_ACTIONS_ENABLED', env) },
+    approvals: input.approvals,
+  })
+}
+
 /** Validate + create an automation job for a preview. Dispatch only if fully enabled +
  *  provisioned; otherwise the job stops at `blocked` (execution not configured). */
 export async function preparePreview(input: {
@@ -31,12 +48,7 @@ export async function preparePreview(input: {
 }): Promise<PrepareResult> {
   const { update, business, compat, actor } = input
   const env = input.env ?? process.env
-  const hasActiveJob = !!(await store.activeJobForBusiness(business.id))
-  const preflight = evaluatePreflight({
-    update, business, compat, hasActiveJob,
-    flags: { automation: flag('OPERION_AUTOMATION_ENABLED', env), preview: flag('OPERION_PREVIEW_AUTOMATION_ENABLED', env), githubActions: flag('OPERION_GITHUB_ACTIONS_ENABLED', env) },
-    approvals: input.approvals,
-  })
+  const preflight = await evaluatePreviewReadiness({ update, business, compat, approvals: input.approvals, env })
   if (!preflight.ok) return { ok: false, preflight, reason: 'preflight_failed' }
 
   const idem = automationIdempotencyKey(business.id, update.key, update.sourceCommit)

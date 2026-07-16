@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import OperationsShell from '../OperationsShell'
 import { fmtTs } from '../ui'
 import { parseRepoName } from '../../../lib/platform/automation/repo-identity'
@@ -179,8 +179,10 @@ function UpdateDetail({ k, businesses, onChanged }: { k: string; businesses: Pla
   const act = async (body: Record<string, unknown>, tag: string) => { setBusy(tag); setMsg(''); setErr(''); try { const j = await pf(`/api/admin/platform/updates/${k}`, { method: 'PATCH', body: JSON.stringify(body) }); if (j.prompt) setPrompt(j.prompt); setMsg('Done.'); await load(); onChanged() } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') } finally { setBusy('') } }
   if (!d) return <p style={{ color: 'var(--muted)' }}>Loading…</p>
   const u = d.update
+  const valSummary = `${Object.values(u.validation).filter(v => v === 'passed').length}/${Object.keys(u.validation).length} passed`
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
+    <div style={{ display: 'grid', gap: 12 }}>
+      {/* ── Always visible: summary + status ── */}
       <div style={card}>
         <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
           <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--muted)' }}>{u.key}</span>
@@ -190,10 +192,18 @@ function UpdateDetail({ k, businesses, onChanged }: { k: string; businesses: Pla
         <p style={{ color: 'var(--muted)', fontSize: 13.5, marginTop: 6 }}>{u.summary}</p>
         <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8, display: 'grid', gap: 2 }}>
           <span>{nice(u.type)} · {nice(u.scope)} · sev {u.severity} · prio {u.priority} · {u.module ?? 'no module'}</span>
-          <span>source {u.sourceBusinessId} @ {u.sourceCommit ?? 'no commit'} · breaking {u.breakingChange ? 'yes' : 'no'} · migration {u.migrationRequired ? 'yes' : 'no'} · flag {u.featureFlagRequired ? 'yes' : 'no'} · rollback {u.rollbackSupported ? 'yes' : 'no'}</span>
-          {u.technicalImpact && <span>impact: {u.technicalImpact}</span>}
+          <span>source {u.sourceBusinessId} @ {u.sourceCommit ?? 'no commit'} · migration {u.migrationRequired ? 'yes' : 'no'} · flag {u.featureFlagRequired ? 'yes' : 'no'} · rollback {u.rollbackSupported ? 'yes' : 'no'}</span>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+        {msg && <p style={{ color: '#34d399', fontSize: 12, marginTop: 8 }}>{msg}</p>}
+        {err && <p style={{ color: '#f87171', fontSize: 12, marginTop: 8 }}>{err}</p>}
+      </div>
+
+      {/* ── PRIMARY: Preview automation (target + readiness + next step + action) ── */}
+      <AutomationPanel updateKey={k} businesses={businesses} inlineActions={{ update_approved: { label: 'Approve update', run: () => act({ action: 'approve' }, 'approve') } }} />
+
+      {/* ── Progressive disclosure: everything else, collapsed ── */}
+      <Section title="Update actions" hint="approve · status · archive">
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button style={btn('primary')} disabled={busy === 'approve' || u.status === 'archived'} onClick={() => act({ action: 'approve' }, 'approve')}>Approve</button>
           <button style={btn()} disabled={busy === 'block'} onClick={() => act({ action: 'block', reason: prompt || '' }, 'block')}>Mark blocked</button>
           <select style={{ ...field, width: 'auto' }} value="" onChange={e => e.target.value && act({ action: 'set-status', status: e.target.value as UpdateStatus }, 'status')}>
@@ -202,13 +212,9 @@ function UpdateDetail({ k, businesses, onChanged }: { k: string; businesses: Pla
           </select>
           <button style={btn('danger')} disabled={busy === 'archive'} onClick={() => act({ action: 'archive' }, 'archive')}>Archive</button>
         </div>
-        {msg && <p style={{ color: '#34d399', fontSize: 12, marginTop: 8 }}>{msg}</p>}
-        {err && <p style={{ color: '#f87171', fontSize: 12, marginTop: 8 }}>{err}</p>}
-      </div>
+      </Section>
 
-      {/* Validation checklist */}
-      <div style={card}>
-        <p style={{ ...lab, marginBottom: 8 }}>Validation evidence</p>
+      <Section title="Validation evidence" hint={valSummary}>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {(Object.keys(u.validation) as (keyof typeof u.validation)[]).map(check => (
             <div key={check} style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
@@ -219,31 +225,25 @@ function UpdateDetail({ k, businesses, onChanged }: { k: string; businesses: Pla
             </div>
           ))}
         </div>
-      </div>
+      </Section>
 
-      {/* Compatibility */}
-      <div style={card}>
-        <p style={{ ...lab, marginBottom: 8 }}>Compatibility by business</p>
+      <Section title="Compatibility by business">
         {businesses.map(b => {
           const c = d.compat.find(x => x.businessId === b.id)
           return <CompatRow key={b.id} biz={b} c={c} onSave={(body) => act({ action: 'assess-compat', businessId: b.id, ...body }, `c-${b.id}`)} busy={busy === `c-${b.id}`} />
         })}
-      </div>
+      </Section>
 
-      {/* Deployment prompt generator */}
-      <div style={card}>
-        <p style={{ ...lab, marginBottom: 8 }}>Claude deployment prompt (copy-only — nothing runs)</p>
+      <Section title="Deployment prompt" hint="copy-only — nothing runs">
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <select style={{ ...field, width: 'auto' }} value={target} onChange={e => setTarget(e.target.value)}>{businesses.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
           <button style={btn('primary')} disabled={busy === 'gen'} onClick={() => act({ action: 'generate-prompt', targetBusinessId: target }, 'gen')}>Generate</button>
           {prompt && <button style={btn()} onClick={() => navigator.clipboard?.writeText(prompt)}>Copy</button>}
         </div>
         {prompt && <textarea readOnly value={prompt} style={{ ...field, marginTop: 8, minHeight: 220, fontFamily: 'monospace', fontSize: 11.5, whiteSpace: 'pre' }} />}
-      </div>
+      </Section>
 
-      {/* Deployment coverage + record */}
-      <div style={card}>
-        <p style={{ ...lab, marginBottom: 8 }}>Deployments</p>
+      <Section title="Deployments" hint={d.deployments.length === 0 ? 'none recorded' : `${d.deployments.length} recorded`}>
         {d.deployments.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 13 }}>None recorded.</p>}
         {d.deployments.map(dep => (
           <div key={dep.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '6px 0', borderTop: '1px solid var(--line)', fontSize: 12 }}>
@@ -254,11 +254,41 @@ function UpdateDetail({ k, businesses, onChanged }: { k: string; businesses: Pla
           </div>
         ))}
         <RecordDeployment businesses={businesses} onSave={(body) => act({ action: 'record-deployment', ...body }, 'record')} busy={busy === 'record'} />
-      </div>
-
-      <AutomationPanel updateKey={k} businesses={businesses} />
+      </Section>
     </div>
   )
+}
+
+// ── Collapsible section (progressive disclosure) — native <details>, a11y-friendly ──
+function Section({ title, hint, children, open = false }: { title: string; hint?: string; children: ReactNode; open?: boolean }) {
+  return (
+    <details style={{ ...card, padding: 0 }} open={open}>
+      <summary style={{ listStyle: 'none', cursor: 'pointer', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 12, color: 'var(--muted)' }}>▸</span>
+        <span style={{ ...lab, margin: 0 }}>{title}</span>
+        {hint && <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--muted)' }}>{hint}</span>}
+      </summary>
+      <div style={{ padding: '0 16px 14px' }}>{children}</div>
+    </details>
+  )
+}
+
+// Plain-English "what to do next" for each blocking gate (falls back to the gate reason).
+const GATE_NEXT: Record<string, string> = {
+  automation_enabled: 'Turn on the three Preview flags (OPERION_AUTOMATION_ENABLED, OPERION_GITHUB_ACTIONS_ENABLED, OPERION_PREVIEW_AUTOMATION_ENABLED) in Vercel, then redeploy.',
+  target_is_target: 'This business isn’t a deploy target — pick a target business.',
+  target_configured: 'Finish this business’s setup: save the repo + Preview project, then Validate GitHub Connection until it reads “ready”.',
+  preview_provider: 'Set the Preview project ID + provider in the business config (Businesses → this business).',
+  update_approved: 'Approve this update (in “Update actions” below).',
+  source_commit: 'This update has no source commit recorded.',
+  tests_defined: 'Mark the source tests + build as passed (in “Validation evidence” below).',
+  compat_assessed: 'Set this target’s compatibility (in “Compatibility” below).',
+  compat_not_blocked: 'Compatibility is marked incompatible/blocked — change it or choose another update.',
+  branch_allowlisted: 'The base branch isn’t allowlisted for this target.',
+  target_health: 'Target health is down — set it back to healthy once verified.',
+  no_conflicting_job: 'Another automation job is active for this target — finish or cancel it first.',
+  migration_approved: 'This update needs explicit migration approval.',
+  env_approved: 'This update changes env/flags — it needs explicit env approval.',
 }
 
 // ── Automation panel: Prepare Preview → gates → stepper → owner approval ──────
@@ -290,18 +320,31 @@ function pilotStage(status: string): { reached: number; failedAt: number | null 
     default: return { reached: 0, failedAt: null }
   }
 }
-function AutomationPanel({ updateKey, businesses }: { updateKey: string; businesses: PlatformBusiness[] }) {
+type Gate = { id: string; label: string; ok: boolean; blocking: boolean; reason?: string }
+function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: string; businesses: PlatformBusiness[]; inlineActions?: Record<string, { label: string; run: () => void }> }) {
   const targets = businesses.filter(b => b.role === 'target' || b.role === 'source_and_target')
   const [target, setTarget] = useState(targets[0]?.id ?? '')
-  const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
-  const [gates, setGates] = useState<{ id: string; label: string; ok: boolean; blocking: boolean; reason?: string }[] | null>(null)
+  const [busy, setBusy] = useState(false); const [checking, setChecking] = useState(false); const [err, setErr] = useState('')
+  const [gates, setGates] = useState<Gate[] | null>(null); const [ready, setReady] = useState(false)
   const [job, setJob] = useState<{ id: string; status: string; currentStep: string; previewUrl?: string; pullRequestUrl?: string; pullRequestNumber?: number; workflowRunId?: string; failureSummary?: string } | null>(null)
+
+  // Read-only readiness on mount + whenever the target changes. Never creates a job.
+  const check = useCallback(async () => {
+    if (!target) { setGates(null); setReady(false); return }
+    setChecking(true); setErr('')
+    try {
+      const j = await pf('/api/admin/platform/automation', { method: 'POST', body: JSON.stringify({ updateKey, businessId: target, evaluateOnly: true }) })
+      setGates(j.preflight?.gates ?? null); setReady(!!j.ok)
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Failed'); setReady(false) } finally { setChecking(false) }
+  }, [updateKey, target])
+  useEffect(() => { check() }, [check])
+
   const prepare = async () => {
-    setBusy(true); setErr(''); setGates(null)
+    setBusy(true); setErr('')
     try {
       const j = await pf('/api/admin/platform/automation', { method: 'POST', body: JSON.stringify({ updateKey, businessId: target }) })
-      setGates(j.preflight?.gates ?? null); setJob(j.job ?? null)
-      if (!j.ok) setErr(j.error ?? 'Preview not prepared — see gates below.')   // blocked preflight is a valid, shown result
+      setGates(j.preflight?.gates ?? null); setJob(j.job ?? null); setReady(!!j.ok)
+      if (!j.ok) setErr(j.error ?? 'Preview not prepared — see readiness below.')
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') } finally { setBusy(false) }
   }
   const act = async (action: string, confirmMsg?: string) => {
@@ -309,20 +352,45 @@ function AutomationPanel({ updateKey, businesses }: { updateKey: string; busines
     setBusy(true); setErr('')
     try { const j = await pf(`/api/admin/platform/automation/${job.id}`, { method: 'POST', body: JSON.stringify({ action }) }); if (j.job) setJob(j.job) } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') } finally { setBusy(false) }
   }
+
+  const passCount = gates ? gates.filter(g => g.ok).length : 0
+  const firstBlock = gates?.find(g => !g.ok && g.blocking)
+  const nextStep = firstBlock ? (GATE_NEXT[firstBlock.id] ?? firstBlock.reason ?? firstBlock.label) : null
+  const inline = firstBlock ? inlineActions?.[firstBlock.id] : undefined
+
   return (
     <div style={{ ...card, border: '1px solid rgba(129,140,248,.35)' }}>
-      <p style={{ ...lab, marginBottom: 8, color: '#a5b4fc' }}>⚙️ Automation — Prepare Preview → Review → Approve Production (owner-gated)</p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+        <p style={{ ...lab, margin: 0, color: '#a5b4fc' }}>⚙️ Preview automation</p>
+        <span style={{ fontSize: 11.5, color: 'var(--muted)', marginLeft: 'auto' }}>Prepare Preview → Review → Approve Production (owner-gated)</span>
+      </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <select style={{ ...field, width: 'auto' }} value={target} onChange={e => setTarget(e.target.value)}>{targets.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
-        <button style={btn('primary')} disabled={busy || !target} onClick={prepare}>{busy ? '…' : 'Prepare Preview'}</button>
+        <button style={btn('primary')} disabled={busy || checking || !target || !ready || !!job} onClick={prepare} title={ready ? 'All checks pass' : 'Resolve the readiness checks first'}>{busy ? '…' : 'Prepare Preview'}</button>
+        <button style={btn()} disabled={checking || busy} onClick={check}>{checking ? 'Checking…' : 'Re-check'}</button>
       </div>
+
+      {/* One clear next step (or a ready confirmation) */}
+      {!job && gates && (ready
+        ? <p style={{ fontSize: 12.5, color: '#34d399', marginTop: 10 }}>✓ All checks pass — you can prepare a Preview.</p>
+        : nextStep && (
+          <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12.5, color: '#fbbf24' }}><strong>Next step:</strong> {nextStep}</span>
+            {inline && <button style={btn()} disabled={busy} onClick={inline.run}>{inline.label}</button>}
+          </div>
+        ))}
       {err && <p style={{ color: '#f87171', fontSize: 12, marginTop: 6 }}>{err}</p>}
+
+      {/* Full readiness list — collapsed once ready, expanded while blocked */}
       {gates && (
-        <div style={{ marginTop: 10, display: 'grid', gap: 3 }}>
-          <p style={{ fontSize: 11, color: 'var(--muted)' }}>Preflight gates:</p>
-          {gates.map(g => <div key={g.id} style={{ fontSize: 12, color: g.ok ? '#34d399' : g.blocking ? '#f87171' : '#fbbf24' }}>{g.ok ? '✓' : g.blocking ? '✗' : '⚠'} {g.label}{g.reason ? ` — ${g.reason}` : ''}</div>)}
-        </div>
+        <details open={!ready && !job} style={{ marginTop: 10 }}>
+          <summary style={{ listStyle: 'none', cursor: 'pointer', fontSize: 11.5, color: 'var(--muted)' }}>▸ Readiness checks ({passCount}/{gates.length} pass)</summary>
+          <div style={{ marginTop: 6, display: 'grid', gap: 3 }}>
+            {gates.map(g => <div key={g.id} style={{ fontSize: 12, color: g.ok ? '#34d399' : g.blocking ? '#f87171' : '#fbbf24' }}>{g.ok ? '✓' : g.blocking ? '✗' : '⚠'} {g.label}{!g.ok && (GATE_NEXT[g.id] || g.reason) ? ` — ${GATE_NEXT[g.id] ?? g.reason}` : ''}</div>)}
+          </div>
+        </details>
       )}
+
       {job && (() => {
         const { reached, failedAt } = pilotStage(job.status)
         const failed = job.status.includes('fail') || job.status === 'blocked'
