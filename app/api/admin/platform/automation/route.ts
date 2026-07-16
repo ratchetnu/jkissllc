@@ -31,7 +31,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   // Read-only readiness (no job created) — the UI calls this to render gates + gate the button.
   if (body.evaluateOnly === true) {
     const preflight = await evaluatePreviewReadiness({ update, business, compat, approvals })
-    return NextResponse.json({ ok: preflight.ok, preflight, evaluateOnly: true })
+    return NextResponse.json({ ok: preflight.ok, preflight, evaluateOnly: true, alreadyDeployed: compat?.status === 'already_present' })
   }
 
   const actor = (await getPrincipal(req))?.sub || 'owner'

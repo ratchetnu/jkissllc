@@ -13,7 +13,7 @@ import { canPromote, canAutoRollback } from './promotion'
 import { isProductionApprovalTransition } from './machine'
 import { getAutomationProvider } from './provider'
 import { getPreviewProvider } from './vercel-provider'
-import { artifactsComplete } from './deploy-view'
+import { artifactsComplete, isAlreadyDeployed } from './deploy-view'
 import { getBusiness, getUpdate } from '../updates/store'
 import * as store from './store'
 
@@ -34,7 +34,7 @@ export function effectiveStrategy(requested: ExecutionStrategy, env: Record<stri
   return requested
 }
 
-export type PrepareResult = { ok: boolean; preflight: PreflightResult; job?: UpdateAutomationJob; reason?: string }
+export type PrepareResult = { ok: boolean; preflight: PreflightResult; job?: UpdateAutomationJob; reason?: string; alreadyDeployed?: boolean }
 
 export type ReadinessInput = {
   update: PlatformUpdate; business: PlatformBusiness; compat?: UpdateCompatibility
@@ -63,6 +63,10 @@ export async function preparePreview(input: {
   const { update, business, compat, actor } = input
   const env = input.env ?? process.env
   const preflight = await evaluatePreviewReadiness({ update, business, compat, approvals: input.approvals, env })
+  // Already-present guard (defense in depth): if compat says this target already carries the
+  // update, there is nothing to transfer. Never create a job / dispatch — a re-transfer of
+  // identical files just fails at commit. Treat it as satisfied, not a failure.
+  if (isAlreadyDeployed(compat?.status)) return { ok: false, preflight, reason: 'already_deployed', alreadyDeployed: true }
   if (!preflight.ok) return { ok: false, preflight, reason: 'preflight_failed' }
 
   const idem = automationIdempotencyKey(business.id, update.key, update.sourceCommit)

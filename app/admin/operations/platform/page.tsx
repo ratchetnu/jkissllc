@@ -307,6 +307,7 @@ function AutomationPanel({ updateKey, businesses, requiresEnv = false, requiresM
   const [approveMigration, setApproveMigration] = useState(false)
   const approvals = (requiresEnv || requiresMigration) ? { environment: approveEnv, migration: approveMigration } : undefined
   const [gates, setGates] = useState<Gate[] | null>(null); const [ready, setReady] = useState(false)
+  const [alreadyDeployed, setAlreadyDeployed] = useState(false)  // compat = already_present ⇒ satisfied, no transfer
   const [job, setJob] = useState<{ id: string; status: string; currentStep: string; failureCategory?: string; previewUrl?: string; previewDeploymentId?: string; pullRequestUrl?: string; pullRequestNumber?: number; workflowRunId?: string; targetCommit?: string; productionUrl?: string; failureSummary?: string; result?: { filesApplied?: number; filesSkipped?: number; filesFailed?: number; lintPassed?: boolean; testsPassed?: boolean; buildPassed?: boolean } } | null>(null)
 
   // Read-only readiness on mount + whenever the target changes. Never creates a job.
@@ -315,7 +316,7 @@ function AutomationPanel({ updateKey, businesses, requiresEnv = false, requiresM
     setChecking(true); setErr('')
     try {
       const j = await pf('/api/admin/platform/automation', { method: 'POST', body: JSON.stringify({ updateKey, businessId: target, evaluateOnly: true, approvals }) })
-      setGates(j.preflight?.gates ?? null); setReady(!!j.ok)
+      setGates(j.preflight?.gates ?? null); setReady(!!j.ok); setAlreadyDeployed(!!j.alreadyDeployed)
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed'); setReady(false) } finally { setChecking(false) }
     // `approvals` is derived from the primitive deps below (a fresh object each render would loop).
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -350,7 +351,8 @@ function AutomationPanel({ updateKey, businesses, requiresEnv = false, requiresM
     try {
       const j = await pf('/api/admin/platform/automation', { method: 'POST', body: JSON.stringify({ updateKey, businessId: target, approvals }) })
       setGates(j.preflight?.gates ?? null); setJob(j.job ?? null); setReady(!!j.ok)
-      if (!j.ok) setErr(j.error ?? 'Preview not prepared — see readiness below.')
+      if (j.alreadyDeployed) { setAlreadyDeployed(true); setErr('') }
+      else if (!j.ok) setErr(j.error ?? 'Preview not prepared — see readiness below.')
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') } finally { setBusy(false) }
   }
   const act = async (action: string, confirmMsg?: string) => {
@@ -399,7 +401,9 @@ function AutomationPanel({ updateKey, businesses, requiresEnv = false, requiresM
       {/* ── One primary action ── */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <select style={{ ...field, width: 'auto' }} value={target} onChange={e => setTarget(e.target.value)} disabled={running}>{targets.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
-        {primary.kind === 'running'
+        {alreadyDeployed && !job
+          ? <span style={{ fontSize: 13, fontWeight: 700, color: '#34d399', padding: '6px 12px', borderRadius: 8, background: 'rgba(52,211,153,.12)' }}>✓ Already deployed — no transfer needed</span>
+          : primary.kind === 'running'
           ? <button style={{ ...btn('primary'), ...dim }} disabled>Deploying…</button>
           : primary.kind === 'approved'
             ? <button style={{ ...btn('primary'), ...dim }} disabled>Approved for production</button>
@@ -413,7 +417,8 @@ function AutomationPanel({ updateKey, businesses, requiresEnv = false, requiresM
 
       {/* ── Not-started guidance: readiness in plain English ── */}
       {!job && (
-        checking ? <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 10 }}>Checking readiness…</p>
+        alreadyDeployed ? <p style={{ fontSize: 12.5, color: '#34d399', marginTop: 10 }}>✓ This target already carries this update — nothing to transfer.</p>
+        : checking ? <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 10 }}>Checking readiness…</p>
         : ready ? <p style={{ fontSize: 12.5, color: '#34d399', marginTop: 10 }}>✓ Everything is ready — click <strong>Deploy Preview</strong>.</p>
         : gates ? (
           <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
