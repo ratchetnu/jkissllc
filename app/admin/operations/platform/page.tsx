@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import OperationsShell from '../OperationsShell'
 import { fmtTs } from '../ui'
 import { parseRepoName } from '../../../lib/platform/automation/repo-identity'
+import { businessReadiness, businessNextStep, groupUpdates, BUCKET_ORDER } from '../../../lib/platform/updates/business-view'
 import type {
   PlatformBusiness, PlatformUpdate, UpdateCompatibility, DeploymentRecord, UpdateStatus, CheckStatus,
 } from '../../../lib/platform/updates/types'
@@ -58,7 +59,7 @@ export default function PlatformPage() {
         {!data && !denied && <p style={{ color: 'var(--muted)' }}>Loading…</p>}
         {data && view.kind === 'overview' && <OverviewView data={data} onOpenUpdate={(key) => setView({ kind: 'update', key })} onOpenBusiness={(id) => setView({ kind: 'business', id })} onSeeded={load} />}
         {data && view.kind === 'update' && <UpdateDetail k={view.key} businesses={data.businesses} onChanged={load} />}
-        {data && view.kind === 'business' && <BusinessDetail id={view.id} onChanged={load} />}
+        {data && view.kind === 'business' && <BusinessDetail id={view.id} onChanged={load} onOpenUpdate={(key) => setView({ kind: 'update', key })} />}
       </div>
     </OperationsShell>
   )
@@ -466,16 +467,42 @@ function RecordDeployment({ businesses, onSave, busy }: { businesses: PlatformBu
 }
 
 // ── Business detail ──────────────────────────────────────────────────────────
-function BusinessDetail({ id, onChanged }: { id: string; onChanged: () => void }) {
+// ── Small presentational helpers (Operion design tokens) ─────────────────────
+const TONE = {
+  green: { fg: '#34d399', bg: 'rgba(52,211,153,.12)' },
+  amber: { fg: '#fbbf24', bg: 'rgba(251,191,36,.12)' },
+  red: { fg: '#f87171', bg: 'rgba(248,113,113,.12)' },
+  blue: { fg: '#a5b4fc', bg: 'rgba(129,140,248,.12)' },
+  gray: { fg: 'var(--muted)', bg: 'rgba(255,255,255,.05)' },
+} as const
+function Badge({ tone, children }: { tone: keyof typeof TONE; children: ReactNode }) {
+  const t = TONE[tone]
+  return <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999, color: t.fg, background: t.bg, whiteSpace: 'nowrap' }}>{children}</span>
+}
+function MetaRow({ label, value }: { label: string; value: ReactNode }) {
+  return <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '5px 0', borderTop: '1px solid var(--line)', fontSize: 12.5 }}><span style={{ color: 'var(--muted)' }}>{label}</span><span style={{ fontWeight: 600, textAlign: 'right', wordBreak: 'break-word' }}>{value}</span></div>
+}
+function ReadinessCard({ title, tone, status, sub, onClick }: { title: string; tone: keyof typeof TONE; status: string; sub: string; onClick?: () => void }) {
+  return (
+    <button type="button" onClick={onClick} aria-label={`${title}: ${status}. ${sub}`} style={{ ...card, padding: 12, textAlign: 'left', cursor: onClick ? 'pointer' : 'default', display: 'grid', gap: 5, alignContent: 'start' }}>
+      <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', color: 'var(--muted)' }}>{title}</span>
+      <span><Badge tone={tone}>{status}</Badge></span>
+      <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>{sub}</span>
+    </button>
+  )
+}
+const secHead = { ...lab, marginBottom: 8 } as const
+
+function BusinessDetail({ id, onChanged, onOpenUpdate }: { id: string; onChanged: () => void; onOpenUpdate: (key: string) => void }) {
   const [d, setD] = useState<{ business: PlatformBusiness; deployments: DeploymentRecord[]; pendingUpdates: PlatformUpdate[] } | null>(null)
   const [f, setF] = useState<Record<string, unknown>>({}); const [busy, setBusy] = useState(false); const [msg, setMsg] = useState('')
+  const [editBiz, setEditBiz] = useState(false); const [editAuto, setEditAuto] = useState(false); const [showHistory, setShowHistory] = useState(false)
   const load = useCallback(async () => {
     const j = await pf(`/api/admin/platform/businesses/${id}`); setD(j)
     const b = j.business
     setF({
       releaseChannel: b.releaseChannel, updatePolicy: b.updatePolicy, updatesPaused: b.updatesPaused, manualApprovalRequired: b.manualApprovalRequired,
       healthStatus: b.healthStatus, currentCommit: b.currentCommit ?? '', currentVersion: b.currentVersion ?? '', repoName: b.repoName ?? '', notes: b.notes ?? '',
-      // automation / preview config
       automationMode: b.automationMode ?? 'manual_prompt', healthEndpoint: b.healthEndpoint ?? '/api/health',
       previewDeploymentProvider: b.previewDeploymentProvider ?? '', previewProjectId: b.previewProjectId ?? '', previewRepoId: b.previewRepoId ?? '',
       productionProjectId: b.productionProjectId ?? '', automationWorkflowFile: b.automationWorkflowFile ?? '',
@@ -484,85 +511,224 @@ function BusinessDetail({ id, onChanged }: { id: string; onChanged: () => void }
     })
   }, [id])
   useEffect(() => { load() }, [load])
-  const save = async () => { if (!confirm('Save changes to this business?')) return; setBusy(true); setMsg(''); try { await pf(`/api/admin/platform/businesses/${id}`, { method: 'PATCH', body: JSON.stringify({ fields: f }) }); setMsg('Saved.'); await load(); onChanged() } catch { setMsg('Failed.') } finally { setBusy(false) } }
+  // Save persists ALL fields (same PATCH contract + confirm + read-back + audit). Returns success.
+  const save = async (): Promise<boolean> => {
+    if (!confirm('Save changes to this business?')) return false
+    setBusy(true); setMsg('')
+    try { await pf(`/api/admin/platform/businesses/${id}`, { method: 'PATCH', body: JSON.stringify({ fields: f }) }); setMsg('Saved.'); await load(); onChanged(); return true }
+    catch (e) { setMsg(e instanceof Error ? e.message : 'Failed.'); return false }
+    finally { setBusy(false) }
+  }
+  const cancelEdit = async () => { if (!confirm('Discard unsaved changes?')) return; await load(); setEditBiz(false); setEditAuto(false); setMsg('') }
   const [conn, setConn] = useState<{ ok: boolean; checks: { name: string; ok: boolean; detail?: string }[] } | null>(null)
   const [connBusy, setConnBusy] = useState(false)
   const validateConn = async () => { setConnBusy(true); setConn(null); try { const j = await pf(`/api/admin/platform/automation/validate`, { method: 'POST', body: JSON.stringify({ businessId: id }) }); setConn(j); await load() } catch (e) { setConn({ ok: false, checks: [{ name: 'Request', ok: false, detail: e instanceof Error ? e.message : 'failed' }] }) } finally { setConnBusy(false) } }
   if (!d) return <p style={{ color: 'var(--muted)' }}>Loading…</p>
+  const b = d.business
   const set = (k: string, v: unknown) => setF(p => ({ ...p, [k]: v }))
+  const scrollTo = (secId: string) => { if (typeof document !== 'undefined') document.getElementById(secId)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }
+
+  // ── Derived readiness (pure view model; reads existing model + config status) ──
+  const { repo, githubReady, configurationStatus: cfg, previewReady, productionProtected: protectedProd, missing } = businessReadiness(b)
+  const previewTone: keyof typeof TONE = previewReady ? 'green' : cfg === 'error' ? 'red' : 'amber'
+  const previewStatus = previewReady ? 'Ready' : cfg === 'error' ? 'Error' : cfg === 'incomplete' ? 'Needs review' : 'Needs setup'
+  const pending = d.pendingUpdates
+
+  // ── Next step (pure) + the UI action wired to its key ──
+  const ns = businessNextStep(b, pending.length)
+  const nextAction = ns.key === 'connect' ? { label: 'Validate GitHub Connection', run: validateConn }
+    : ns.key === 'configure' ? { label: 'Edit Automation Settings', run: () => { setEditAuto(true); scrollTo('sec-automation') } }
+      : ns.key === 'prepare' ? { label: 'View pending updates', run: () => scrollTo('sec-updates') } : undefined
+  const next = { ...ns, action: nextAction }
+
+  // ── Pending-update grouping (pure) ──
+  const groupOrder = BUCKET_ORDER
+  const groups = groupUpdates(pending)
+
+  // Inline field renderers for the editors (closures over f/set).
+  const Txt = (k: string, label: string, ph?: string) => <div><label style={lab}>{label}</label><input style={field} placeholder={ph} value={String(f[k] ?? '')} onChange={e => set(k, e.target.value)} /></div>
+  const Sel = (k: string, label: string, opts: string[]) => <div><label style={lab}>{label}</label><select style={field} value={String(f[k])} onChange={e => set(k, e.target.value)}>{opts.map(o => <option key={o} value={o}>{nice(o)}</option>)}</select></div>
+  const Chk = (k: string, label: string, warn?: boolean) => <label style={{ display: 'flex', gap: 6, alignItems: 'center', color: warn ? '#fbbf24' : 'var(--muted)', fontSize: 12.5 }}><input type="checkbox" checked={!!f[k]} onChange={e => set(k, e.target.checked)} />{label}</label>
+  const grid = { display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))' } as const
+
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
+    <div style={{ display: 'grid', gap: 12 }}>
+      {/* ── 1. Business header (compact, read-only) ── */}
       <div style={card}>
-        <h2 style={{ fontSize: 17, fontWeight: 800 }}>{d.business.name}</h2>
-        <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{d.business.repoName} · {d.business.defaultBranch} · {d.business.productionUrl}</p>
-        <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', marginTop: 12 }}>
-          <div><label style={lab}>Release channel</label><select style={field} value={String(f.releaseChannel)} onChange={e => set('releaseChannel', e.target.value)}>{['internal', 'alpha', 'beta', 'stable', 'lts', 'custom'].map(s => <option key={s} value={s}>{s}</option>)}</select></div>
-          <div><label style={lab}>Update policy</label><select style={field} value={String(f.updatePolicy)} onChange={e => set('updatePolicy', e.target.value)}>{['manual', 'owner_approval', 'scheduled_manual', 'security_only', 'pinned', 'paused'].map(s => <option key={s} value={s}>{nice(s)}</option>)}</select></div>
-          <div><label style={lab}>Health</label><select style={field} value={String(f.healthStatus)} onChange={e => set('healthStatus', e.target.value)}>{['unknown', 'healthy', 'degraded', 'down'].map(s => <option key={s} value={s}>{s}</option>)}</select></div>
-          <div><label style={lab}>Current commit</label><input style={field} value={String(f.currentCommit)} onChange={e => set('currentCommit', e.target.value)} /></div>
-          <div><label style={lab}>Current version</label><input style={field} value={String(f.currentVersion)} onChange={e => set('currentVersion', e.target.value)} /></div>
-          <div style={{ gridColumn: '1 / -1' }}>
-            <label style={lab}>Repository (owner/name)</label>
-            <input style={field} placeholder="ratchetnu/supercharged" value={String(f.repoName)} onChange={e => set('repoName', e.target.value)} />
-            {(() => {
-              const raw = String(f.repoName ?? '').trim()
-              if (!raw) return <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>Format: <code>owner/name</code> — a GitHub URL is accepted and normalized.</p>
-              const ref = parseRepoName(raw)
-              return ref
-                ? <p style={{ fontSize: 11, color: '#34d399', marginTop: 3 }}>✓ {ref.owner}/{ref.name}</p>
-                : <p style={{ fontSize: 11, color: '#f87171', marginTop: 3 }}>✗ needs owner/name (e.g. ratchetnu/supercharged) — a bare name, URL, or path is rejected on save.</p>
-            })()}
-          </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <h2 style={{ fontSize: 17, fontWeight: 800 }}>{b.name}</h2>
+          <Badge tone={b.role === 'source_and_target' ? 'blue' : 'gray'}>{nice(b.role)}</Badge>
+          <button style={{ ...btn(), marginLeft: 'auto' }} onClick={() => { setEditBiz(v => !v); scrollTo('sec-settings') }}>{editBiz ? 'Close' : 'Edit Business'}</button>
         </div>
-        <div style={{ display: 'flex', gap: 14, marginTop: 10, fontSize: 12 }}>
-          <label style={{ display: 'flex', gap: 5, alignItems: 'center', color: 'var(--muted)' }}><input type="checkbox" checked={!!f.updatesPaused} onChange={e => set('updatesPaused', e.target.checked)} />Updates paused</label>
-          <label style={{ display: 'flex', gap: 5, alignItems: 'center', color: 'var(--muted)' }}><input type="checkbox" checked={!!f.manualApprovalRequired} onChange={e => set('manualApprovalRequired', e.target.checked)} />Manual approval required</label>
+        <div style={{ marginTop: 10 }}>
+          <MetaRow label="Repository" value={repo ? `${repo.owner}/${repo.name}` : <span style={{ color: '#f87171' }}>not set</span>} />
+          <MetaRow label="Production URL" value={b.productionUrl ? <a href={b.productionUrl} target="_blank" rel="noreferrer" style={{ color: '#a5b4fc' }}>{b.productionUrl}</a> : '—'} />
+          <MetaRow label="Release channel" value={nice(b.releaseChannel)} />
+          <MetaRow label="Health" value={<Badge tone={b.healthStatus === 'healthy' ? 'green' : b.healthStatus === 'down' ? 'red' : b.healthStatus === 'degraded' ? 'amber' : 'gray'}>{nice(b.healthStatus)}</Badge>} />
+          <MetaRow label="Automation mode" value={nice(b.automationMode ?? 'manual_prompt')} />
+          <MetaRow label="Current version" value={b.currentVersion || '—'} />
+          <MetaRow label="Current commit" value={b.currentCommit ? <span style={{ fontFamily: 'monospace' }}>{b.currentCommit}</span> : '—'} />
         </div>
-        <div><label style={{ ...lab, marginTop: 10 }}>Notes</label><input style={field} value={String(f.notes)} onChange={e => set('notes', e.target.value)} /></div>
-
-        {/* ── Automation / Preview configuration (for automated Preview pilots) ── */}
-        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
-          <p style={{ ...lab, color: '#a5b4fc', marginBottom: 8 }}>⚙️ Automation / Preview config</p>
-          <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))' }}>
-            <div><label style={lab}>Automation mode</label><select style={field} value={String(f.automationMode)} onChange={e => set('automationMode', e.target.value)}>{['manual_prompt', 'automated_preparation', 'automated_preview', 'approved_production', 'fully_manual'].map(s => <option key={s} value={s}>{nice(s)}</option>)}</select></div>
-            <div><label style={lab}>Health endpoint</label><input style={field} placeholder="/api/health" value={String(f.healthEndpoint)} onChange={e => set('healthEndpoint', e.target.value)} /></div>
-            <div><label style={lab}>Workflow file</label><input style={field} placeholder="operion-update.yml" value={String(f.automationWorkflowFile)} onChange={e => set('automationWorkflowFile', e.target.value)} /></div>
-            <div><label style={lab}>Preview provider</label><input style={field} placeholder="vercel" value={String(f.previewDeploymentProvider)} onChange={e => set('previewDeploymentProvider', e.target.value)} /></div>
-            <div><label style={lab}>Preview project ID</label><input style={field} placeholder="prj_…" value={String(f.previewProjectId)} onChange={e => set('previewProjectId', e.target.value)} /></div>
-            <div><label style={lab}>Preview repo ID (numeric)</label><input style={field} placeholder="1295706037" value={String(f.previewRepoId)} onChange={e => set('previewRepoId', e.target.value)} /></div>
-            <div><label style={lab}>Production project ID</label><input style={field} placeholder="(optional)" value={String(f.productionProjectId)} onChange={e => set('productionProjectId', e.target.value)} /></div>
-          </div>
-          <div style={{ display: 'flex', gap: 14, marginTop: 10, fontSize: 12, flexWrap: 'wrap' }}>
-            {([['requirePullRequest', 'Require PR'], ['requireOwnerApproval', 'Require owner approval'], ['requirePreview', 'Require preview'], ['requirePassingChecks', 'Require passing checks'], ['allowAutomatedMerge', 'Allow automated merge'], ['allowProductionPromotion', 'Allow production promotion']] as const).map(([k, label]) => (
-              <label key={k} style={{ display: 'flex', gap: 5, alignItems: 'center', color: k === 'allowProductionPromotion' || k === 'allowAutomatedMerge' ? '#fbbf24' : 'var(--muted)' }}><input type="checkbox" checked={!!f[k]} onChange={e => set(k, e.target.checked)} />{label}</label>
-            ))}
-          </div>
-          <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Fill Preview project + repo ID, then re-run Validate to reach <strong>ready</strong>. Keep automated-merge + production-promotion OFF for a Preview pilot.</p>
-        </div>
-
-        <button style={{ ...btn('primary'), marginTop: 10 }} disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save (confirmed + audited)'}</button>
-        {msg && <span style={{ marginLeft: 10, fontSize: 12, color: '#34d399' }}>{msg}</span>}
       </div>
+
+      {/* ── 2. Next step ── */}
       <div style={{ ...card, border: '1px solid rgba(129,140,248,.35)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <p style={{ ...lab, margin: 0, color: '#a5b4fc' }}>🔌 GitHub connection {d.business.configurationStatus ? `· ${nice(d.business.configurationStatus)}` : ''}</p>
-          <button style={{ ...btn(), marginLeft: 'auto' }} disabled={connBusy} onClick={validateConn}>{connBusy ? 'Validating…' : 'Validate GitHub Connection'}</button>
+        <p style={{ ...lab, margin: 0, color: '#a5b4fc' }}>Next step</p>
+        <p style={{ fontSize: 15, fontWeight: 800, marginTop: 6 }}>{next.title}</p>
+        <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 3 }}>{next.detail}</p>
+        {next.action && <button style={{ ...btn('primary'), marginTop: 10 }} disabled={connBusy || busy} onClick={next.action.run}>{next.action.label}</button>}
+      </div>
+
+      {/* ── 3. Readiness summary (4 cards; stack on mobile) ── */}
+      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))' }}>
+        <ReadinessCard title="GitHub Connection" tone={githubReady ? 'green' : 'amber'} status={githubReady ? 'Ready' : 'Needs setup'} sub={githubReady ? 'Repository verified' : 'Validate to connect'} onClick={() => scrollTo('sec-github')} />
+        <ReadinessCard title="Preview Automation" tone={previewTone} status={previewStatus} sub={previewReady ? 'Configuration ready' : missing[0] ? `Missing: ${missing[0]}` : 'Configure preview'} onClick={() => scrollTo('sec-automation')} />
+        <ReadinessCard title="Production Protection" tone={protectedProd ? 'green' : 'amber'} status={protectedProd ? 'Protected' : 'Promotion enabled'} sub={protectedProd ? 'Promotion disabled' : 'Owner promotion allowed'} onClick={() => scrollTo('sec-automation')} />
+        <ReadinessCard title="Pending Updates" tone={pending.length ? 'blue' : 'gray'} status={String(pending.length)} sub={pending.length ? `${groups['Ready for Preview'].length} ready for preview` : 'Nothing pending'} onClick={() => scrollTo('sec-updates')} />
+      </div>
+
+      {/* ── 4. Primary actions ── */}
+      <div style={card}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button style={btn('primary')} disabled={connBusy} onClick={validateConn}>{connBusy ? 'Validating…' : 'Validate GitHub Connection'}</button>
+          <button style={btn()} onClick={() => { setEditAuto(true); scrollTo('sec-automation') }}>Edit Automation Settings</button>
+          <button style={btn()} onClick={() => { setEditBiz(true); scrollTo('sec-settings') }}>Edit Business</button>
         </div>
-        {conn && (
-          <div style={{ marginTop: 8, display: 'grid', gap: 3 }}>
-            {conn.checks.map((c, i) => <div key={i} style={{ fontSize: 12, color: c.ok ? '#34d399' : '#f87171' }}>{c.ok ? '✓' : '✗'} {c.name}{c.detail ? ` — ${c.detail}` : ''}</div>)}
-            <p style={{ fontSize: 11, marginTop: 4, color: 'var(--muted)' }}>Read-only — no repository was modified. Write actions stay disabled until the automation flags are on.</p>
+        {!previewReady && <p style={{ fontSize: 12, color: '#fbbf24', marginTop: 8 }}>Prepare Preview runs per-update once this business is <strong>ready</strong>{missing.length ? ` — resolve: ${missing.join(', ')}` : ''}. Open a pending update to prepare its preview.</p>}
+        {msg && <p style={{ marginTop: 8, fontSize: 12, color: msg === 'Saved.' ? '#34d399' : '#f87171' }}>{msg}</p>}
+      </div>
+
+      {/* ── 5. GitHub connection card (simplified) ── */}
+      <div id="sec-github" style={{ ...card, border: '1px solid rgba(129,140,248,.35)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <p style={{ ...lab, margin: 0, color: '#a5b4fc' }}>🔌 GitHub Connection</p>
+          <Badge tone={githubReady ? 'green' : 'amber'}>{githubReady ? 'Ready' : nice(cfg)}</Badge>
+          <button style={{ ...btn(), marginLeft: 'auto' }} disabled={connBusy} onClick={validateConn}>{connBusy ? 'Validating…' : 'Validate Again'}</button>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <MetaRow label="Repository" value={repo ? `${repo.owner}/${repo.name}` : 'not set'} />
+          <MetaRow label="Installation" value={b.githubInstallationId ? <Badge tone="green">Connected</Badge> : <Badge tone="amber">Not connected</Badge>} />
+          <MetaRow label="Default branch" value={b.defaultBranch || '—'} />
+          <MetaRow label="Last validated" value={b.lastVerificationAt ? fmtTs(b.lastVerificationAt) : 'never'} />
+        </div>
+        {conn && !conn.ok && (
+          <div style={{ marginTop: 8 }}>
+            <p style={{ fontSize: 12.5, color: '#f87171' }}>{conn.checks.find(c => !c.ok)?.name}{conn.checks.find(c => !c.ok)?.detail ? ` — ${conn.checks.find(c => !c.ok)?.detail}` : ''}</p>
+            <button style={{ ...btn(), marginTop: 6 }} onClick={() => { setEditAuto(true); scrollTo('sec-automation') }}>Edit Configuration</button>
+            <details style={{ marginTop: 6 }}><summary style={{ cursor: 'pointer', fontSize: 11.5, color: 'var(--muted)' }}>▸ Raw check details</summary><div style={{ marginTop: 4, display: 'grid', gap: 2 }}>{conn.checks.map((c, i) => <div key={i} style={{ fontSize: 12, color: c.ok ? '#34d399' : '#f87171' }}>{c.ok ? '✓' : '✗'} {c.name}{c.detail ? ` — ${c.detail}` : ''}</div>)}</div></details>
+          </div>
+        )}
+        {conn && conn.ok && <p style={{ marginTop: 8, fontSize: 12, color: '#34d399' }}>✓ All checks passed — read-only, no repository was modified.</p>}
+      </div>
+
+      {/* ── 6. Automation / Preview config — summary + editor drawer ── */}
+      <div id="sec-automation" style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <p style={{ ...secHead, margin: 0 }}>⚙️ Automation / Preview</p>
+          <Badge tone={previewTone}>{previewStatus}</Badge>
+          <div style={{ display: 'flex', gap: 8, marginLeft: 'auto', flexWrap: 'wrap' }}>
+            <button style={btn()} disabled={connBusy} onClick={validateConn}>{connBusy ? 'Validating…' : 'Validate Configuration'}</button>
+            <button style={btn('primary')} onClick={() => setEditAuto(v => !v)}>{editAuto ? 'Close' : 'Edit Automation Settings'}</button>
+          </div>
+        </div>
+        {!editAuto && (
+          <div style={{ marginTop: 8 }}>
+            <MetaRow label="Automation mode" value={nice(b.automationMode ?? 'manual_prompt')} />
+            <MetaRow label="GitHub" value={b.githubInstallationId ? <Badge tone="green">Connected</Badge> : <Badge tone="amber">Not connected</Badge>} />
+            <MetaRow label="Workflow" value={b.automationWorkflowFile || '—'} />
+            <MetaRow label="Preview provider" value={b.previewDeploymentProvider || '—'} />
+            <MetaRow label="Preview project" value={b.previewProjectId ? <Badge tone="green">Configured</Badge> : <Badge tone="amber">Not set</Badge>} />
+            <MetaRow label="Production promotion" value={b.allowProductionPromotion ? <Badge tone="amber">Enabled</Badge> : <Badge tone="green">Disabled</Badge>} />
+            <MetaRow label="Automated merge" value={b.allowAutomatedMerge ? <Badge tone="amber">Enabled</Badge> : <Badge tone="green">Disabled</Badge>} />
+          </div>
+        )}
+        {editAuto && (
+          <div style={{ marginTop: 10, display: 'grid', gap: 14 }}>
+            <div><p style={{ ...lab, marginBottom: 6 }}>A · Execution</p><div style={grid}>{Sel('automationMode', 'Automation mode', ['manual_prompt', 'automated_preparation', 'automated_preview', 'approved_production', 'fully_manual'])}{Txt('automationWorkflowFile', 'Workflow file', 'operion-update.yml')}{Txt('healthEndpoint', 'Health endpoint', '/api/health')}</div></div>
+            <div><p style={{ ...lab, marginBottom: 6 }}>B · Preview provider</p><div style={grid}>{Txt('previewDeploymentProvider', 'Provider', 'vercel')}{Txt('previewProjectId', 'Preview project ID', 'prj_…')}{Txt('previewRepoId', 'Preview repo ID (numeric)', '1295706037')}{Txt('productionProjectId', 'Production project ID', '(optional)')}</div></div>
+            <div><p style={{ ...lab, marginBottom: 6 }}>C · Required gates</p><div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>{Chk('requirePullRequest', 'Require PR')}{Chk('requireOwnerApproval', 'Require owner approval')}{Chk('requirePreview', 'Require preview')}{Chk('requirePassingChecks', 'Require passing checks')}</div></div>
+            <div style={{ border: '1px solid rgba(251,191,36,.4)', borderRadius: 10, padding: 12, background: 'rgba(251,191,36,.06)' }}>
+              <p style={{ ...lab, marginBottom: 6, color: '#fbbf24' }}>D · Production controls</p>
+              <p style={{ fontSize: 11.5, color: '#fbbf24', marginBottom: 8 }}>⚠️ These let automation merge and promote to production. Keep both OFF for Preview-only pilots. Production promotion is additionally gated by the owner flag server-side.</p>
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>{Chk('allowAutomatedMerge', 'Allow automated merge', true)}{Chk('allowProductionPromotion', 'Allow production promotion', true)}</div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button style={btn('primary')} disabled={busy} onClick={async () => { if (await save()) setEditAuto(false) }}>{busy ? 'Saving…' : 'Save (confirmed + audited)'}</button>
+              <button style={btn()} disabled={busy} onClick={cancelEdit}>Cancel</button>
+            </div>
           </div>
         )}
       </div>
-      <div style={card}>
-        <p style={{ ...lab, marginBottom: 8 }}>Pending updates for {d.business.name} ({d.pendingUpdates.length})</p>
-        {d.pendingUpdates.map(u => <div key={u.key} style={{ fontSize: 13, padding: '4px 0', borderTop: '1px solid var(--line)' }}><span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--muted)' }}>{u.key}</span> {u.title} <span style={{ color: '#fbbf24', fontSize: 11 }}>{nice(u.status)}</span></div>)}
+
+      {/* ── Business settings editor (read-only by default; drawer on Edit) ── */}
+      <div id="sec-settings" style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <p style={{ ...secHead, margin: 0 }}>Business settings</p>
+          <button style={{ ...btn(), marginLeft: 'auto' }} onClick={() => setEditBiz(v => !v)}>{editBiz ? 'Close' : 'Edit Business'}</button>
+        </div>
+        {!editBiz && (
+          <div style={{ marginTop: 8 }}>
+            <MetaRow label="Release channel" value={nice(b.releaseChannel)} />
+            <MetaRow label="Update policy" value={nice(b.updatePolicy)} />
+            <MetaRow label="Repository" value={b.repoName || '—'} />
+            <MetaRow label="Health" value={nice(b.healthStatus)} />
+            <MetaRow label="Version / commit" value={`${b.currentVersion || '—'} · ${b.currentCommit || '—'}`} />
+            <MetaRow label="Updates paused" value={b.updatesPaused ? 'Yes' : 'No'} />
+            <MetaRow label="Manual approval" value={b.manualApprovalRequired ? 'Required' : 'No'} />
+            <MetaRow label="Notes" value={b.notes || '—'} />
+          </div>
+        )}
+        {editBiz && (
+          <div style={{ marginTop: 10, display: 'grid', gap: 14 }}>
+            <div><p style={{ ...lab, marginBottom: 6 }}>Release policy</p><div style={grid}>{Sel('releaseChannel', 'Release channel', ['internal', 'alpha', 'beta', 'stable', 'lts', 'custom'])}{Sel('updatePolicy', 'Update policy', ['manual', 'owner_approval', 'scheduled_manual', 'security_only', 'pinned', 'paused'])}</div></div>
+            <div>
+              <p style={{ ...lab, marginBottom: 6 }}>Repository</p>
+              <input style={field} placeholder="ratchetnu/supercharged" value={String(f.repoName ?? '')} onChange={e => set('repoName', e.target.value)} />
+              {(() => { const raw = String(f.repoName ?? '').trim(); if (!raw) return <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>Format: <code>owner/name</code> — a GitHub URL is accepted and normalized.</p>; const ref = parseRepoName(raw); return ref ? <p style={{ fontSize: 11, color: '#34d399', marginTop: 3 }}>✓ {ref.owner}/{ref.name}</p> : <p style={{ fontSize: 11, color: '#f87171', marginTop: 3 }}>✗ needs owner/name (e.g. ratchetnu/supercharged) — rejected on save.</p> })()}
+            </div>
+            <div><p style={{ ...lab, marginBottom: 6 }}>Status</p><div style={grid}>{Sel('healthStatus', 'Health', ['unknown', 'healthy', 'degraded', 'down'])}{Txt('currentVersion', 'Current version')}{Txt('currentCommit', 'Current commit')}</div>
+              <div style={{ display: 'flex', gap: 16, marginTop: 8, flexWrap: 'wrap' }}>{Chk('updatesPaused', 'Updates paused')}{Chk('manualApprovalRequired', 'Manual approval required')}</div></div>
+            <div><p style={{ ...lab, marginBottom: 6 }}>Notes</p><input style={field} value={String(f.notes ?? '')} onChange={e => set('notes', e.target.value)} /></div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button style={btn('primary')} disabled={busy} onClick={async () => { if (await save()) setEditBiz(false) }}>{busy ? 'Saving…' : 'Save (confirmed + audited)'}</button>
+              <button style={btn()} disabled={busy} onClick={cancelEdit}>Cancel</button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* ── 7. Pending updates (grouped) ── */}
+      <div id="sec-updates" style={card}>
+        <p style={secHead}>Pending updates for {b.name} ({pending.length})</p>
+        {pending.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 13 }}>Nothing pending.</p>}
+        {groupOrder.filter(g => groups[g].length).map(g => (
+          <div key={g} style={{ marginTop: 8 }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4 }}>{g} ({groups[g].length})</p>
+            {groups[g].map(u => (
+              <div key={u.key} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '7px 0', borderTop: '1px solid var(--line)' }}>
+                <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--muted)' }}>{u.key}</span>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{u.title}</span>
+                <Badge tone={u.status === 'blocked' || u.status === 'failed' ? 'red' : g === 'Ready for Preview' ? 'green' : 'amber'}>{nice(u.status)}</Badge>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>prio {u.priority}</span>
+                <button style={{ ...btn(), marginLeft: 'auto', padding: '4px 10px' }} onClick={() => onOpenUpdate(u.key)}>View Update</button>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {/* ── 8. Deployment activity (compact; collapsed when empty) ── */}
       <div style={card}>
-        <p style={{ ...lab, marginBottom: 8 }}>Deployment history</p>
-        {d.deployments.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 13 }}>None.</p>}
-        {d.deployments.map(dep => <div key={dep.id} style={{ fontSize: 12, padding: '4px 0', borderTop: '1px solid var(--line)', color: 'var(--muted)' }}>{dep.id} · {nice(dep.status)} · verify {nice(dep.verificationStatus)} · {fmtTs(dep.createdAt)}</div>)}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <p style={{ ...secHead, margin: 0 }}>Deployment activity</p>
+          {d.deployments.length > 0 && <button style={{ ...btn(), marginLeft: 'auto' }} onClick={() => setShowHistory(v => !v)}>{showHistory ? 'Hide' : `View history (${d.deployments.length})`}</button>}
+        </div>
+        {d.deployments.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 6 }}>No deployments have been recorded for {b.name} yet.</p>}
+        {showHistory && d.deployments.map(dep => (
+          <div key={dep.id} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '5px 0', borderTop: '1px solid var(--line)', fontSize: 12, color: 'var(--muted)' }}>
+            <span style={{ fontFamily: 'monospace' }}>{dep.id}</span><span>{nice(dep.status)}</span><span>verify {nice(dep.verificationStatus)}</span><span style={{ marginLeft: 'auto' }}>{fmtTs(dep.createdAt)}</span>
+          </div>
+        ))}
       </div>
     </div>
   )
