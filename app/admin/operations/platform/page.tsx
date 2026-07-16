@@ -400,7 +400,20 @@ function RecordDeployment({ businesses, onSave, busy }: { businesses: PlatformBu
 function BusinessDetail({ id, onChanged }: { id: string; onChanged: () => void }) {
   const [d, setD] = useState<{ business: PlatformBusiness; deployments: DeploymentRecord[]; pendingUpdates: PlatformUpdate[] } | null>(null)
   const [f, setF] = useState<Record<string, unknown>>({}); const [busy, setBusy] = useState(false); const [msg, setMsg] = useState('')
-  const load = useCallback(async () => { const j = await pf(`/api/admin/platform/businesses/${id}`); setD(j); setF({ releaseChannel: j.business.releaseChannel, updatePolicy: j.business.updatePolicy, updatesPaused: j.business.updatesPaused, manualApprovalRequired: j.business.manualApprovalRequired, healthStatus: j.business.healthStatus, currentCommit: j.business.currentCommit ?? '', currentVersion: j.business.currentVersion ?? '', repoName: j.business.repoName ?? '', notes: j.business.notes ?? '' }) }, [id])
+  const load = useCallback(async () => {
+    const j = await pf(`/api/admin/platform/businesses/${id}`); setD(j)
+    const b = j.business
+    setF({
+      releaseChannel: b.releaseChannel, updatePolicy: b.updatePolicy, updatesPaused: b.updatesPaused, manualApprovalRequired: b.manualApprovalRequired,
+      healthStatus: b.healthStatus, currentCommit: b.currentCommit ?? '', currentVersion: b.currentVersion ?? '', repoName: b.repoName ?? '', notes: b.notes ?? '',
+      // automation / preview config
+      automationMode: b.automationMode ?? 'manual_prompt', healthEndpoint: b.healthEndpoint ?? '/api/health',
+      previewDeploymentProvider: b.previewDeploymentProvider ?? '', previewProjectId: b.previewProjectId ?? '', previewRepoId: b.previewRepoId ?? '',
+      productionProjectId: b.productionProjectId ?? '', automationWorkflowFile: b.automationWorkflowFile ?? '',
+      requirePullRequest: b.requirePullRequest ?? true, requireOwnerApproval: b.requireOwnerApproval ?? true, requirePreview: b.requirePreview ?? true,
+      requirePassingChecks: b.requirePassingChecks ?? true, allowAutomatedMerge: b.allowAutomatedMerge ?? false, allowProductionPromotion: b.allowProductionPromotion ?? false,
+    })
+  }, [id])
   useEffect(() => { load() }, [load])
   const save = async () => { if (!confirm('Save changes to this business?')) return; setBusy(true); setMsg(''); try { await pf(`/api/admin/platform/businesses/${id}`, { method: 'PATCH', body: JSON.stringify({ fields: f }) }); setMsg('Saved.'); await load(); onChanged() } catch { setMsg('Failed.') } finally { setBusy(false) } }
   const [conn, setConn] = useState<{ ok: boolean; checks: { name: string; ok: boolean; detail?: string }[] } | null>(null)
@@ -437,6 +450,27 @@ function BusinessDetail({ id, onChanged }: { id: string; onChanged: () => void }
           <label style={{ display: 'flex', gap: 5, alignItems: 'center', color: 'var(--muted)' }}><input type="checkbox" checked={!!f.manualApprovalRequired} onChange={e => set('manualApprovalRequired', e.target.checked)} />Manual approval required</label>
         </div>
         <div><label style={{ ...lab, marginTop: 10 }}>Notes</label><input style={field} value={String(f.notes)} onChange={e => set('notes', e.target.value)} /></div>
+
+        {/* ── Automation / Preview configuration (for automated Preview pilots) ── */}
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+          <p style={{ ...lab, color: '#a5b4fc', marginBottom: 8 }}>⚙️ Automation / Preview config</p>
+          <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))' }}>
+            <div><label style={lab}>Automation mode</label><select style={field} value={String(f.automationMode)} onChange={e => set('automationMode', e.target.value)}>{['manual_prompt', 'automated_preparation', 'automated_preview', 'approved_production', 'fully_manual'].map(s => <option key={s} value={s}>{nice(s)}</option>)}</select></div>
+            <div><label style={lab}>Health endpoint</label><input style={field} placeholder="/api/health" value={String(f.healthEndpoint)} onChange={e => set('healthEndpoint', e.target.value)} /></div>
+            <div><label style={lab}>Workflow file</label><input style={field} placeholder="operion-update.yml" value={String(f.automationWorkflowFile)} onChange={e => set('automationWorkflowFile', e.target.value)} /></div>
+            <div><label style={lab}>Preview provider</label><input style={field} placeholder="vercel" value={String(f.previewDeploymentProvider)} onChange={e => set('previewDeploymentProvider', e.target.value)} /></div>
+            <div><label style={lab}>Preview project ID</label><input style={field} placeholder="prj_…" value={String(f.previewProjectId)} onChange={e => set('previewProjectId', e.target.value)} /></div>
+            <div><label style={lab}>Preview repo ID (numeric)</label><input style={field} placeholder="1295706037" value={String(f.previewRepoId)} onChange={e => set('previewRepoId', e.target.value)} /></div>
+            <div><label style={lab}>Production project ID</label><input style={field} placeholder="(optional)" value={String(f.productionProjectId)} onChange={e => set('productionProjectId', e.target.value)} /></div>
+          </div>
+          <div style={{ display: 'flex', gap: 14, marginTop: 10, fontSize: 12, flexWrap: 'wrap' }}>
+            {([['requirePullRequest', 'Require PR'], ['requireOwnerApproval', 'Require owner approval'], ['requirePreview', 'Require preview'], ['requirePassingChecks', 'Require passing checks'], ['allowAutomatedMerge', 'Allow automated merge'], ['allowProductionPromotion', 'Allow production promotion']] as const).map(([k, label]) => (
+              <label key={k} style={{ display: 'flex', gap: 5, alignItems: 'center', color: k === 'allowProductionPromotion' || k === 'allowAutomatedMerge' ? '#fbbf24' : 'var(--muted)' }}><input type="checkbox" checked={!!f[k]} onChange={e => set(k, e.target.checked)} />{label}</label>
+            ))}
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Fill Preview project + repo ID, then re-run Validate to reach <strong>ready</strong>. Keep automated-merge + production-promotion OFF for a Preview pilot.</p>
+        </div>
+
         <button style={{ ...btn('primary'), marginTop: 10 }} disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save (confirmed + audited)'}</button>
         {msg && <span style={{ marginLeft: 10, fontSize: 12, color: '#34d399' }}>{msg}</span>}
       </div>

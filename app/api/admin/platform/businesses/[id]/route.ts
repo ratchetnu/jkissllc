@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePlatformOwner } from '../../../_lib/session'
 import { getBusiness, saveBusiness, listUpdates, listDeployments } from '../../../../../lib/platform/updates/store'
-import type { PlatformBusiness, ReleaseChannel, UpdatePolicy, HealthStatus, BusinessStatus } from '../../../../../lib/platform/updates/types'
+import type { PlatformBusiness, ReleaseChannel, UpdatePolicy, HealthStatus, BusinessStatus, AutomationMode } from '../../../../../lib/platform/updates/types'
 import { parseRepoName } from '../../../../../lib/platform/automation/repo-identity'
 
 export const runtime = 'nodejs'
@@ -13,6 +13,7 @@ const CHANNELS: ReleaseChannel[] = ['internal', 'alpha', 'beta', 'stable', 'lts'
 const POLICIES: UpdatePolicy[] = ['manual', 'owner_approval', 'scheduled_manual', 'security_only', 'pinned', 'paused']
 const HEALTH: HealthStatus[] = ['unknown', 'healthy', 'degraded', 'down']
 const STATUSES: BusinessStatus[] = ['active', 'onboarding', 'paused', 'archived']
+const MODES: AutomationMode[] = ['manual_prompt', 'automated_preparation', 'automated_preview', 'approved_production', 'fully_manual']
 
 // GET — business + deployment history + which updates it's on/behind (via deployments).
 export const GET = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
@@ -58,6 +59,20 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
     next.repositoryOwner = ref.owner
     next.repositoryNameOnly = ref.name
     next.repoProvider = next.repoProvider ?? 'github'
+  }
+  // ── Automation / Preview configuration (for automated Preview pilots) ────────
+  if (MODES.includes(f.automationMode)) next.automationMode = f.automationMode
+  for (const k of ['previewDeploymentProvider', 'previewProjectId', 'productionProjectId', 'automationWorkflowFile'] as const) {
+    if (typeof f[k] === 'string') (next as Record<string, unknown>)[k] = s(f[k], 200)
+  }
+  // previewRepoId is a numeric GitHub repo id — accept only digits (or clear it).
+  if (typeof f.previewRepoId === 'string') {
+    const v = f.previewRepoId.trim()
+    if (v && !/^\d+$/.test(v)) return NextResponse.json({ error: 'previewRepoId must be the numeric GitHub repo id (digits only)' }, { status: 400 })
+    next.previewRepoId = v || undefined
+  }
+  for (const k of ['requirePullRequest', 'requireOwnerApproval', 'requirePreview', 'requirePassingChecks', 'allowAutomatedMerge', 'allowProductionPromotion'] as const) {
+    if (typeof f[k] === 'boolean') (next as Record<string, unknown>)[k] = f[k]
   }
   next.updatedAt = Date.now()
   await saveBusiness(next)
