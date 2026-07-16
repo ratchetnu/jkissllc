@@ -1,10 +1,11 @@
-# Operion Update — reusable, controlled port/preview workflow.
+# Operion Update — reusable, controlled commit-transfer Preview workflow.
 #
-# SOURCE-OF-TRUTH copy (lives in jkissllc). The TARGET repo (e.g. supercharged) gets its
-# own copy of this file when the owner wires that business live. It ONLY runs on manual
-# workflow_dispatch — Operion dispatches it (flag-gated) with signed inputs; it never runs
-# on push/PR, so it is inert while sitting in the repo. It creates a work branch, runs the
-# gates, and reports a signed result back to Operion. It never promotes production.
+# SOURCE-OF-TRUTH copy (lives in jkissllc). The TARGET repo (e.g. supercharged) gets its own
+# copy of THIS file + scripts/operion-apply.mjs when the owner wires that business live. It
+# ONLY runs on manual workflow_dispatch — Operion dispatches it (flag-gated) with signed
+# inputs; it never runs on push/PR, so it is inert while sitting in the repo. It applies the
+# approved commit-transfer manifest, runs the gates, opens a PR, and reports a signed result.
+# It NEVER merges the PR and NEVER deploys/promotes production.
 name: Operion Update
 run-name: "Operion ${{ inputs.updateId }} → ${{ inputs.targetBranch }}"
 
@@ -16,7 +17,7 @@ on:
       sourceRepository:    { description: "source repo (owner/name)", required: false, type: string }
       sourceCommit:        { description: "source commit SHA", required: false, type: string }
       targetBranch:        { description: "work branch to create", required: true, type: string }
-      executionStrategy:   { description: "commit_transfer | file_manifest | ai_adaptation", required: false, type: string, default: "ai_adaptation" }
+      executionStrategy:   { description: "commit_transfer | file_manifest | ai_adaptation", required: false, type: string, default: "commit_transfer" }
       promptTemplateVersion: { description: "prompt template version", required: false, type: string }
 
 permissions:
@@ -39,31 +40,73 @@ jobs:
         run: |
           git config user.name "operion[bot]"
           git config user.email "operion[bot]@users.noreply.github.com"
-          git checkout -b "${{ inputs.targetBranch }}"
-
-      # The adaptation executor (commit_transfer / file_manifest / ai_adaptation) is wired
-      # in a later phase. This placeholder keeps the workflow valid + inert until then.
-      - name: Apply update (placeholder — no changes yet)
-        run: echo "Operion: strategy=${{ inputs.executionStrategy }} update=${{ inputs.updateId }} — apply step not yet enabled"
+          git checkout -b "${{ inputs.targetBranch }}" || git checkout "${{ inputs.targetBranch }}"
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with: { node-version: "24" }
 
+      # Deterministic commit transfer: fetch the approved, signed manifest from Operion and
+      # write exactly those files. Verifies each hash; aborts (non-zero) on any mismatch or if
+      # nothing changed. NO AI. See scripts/operion-apply.mjs.
+      - name: Apply update (Operion commit transfer)
+        id: apply
+        env:
+          OPERION_CALLBACK_URL: ${{ secrets.OPERION_CALLBACK_URL }}
+          OPERION_CALLBACK_SECRET: ${{ secrets.OPERION_CALLBACK_SECRET }}
+          OPERION_JOB_ID: ${{ inputs.deploymentRequestId }}
+          OPERION_APPLY_RESULT: apply-result.json
+        run: node scripts/operion-apply.mjs
+
       - name: Install
         run: npm ci
 
       - name: Typecheck
+        id: typecheck
         run: npx tsc --noEmit
 
+      - name: Lint
+        id: lint
+        run: npm run lint
+
       - name: Test
+        id: test
         run: npm test
 
       - name: Build
+        id: build
         run: npm run build
 
-      # Report a signed result to Operion. HMAC-SHA256 over "${timestamp}.${body}" with the
-      # shared OPERION_CALLBACK_SECRET — matches app/lib/platform/automation/callback.ts.
+      - name: Commit transferred files + push feature branch
+        id: push
+        if: success()
+        run: |
+          git add -A
+          git commit -m "chore(operion): apply update ${{ inputs.updateId }} (job ${{ inputs.deploymentRequestId }})" || echo "nothing to commit"
+          git push origin "${{ inputs.targetBranch }}"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update pull request
+        id: pr
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          EXISTING=$(gh pr list --head "${{ inputs.targetBranch }}" --json number,url --jq '.[0]' 2>/dev/null || echo "")
+          if [ -n "$EXISTING" ] && [ "$EXISTING" != "null" ]; then
+            NUM=$(echo "$EXISTING" | jq -r '.number'); URL=$(echo "$EXISTING" | jq -r '.url')
+          else
+            gh pr create --base main --head "${{ inputs.targetBranch }}" \
+              --title "Operion: ${{ inputs.updateId }}" \
+              --body "Automated Operion commit-transfer preview for \`${{ inputs.updateId }}\` (job ${{ inputs.deploymentRequestId }}). Preview-only — do NOT merge until owner review in Operion." 2>/dev/null || true
+            NUM=$(gh pr view "${{ inputs.targetBranch }}" --json number --jq '.number' 2>/dev/null || echo "")
+            URL=$(gh pr view "${{ inputs.targetBranch }}" --json url --jq '.url' 2>/dev/null || echo "")
+          fi
+          echo "number=${NUM}" >> "$GITHUB_OUTPUT"; echo "url=${URL}" >> "$GITHUB_OUTPUT"
+
+      # Report a signed, machine-readable result to Operion (HMAC-SHA256 over `${ts}.${body}`
+      # = app/lib/platform/automation/callback.ts). The Vercel Preview is created by the target
+      # project's git integration on branch push; Operion polls it server-side.
       - name: Report to Operion (signed)
         if: always()
         env:
@@ -73,17 +116,33 @@ jobs:
           if [ -z "$OPERION_CALLBACK_URL" ] || [ -z "$OPERION_CALLBACK_SECRET" ]; then
             echo "OPERION_CALLBACK_URL / OPERION_CALLBACK_SECRET not set — skipping callback"; exit 0
           fi
+          APPLIED=0; SKIPPED=0; FAILEDN=0
+          if [ -f apply-result.json ]; then
+            APPLIED=$(jq -r '.applied // 0' apply-result.json); SKIPPED=$(jq -r '.skipped // 0' apply-result.json); FAILEDN=$(jq -r '.failed // 0' apply-result.json)
+          fi
           STATUS="preview_ready"
-          [ "${{ job.status }}" != "success" ] && STATUS="build_failed"
+          if [ "${{ steps.apply.outcome }}" = "failure" ]; then STATUS="apply_failed"
+          elif [ "${{ steps.test.outcome }}" = "failure" ]; then STATUS="tests_failed"
+          elif [ "${{ steps.build.outcome }}" = "failure" ]; then STATUS="build_failed"
+          elif [ "${{ job.status }}" != "success" ]; then STATUS="preview_failed"; fi
+          TP=false; [ "${{ steps.test.outcome }}" = "success" ] && TP=true
+          BP=false; [ "${{ steps.build.outcome }}" = "success" ] && BP=true
+          LP=false; [ "${{ steps.lint.outcome }}" = "success" ] && LP=true
           TS=$(date +%s000)
           BODY=$(jq -nc \
             --arg d "gh-${{ github.run_id }}" \
             --arg j "${{ inputs.deploymentRequestId }}" \
             --arg s "$STATUS" \
-            --arg c "${{ github.sha }}" \
+            --arg br "${{ inputs.targetBranch }}" \
+            --arg c "${{ steps.push.outputs.sha }}" \
             --arg run "${{ github.run_id }}" \
-            --arg url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            '{deliveryId:$d, jobId:$j, status:$s, commit:$c, workflowRunId:$run, previewUrl:$url}')
+            --argjson prn "${{ steps.pr.outputs.number || 'null' }}" \
+            --arg prurl "${{ steps.pr.outputs.url }}" \
+            --argjson tp "$TP" --argjson bp "$BP" --argjson lp "$LP" \
+            --argjson ap "$APPLIED" --argjson sk "$SKIPPED" --argjson fl "$FAILEDN" \
+            '{deliveryId:$d, jobId:$j, status:$s, branch:$br, commit:$c, workflowRunId:$run,
+              pullRequestNumber:$prn, pullRequestUrl:$prurl,
+              result:{testsPassed:$tp, buildPassed:$bp, lintPassed:$lp, changedFiles:$ap, filesApplied:$ap, filesSkipped:$sk, filesFailed:$fl}}')
           SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$OPERION_CALLBACK_SECRET" | sed 's/^.*= *//')
           curl -sS -X POST "$OPERION_CALLBACK_URL" \
             -H "content-type: application/json" \

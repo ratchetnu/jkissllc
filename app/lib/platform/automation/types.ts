@@ -39,6 +39,10 @@ export type WorkflowResult = {
   buildPassed?: boolean
   lintPassed?: boolean
   changedFiles?: number
+  // Commit-transfer apply stats (counts only — never filesystem paths).
+  filesApplied?: number
+  filesSkipped?: number
+  filesFailed?: number
   adaptationReport?: string      // short, safe summary from the AI-adaptation strategy
   warnings?: string[]
 }

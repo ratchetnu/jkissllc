@@ -131,6 +131,23 @@ export class GitHubActionsProvider implements UpdateAutomationProvider {
   readCommit(installationId: string, repo: RepoRef, sha: string) {
     return this.get(installationId, `/repos/${repo.owner}/${repo.name}/commits/${encodeURIComponent(sha)}`, (b) => { const r = b as { sha: string; commit: { message: string } }; return { sha: r.sha, message: r.commit.message } })
   }
+  readCommitFiles(installationId: string, repo: RepoRef, sha: string) {
+    return this.get(installationId, `/repos/${repo.owner}/${repo.name}/commits/${encodeURIComponent(sha)}`, (b) => {
+      const r = b as { files?: { filename: string; status: string }[] }
+      return { files: (r.files ?? []).map(f => ({ filename: f.filename, status: f.status })) }
+    })
+  }
+  readFileContent(installationId: string, repo: RepoRef, path: string, ref: string) {
+    // Contents API returns base64; we re-hash the decoded bytes so the manifest hash is
+    // over the exact content we transfer (not GitHub's git-blob sha).
+    const safe = path.split('/').map(encodeURIComponent).join('/')
+    return this.get(installationId, `/repos/${repo.owner}/${repo.name}/contents/${safe}?ref=${encodeURIComponent(ref)}`, (b) => {
+      const r = b as { content?: string; encoding?: string }
+      const contentBase64 = (r.content ?? '').replace(/\n/g, '')
+      const sha256 = crypto.createHash('sha256').update(Buffer.from(contentBase64, 'base64')).digest('hex')
+      return { contentBase64, sha256 }
+    })
+  }
   readPullRequest(installationId: string, repo: RepoRef, number: number) {
     return this.get(installationId, `/repos/${repo.owner}/${repo.name}/pulls/${number}`, (b) => { const r = b as { head: { sha: string }; mergeable: boolean; html_url: string }; return { headSha: r.head.sha, mergeable: !!r.mergeable, url: r.html_url } })
   }

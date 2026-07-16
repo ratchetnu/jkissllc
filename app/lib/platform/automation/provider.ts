@@ -22,6 +22,10 @@ export interface UpdateAutomationProvider {
   readRepository(installationId: string, repo: RepoRef): Promise<ProviderResult<{ defaultBranch: string; private: boolean }>>
   readBranch(installationId: string, repo: RepoRef, branch: string): Promise<ProviderResult<{ commit: string }>>
   readCommit(installationId: string, repo: RepoRef, sha: string): Promise<ProviderResult<{ sha: string; message: string }>>
+  /** Files changed in a commit — the deterministic basis for a commit-transfer manifest. */
+  readCommitFiles(installationId: string, repo: RepoRef, sha: string): Promise<ProviderResult<{ files: { filename: string; status: string }[] }>>
+  /** Raw file content at a ref (base64) — the approved bytes a manifest transfers. */
+  readFileContent(installationId: string, repo: RepoRef, path: string, ref: string): Promise<ProviderResult<{ contentBase64: string; sha256: string }>>
   createBranch(installationId: string, repo: RepoRef, fromBranch: string, newBranch: string): Promise<ProviderResult<{ branch: string; commit: string }>>
   dispatchWorkflow(installationId: string, repo: RepoRef, workflowFile: string, ref: string, inputs: Record<string, string>): Promise<ProviderResult<{ dispatched: boolean }>>
   readWorkflowRun(installationId: string, repo: RepoRef, runId: string): Promise<ProviderResult<{ status: string; conclusion?: string; url?: string }>>
@@ -47,6 +51,8 @@ export class StubProvider implements UpdateAutomationProvider {
   readRepository() { return fail<{ defaultBranch: string; private: boolean }>() }
   readBranch() { return fail<{ commit: string }>() }
   readCommit() { return fail<{ sha: string; message: string }>() }
+  readCommitFiles() { return fail<{ files: { filename: string; status: string }[] }>() }
+  readFileContent() { return fail<{ contentBase64: string; sha256: string }>() }
   createBranch() { return fail<{ branch: string; commit: string }>() }
   dispatchWorkflow() { return fail<{ dispatched: boolean }>() }
   readWorkflowRun() { return fail<{ status: string; conclusion?: string; url?: string }>() }

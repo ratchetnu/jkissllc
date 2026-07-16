@@ -327,7 +327,7 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
   const [target, setTarget] = useState(targets[0]?.id ?? '')
   const [busy, setBusy] = useState(false); const [checking, setChecking] = useState(false); const [err, setErr] = useState('')
   const [gates, setGates] = useState<Gate[] | null>(null); const [ready, setReady] = useState(false)
-  const [job, setJob] = useState<{ id: string; status: string; currentStep: string; previewUrl?: string; pullRequestUrl?: string; pullRequestNumber?: number; workflowRunId?: string; failureSummary?: string } | null>(null)
+  const [job, setJob] = useState<{ id: string; status: string; currentStep: string; previewUrl?: string; previewDeploymentId?: string; pullRequestUrl?: string; pullRequestNumber?: number; workflowRunId?: string; targetCommit?: string; failureSummary?: string; result?: { filesApplied?: number; filesSkipped?: number; filesFailed?: number } } | null>(null)
 
   // Read-only readiness on mount + whenever the target changes. Never creates a job.
   const check = useCallback(async () => {
@@ -415,9 +415,14 @@ function AutomationPanel({ updateKey, businesses, inlineActions }: { updateKey: 
             })}
           </div>
           <p style={{ fontSize: 12 }}>Job <span style={{ fontFamily: 'monospace' }}>{job.id}</span> · <span style={{ fontWeight: 700, color: failed ? '#f87171' : job.status === 'completed' ? '#34d399' : '#fbbf24' }}>{nice(job.status)}</span>{job.failureSummary ? ` — ${job.failureSummary}` : ''}</p>
+          {job.result && (job.result.filesApplied != null || job.result.filesFailed != null) && (
+            <p style={{ fontSize: 12, marginTop: 2, color: 'var(--muted)' }}>Transfer: <span style={{ color: '#34d399' }}>{job.result.filesApplied ?? 0} applied</span>{job.result.filesSkipped ? ` · ${job.result.filesSkipped} skipped` : ''}{job.result.filesFailed ? <span style={{ color: '#f87171' }}> · {job.result.filesFailed} failed</span> : ''}</p>
+          )}
           <div style={{ display: 'flex', gap: 10, marginTop: 4, flexWrap: 'wrap', fontSize: 12 }}>
+            {job.targetCommit && <span style={{ color: 'var(--muted)', fontFamily: 'monospace' }}>{job.targetCommit.slice(0, 7)}</span>}
             {job.pullRequestUrl && <a href={job.pullRequestUrl} target="_blank" rel="noreferrer" style={{ color: '#a5b4fc' }}>View PR{job.pullRequestNumber ? ` #${job.pullRequestNumber}` : ''} →</a>}
             {job.previewUrl && <a href={job.previewUrl} target="_blank" rel="noreferrer" style={{ color: '#a5b4fc' }}>View Preview →</a>}
+            {job.previewDeploymentId && <span style={{ color: 'var(--muted)' }}>{job.previewDeploymentId}</span>}
             {job.workflowRunId && <span style={{ color: 'var(--muted)' }}>run {job.workflowRunId}</span>}
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
