@@ -9,7 +9,7 @@ import type { PlatformUpdate, PlatformBusiness, UpdateCompatibility } from '../u
 import { AUTOMATION_JOB_VERSION, type UpdateAutomationJob, type ExecutionStrategy } from './types'
 import { evaluatePreflight, workBranchFor, commitDriftDetected, automaticRollbackEligible, type PreflightResult } from './preflight'
 import { businessRepoRef } from './repo-identity'
-import { canPromote } from './promotion'
+import { canPromote, canAutoRollback } from './promotion'
 import { isProductionApprovalTransition } from './machine'
 import { getAutomationProvider } from './provider'
 import { getPreviewProvider } from './vercel-provider'
@@ -140,6 +140,13 @@ export async function approveProduction(input: {
       j.status = 'failed'; j.failureCategory = 'internal_error'; j.failureSummary = 'missing repo/PR for merge'; j.updatedAt = now(); await store.saveJob(j)
       return { ok: false, job: j, reason: 'missing repo/PR for merge' }
     }
+    // Capture the current production deployment as the known-good rollback target BEFORE we
+    // change production, so automatic rollback (if enabled) can instantly restore it.
+    const projectId = input.business.productionProjectId || input.business.previewProjectId
+    if (projectId && !j.rollbackTargetDeploymentId) {
+      const cur = await getPreviewProvider(env).findProductionDeployment(projectId)
+      if (cur.ok && cur.data && cur.data.ready) j.rollbackTargetDeploymentId = cur.data.deploymentId
+    }
     j.status = 'merging'; j.updatedAt = now(); await store.saveJob(j)
     const provider = getAutomationProvider(env)
     const merged = await provider.mergePullRequest(input.business.githubInstallationId, repoRef, j.pullRequestNumber, j.approvedCommit ?? j.targetCommit ?? '')
@@ -257,6 +264,28 @@ export async function finalizePreview(input: { jobId: string; env?: Record<strin
     j.updatedAt = now(); await store.saveJob(j)
     const complete = artifactsComplete(j, { requirePr: business.requirePullRequest, requirePreview: business.requirePreview })
     return { ok: true, job: j, artifactsComplete: complete, needsAttention }
+  }, { onBusy: () => ({ ok: false, reason: 'target_locked' }), token: `${job.businessId}:${now()}` })
+}
+
+/** Automatic rollback: promote the captured known-good production deployment back. Flag-gated
+ *  + bounded; reconciler-driven so it self-heals a failed promotion. Never merges anything. */
+export async function advanceRollback(input: { jobId: string; env?: Record<string, string | undefined> }): Promise<ApproveResult> {
+  const env = input.env ?? process.env
+  const job = await store.getJob(input.jobId)
+  if (!job) return { ok: false, reason: 'no_job' }
+  const gate = canAutoRollback({ status: job.status, flagEnabled: flag('OPERION_AUTOMATIC_ROLLBACK_ENABLED', env), rollbackTargetDeploymentId: job.rollbackTargetDeploymentId, attemptCount: job.attemptCount })
+  if (!gate.ok) return { ok: false, reason: gate.reason }
+  const business = await getBusiness(job.businessId)
+  if (!business) return { ok: false, reason: 'business missing' }
+  const projectId = business.productionProjectId || business.previewProjectId
+  return store.withBusinessLock<ApproveResult>(job.businessId, async () => {
+    const j = await store.getJob(input.jobId); if (!j || j.status !== 'rollback_required') return { ok: false, reason: 'job changed' }
+    j.status = 'rolling_back'; j.attemptCount = (j.attemptCount ?? 0) + 1; j.updatedAt = now(); await store.saveJob(j)
+    const vercel = getPreviewProvider(env)
+    const res = projectId && j.rollbackTargetDeploymentId ? await vercel.promoteProduction(projectId, j.rollbackTargetDeploymentId) : { ok: false as const, error: 'no rollback target', category: 'config' }
+    if (res.ok) { j.status = 'rolled_back'; j.rolledBackAt = now(); j.failureSummary = 'production restored to the previous verified deployment'; j.updatedAt = now(); await store.saveJob(j); return { ok: true, job: j } }
+    j.status = 'rollback_required'; j.failureSummary = `automatic rollback failed: ${res.error}`; j.updatedAt = now(); await store.saveJob(j)
+    return { ok: false, job: j, reason: res.error }
   }, { onBusy: () => ({ ok: false, reason: 'target_locked' }), token: `${job.businessId}:${now()}` })
 }
 

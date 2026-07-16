@@ -4,7 +4,7 @@ import { listJobs, saveJob } from '../../../lib/platform/automation/store'
 import { getBusiness } from '../../../lib/platform/updates/store'
 import { getAutomationProvider } from '../../../lib/platform/automation/provider'
 import { businessRepoRef } from '../../../lib/platform/automation/repo-identity'
-import { retryPreview, finalizePreview, advancePromotion } from '../../../lib/platform/automation/orchestrator'
+import { retryPreview, finalizePreview, advancePromotion, advanceRollback } from '../../../lib/platform/automation/orchestrator'
 import { reconcileDecision } from '../../../lib/platform/automation/reconcile'
 import { isTransientFailure, artifactsComplete } from '../../../lib/platform/automation/deploy-view'
 import { PROMOTION_ACTIVE } from '../../../lib/platform/automation/promotion'
@@ -30,11 +30,18 @@ export async function GET(req: NextRequest) {
   const all = await listJobs()
   const jobs = all.filter(j => AUTOMATION_ACTIVE.includes(j.status) || isTransientFailure(j.failureCategory)
     || (j.status === 'awaiting_owner_review' && (!j.pullRequestUrl || !j.previewUrl))
-    || (j.status === 'production_deploying' || j.status === 'verifying'))
+    || (j.status === 'production_deploying' || j.status === 'verifying')
+    || j.status === 'rollback_required')
   const provider = getAutomationProvider()
   const results: { jobId: string; action: string; reason: string }[] = []
 
   for (const job of jobs) {
+    // Failed production promotion → automatic rollback (flag-gated + bounded).
+    if (job.status === 'rollback_required') {
+      const rb = await advanceRollback({ jobId: job.id })
+      results.push({ jobId: job.id, action: 'auto_rollback', reason: rb.job?.status ?? rb.reason ?? 'skipped' })
+      continue
+    }
     // Production promotion in flight → confirm deploy + health, then complete.
     if (PROMOTION_ACTIVE.has(job.status) && (job.status === 'production_deploying' || job.status === 'verifying')) {
       const p = await advancePromotion({ jobId: job.id })

@@ -190,6 +190,19 @@ export class VercelPreviewProvider {
     }
   }
 
+  // ── Promote a specific deployment to production (used for instant rollback) ──
+  async promoteProduction(project: string, deploymentId: string, teamId?: string): Promise<ProviderResult<{ promoted: boolean }>> {
+    if (!this.configured) return { ok: false, error: 'VERCEL_TOKEN not configured', category: 'not_configured' }
+    if (!project || !deploymentId) return { ok: false, error: 'project + deploymentId required', category: 'config' }
+    const scope = (explicit?: string) => { const id = explicit || this.teamId; return id ? `?teamId=${encodeURIComponent(id)}` : '' }
+    let res
+    try { res = await this.fetch(`${API}/v10/projects/${encodeURIComponent(project)}/promote/${encodeURIComponent(deploymentId)}${scope(teamId)}`, { method: 'POST', headers: this.headers() }) }
+    catch { return { ok: false, error: 'Vercel API unreachable', category: 'network' } }
+    if (res.status === 401 || res.status === 403) return { ok: false, error: 'Vercel auth/permission denied', category: 'permission' }
+    if (!res.ok) return { ok: false, error: `promote failed (${res.status})`, category: 'api' }
+    return { ok: true, data: { promoted: true } }
+  }
+
   // ── Cancel an in-flight Preview deployment ──────────────────────────────────
   async cancelPreviewDeployment(deploymentId: string, teamId?: string): Promise<ProviderResult<{ canceled: boolean }>> {
     if (!this.configured) return { ok: false, error: 'VERCEL_TOKEN not configured', category: 'not_configured' }
@@ -234,6 +247,7 @@ export class StubPreviewProvider {
   createPreviewDeployment() { return this.fail<PreviewDeployment>() }
   findPreviewByBranch() { return this.fail<PreviewDeployment | null>() }
   findProductionDeployment() { return this.fail<PreviewDeployment | null>() }
+  promoteProduction() { return this.fail<{ promoted: boolean }>() }
   readPreviewDeployment() { return this.fail<PreviewDeployment>() }
   waitForPreviewReady() { return this.fail<PreviewDeployment>() }
   cancelPreviewDeployment() { return this.fail<{ canceled: boolean }>() }

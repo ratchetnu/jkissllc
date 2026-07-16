@@ -1,7 +1,7 @@
 // Operion production promotion — pure decision tests (Sprint 2).
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { canPromote, promotionDriftDetected, promotionStage, PROMOTION_STAGES, PROMOTION_ACTIVE } from '../app/lib/platform/automation/promotion'
+import { canPromote, canAutoRollback, promotionDriftDetected, promotionStage, PROMOTION_STAGES, PROMOTION_ACTIVE } from '../app/lib/platform/automation/promotion'
 
 const ready = { status: 'awaiting_owner_review', approvedCommit: 'abc', targetCommit: 'abc', pullRequestNumber: 1, flagEnabled: true, businessAllows: true }
 
@@ -34,6 +34,15 @@ test('promotionStage walks Approved → Merging → Deploying → Verifying → 
   assert.deepEqual(promotionStage('completed'), { reached: 4, failedAt: null })
   assert.equal(promotionStage('rollback_required').failedAt, 3)
   assert.equal(promotionStage('failed').failedAt, 1)
+})
+
+test('canAutoRollback: flag-gated + needs a target + bounded', () => {
+  const base = { status: 'rollback_required', flagEnabled: true, rollbackTargetDeploymentId: 'dpl_good', attemptCount: 0 }
+  assert.equal(canAutoRollback(base).ok, true)
+  assert.equal(canAutoRollback({ ...base, flagEnabled: false }).ok, false)             // flag off = safe default
+  assert.equal(canAutoRollback({ ...base, rollbackTargetDeploymentId: undefined }).ok, false) // nothing to restore
+  assert.equal(canAutoRollback({ ...base, attemptCount: 2 }).ok, false)                // exhausted
+  assert.equal(canAutoRollback({ ...base, status: 'completed' }).ok, false)            // not failed
 })
 
 test('PROMOTION_ACTIVE covers the in-flight states only', () => {

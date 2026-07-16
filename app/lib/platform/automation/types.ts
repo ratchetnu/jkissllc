@@ -85,6 +85,8 @@ export type UpdateAutomationJob = {
   approvedBy?: string
   // production promotion (Sprint 2)
   mergeCommit?: string
+  rollbackTargetDeploymentId?: string   // the known-good production deployment captured before promoting
+  rolledBackAt?: number
   // failure / rollback
   failureCategory?: AutomationFailure
   failureSummary?: string
