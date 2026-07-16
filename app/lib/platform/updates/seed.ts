@@ -4,10 +4,11 @@
 // no-ops (unless force). Uses the real update-key counter so keys are UPD-1001…. NEVER
 // touches the Supercharged repo — it only writes a RECORD describing it.
 
-import {
-  getBusiness, saveBusiness, saveUpdate, saveCompat, nextUpdateKey,
-} from './store'
+import * as defaultStore from './store'
 import { PLATFORM_UPDATE_VERSION, type PlatformBusiness, type PlatformUpdate, type UpdateCompatibility, type ValidationChecklist } from './types'
+
+// The store surface seed needs — injectable so the safety invariant is testable.
+export type SeedStore = Pick<typeof defaultStore, 'getBusiness' | 'saveBusiness' | 'saveUpdate' | 'saveCompat' | 'nextUpdateKey'>
 
 const PASS: ValidationChecklist = {
   typecheck: 'passed', lint: 'passed', tests: 'passed', build: 'passed',
@@ -15,8 +16,13 @@ const PASS: ValidationChecklist = {
   e2e: 'not_applicable', smokeTest: 'passed', ownerVerification: 'passed',
 }
 
-export async function seedPlatform(now: number, opts: { force?: boolean } = {}): Promise<{ seeded: boolean; businesses: number; updates: number }> {
-  if (!opts.force && (await getBusiness('jkiss'))) return { seeded: false, businesses: 0, updates: 0 }
+export async function seedPlatform(now: number, opts: { force?: boolean } = {}, store: SeedStore = defaultStore): Promise<{ seeded: boolean; businesses: number; updates: number }> {
+  const { getBusiness, saveBusiness, saveUpdate, saveCompat, nextUpdateKey } = store
+  // Owner-configured business records are NEVER overwritten — not even with force. `force`
+  // only re-seeds the updates/compat below. This makes a re-seed safe: repoName, GitHub
+  // install, preview/automation config, and status survive.
+  const existingJk = await getBusiness('jkiss')
+  if (!opts.force && existingJk) return { seeded: false, businesses: 0, updates: 0 }
 
   const jkiss: PlatformBusiness = {
     recordVersion: PLATFORM_UPDATE_VERSION, id: 'jkiss', name: 'J KISS LLC', slug: 'jkiss',
@@ -36,8 +42,10 @@ export async function seedPlatform(now: number, opts: { force?: boolean } = {}):
     updatesPaused: false, manualApprovalRequired: true, autoDeployAllowed: false, healthStatus: 'unknown',
     notes: 'External Operion-based business. Owner-run. Never auto-deployed from here. Repo/commit/modules to be verified by the owner.', createdAt: now, updatedAt: now,
   }
-  await saveBusiness(jkiss)
-  await saveBusiness(supercharged)
+  // Create businesses only when absent — an existing record (with owner-set repo/preview/
+  // automation config) is left untouched so a forced re-seed can't destroy production data.
+  if (!existingJk) await saveBusiness(jkiss)
+  if (!(await getBusiness('supercharged'))) await saveBusiness(supercharged)
 
   // Each entry: [title, summary, partial overrides]. Deployed on J KISS; Supercharged status varies.
   const defs: Array<{ mk: Partial<PlatformUpdate>; superchargedCompat: Partial<UpdateCompatibility> }> = [
