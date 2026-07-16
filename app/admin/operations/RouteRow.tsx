@@ -14,7 +14,7 @@ export default function RouteRow({ o, i = 0 }: { o: OpsRoute & { status: RouteSt
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ fontWeight: 700, fontSize: 15.5 }}>{o.businessName}</span>
-          <span style={{ fontSize: 10.5, fontWeight: 800, padding: '2px 8px', borderRadius: 99, background: chip.bg, color: chip.fg }}>{chip.label}</span>
+          <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '.02em', lineHeight: 1, padding: '3px 9px', borderRadius: 999, background: chip.bg, color: chip.fg }}>{chip.label}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4, fontSize: 12.5, color: 'var(--muted)', flexWrap: 'wrap' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><CalendarDays size={13} /> {fmtDay(o.routeDate)}</span>
