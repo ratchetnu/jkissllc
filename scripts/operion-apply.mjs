@@ -23,7 +23,9 @@ const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex')
 function isSafeRepoPath(p) {
   if (typeof p !== 'string' || !p || p.length > 400 || p.includes('\0') || p.includes('\\')) return false
   if (p.startsWith('/') || p.startsWith('~') || /^[A-Za-z]:/.test(p)) return false
-  return p.split('/').every(s => s !== '' && s !== '.' && s !== '..' && /^[A-Za-z0-9._-]+$/.test(s))
+  // Brackets/parens allowed for Next.js dynamic segments ([id], [...slug]) + route groups —
+  // mirrors app/lib/platform/automation/manifest.ts isSafeRepoPath. Traversal still blocked above.
+  return p.split('/').every(s => s !== '' && s !== '.' && s !== '..' && /^[A-Za-z0-9._()\[\]-]+$/.test(s))
 }
 
 const manifestUrl = OPERION_CALLBACK_URL.replace(/\/callback\/?$/, '/manifest')

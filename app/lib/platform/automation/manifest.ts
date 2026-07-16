@@ -34,7 +34,10 @@ export function isSafeRepoPath(p: unknown): p is string {
   if (p.startsWith('/') || p.startsWith('~') || /^[A-Za-z]:/.test(p)) return false // absolute / drive / home
   const segs = p.split('/')
   if (segs.some(s => s === '' || s === '.' || s === '..')) return false           // traversal / empty / current
-  if (segs.some(s => !/^[A-Za-z0-9._-]+$/.test(s))) return false   // only safe chars per segment
+  // Safe chars per segment. Brackets [ ] and parens ( ) are allowed so Next.js dynamic
+  // route segments ([id], [...slug], [[...slug]]) and route groups ((group)) transfer —
+  // they are ubiquitous and legitimate, and can't create traversal (that's guarded above).
+  if (segs.some(s => !/^[A-Za-z0-9._()\[\]-]+$/.test(s))) return false
   return true
 }
 

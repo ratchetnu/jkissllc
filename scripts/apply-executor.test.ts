@@ -25,6 +25,18 @@ test('isSafeRepoPath rejects traversal / absolute / junk, accepts normal paths',
   for (const bad of ['../etc/passwd', '/etc/passwd', '~/x', 'a/../b', './x', 'a//b', 'a\\b', 'C:/x', '', 'a/b\0c']) assert.equal(isSafeRepoPath(bad), false, bad)
 })
 
+test('isSafeRepoPath accepts Next.js dynamic segments + route groups (brackets/parens)', () => {
+  for (const ok of [
+    'app/api/admin/bookings/[id]/route.ts',
+    'app/blog/[...slug]/page.tsx',
+    'app/shop/[[...all]]/page.tsx',
+    'app/(marketing)/about/page.tsx',
+    'app/booking/[token]/page.tsx',
+  ]) assert.equal(isSafeRepoPath(ok), true, ok)
+  // …but bracketed traversal is still blocked (the traversal guard runs first).
+  assert.equal(isSafeRepoPath('app/[id]/../../etc/passwd'), false)
+})
+
 // ── manifest validation ──
 test('validateManifest rejects duplicates, unsafe paths, bad actions, missing hashes', () => {
   assert.equal(validateManifest(manifest([])).ok, false)                                   // empty
