@@ -1,0 +1,92 @@
+# Operion Update — reusable, controlled port/preview workflow.
+#
+# SOURCE-OF-TRUTH copy (lives in jkissllc). The TARGET repo (e.g. supercharged) gets its
+# own copy of this file when the owner wires that business live. It ONLY runs on manual
+# workflow_dispatch — Operion dispatches it (flag-gated) with signed inputs; it never runs
+# on push/PR, so it is inert while sitting in the repo. It creates a work branch, runs the
+# gates, and reports a signed result back to Operion. It never promotes production.
+name: Operion Update
+run-name: "Operion ${{ inputs.updateId }} → ${{ inputs.targetBranch }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploymentRequestId: { description: "Operion job id", required: true, type: string }
+      updateId:            { description: "PlatformUpdate key", required: true, type: string }
+      sourceRepository:    { description: "source repo (owner/name)", required: false, type: string }
+      sourceCommit:        { description: "source commit SHA", required: false, type: string }
+      targetBranch:        { description: "work branch to create", required: true, type: string }
+      executionStrategy:   { description: "commit_transfer | file_manifest | ai_adaptation", required: false, type: string, default: "ai_adaptation" }
+      promptTemplateVersion: { description: "prompt template version", required: false, type: string }
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: operion-update-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target
+        uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Create work branch
+        run: |
+          git config user.name "operion[bot]"
+          git config user.email "operion[bot]@users.noreply.github.com"
+          git checkout -b "${{ inputs.targetBranch }}"
+
+      # The adaptation executor (commit_transfer / file_manifest / ai_adaptation) is wired
+      # in a later phase. This placeholder keeps the workflow valid + inert until then.
+      - name: Apply update (placeholder — no changes yet)
+        run: echo "Operion: strategy=${{ inputs.executionStrategy }} update=${{ inputs.updateId }} — apply step not yet enabled"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with: { node-version: "24" }
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # Report a signed result to Operion. HMAC-SHA256 over "${timestamp}.${body}" with the
+      # shared OPERION_CALLBACK_SECRET — matches app/lib/platform/automation/callback.ts.
+      - name: Report to Operion (signed)
+        if: always()
+        env:
+          OPERION_CALLBACK_URL: ${{ secrets.OPERION_CALLBACK_URL }}
+          OPERION_CALLBACK_SECRET: ${{ secrets.OPERION_CALLBACK_SECRET }}
+        run: |
+          if [ -z "$OPERION_CALLBACK_URL" ] || [ -z "$OPERION_CALLBACK_SECRET" ]; then
+            echo "OPERION_CALLBACK_URL / OPERION_CALLBACK_SECRET not set — skipping callback"; exit 0
+          fi
+          STATUS="preview_ready"
+          [ "${{ job.status }}" != "success" ] && STATUS="build_failed"
+          TS=$(date +%s000)
+          BODY=$(jq -nc \
+            --arg d "gh-${{ github.run_id }}" \
+            --arg j "${{ inputs.deploymentRequestId }}" \
+            --arg s "$STATUS" \
+            --arg c "${{ github.sha }}" \
+            --arg run "${{ github.run_id }}" \
+            --arg url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            '{deliveryId:$d, jobId:$j, status:$s, commit:$c, workflowRunId:$run, previewUrl:$url}')
+          SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$OPERION_CALLBACK_SECRET" | sed 's/^.*= *//')
+          curl -sS -X POST "$OPERION_CALLBACK_URL" \
+            -H "content-type: application/json" \
+            -H "x-operion-timestamp: $TS" \
+            -H "x-operion-signature: $SIG" \
+            -d "$BODY" || echo "callback POST failed (non-fatal)"

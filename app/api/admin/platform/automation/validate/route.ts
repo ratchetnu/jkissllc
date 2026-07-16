@@ -20,13 +20,24 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
 
   const result = await validateGithubConnection(business)
 
-  // Record the validation outcome (metadata only). Ready requires connection + a preview
-  // project + a workflow file so preflight can later pass.
-  business.lastVerificationAt = Date.now()
+  // Persist the discovered GitHub metadata (installation id, repo owner/name, branch) so
+  // the business record is auto-configured. Ready still requires a preview project + a
+  // workflow file so preflight can later pass.
+  const now = Date.now()
+  if (result.discovered) {
+    const d = result.discovered
+    business.githubInstallationId = d.installationId
+    business.repositoryOwner = d.repositoryOwner
+    business.repositoryNameOnly = d.repositoryNameOnly
+    business.defaultBranch = d.defaultBranch
+    if (!business.allowedTargetBranches?.length) business.allowedTargetBranches = [d.defaultBranch]
+    if (!business.automationWorkflowFile) business.automationWorkflowFile = 'operion-update.yml'
+    business.repoProvider = 'github'
+  }
+  business.lastVerificationAt = now
   business.configurationStatus = result.ok && !!business.previewProjectId && !!business.automationWorkflowFile ? 'ready' : result.ok ? 'incomplete' : 'error'
-  if (result.defaultBranch) business.defaultBranch = result.defaultBranch
-  business.updatedAt = Date.now()
+  business.updatedAt = now
   await saveBusiness(business)
 
-  return NextResponse.json({ ok: result.ok, checks: result.checks, configurationStatus: business.configurationStatus })
+  return NextResponse.json({ ok: result.ok, checks: result.checks, configurationStatus: business.configurationStatus, installationDiscovered: !!result.discovered })
 })

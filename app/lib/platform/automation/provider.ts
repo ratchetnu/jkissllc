@@ -16,6 +16,8 @@ export type ProviderResult<T> = { ok: true; data: T } | { ok: false; error: stri
 
 export interface UpdateAutomationProvider {
   readonly name: string
+  /** Discover which installation covers a repo (App JWT; read-only) — for auto-config. */
+  getRepoInstallation(repo: RepoRef): Promise<ProviderResult<{ installationId: string }>>
   validateConnection(installationId: string): Promise<ProviderResult<{ connected: boolean; login?: string }>>
   readRepository(installationId: string, repo: RepoRef): Promise<ProviderResult<{ defaultBranch: string; private: boolean }>>
   readBranch(installationId: string, repo: RepoRef, branch: string): Promise<ProviderResult<{ commit: string }>>
@@ -40,6 +42,7 @@ function fail<T>(): Promise<ProviderResult<T>> { return Promise.resolve({ ok: fa
 /** The inert default: every operation fails closed. Safe to run with no credentials. */
 export class StubProvider implements UpdateAutomationProvider {
   readonly name = 'stub'
+  getRepoInstallation() { return fail<{ installationId: string }>() }
   validateConnection() { return fail<{ connected: boolean; login?: string }>() }
   readRepository() { return fail<{ defaultBranch: string; private: boolean }>() }
   readBranch() { return fail<{ commit: string }>() }

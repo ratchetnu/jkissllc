@@ -102,6 +102,17 @@ export class GitHubActionsProvider implements UpdateAutomationProvider {
   }
 
   // ── READ (never mutate) ─────────────────────────────────────────────────────
+  async getRepoInstallation(repo: RepoRef): Promise<ProviderResult<{ installationId: string }>> {
+    const jwt = this.appJwt()
+    if (!jwt.ok) return { ok: false, error: jwt.error, category: 'auth' }
+    let res
+    try { res = await this.fetch(`${API}/repos/${repo.owner}/${repo.name}/installation`, { headers: this.appHeaders(jwt.jwt) }) } catch { return { ok: false, error: 'GitHub API unreachable', category: 'network' } }
+    if (res.status === 404) return { ok: false, error: 'App is not installed on this repository', category: 'installation' }
+    if (!res.ok) return { ok: false, error: `installation lookup failed (${res.status})`, category: 'api' }
+    const b = (await res.json().catch(() => null)) as { id?: number } | null
+    if (b?.id == null) return { ok: false, error: 'no installation id', category: 'api' }
+    return { ok: true, data: { installationId: String(b.id) } }
+  }
   async validateConnection(installationId: string): Promise<ProviderResult<{ connected: boolean; login?: string }>> {
     const t = await this.installationToken(installationId)   // proves App auth + installation
     if (!t.ok) return t

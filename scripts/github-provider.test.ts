@@ -69,6 +69,15 @@ test('read op returns mapped data and never mutates', async () => {
   assert.ok(m.calls.every(c => !c.url.includes('/merge')))
 })
 
+test('getRepoInstallation discovers the installation id (200) and fails closed when app not installed (404)', async () => {
+  const ok = mockFetch([['/repos/ratchetnu/supercharged/installation', () => ({ status: 200, body: { id: 146887383 } })]])
+  const r1 = await new GitHubActionsProvider(ENV, { fetch: ok.fetch, now: () => T }).getRepoInstallation(REPO)
+  assert.equal(r1.ok && r1.data.installationId, '146887383')
+  const nf = mockFetch([['/repos/ratchetnu/supercharged/installation', () => ({ status: 404, body: {} })]])
+  const r2 = await new GitHubActionsProvider(ENV, { fetch: nf.fetch, now: () => T }).getRepoInstallation(REPO)
+  assert.equal(r2.ok, false); assert.ok(!r2.ok && r2.category === 'installation')
+})
+
 test('WRITE ops fail closed while OPERION_GITHUB_ACTIONS_ENABLED is off (default)', async () => {
   const m = mockFetch([tokenRoute])
   const p = new GitHubActionsProvider(ENV, { fetch: m.fetch, now: () => T })
