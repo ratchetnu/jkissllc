@@ -190,15 +190,21 @@ export async function finalizePreview(input: { jobId: string; env?: Record<strin
       }
     }
 
-    // 2) Preview — discover the branch's Vercel deployment, then create only if configured.
+    // 2) Preview — discover the branch's Vercel deployment. A valid (non-failed) preview is
+    //    recorded; if there's none or it's blocked (e.g. an invalid commit author), regenerate
+    //    via a fresh workflow run (bounded), which now commits as github-actions[bot].
     if (!j.previewUrl && business.previewProjectId) {
       const vercel = getPreviewProvider(env)
       const found = await vercel.findPreviewByBranch(business.previewProjectId, j.workBranch!)
-      if (found.ok && found.data) { j.previewDeploymentId = found.data.deploymentId; j.previewUrl = found.data.url }
-      else if (found.ok && !found.data && business.previewRepoId) {
-        const created = await vercel.createPreviewDeployment({ project: business.previewProjectId, ref: j.workBranch!, repoId: business.previewRepoId })
-        if (created.ok) { j.previewDeploymentId = created.data.deploymentId; j.previewUrl = created.data.url }
-        else needsAttention = needsAttention ?? `Preview could not be created (${created.error}).`
+      if (found.ok && found.data && !found.data.failed) {
+        j.previewDeploymentId = found.data.deploymentId; j.previewUrl = found.data.url
+      } else if (flag('OPERION_PREVIEW_AUTOMATION_ENABLED', env) && flag('OPERION_GITHUB_ACTIONS_ENABLED', env) && (j.attemptCount ?? 0) < 3) {
+        const update = await getUpdate(j.updateId)
+        const res = await provider.dispatchWorkflow(business.githubInstallationId!, repoRef, business.automationWorkflowFile!, business.defaultBranch, { deploymentRequestId: j.id, updateId: update?.key ?? j.updateId, targetBranch: j.workBranch!, executionStrategy: j.strategy })
+        if (res.ok) { j.status = 'creating_branch'; j.currentStep = 'branch'; j.attemptCount = (j.attemptCount ?? 0) + 1; j.startedAt = now() }
+        else needsAttention = needsAttention ?? `Preview regeneration could not be dispatched (${res.error}).`
+      } else if ((j.attemptCount ?? 0) >= 3) {
+        needsAttention = needsAttention ?? 'Preview could not be produced after several attempts — check the Vercel git-author setting.'
       }
     }
 
