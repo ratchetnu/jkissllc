@@ -1,5 +1,6 @@
 'use client'
 
+import { QRCodeSVG } from 'qrcode.react'
 import { COMPANY, CREDENTIALS_SLASH, ADDRESS_ONE_LINE } from '../lib/company'
 import type { PayStatement } from '../lib/pay-statements'
 import { groupEarnings, summaryRows, DEFAULT_CLASSIFICATION, type PayStatementMeta } from '../lib/pay-statement-view'
@@ -28,13 +29,15 @@ function Meta({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-export default function PayStatementDoc({ s, meta = {} }: { s: PayStatement; meta?: PayStatementMeta }) {
+export default function PayStatementDoc({ s, meta = {}, variant = 'standard', verifyUrl }: { s: PayStatement; meta?: PayStatementMeta; variant?: 'standard' | 'verification'; verifyUrl?: string }) {
   const groups = groupEarnings(s.lines)
   const rows = summaryRows(s, meta)
   const classification = meta.classification ?? DEFAULT_CLASSIFICATION
   const version = meta.version ?? 1
   const statusLabel = s.status === 'void' ? 'Void' : 'Issued'
   const num = (c: number, neg?: boolean) => <span className="tabular-nums" style={{ fontVariantNumeric: 'tabular-nums' }}>{neg ? '–' : ''}{money(Math.abs(c))}</span>
+  const isVerify = variant === 'verification'
+  const verifyLink = verifyUrl ?? `${COMPANY.siteUrl}/verify/${encodeURIComponent(s.id)}`   // opaque ps_ id, not enumerable
 
   return (
     <div className="pay-doc" style={{
@@ -53,7 +56,7 @@ export default function PayStatementDoc({ s, meta = {} }: { s: PayStatement; met
           </p>
         </div>
         <div style={{ minWidth: 210, border: `1px solid ${HAIR}`, borderRadius: 12, padding: '14px 16px' }}>
-          <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.09em', textTransform: 'uppercase', color: ACCENT, margin: 0 }}>Contractor Pay Statement</p>
+          <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.09em', textTransform: 'uppercase', color: ACCENT, margin: 0 }}>Contractor Pay Statement{isVerify ? ' · Verification Copy' : ''}</p>
           <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
             <Meta label="Statement" value={<span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{s.statementNumber}</span>} />
             <Meta label="Pay period" value={`${day(s.periodStart)} – ${day(s.periodEnd)}`} />
@@ -77,6 +80,24 @@ export default function PayStatementDoc({ s, meta = {} }: { s: PayStatement; met
         {(meta.businessName || COMPANY.legalName) && <Meta label="Business" value={meta.businessName ?? COMPANY.legalName} />}
         {meta.paymentMethodLabel && <Meta label="Payment method" value={meta.paymentMethodLabel} />}
       </section>
+
+      {/* ── Verification panel (verification copy only) — income verification + QR ── */}
+      {isVerify && (
+        <section aria-label="Verification" style={{ marginTop: 24, border: `1px solid ${HAIR}`, borderRadius: 14, padding: 18, display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap', background: '#fbfbfd' }}>
+          <div style={{ background: '#fff', padding: 8, borderRadius: 10, border: `1px solid ${HAIR}`, lineHeight: 0 }}>
+            <QRCodeSVG value={verifyLink} size={96} level="M" bgColor="#ffffff" fgColor={INK} aria-label="Scan to verify this statement" />
+          </div>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', color: ACCENT, margin: 0 }}>Income Verification Copy</p>
+            <p style={{ fontSize: 12.5, color: INK, margin: '6px 0 0', lineHeight: 1.55 }}>
+              This is a verification copy of a genuine contractor pay statement issued by {COMPANY.legalName}. A lender, landlord, or verifier may confirm its authenticity by scanning the code or visiting the link below.
+            </p>
+            <p style={{ fontSize: 11.5, margin: '8px 0 0', color: SUBTLE, wordBreak: 'break-all' }}>
+              <span style={{ fontWeight: 600, color: INK }}>Verify:</span> {verifyLink}
+            </p>
+          </div>
+        </section>
+      )}
 
       {/* ── Pay summary — Net Payment dominant ── */}
       <section aria-label="Pay summary" style={{ marginTop: 28, border: `1px solid ${HAIR}`, borderRadius: 14, overflow: 'hidden' }}>
