@@ -6,6 +6,7 @@ import {
 import { emailOpsPaymentReceived, emailPaymentReceiptCustomer } from './booking-emails'
 import { notifyBookingConfirmed, notifyPaidInFull } from './notify'
 import { notifyOwnerNewConfirmedBooking } from './booking-notify'
+import { emitBookingConfirmedComm } from './comms/wire-booking-confirmed'
 import { ensureLoyaltyCode } from './promo'
 import { onPaymentCaptured } from './intake-workflow'
 
@@ -80,6 +81,9 @@ async function applyStripePayment(session: Stripe.Checkout.Session, token: strin
     if (justConfirmed) {
       await notifyBookingConfirmed(b)                                 // customer confirmation
       await notifyOwnerNewConfirmedBooking(b, payment).catch(e => console.error('[record-payment] owner notify', e))
+      // Additive comms event-model wiring: records ONE suppressed/test ledger entry
+      // for BOOKING_CONFIRMED. Never calls a provider, never blocks confirmation.
+      await emitBookingConfirmedComm(b)
     }
     if (nowPaidInFull) await notifyPaidInFull(b)
   }
