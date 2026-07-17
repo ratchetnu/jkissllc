@@ -54,7 +54,10 @@ type Metrics = { total: number; queued: number; processing: number; completed: n
 type FacetOption = { value: string; label: string; count: number }
 type Facets = { models: FacetOption[]; deployments: FacetOption[]; businesses: FacetOption[] }
 type Bucket = { start: number; end: number; count: number; groundTruthCount: number; agreementPct: number; autoQuotePct: number; avgConfidence: number | null; avgLatencyMs: number | null }
-type Payload = { enabled: boolean; reason?: string; sampled?: number; matched?: number; facets?: Facets; analytics?: Analytics; disagreements?: Disagreement[]; scorecards?: Scorecard[]; readiness?: Readiness; metrics?: Metrics; window?: string; rollup?: Bucket[] }
+type Usage = { totalEvaluations: number; totalInferenceAttempts: number; totalRetries: number; estTotalCostUsd: number; withCost: number; missingCost: number; byFailureCategory: Record<string, number>; today: { day: string; evaluations: number; estCostUsd: number } }
+type SpendToday = { day: string; evals: number; costUsd: number; retries: number; preventedRetries: number; budgetBlocked: number }
+type Budget = { killed: boolean; maxEvalsPerDay: number; maxEvalsPerBooking: number; maxEstDailyCostUsd: number; maxAttempts: number }
+type Payload = { enabled: boolean; reason?: string; sampled?: number; matched?: number; facets?: Facets; analytics?: Analytics; disagreements?: Disagreement[]; scorecards?: Scorecard[]; readiness?: Readiness; metrics?: Metrics; usage?: Usage; spendToday?: SpendToday; budget?: Budget; killOverride?: boolean | null; window?: string; rollup?: Bucket[] }
 
 const WINDOWS: { k: string; label: string }[] = [{ k: '24h', label: '24h' }, { k: '7d', label: '7d' }, { k: '30d', label: '30d' }, { k: '90d', label: '90d' }]
 const METRIC_OPTS: { k: TrendMetric; label: string }[] = [{ k: 'agreement', label: 'Agreement' }, { k: 'autoQuote', label: 'Auto-quote' }, { k: 'confidence', label: 'Confidence' }, { k: 'latency', label: 'Latency' }]
@@ -231,6 +234,10 @@ function ShadowAnalyticsInner() {
               <Stat label="False positives" value={`${fps}`} />
               <Stat label="Awaiting review" value={`${data.metrics?.awaitingReview ?? 0}`} />
             </div>
+
+            {data.usage && data.budget && data.spendToday && (
+              <CreditProtection usage={data.usage} spend={data.spendToday} budget={data.budget} killOverride={data.killOverride ?? null} onReload={() => load()} />
+            )}
 
             {/* ── Charts row: confidence distribution + agreement donut ── */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10 }}>
@@ -428,6 +435,73 @@ function Disagreements({ items }: { items: Disagreement[] }) {
           <span style={{ fontSize: 13, color: 'var(--muted)' }}>›</span>
         </a>
       ))}
+    </div>
+  )
+}
+
+
+// ── AI credit-protection panel ───────────────────────────────────────────────
+function CreditProtection({ usage, spend, budget, killOverride, onReload }: { usage: Usage; spend: SpendToday; budget: Budget; killOverride: boolean | null; onReload: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const effectiveKilled = budget.killed || killOverride === true
+  const dayPct = Math.min(100, Math.round((spend.evals / Math.max(1, budget.maxEvalsPerDay)) * 100))
+  const costPct = Math.min(100, Math.round((spend.costUsd / Math.max(0.0001, budget.maxEstDailyCostUsd)) * 100))
+  const toggleKill = async (on: boolean) => {
+    setBusy(true)
+    try {
+      await fetch('/api/admin/shadow-kill-switch', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on }) })
+      onReload()
+    } finally { setBusy(false) }
+  }
+  const barStyle: React.CSSProperties = { height: 6, borderRadius: 3, background: 'var(--line)', overflow: 'hidden', marginTop: 4 }
+  const fill = (pct: number): React.CSSProperties => ({ height: '100%', width: `${pct}%`, background: pct >= 100 ? '#f87171' : pct > 80 ? '#fbbf24' : '#34d399' })
+  return (
+    <div style={{ ...card, borderColor: effectiveKilled ? '#f87171' : 'var(--line)', display: 'grid', gap: 12 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+        <strong style={{ fontSize: 13 }}>AI credit protection</strong>
+        <span style={{ fontSize: 11, color: 'var(--muted)' }}>V2 inference only — V1, analytics, and ground truth are never affected.</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11.5, fontWeight: 800, color: effectiveKilled ? '#f87171' : '#34d399' }}>
+            {effectiveKilled ? '● HALTED' : '● Running'}
+          </span>
+          <button disabled={busy || budget.killed} onClick={() => toggleKill(!effectiveKilled)}
+            title={budget.killed ? 'Forced off by SHADOW_V2_KILL_SWITCH env — cannot override up' : ''}
+            style={{ ...seg, border: `1px solid ${effectiveKilled ? '#34d399' : '#f87171'}`, borderRadius: 9, color: effectiveKilled ? '#34d399' : '#f87171' }}>
+            {effectiveKilled ? 'Resume V2' : 'Emergency stop'}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+        <div style={{ ...card, padding: 12 }}>
+          <span style={lab}>Today — evaluations</span>
+          <div style={{ fontSize: 18, fontWeight: 800 }}>{spend.evals} <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400 }}>/ {budget.maxEvalsPerDay}</span></div>
+          <div style={barStyle}><div style={fill(dayPct)} /></div>
+        </div>
+        <div style={{ ...card, padding: 12 }}>
+          <span style={lab}>Today — est. cost</span>
+          <div style={{ fontSize: 18, fontWeight: 800 }}>{usd(spend.costUsd)} <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400 }}>/ ${budget.maxEstDailyCostUsd}</span></div>
+          <div style={barStyle}><div style={fill(costPct)} /></div>
+        </div>
+        <Stat label="Retries today" value={`${spend.retries}`} />
+        <Stat label="Retries prevented" value={`${spend.preventedRetries}`} good={spend.preventedRetries > 0} />
+        <Stat label="Budget-blocked" value={`${spend.budgetBlocked}`} />
+        <Stat label="All-time calls" value={`${usage.totalInferenceAttempts}`} sub={`${usd(usage.estTotalCostUsd)} total`} />
+      </div>
+
+      {usage.missingCost > 0 && (
+        <p style={{ fontSize: 10.5, color: 'var(--muted)', margin: 0 }}>
+          {usage.missingCost} completed evaluation(s) reported no token usage — their cost is recorded as unknown, never guessed.
+        </p>
+      )}
+      {Object.keys(usage.byFailureCategory).length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {Object.entries(usage.byFailureCategory).map(([k, v]) => (
+            <span key={k} style={{ fontSize: 10.5, padding: '2px 7px', borderRadius: 6, border: '1px solid var(--line)', color: 'var(--muted)' }}>{nice(k)}: {v}</span>
+          ))}
+        </div>
+      )}
+      {budget.killed && <p style={{ fontSize: 10.5, color: '#f87171', margin: 0 }}>Forced off by the SHADOW_V2_KILL_SWITCH environment flag — the runtime toggle cannot re-enable it.</p>}
     </div>
   )
 }

@@ -3,7 +3,9 @@ import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route
 import { requirePlatformOwner } from '../_lib/session'
 import { isEnabled } from '../../../lib/platform/flags'
 import { listShadowJobs } from '../../../lib/estimation/shadow-store'
-import { computeShadowMetrics } from '../../../lib/estimation/shadow-metrics'
+import { computeShadowMetrics, computeShadowUsage } from '../../../lib/estimation/shadow-metrics'
+import { readShadowSpend, getShadowKillOverride } from '../../../lib/estimation/shadow-store'
+import { shadowBudgetFromEnv } from '../../../lib/estimation/shadow-budget'
 import {
   computeShadowAnalytics, detectDisagreements, modelScorecards, readinessScore,
   timeSeriesRollup, type RollupWindow,
@@ -52,6 +54,12 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
       scorecards: modelScorecards(jobs),
       readiness: readinessScore(jobs),
       metrics: computeShadowMetrics(jobs),
+      // AI credit-protection surface: all-time usage (pure over jobs), today's live spend
+      // counters, the configured budget, and the effective kill state. Owner-visible.
+      usage: computeShadowUsage(all, Date.now()),
+      spendToday: await readShadowSpend(Date.now()),
+      budget: shadowBudgetFromEnv(),
+      killOverride: await getShadowKillOverride(),
       window,
       rollup: timeSeriesRollup(jobs, window, Date.now(), range),
     })
