@@ -263,6 +263,8 @@ export const FIXTURES: Fixture[] = [
     scenario: 'Loose bags and boxes with an uncertain count',
     analysis: analysis({
       confidence: 'medium', confidenceScore: 0.6,
+      // Sealed bags/boxes of unknown contents — a prompt-v2-2 blocker the model flags.
+      manualReviewRequired: true, manualReviewReasons: ['Sealed bags/boxes — unknown contents affect weight/price.'],
       unifiedInventory: [
         obj({ objectId: 'o1', category: 'household_trash', description: 'trash bags', quantity: 8, minQuantity: 4, maxQuantity: 12, confidence: 'medium' }),
         obj({ objectId: 'o2', category: 'household_trash', description: 'boxes', quantity: 6, minQuantity: 6, maxQuantity: 6 }),
@@ -411,6 +413,8 @@ export const FIXTURES: Fixture[] = [
     analysis: analysis({
       ...counts(3, 1, 'poor'),
       confidence: 'low', confidenceScore: 0.35,
+      // Too dark/blurry to read reliably — a prompt-v2-2 blocker the model flags.
+      manualReviewRequired: true, manualReviewReasons: ['Image too dark/blurry to estimate reliably.'],
       uncertaintyReasons: ['Most photos too dark/blurry to read reliably.'],
       missingInformation: ['Clear photos of the full pile.'],
       recommendedCustomerQuestions: ['Could you send a clearer, well-lit photo of everything together?'],
@@ -438,6 +442,8 @@ export const FIXTURES: Fixture[] = [
     analysis: analysis({
       ...counts(1, 1),
       confidence: 'medium', confidenceScore: 0.5,
+      // Close-up with no context — scope can't be gauged; a prompt-v2-2 blocker the model flags.
+      manualReviewRequired: true, manualReviewReasons: ['Close-up with no context — cannot gauge job scope.'],
       uncertaintyReasons: ['Close-up with no surrounding context — hard to identify or size.'],
       unifiedInventory: [
         obj({ objectId: 'o1', category: 'unknown', description: 'unknown object', confidence: 'low' }),

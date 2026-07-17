@@ -388,8 +388,17 @@ export function estimateFromV2(v2: JunkPhotoAnalysisV2, opts: EstimateFromV2Opts
     if (sensitiveItems.length > 0) reasons.add('Sensitive/estate items present — owner review required.')
     if (hugeVolume) reasons.add('Very large volume — likely a multi-load job.')
     if (inventory.length === 0) reasons.add('No items could be identified — manual review required.')
+    // Auto-quote eligibility follows the proven V1 posture: the deterministic decideQuote
+    // decision (hazard/dense-with-evidence/unusable/multi-load/price) PLUS the hard V2-only
+    // signals (specialty via confidence, hazardous or sensitive/regulated items, huge volume).
+    // The soft confidence band + advisory `reasons` no longer force review — a clear ordinary
+    // job auto-quotes with a price RANGE instead of being escalated.
     const manualReviewRequired =
-      decision.decision === 'manual_review' || confidence.manualReview || reasons.size > 0
+      decision.decision === 'manual_review' ||
+      confidence.manualReview ||
+      hazardousItems.length > 0 ||
+      sensitiveItems.length > 0 ||
+      hugeVolume
 
     // ── Confidence-by-dimension (deterministic; no false precision) ─────────────
     const meanItemConf = inventory.length

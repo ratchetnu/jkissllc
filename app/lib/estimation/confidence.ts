@@ -113,7 +113,11 @@ export function computeConfidence(
   const manualReviewReasons: string[] = []
   // A cap forces the band no higher than a ceiling regardless of score.
   let bandCeiling: ConfidenceBand = 'high'
-  const capLow = () => { bandCeiling = 'low' }
+  // A HARD cap (no usable photos / most images unusable) is a genuine quality blocker and
+  // DOES force review; a soft capMedium (single photo, access, wide range) only limits the
+  // advisory band and never forces review on its own.
+  let hardReviewCap = false
+  const capLow = () => { bandCeiling = 'low'; hardReviewCap = true }
   const capMedium = () => { if (bandCeiling === 'high') bandCeiling = 'medium' }
   const penalize = (amount: number, reason: string) => { score -= amount; reasons.push(reason) }
 
@@ -261,8 +265,13 @@ export function computeConfidence(
   const order: Record<ConfidenceBand, number> = { high: 3, medium: 2, low: 1 }
   if (order[band] > order[bandCeiling]) band = bandCeiling
 
+  // The confidence BAND is ADVISORY — it drives display/owner routing, NOT the auto-quote
+  // decision (matching V1, whose proven decideQuote path never forces review on a low band).
+  // Review is forced only by HARD signals: a real hazard, a true specialty item, the model's
+  // (now blocker-scoped) manualReviewRequired, or an already-recorded hard review reason
+  // (no-usable-photos / multi-load). A clear ordinary job with a wide range is NOT reviewed.
   const manualReview =
-    band === 'low' ||
+    hardReviewCap ||           // a HARD quality cap (no usable photos / most images unusable) — not a soft low score
     hazard ||
     !!specialtyMatch ||
     !!v2.manualReviewRequired ||
