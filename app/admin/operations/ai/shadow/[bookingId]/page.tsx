@@ -35,6 +35,12 @@ export default function ShadowEvaluationPage({ params }: { params: Promise<{ boo
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [assignee, setAssignee] = useState('')
+  // Ground-truth draft. Seeded from the stored value on load so an edit starts from what
+  // was already recorded rather than a blank form.
+  const [gtQuote, setGtQuote] = useState('')
+  const [gtFinal, setGtFinal] = useState('')
+  const [gtSource, setGtSource] = useState<string>('customer_quote')
+  const [gtNotes, setGtNotes] = useState('')
 
   const load = useCallback(async () => {
     setErr('')
@@ -42,7 +48,15 @@ export default function ShadowEvaluationPage({ params }: { params: Promise<{ boo
       const res = await fetch(`/api/admin/shadow-analytics/${bookingId}`, { credentials: 'same-origin' })
       if (res.status === 404) { setErr('Evaluation not found.'); return }
       if (res.status === 401 || res.status === 403) { setErr('Owner access required.'); return }
-      setD(await res.json())
+      const next = await res.json()
+      setD(next)
+      const gt = next?.job?.groundTruth
+      if (gt) {
+        setGtQuote(gt.actualQuoteUsd != null ? String(gt.actualQuoteUsd) : '')
+        setGtFinal(gt.actualFinalUsd != null ? String(gt.actualFinalUsd) : '')
+        setGtSource(gt.source ?? 'customer_quote')
+        setGtNotes(gt.notes ?? '')
+      }
     } catch { setErr('Could not load.') }
   }, [bookingId])
   useEffect(() => { load() }, [load])
@@ -142,6 +156,24 @@ export default function ShadowEvaluationPage({ params }: { params: Promise<{ boo
               </div>
             </div>
 
+
+            {/* ── Owner ground truth — the benchmark that unlocks a verdict ────────── */}
+            <GroundTruthPanel
+              job={job}
+              busy={busy}
+              quote={gtQuote} setQuote={setGtQuote}
+              final={gtFinal} setFinal={setGtFinal}
+              source={gtSource} setSource={setGtSource}
+              notes={gtNotes} setNotes={setGtNotes}
+              onSave={() => act({
+                action: 'ground_truth',
+                actualQuoteUsd: gtQuote.trim() === '' ? undefined : Number(gtQuote),
+                actualFinalUsd: gtFinal.trim() === '' ? undefined : Number(gtFinal),
+                source: gtSource,
+                notes: gtNotes.trim() || undefined,
+              })}
+            />
+
             {/* Owner actions */}
             <div style={card}>
               <span style={lab}>Owner actions (audited)</span>
@@ -198,4 +230,109 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
 }
 function Mini({ k, v }: { k: string; v: React.ReactNode }) {
   return <div><div style={{ fontSize: 9.5, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>{k}</div><div style={{ fontSize: 12.5, fontWeight: 700 }}>{v}</div></div>
+}
+
+
+// ── Ground-truth capture ─────────────────────────────────────────────────────
+// Neither estimator is ground truth. Only the owner's actual number is — and until one
+// exists, the comparison engine can only return `needs_ground_truth`, which means agreement
+// and readiness cannot move. This panel is what unblocks them.
+//
+// Saving runs ZERO AI inference: the server rebuilds the verdict from the stored V1 and V2
+// outputs via the pure buildV2Comparison.
+const OUTCOME_LABEL: Record<string, { label: string; c: string }> = {
+  better_than_authoritative: { label: 'V2 better than V1', c: '#34d399' },
+  equivalent: { label: 'Equivalent', c: '#a3e635' },
+  worse: { label: 'V2 worse than V1', c: '#f87171' },
+  inconclusive: { label: 'Inconclusive', c: '#fbbf24' },
+  needs_ground_truth: { label: 'Awaiting owner ground truth', c: '#93c5fd' },
+}
+const SOURCES: { k: string; label: string; hint: string }[] = [
+  { k: 'customer_quote', label: 'Customer quote', hint: 'what was quoted to the customer' },
+  { k: 'owner_adjusted', label: 'Owner-adjusted', hint: 'your corrected number' },
+  { k: 'completed_job', label: 'Completed job price', hint: 'final invoiced — strongest evidence' },
+  { k: 'test_benchmark', label: 'Test benchmark', hint: 'internal fixture, not real-world evidence' },
+]
+const errPct = (est: number | undefined, gt: number | null): string =>
+  est == null || gt == null || gt <= 0 ? '—' : `${(Math.abs(est - gt) / gt * 100).toFixed(1)}%`
+
+function GroundTruthPanel(p: {
+  job: { comparison?: { outcome?: string; authoritativeRecommendedUsd?: number; shadowRecommendedUsd?: number }; groundTruth?: { actualQuoteUsd?: number; actualFinalUsd?: number; reviewedBy?: string; reviewedAt?: number; source?: string } }
+  busy: boolean
+  quote: string; setQuote: (v: string) => void
+  final: string; setFinal: (v: string) => void
+  source: string; setSource: (v: string) => void
+  notes: string; setNotes: (v: string) => void
+  onSave: () => void
+}) {
+  const c = p.job.comparison
+  const v1 = c?.authoritativeRecommendedUsd
+  const v2 = c?.shadowRecommendedUsd
+  const stored = p.job.groundTruth
+  const gt = stored?.actualQuoteUsd ?? stored?.actualFinalUsd ?? null
+  const verdict = OUTCOME_LABEL[c?.outcome ?? 'needs_ground_truth'] ?? OUTCOME_LABEL.needs_ground_truth
+  const money = /^\d*\.?\d{0,2}$/
+  const quoteBad = p.quote.trim() !== '' && (!money.test(p.quote) || Number(p.quote) <= 0)
+  const finalBad = p.final.trim() !== '' && (!money.test(p.final) || Number(p.final) <= 0)
+  const canSave = !p.busy && !quoteBad && !finalBad && (p.quote.trim() !== '' || p.final.trim() !== '')
+
+  return (
+    <div style={{ ...card, borderColor: gt == null ? '#93c5fd' : 'var(--line)' }}>
+      <span style={lab}>Owner ground truth</span>
+      <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '4px 0 10px', lineHeight: 1.5 }}>
+        The owner-confirmed benchmark — <strong>what you actually quoted or invoiced</strong>. Neither
+        estimator counts as ground truth. Until you record one, this evaluation stays{' '}
+        <em>awaiting ground truth</em> and cannot count toward agreement or readiness.
+        Saving re-scores it instantly and runs no AI.
+      </p>
+
+      {/* The three numbers, side by side. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8, marginBottom: 10 }}>
+        <Mini k="V1 (customer-facing)" v={v1 != null ? `$${v1}` : '—'} />
+        <Mini k="V2 (shadow only)" v={v2 != null ? `$${v2}` : '—'} />
+        <Mini k="Ground truth" v={gt != null ? `$${gt}` : 'not recorded'} />
+        <Mini k="V1 error vs truth" v={errPct(v1, gt)} />
+        <Mini k="V2 error vs truth" v={errPct(v2, gt)} />
+      </div>
+
+      <div style={{ display: 'inline-block', fontSize: 11, fontWeight: 800, padding: '3px 8px', borderRadius: 6, marginBottom: 10, color: verdict.c, background: `color-mix(in srgb, ${verdict.c} 15%, transparent)`, border: `1px solid color-mix(in srgb, ${verdict.c} 35%, transparent)` }}>
+        {verdict.label}
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <label style={{ display: 'grid', gap: 3, flex: '1 1 130px' }}>
+          <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>Actual quoted ($)</span>
+          <input inputMode="decimal" value={p.quote} onChange={(e) => p.setQuote(e.target.value)} placeholder="360"
+            style={{ padding: '7px 10px', background: 'transparent', border: `1px solid ${quoteBad ? '#f87171' : 'var(--line)'}`, borderRadius: 9, color: 'var(--text)', fontSize: 12.5 }} />
+        </label>
+        <label style={{ display: 'grid', gap: 3, flex: '1 1 130px' }}>
+          <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>Final invoiced ($, optional)</span>
+          <input inputMode="decimal" value={p.final} onChange={(e) => p.setFinal(e.target.value)} placeholder="—"
+            style={{ padding: '7px 10px', background: 'transparent', border: `1px solid ${finalBad ? '#f87171' : 'var(--line)'}`, borderRadius: 9, color: 'var(--text)', fontSize: 12.5 }} />
+        </label>
+        <label style={{ display: 'grid', gap: 3, flex: '1 1 170px' }}>
+          <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>Source of truth</span>
+          <select value={p.source} onChange={(e) => p.setSource(e.target.value)}
+            style={{ padding: '7px 9px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 9, color: 'var(--text)', fontSize: 12.5 }}>
+            {SOURCES.map((s) => <option key={s.k} value={s.k}>{s.label}</option>)}
+          </select>
+        </label>
+      </div>
+      <p style={{ fontSize: 10.5, color: 'var(--muted)', margin: '4px 0 8px' }}>{SOURCES.find((s) => s.k === p.source)?.hint}</p>
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <input value={p.notes} onChange={(e) => p.setNotes(e.target.value)} placeholder="Why this number? (optional)"
+          style={{ flex: '1 1 220px', padding: '7px 10px', background: 'transparent', border: '1px solid var(--line)', borderRadius: 9, color: 'var(--text)', fontSize: 12.5 }} />
+        <button disabled={!canSave} onClick={p.onSave} style={btn(true)}>
+          {gt == null ? 'Record ground truth' : 'Update ground truth'}
+        </button>
+      </div>
+      {(quoteBad || finalBad) && <p style={{ fontSize: 11, color: '#f87171', marginTop: 6 }}>Enter a positive dollar amount (max 2 decimals).</p>}
+      {stored?.reviewedBy && (
+        <p style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 8 }}>
+          Recorded by <strong>{stored.reviewedBy}</strong>{stored.reviewedAt ? ` on ${new Date(stored.reviewedAt).toLocaleString('en-US')}` : ''}. Edits are audited.
+        </p>
+      )}
+    </div>
+  )
 }

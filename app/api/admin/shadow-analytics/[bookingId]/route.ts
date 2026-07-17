@@ -5,6 +5,7 @@ import { isEnabled } from '../../../../lib/platform/flags'
 import { getShadowJob, saveShadowJob } from '../../../../lib/estimation/shadow-store'
 import { getBookingByToken } from '../../../../lib/bookings'
 import { applyShadowAction, isClassification, type ShadowAction } from '../../../../lib/estimation/shadow-classification'
+import { handleShadowAdminAction } from '../../../../lib/estimation/shadow-admin'
 import { recordPlatformAudit, listPlatformAuditForRef } from '../../../../lib/platform/updates/audit'
 
 export const runtime = 'nodejs'
@@ -43,10 +44,34 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
   if (!job) return NextResponse.json({ error: 'not_found' }, { status: 404 })
 
   const body = await req.json().catch(() => ({}))
-  const action = parseAction(body)
-  if (!action) return NextResponse.json({ error: 'invalid action' }, { status: 400 })
   const actor = (await getPrincipal(req))?.sub || 'owner'
   const now = Date.now()
+
+  // Ground truth reuses the EXISTING shadow-admin implementation (validation, merge,
+  // refreshComparison, audit stamps) rather than reimplementing it here. Routing it through
+  // THIS route rather than PATCH /api/admin/bookings/[id] is deliberate: this route is
+  // requirePlatformOwner, so ground truth is owner-only, where the bookings route would
+  // admit any admin.
+  //
+  // Recording ground truth runs ZERO inference: refreshComparison rebuilds the verdict from
+  // the STORED V2 estimate + the stored V1 baseline via the pure buildV2Comparison.
+  if (body?.action === 'ground_truth') {
+    const b = await getBookingByToken(bookingId)
+    if (!b) return NextResponse.json({ error: 'booking_not_found' }, { status: 404 })
+    const r = await handleShadowAdminAction('shadow-ground-truth', b, body, actor, 'admin', now)
+    if (r.status === 200) {
+      await recordPlatformAudit({
+        actor, actorType: 'owner', source: 'shadow-workspace', action: 'status.manual_correction',
+        jobId: job.shadowJobId, summary: `Recorded ground truth for shadow ${job.bookingNumber ?? bookingId}`,
+        traceId: job.traceId,
+        meta: { source: body.source, actualQuoteUsd: body.actualQuoteUsd, actualFinalUsd: body.actualFinalUsd },
+      })
+    }
+    return NextResponse.json(r.body, { status: r.status })
+  }
+
+  const action = parseAction(body)
+  if (!action) return NextResponse.json({ error: 'invalid action' }, { status: 400 })
 
   const result = applyShadowAction(job, action, actor, now)
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 })
