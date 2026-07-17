@@ -193,7 +193,27 @@ export type V2ShadowJob = {
   classifiedAt?: number
   assignee?: string
   ownerNotes?: { note: string; by: string; at: number }[]
+  // Prior completed runs, newest last — captured when an owner reruns, so a rerun creates a
+  // new attempt WITHOUT erasing what the previous run found. Bounded; carries no raw model
+  // output, only the comparison summary + telemetry needed to audit the change over time.
+  priorRuns?: ShadowRunSnapshot[]
 }
+
+/** A compact, audit-only snapshot of a completed shadow run, kept across reruns. */
+export type ShadowRunSnapshot = {
+  at: number                     // when that run completed
+  model?: string
+  promptVersion?: number
+  status: V2ShadowStatus
+  outcome?: string               // comparison outcome
+  shadowRecommendedUsd?: number
+  quoteDeltaUsd?: number
+  estimatedCostUsd?: number
+  latencyMs?: number
+  attempts: number
+}
+
+export const MAX_SHADOW_PRIOR_RUNS = 20
 
 /** How the owner classified a shadow disagreement/evaluation (evidence for model promotion). */
 export type ShadowClassification =
