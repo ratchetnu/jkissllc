@@ -34,9 +34,11 @@ export function makeApprovals(client: ApprovalClient) {
   /** Newest-first approvals for a tenant, optionally filtered to a status. */
   async function listApprovals(tenantId: string, opts: { limit?: number; status?: ApprovalRequest['status'] } = {}): Promise<ApprovalRequest[]> {
     const ids = await client.zrevrange(tenantIndex(tenantId), 0, Math.max(0, (opts.limit ?? 100) - 1))
+    // Batch the per-id reads (this list is polled every 12s by the workflow timeline);
+    // a serial await-in-loop was up to `limit` round-trips. Order/filtering unchanged.
+    const reqs = await Promise.all(ids.map(getApproval))
     const out: ApprovalRequest[] = []
-    for (const id of ids) {
-      const req = await getApproval(id)
+    for (const req of reqs) {
       if (!req) continue
       if (opts.status && req.status !== opts.status) continue
       out.push(req)

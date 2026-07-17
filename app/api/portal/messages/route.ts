@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireCrew } from '../_lib/crew'
-import { threadForStaff, recordMessage, markCrewRead, recentForStaff } from '../../../lib/messages'
+import { threadForStaff, recordMessage, markCrewRead, recentForStaff, getMessage } from '../../../lib/messages'
 import { getStaff } from '../../../lib/staff'
 import { notifyOwnerOfReply } from '../../../lib/owner-alerts'
 import { COMPANY } from '../../../lib/company'
@@ -33,7 +33,14 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   if (action === 'read') {
     // Mark everything (or one message) as read by this crew member.
     const id = typeof body.id === 'string' ? body.id : ''
-    if (id) { await markCrewRead(id) }
+    if (id) {
+      // Ownership: a crew member may only mark THEIR OWN message read. Without this,
+      // any id in the body stamps crewReadAt on another crew member's (or a customer)
+      // thread — an IDOR write that corrupts unread state. Mirror the ack route's 404.
+      const m = await getMessage(id)
+      if (!m || m.staffId !== who.staffId) return NextResponse.json({ error: 'not_found' }, { status: 404 })
+      await markCrewRead(id)
+    }
     else {
       const recent = await recentForStaff(who.staffId, 150)
       await Promise.all(recent.filter(m => m.direction === 'outbound' && !m.crewReadAt).map(m => markCrewRead(m.id)))

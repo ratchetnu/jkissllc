@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission, requireAdmin } from '../_lib/session'
-import { listStaff, saveStaff, deleteStaff, type Staff, type PayKind, type PayHistoryEntry } from '../../../lib/staff'
+import { can } from '../../../lib/rbac'
+import { listStaff, saveStaff, deleteStaff, redactStaffForViewer, type Staff, type PayKind, type PayHistoryEntry } from '../../../lib/staff'
 import { bizKey } from '../../../lib/businesses'
 import { parseMoneyCents } from '../../../lib/finance'
 import { repriceCrewRoutes, repriceCandidates, isApplyTo, type ApplyTo } from '../../../lib/route-reprice'
@@ -37,10 +38,19 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
   // Read the crew directory — admin + manager (crew:view). Writes below stay admin-only.
   const who = await requirePermission(req, 'crew:view')
   if (who instanceof NextResponse) return who
-  // ?candidates=<staffId> lists the live routes a pay change could apply to.
+  // Pay/tax fields ride on the Staff record but are governed by pay:view:all / tax:view.
+  // A manager holds crew:view (this gate) but neither of those, so redact for them.
+  const canSeePay = can(who.role, 'pay:view:all')
+  const canSeeTax = can(who.role, 'tax:view')
+  // ?candidates=<staffId> lists the live routes a pay change could apply to — that
+  // surfaces route pay, so it's for pay-viewers (the admin pay editor) only.
   const candidatesFor = new URL(req.url).searchParams.get('candidates')
-  if (candidatesFor) return NextResponse.json({ ok: true, items: await repriceCandidates({ staffId: candidatesFor }) })
-  return NextResponse.json({ ok: true, items: await listStaff() })
+  if (candidatesFor) {
+    if (!canSeePay) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+    return NextResponse.json({ ok: true, items: await repriceCandidates({ staffId: candidatesFor }) })
+  }
+  const items = await listStaff()
+  return NextResponse.json({ ok: true, items: items.map((s) => redactStaffForViewer(s, { pay: canSeePay, tax: canSeeTax })) })
 })
 
 export const POST = withTenantRoute(async (req: NextRequest) => {

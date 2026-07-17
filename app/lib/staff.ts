@@ -72,6 +72,28 @@ export type Staff = {
 export const staffUsesTimeclock = (s: Pick<Staff, 'usesTimeclock'> | null | undefined): boolean =>
   s?.usesTimeclock !== false
 
+// Compensation and W-9/tax fields are governed by pay:view:all and tax:view — both
+// explicitly EXCLUDED from the manager role (see app/lib/rbac.ts). The crew directory
+// read, however, is gated on crew:view, which managers DO hold. So when the roster is
+// served to a caller who lacks pay/tax rights, project the governed fields OUT rather
+// than trust the read gate alone. Admins hold both rights, so their record is returned
+// byte-identical — the operations UI is unaffected. Pure so it's unit-testable.
+export function redactStaffForViewer(s: Staff, opts: { pay: boolean; tax: boolean }): Staff {
+  if (opts.pay && opts.tax) return s
+  const out: Staff = { ...s }
+  if (!opts.pay) {
+    delete out.payKind
+    delete out.defaultPayCents
+    delete out.payByBusiness
+    delete out.payNotes
+    delete out.payEffectiveDate
+    delete out.payActive
+    delete out.payHistory
+  }
+  if (!opts.tax) delete out.w9
+  return out
+}
+
 const KEY = (id: string) => `staff:${id}`
 const INDEX = 'staff:index'
 

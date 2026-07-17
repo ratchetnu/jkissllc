@@ -5,11 +5,10 @@ import {
   listBookings, balanceDueCents, paymentSummaryStatus, confirmedFeesCents,
   SERVICE_LABELS, BOOKING_STATUS_LABEL, PAYMENT_SUMMARY_LABEL, type Booking,
 } from '../../../../lib/bookings'
+// Shared cell renderer: escapes delimiters AND neutralizes spreadsheet formula
+// injection (customer name/email/promo flow into this staff-downloaded export).
+import { csvCell } from '../../../../lib/validators'
 
-function csvCell(v: string | number | undefined): string {
-  const s = v === undefined ? '' : String(v)
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
-}
 const usd = (c: number) => (c / 100).toFixed(2)
 
 function jobDate(b: Booking): string {

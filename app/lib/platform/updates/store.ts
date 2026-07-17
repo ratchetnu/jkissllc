@@ -20,9 +20,10 @@ const K_DEP_CTR = 'platform:deployment:counter'
 
 function parse<T>(raw: string | null): T | null { if (!raw) return null; try { return JSON.parse(raw) as T } catch { return null } }
 async function loadMany<T>(prefix: string, ids: string[]): Promise<T[]> {
-  const out: T[] = []
-  for (const id of ids) { const v = parse<T>(await redis.get(prefix + id)); if (v) out.push(v) }
-  return out
+  // Batch the reads instead of a serial await-in-loop; ids are pre-ordered by the
+  // caller's zrevrange, so parsing in place preserves order and filtering.
+  const raws = await Promise.all(ids.map((id) => redis.get(prefix + id)))
+  return raws.map((r) => parse<T>(r)).filter((v): v is T => v !== null)
 }
 
 // ── Businesses ───────────────────────────────────────────────────────────────
