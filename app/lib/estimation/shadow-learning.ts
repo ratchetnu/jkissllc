@@ -501,3 +501,29 @@ export function evalErrorsToCsv(errs: EvalError[]): string {
   ].map(cell).join(','))
   return [headers.join(','), ...rows].join('\n')
 }
+
+// ── Job-level narrowing (Performance filters affect the aggregates, not just rows) ──
+export type LearningJobFilter = {
+  from?: number; to?: number
+  model?: string
+  promptVersion?: number
+  category?: string
+  reviewed?: boolean            // has an owner review (reviewedAt) or not
+  hasGroundTruth?: boolean       // benchmarked or not
+}
+
+/** Narrow the job set BEFORE aggregates are computed, so a Performance filter genuinely reshapes
+ *  the numbers (not just the explorer rows). Pure; an unset dimension is a no-op. */
+export function filterLearningJobs(jobs: V2ShadowJob[], f: LearningJobFilter): V2ShadowJob[] {
+  return jobs.filter((j) => {
+    const t = j.completedAt ?? j.updatedAt
+    if (typeof f.from === 'number' && t < f.from) return false
+    if (typeof f.to === 'number' && t >= f.to) return false
+    if (f.model && jobModel(j) !== f.model) return false
+    if (typeof f.promptVersion === 'number' && j.promptVersion !== f.promptVersion) return false
+    if (f.category && !(j.learningCategories ?? []).includes(f.category)) return false
+    if (typeof f.reviewed === 'boolean' && !!j.reviewedAt !== f.reviewed) return false
+    if (typeof f.hasGroundTruth === 'boolean' && (groundTruthQuote(j.groundTruth) !== null) !== f.hasGroundTruth) return false
+    return true
+  })
+}

@@ -190,3 +190,16 @@ export async function shadowKillEngaged(envKilled: boolean): Promise<boolean> {
     return envKilled
   }
 }
+
+// ── AI Command Center display preferences (owner-safe, non-secret) ───────────
+import { DEFAULT_AI_PREFS, type AiPrefs } from './ai-prefs'
+const KEY_AI_PREFS = 'settings:ai_prefs'
+
+export async function getAiPrefs(): Promise<AiPrefs> {
+  const raw = await redis.get(KEY_AI_PREFS)
+  const parsed = safeParse<Partial<AiPrefs>>(raw)
+  return { ...DEFAULT_AI_PREFS, ...(parsed ?? {}) }
+}
+export async function setAiPrefs(prefs: AiPrefs): Promise<void> {
+  await redis.set(KEY_AI_PREFS, JSON.stringify(prefs))
+}

@@ -26,7 +26,7 @@ export const AI_SECTIONS: SectionDef[] = [
   { id: 'performance', label: 'Performance',   href: '/admin/operations/ai/performance',  hint: 'Accuracy, trends, leaderboards' },
   { id: 'learning',    label: 'Review & Learning', href: '/admin/operations/ai/learning', hint: 'Ground truth, categories, history' },
   { id: 'models',      label: 'Models & Versions', href: '/admin/operations/ai/models',   hint: 'Version registry (read-only)' },
-  { id: 'controls',    label: 'Usage & Controls', href: '/admin/operations/ai/controls',  hint: 'Budget, kill switch, usage' },
+  { id: 'controls',    label: 'Usage & Controls', href: '/admin/operations/ai/usage',     hint: 'Budget, kill switch, usage' },
   { id: 'alerts',      label: 'Alerts & Readiness', href: '/admin/operations/ai/alerts',  hint: 'Readiness, warnings' },
   { id: 'settings',    label: 'Settings',      href: '/admin/operations/ai/settings',     hint: 'Owner-safe configuration' },
 ]

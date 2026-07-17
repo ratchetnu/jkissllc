@@ -453,7 +453,7 @@ function AiControlCenter() {
 export default function AiControlsSectionPage() {
   return (
     <OperationsShell>
-      <AICommandShell section="controls" title="Usage & Controls">
+      <AICommandShell section="controls" title="Production AI telemetry">
         <AiControlCenter />
       </AICommandShell>
     </OperationsShell>
