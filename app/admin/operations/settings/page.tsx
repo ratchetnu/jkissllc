@@ -32,7 +32,7 @@ const TOOL_GROUPS: { label: string; items: { href: string; label: string; Icon: 
     { href: '/admin/disposal', label: 'Disposal Pricing', Icon: Trash2 },
     { href: '/admin/policy', label: 'Policy', Icon: ScrollText },
     { href: '/admin/analytics', label: 'Analytics', Icon: BarChart3 },
-    { href: '/admin/operations/ai', label: 'AI Control Center', Icon: Sparkles },
+    { href: '/admin/operations/ai', label: 'AI Command Center', Icon: Sparkles },
   ] },
 ]
 

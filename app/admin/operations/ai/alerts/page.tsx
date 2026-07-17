@@ -11,6 +11,7 @@ import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import OperationsShell from '../../OperationsShell'
+import AICommandShell from '../AICommandShell'
 
 // ── shared style tokens (same admin theme vars the rest of Operion uses) ─────
 const card: React.CSSProperties = { background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 14, padding: 16 }
@@ -153,7 +154,7 @@ function AlertsInner() {
   const alerts = data?.alerts ?? []
 
   return (
-    <OperationsShell>
+    <OperationsShell><AICommandShell section="alerts" title="Alerts & Readiness">
       <div style={{ display: 'grid', gap: 14, paddingBottom: 40 }}>
         <header style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
           <div>
@@ -242,7 +243,7 @@ function AlertsInner() {
           </>
         )}
       </div>
-    </OperationsShell>
+    </AICommandShell></OperationsShell>
   )
 }
 
