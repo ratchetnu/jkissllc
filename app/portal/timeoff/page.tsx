@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Check, AlertTriangle, X } from 'lucide-react'
-import PortalShell from '../PortalShell'
 import { fmtDay } from '../ui'
 
 type Status = 'draft' | 'pending' | 'approved' | 'denied' | 'cancelled'
@@ -165,5 +164,5 @@ function TimeOff() {
 }
 
 export default function TimeOffPage() {
-  return <PortalShell><TimeOff /></PortalShell>
+  return <TimeOff />
 }

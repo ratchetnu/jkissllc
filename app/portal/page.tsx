@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { MapPin, Clock, ArrowRight, Navigation, Truck, Users, FileText, AlertTriangle, CheckCircle2 } from 'lucide-react'
-import PortalShell from './PortalShell'
 import CrewTasks from './CrewTasks'
 import { money, fmtLongDay, mapsUrl, statusOf } from './ui'
 
@@ -186,5 +185,5 @@ function Home() {
 }
 
 export default function PortalHomePage() {
-  return <PortalShell><Home /></PortalShell>
+  return <Home />
 }

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Clock, MapPin, AlertTriangle, CheckCircle2, Navigation } from 'lucide-react'
-import PortalShell from '../PortalShell'
 import { mapsUrl, fmtLongDay } from '../ui'
 
 type Phase = 'not_started' | 'clocked_in' | 'clocked_out'
@@ -194,8 +193,6 @@ function Timeclock() {
 
 export default function ClockPage() {
   return (
-    <PortalShell>
-      <Timeclock />
-    </PortalShell>
+    <Timeclock />
   )
 }
