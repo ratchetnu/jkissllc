@@ -14,6 +14,7 @@
 
 import { priceJob, categoryFor, type DisposalSettings, type DisposalQuote, type CalibrationBias } from '../disposal'
 import type { JunkPhotoAnalysis } from '../ai/analysis-schema'
+import { hasDenseMaterialEvidence } from './dense-material'
 
 export const PRICING_DECISION_VERSION = 'junk-decision-1'
 
@@ -128,7 +129,10 @@ export function decideQuote(opts: {
   // Reasons accumulate from the analysis + pricing + guardrails.
   const reasons = new Set<string>(a.reviewReasons)
   const hazard = c.hazardousMaterialPossible || c.paintOrChemicalPossible
-  const dense = c.concreteOrSoilPossible
+  // The model over-reports concreteOrSoilPossible on ordinary scenes; only treat it as a
+  // weight-risk review when the inventory actually contains a dense construction/demolition
+  // material. Furniture / appliances / boxes / mattresses / brush never trip this.
+  const dense = c.concreteOrSoilPossible && hasDenseMaterialEvidence(a.normalizedItems)
   const loads = a.estimatedTruckLoadFraction.likely
   const noItems = a.normalizedItems.length === 0
   const unusable = a.photoObservations.length > 0 && a.photoObservations.every(p => p.imageQuality === 'unusable')
