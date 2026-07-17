@@ -14,6 +14,7 @@ export type AuditAction =
   | 'reminder.sent' | 'reminder.opened' | 'reminder.acknowledged'
   | 'reminder.completed' | 'reminder.escalated' | 'reminder.failed'
   | 'dispatch.sent' | 'bulk.sent'
+  | 'comm.dispatched'
   | 'manager.override' | 'admin.override'
 
 export type AuditEntry = {

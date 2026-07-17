@@ -99,5 +99,3 @@ an optional `adapters.ts` bridges `Booking`/`RouteInvoice` into a plain `CommCon
 Adds email opt-out, idempotency keys, quiet hours, retry limits, and a **default-suppressed**
 send mode (`off` in Preview/dev). Ships a calm read-only admin console; does **not** replace the
 existing inbox or crew engine.
-</content>
-</invoke>
