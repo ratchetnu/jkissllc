@@ -8,6 +8,7 @@ import {
   computeShadowAnalytics, detectDisagreements, modelScorecards, readinessScore,
   timeSeriesRollup, type RollupWindow,
 } from '../../../lib/estimation/shadow-analytics'
+import { extractFacets, applyShadowFilter, parseShadowFilter } from '../../../lib/estimation/shadow-facets'
 
 const WINDOWS: RollupWindow[] = ['24h', '7d', '30d', '90d']
 
@@ -27,20 +28,32 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!isEnabled('SHADOW_ANALYTICS_ENABLED')) {
     return NextResponse.json({ enabled: false, reason: 'SHADOW_ANALYTICS_ENABLED is off' })
   }
-  const w = req.nextUrl.searchParams.get('window')
+  const sp = req.nextUrl.searchParams
+  const w = sp.get('window')
   const window: RollupWindow = WINDOWS.includes(w as RollupWindow) ? (w as RollupWindow) : '7d'
+  const filter = parseShadowFilter(sp)
+  // A custom [from,to] overrides the window's trailing span (bucket size still comes from window).
+  const range = typeof filter.from === 'number' || typeof filter.to === 'number'
+    ? { from: filter.from, to: filter.to } : undefined
   try {
-    const jobs = await listShadowJobs(SHADOW_JOB_SAMPLE)
+    const all = await listShadowJobs(SHADOW_JOB_SAMPLE)
+    // Facets enumerate the FULL set so options never vanish when a filter is active;
+    // every metric below derives from the filtered subset via the pure engine.
+    const facets = extractFacets(all)
+    const jobs = applyShadowFilter(all, filter)
     return NextResponse.json({
       enabled: true,
-      sampled: jobs.length,
+      sampled: all.length,
+      matched: jobs.length,
+      facets,
+      filter,
       analytics: computeShadowAnalytics(jobs),
       disagreements: detectDisagreements(jobs).slice(0, 50),
       scorecards: modelScorecards(jobs),
       readiness: readinessScore(jobs),
       metrics: computeShadowMetrics(jobs),
       window,
-      rollup: timeSeriesRollup(jobs, window, Date.now()),
+      rollup: timeSeriesRollup(jobs, window, Date.now(), range),
     })
   } catch {
     return NextResponse.json({ error: 'shadow analytics unavailable' }, { status: 500 })
