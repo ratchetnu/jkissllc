@@ -28,6 +28,21 @@ const EQUIVALENT_BAND = 0.1   // ±10%
 const GT_GOOD_BAND = 0.15     // within 15% of owner's actual → good
 const GT_POOR_BAND = 0.35     // beyond 35% → clearly worse
 
+/**
+ * The owner-confirmed benchmark price, or null when there isn't a usable one.
+ *
+ * THE SINGLE DEFINITION of "has usable ground truth". The verdict (classifyOutcome) and the
+ * analytics denominator (computeShadowAnalytics) must both read it from here — if they ever
+ * disagreed, the dashboard would report an agreement rate over a different population than
+ * the one the verdicts were computed on, which is exactly the kind of bug nobody notices.
+ *
+ * Neither estimator is ground truth. Only the owner's actual number is.
+ */
+export function groundTruthQuote(gt?: V2GroundTruth): number | null {
+  const q = gt?.actualQuoteUsd ?? gt?.actualFinalUsd
+  return typeof q === 'number' && Number.isFinite(q) && q > 0 ? q : null
+}
+
 export function buildV2Comparison(
   shadow: EstimationResultV2,
   authoritative?: AuthoritativeBaseline,
@@ -50,8 +65,8 @@ export function buildV2Comparison(
     : undefined
 
   // vs owner ground truth (the real yardstick, when captured)
-  const gtQuote = groundTruth?.actualQuoteUsd ?? groundTruth?.actualFinalUsd
-  const hasGt = gtQuote != null && Number.isFinite(gtQuote)
+  const gtQuote = groundTruthQuote(groundTruth) ?? undefined
+  const hasGt = gtQuote != null
   const vsGroundTruthQuoteDeltaUsd = hasGt ? round2(shadowRecommendedUsd - (gtQuote as number)) : (groundTruth ? null : undefined)
   const tierKey = shadow.v2?.loadTier?.key
   const tierLabel = shadow.v2?.loadTier?.label

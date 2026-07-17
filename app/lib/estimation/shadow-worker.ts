@@ -8,7 +8,7 @@
 import type { Booking } from '../bookings'
 import { getBookingByToken } from '../bookings'
 import { isEnabled, type FeatureFlag } from '../platform/flags'
-import { analyzePhotosV2 } from '../ai/analysis-v2'
+import { analyzePhotosV2, promptVersionNumber } from '../ai/analysis-v2'
 import { estimateFromV2 } from './v2-bridge'
 import { clarificationsForV2 } from './clarify-v2'
 import { buildV2Comparison } from './shadow-comparison'
@@ -244,6 +244,13 @@ async function processShadowInner(bookingId: string, deps?: ShadowDeps): Promise
     const comparison = buildV2Comparison(estimate, authoritativeBaseline(b), job.groundTruth)
     const endNow = d.now()
     job.status = estimate.manualReviewRequired ? 'manual_review' : 'completed'
+    // Stamp the deployment identity + provider accounting from what ACTUALLY ran, so the
+    // scorecard can tell one prompt version from another and cost analytics has real input.
+    // `estCostUsd` is undefined when the provider reported no usage — persist that as unknown
+    // rather than inventing a number.
+    job.promptVersion = promptVersionNumber(v2.promptVersion) ?? job.promptVersion
+    job.estimatedCostUsd = v2.estCostUsd
+    job.providerUsage = v2.usage
     job.result = { estimate, questions, ok: true, model: v2.model, analysisVersion: estimate.v2?.analysisVersion, promptVersion: job.promptVersion }
     job.comparison = comparison
     job.model = v2.model

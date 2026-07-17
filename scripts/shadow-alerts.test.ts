@@ -27,6 +27,9 @@ const BASE_COMPARISON: V2Comparison = {
 
 let seq = 0
 function job(over: Partial<Omit<V2ShadowJob, 'comparison'>> & { comparison?: Partial<V2Comparison> | null; confidence?: number } = {}): V2ShadowJob {
+  // Agreement/readiness are scored ONLY over owner-benchmarked evaluations, so every
+  // evaluated fixture carries ground truth by default. These tests exercise alert policy
+  // behavior; the ground-truth semantics themselves are covered in shadow-analytics.test.ts.
   const at = over.completedAt ?? NOW
   return {
     jobVersion: 1, bookingId: over.bookingId ?? `bk${seq++}`, shadowJobId: 's', status: over.status ?? 'completed',
@@ -36,6 +39,7 @@ function job(over: Partial<Omit<V2ShadowJob, 'comparison'>> & { comparison?: Par
     traceId: over.traceId ?? `tr${seq}`,
     result: { estimate: { confidenceScore: over.confidence ?? 0.6, manualReviewReasons: [] } as unknown as EstimationResultV2, questions: [], ok: true },
     comparison: over.comparison === null ? undefined : { ...BASE_COMPARISON, ...over.comparison },
+    groundTruth: over.groundTruth ?? { actualQuoteUsd: 300 },
     completedAt: at,
     updatedAt: at,
     failureCategory: over.failureCategory,

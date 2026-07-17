@@ -16,6 +16,7 @@ import {
   correctItemQuantity, markDuplicate, setLoadTier, setSurcharge, buildV2Override,
 } from './v2-corrections'
 import type { V2ShadowJob, V2GroundTruth } from './shadow-types'
+import { isGroundTruthSource } from './shadow-types'
 
 export const SHADOW_ADMIN_ACTIONS = new Set([
   'shadow-enqueue', 'shadow-rerun', 'shadow-cancel', 'shadow-retry',
@@ -117,17 +118,22 @@ export async function handleShadowAdminAction(
     case 'shadow-ground-truth': {
       const job = await getShadowJob(bookingId)
       if (!job) return { status: 404, body: { error: 'No shadow job to attach ground truth to.' } }
+      // Merge onto any existing ground truth so a partial edit (e.g. adding the final
+      // invoiced price later) cannot silently wipe fields the owner already recorded.
+      const prior = job.groundTruth ?? {}
       const gt: V2GroundTruth = {
-        confirmedItems: s(body.confirmedItems, 1000),
+        ...prior,
+        source: isGroundTruthSource(body.source) ? body.source : prior.source,
+        confirmedItems: s(body.confirmedItems, 1000) ?? prior.confirmedItems,
         confirmedQuantities: s(body.confirmedQuantities, 1000),
         duplicateSightings: n(body.duplicateSightings),
         correctLoadTier: s(body.correctLoadTier, 60),
         actualTruckPct: n(body.actualTruckPct),
-        actualQuoteUsd: n(body.actualQuoteUsd),
-        actualFinalUsd: n(body.actualFinalUsd),
+        actualQuoteUsd: n(body.actualQuoteUsd) ?? prior.actualQuoteUsd,
+        actualFinalUsd: n(body.actualFinalUsd) ?? prior.actualFinalUsd,
         expectedSurchargeUsd: n(body.expectedSurchargeUsd),
         expectedManualReview: typeof body.expectedManualReview === 'boolean' ? body.expectedManualReview : undefined,
-        notes: s(body.notes, 2000),
+        notes: s(body.notes, 2000) ?? prior.notes,
         reviewedBy: actor,
         reviewedAt: now,
       }

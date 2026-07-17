@@ -53,8 +53,25 @@ export const SHADOW_TRANSIENT: V2ShadowFailure[] = ['provider_timeout', 'provide
 // How the shadow job was created (owner vs the automatic post-terminal enqueue).
 export type V2ShadowCreatedBy = 'auto' | 'owner' | 'system'
 
+/** Where the owner's benchmark number came from. Provenance matters: a completed job price
+ *  is stronger evidence than a quote the customer never accepted, and a test benchmark is not
+ *  real-world evidence at all. Recorded so a promotion decision can be re-judged later. */
+export type GroundTruthSource =
+  | 'customer_quote'    // what was quoted to the customer
+  | 'owner_adjusted'    // the owner's corrected number
+  | 'completed_job'     // the final invoiced price — the strongest evidence
+  | 'test_benchmark'    // an internal fixture, NOT real-world evidence
+
+export const GROUND_TRUTH_SOURCES: readonly GroundTruthSource[] = [
+  'customer_quote', 'owner_adjusted', 'completed_job', 'test_benchmark',
+] as const
+
+export const isGroundTruthSource = (v: unknown): v is GroundTruthSource =>
+  typeof v === 'string' && (GROUND_TRUTH_SOURCES as readonly string[]).includes(v)
+
 /** Owner-confirmed reality — the ONLY ground truth. Neither estimator is ground truth. */
 export type V2GroundTruth = {
+  source?: GroundTruthSource
   confirmedItems?: string          // free text or short list the owner confirms
   confirmedQuantities?: string
   duplicateSightings?: number

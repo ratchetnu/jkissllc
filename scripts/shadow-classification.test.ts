@@ -58,6 +58,8 @@ test('assign + note (notes accumulate, attributed, capped)', () => {
 // ── rollups ──
 const evalJob = (t: number, agree: boolean, auto: boolean): V2ShadowJob => job({
   bookingId: `b${t}`, completedAt: t, latencyMs: 40000,
+  // Agreement is only scored against an owner benchmark, so a rollup fixture must carry one.
+  groundTruth: { actualQuoteUsd: 300 },
   result: { estimate: { confidenceScore: 0.6 } as never, questions: [], ok: true },
   comparison: { comparisonVersion: 1, shadowRecommendedUsd: 300, shadowDecision: 'x', shadowManualReview: !auto, shadowInventoryCount: 1, outcome: agree ? 'equivalent' : 'worse', outcomeReasons: [] } as V2Comparison,
 })
