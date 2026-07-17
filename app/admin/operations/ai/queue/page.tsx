@@ -11,7 +11,6 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import OperationsShell from '../../OperationsShell'
 import AICommandShell, { aiCard, aiLabel, AISkeleton, AIError, AIEmpty } from '../AICommandShell'
-import ShadowKillSwitch from '../ShadowKillSwitch'
 
 const TIER_COLOR: Record<string, string> = {
   needs_intervention: '#f87171', awaiting_review: '#fbbf24', missing_ground_truth: '#a3e635',
@@ -84,7 +83,6 @@ function Queue() {
 
   return (
     <>
-      <ShadowKillSwitch />
       {/* Attention header + guided entry point */}
       <div style={{ ...aiCard, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 14 }}>
         <div style={{ flex: '1 1 200px' }}>

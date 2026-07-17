@@ -25,9 +25,11 @@ type Row = { key: string; label: string; sampleSize: number; avgErrorPct: number
 type Cat = { category: string; label: string; count: number; avgErrorPct: number | null; v2WinPct: number | null }
 type Readiness = { tier: string; score: number; sampleSize: number; groundTruthCoverage: number; failureRatePct: number; avgImprovementPct: number | null; reasons: string[]; blockers: string[] }
 type TB = { label: string; count: number; avgV1ErrorPct: number | null; avgV2ErrorPct: number | null }
+type Facet = { value: string; label: string; count: number }
 type Payload = {
-  enabled: boolean; reason?: string
-  overview?: Overview; readiness?: Readiness
+  enabled: boolean; reason?: string; sampled?: number; matched?: number
+  overview?: Overview; readiness?: Readiness; categories?: string[]
+  facets?: { models: Facet[] }
   leaderboards?: { byPromptVersion: Row[]; byModel: Row[] }
   heatmap?: Cat[]; trends?: { weekly: TB[]; monthly: TB[] }
 }
@@ -42,9 +44,30 @@ function Perf() {
   const router = useRouter(); const pathname = usePathname(); const sp = useSearchParams()
   const [board, setBoard] = useState<typeof BOARDS[number]['k']>('byPromptVersion')
   const [trend, setTrend] = useState<'weekly' | 'monthly'>('weekly')
-  const [category] = useState(sp.get('category') ?? '')
+  // Performance filters — every one reshapes the aggregates (API narrows jobs), zero AI.
+  const [category, setCategory] = useState(sp.get('category') ?? '')
+  const [model, setModel] = useState(sp.get('model') ?? '')
+  const [reviewed, setReviewed] = useState(sp.get('reviewed') ?? '')
+  const [gt, setGt] = useState(sp.get('gt') ?? '')
+  const [fromD, setFromD] = useState(sp.get('fromD') ?? '')
+  const [toD, setToD] = useState(sp.get('toD') ?? '')
 
-  const query = useMemo(() => (category ? `?category=${category}` : ''), [category])
+  const dayMs = (d: string, end = false) => { const t = Date.parse(end ? `${d}T23:59:59` : `${d}T00:00:00`); return Number.isFinite(t) ? t : undefined }
+  const query = useMemo(() => {
+    const p = new URLSearchParams()
+    if (category) p.set('category', category)
+    if (model) p.set('model', model)
+    if (reviewed) p.set('reviewed', reviewed)
+    if (gt) p.set('gt', gt)
+    const f = fromD ? dayMs(fromD) : undefined, t = toD ? dayMs(toD, true) : undefined
+    if (f != null) p.set('from', String(f))
+    if (t != null) p.set('to', String(t))
+    const q = p.toString()
+    return q ? `?${q}` : ''
+  }, [category, model, reviewed, gt, fromD, toD])
+
+  const hasFilter = !!(category || model || reviewed || gt || fromD || toD)
+  const resetFilters = () => { setCategory(''); setModel(''); setReviewed(''); setGt(''); setFromD(''); setToD('') }
   const [res, setRes] = useState<{ key: string; payload: Payload | null; err: string } | null>(null)
   useEffect(() => {
     const c = new AbortController()
@@ -54,7 +77,11 @@ function Perf() {
       .catch((e) => { if ((e as { name?: string })?.name !== 'AbortError') done(null, 'Could not load performance.') })
     return () => c.abort()
   }, [query])
-  useEffect(() => { router.replace(`${pathname}${query}`, { scroll: false }) }, [query, pathname, router])
+  useEffect(() => {
+    const p = new URLSearchParams(query.replace(/^\?/, ''))
+    if (fromD) p.set('fromD', fromD); if (toD) p.set('toD', toD)
+    router.replace(`${pathname}${p.toString() ? `?${p}` : ''}`, { scroll: false })
+  }, [query, fromD, toD, pathname, router])
 
   const loading = res?.key !== query
   const data = res?.payload ?? null
@@ -67,8 +94,34 @@ function Perf() {
   if (!o || !r) return <AISkeleton rows={4} />
   const verified = o.groundTruthsRecorded
 
+  const inputStyle: React.CSSProperties = { padding: '6px 9px', background: 'transparent', border: '1px solid var(--line)', borderRadius: 8, color: 'var(--text)', fontSize: 11.5 }
+  const selectStyle: React.CSSProperties = { padding: '6px 9px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 8, color: 'var(--text)', fontSize: 11.5 }
   return (
     <>
+      {/* Filters — reshape every aggregate below; zero AI */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+        <select value={category} onChange={(e) => setCategory(e.target.value)} style={selectStyle} aria-label="Category">
+          <option value="">Category: all</option>
+          {(data?.categories ?? []).map((c) => <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>)}
+        </select>
+        {(data?.facets?.models?.length ?? 0) > 1 && (
+          <select value={model} onChange={(e) => setModel(e.target.value)} style={selectStyle} aria-label="Model version">
+            <option value="">Model: all</option>
+            {data?.facets?.models.map((m) => <option key={m.value} value={m.value}>{m.label} ({m.count})</option>)}
+          </select>
+        )}
+        <select value={reviewed} onChange={(e) => setReviewed(e.target.value)} style={selectStyle} aria-label="Reviewed">
+          <option value="">Reviewed: any</option><option value="1">Reviewed</option><option value="0">Unreviewed</option>
+        </select>
+        <select value={gt} onChange={(e) => setGt(e.target.value)} style={selectStyle} aria-label="Ground truth">
+          <option value="">Ground truth: any</option><option value="1">Has ground truth</option><option value="0">Missing</option>
+        </select>
+        <label style={{ fontSize: 11, color: 'var(--muted)' }}>From <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} style={{ ...inputStyle, colorScheme: 'light dark' }} /></label>
+        <label style={{ fontSize: 11, color: 'var(--muted)' }}>To <input type="date" value={toD} onChange={(e) => setToD(e.target.value)} style={{ ...inputStyle, colorScheme: 'light dark' }} /></label>
+        {hasFilter && <button onClick={resetFilters} style={{ ...inputStyle, cursor: 'pointer', fontWeight: 700 }}>Reset</button>}
+        {hasFilter && <span style={{ fontSize: 11, color: 'var(--muted)' }}>{data?.matched ?? 0} of {data?.sampled ?? 0} shown</span>}
+      </div>
+
       {/* Health summary — the decision line, calm */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
         <div style={{ ...aiCard, borderColor: `${(READINESS[r.tier]?.c ?? 'var(--line)')}44` }}>

@@ -7,7 +7,7 @@ import { extractFacets } from '../../../lib/estimation/shadow-facets'
 import {
   learningOverview, leaderboards, categoryHeatmap, learningReadiness, learningRecommendations,
   learningTrends, evalErrors, applyLearningFilter, evalErrorsToCsv, LEARNING_CATEGORIES,
-  type LearningFilter,
+  filterLearningJobs, type LearningFilter, type LearningJobFilter,
 } from '../../../lib/estimation/shadow-learning'
 
 export const runtime = 'nodejs'
@@ -45,11 +45,18 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
   const filter = parseFilter(sp)
   const now = Date.now()
   try {
-    const all = await listShadowJobs(JOB_SAMPLE)
+      const sampled = await listShadowJobs(JOB_SAMPLE)
 
-    // The explorer's filter narrows the per-evaluation ERROR rows; the aggregate dashboards
-    // (overview, leaderboards, heatmap, readiness, recommendations, trends) are computed over
-    // the FULL set so a filter never distorts the headline picture.
+    // Performance passes job-level filters (date/model/prompt/category/reviewed/ground-truth) so
+    // its aggregates genuinely reshape. Learning passes none, so it keeps the full picture. An
+    // unset dimension is a no-op either way.
+    const jf: LearningJobFilter = {
+      from: filter.from, to: filter.to, model: filter.model, promptVersion: filter.promptVersion,
+      category: filter.category,
+      reviewed: sp.get('reviewed') === '1' ? true : sp.get('reviewed') === '0' ? false : undefined,
+      hasGroundTruth: sp.get('gt') === '1' ? true : sp.get('gt') === '0' ? false : undefined,
+    }
+    const all = filterLearningJobs(sampled, jf)
     const rows = applyLearningFilter(evalErrors(all), filter)
 
     if (sp.get('format') === 'csv') {
@@ -65,10 +72,11 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
 
     return NextResponse.json({
       enabled: true,
-      sampled: all.length,
+      sampled: sampled.length,
+      matched: all.length,
       filter,
       categories: LEARNING_CATEGORIES,
-      facets: extractFacets(all),
+      facets: extractFacets(sampled),
       overview: learningOverview(all),
       leaderboards: leaderboards(all),
       heatmap: categoryHeatmap(all),
