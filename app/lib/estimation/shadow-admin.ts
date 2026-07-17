@@ -26,6 +26,12 @@ export const SHADOW_ADMIN_ACTIONS = new Set([
   'v2-correct-item', 'v2-mark-duplicate', 'v2-set-tier', 'v2-set-surcharge', 'v2-override',
 ])
 
+// Pure state guards, exported so the "no review before completion" contract is unit-testable
+// without a store. A comparison exists only on a completed/manual_review job; a result.estimate
+// only after a successful run.
+export const canCategorize = (job: { comparison?: unknown } | null | undefined): boolean => !!job?.comparison
+export const canRecordGroundTruth = (job: { result?: { estimate?: unknown } } | null | undefined): boolean => !!job?.result?.estimate
+
 export function isShadowAdminAction(action: string): boolean {
   return SHADOW_ADMIN_ACTIONS.has(action)
 }
@@ -119,6 +125,10 @@ export async function handleShadowAdminAction(
     case 'shadow-ground-truth': {
       const job = await getShadowJob(bookingId)
       if (!job) return { status: 404, body: { error: 'No shadow job to attach ground truth to.' } }
+      // State guard: ground truth scores a COMPLETED evaluation against reality. Refuse to attach
+      // it before there is a result to score, so we never record a benchmark for a run that never
+      // produced a comparison.
+      if (!canRecordGroundTruth(job)) return { status: 400, body: { error: 'Ground truth can be recorded once the evaluation has completed.' } }
       // Merge onto any existing ground truth so a partial edit (e.g. adding the final
       // invoiced price later) cannot silently wipe fields the owner already recorded.
       const prior = job.groundTruth ?? {}
@@ -158,6 +168,10 @@ export async function handleShadowAdminAction(
     case 'shadow-categorize': {
       const job = await getShadowJob(bookingId)
       if (!job) return { status: 404, body: { error: 'No shadow job.' } }
+      // State guard: categories describe a COMPLETED evaluation's outcome. Refuse to tag a
+      // result that does not exist yet (queued/processing/failed), so the learning heatmaps
+      // never aggregate over a nonexistent comparison.
+      if (!canCategorize(job)) return { status: 400, body: { error: 'Categorize is available once the evaluation has completed.' } }
       const raw = Array.isArray(body.categories) ? body.categories : []
       const cats = [...new Set(raw.filter(isLearningCategory))].slice(0, LEARNING_CATEGORIES.length)
       job.learningCategories = cats

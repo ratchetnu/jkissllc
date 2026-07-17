@@ -84,7 +84,7 @@ export default function ShadowEvaluationPage({ params }: { params: Promise<{ boo
     <OperationsShell>
       <div style={{ display: 'grid', gap: 14, maxWidth: 1000, margin: '0 auto' }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
-          <Link href="/admin/operations/ai/shadow" style={{ fontSize: 12, color: 'var(--muted)', textDecoration: 'none' }}>← Shadow Analytics</Link>
+          <Link href="/admin/operations/ai/queue" style={{ fontSize: 12, color: 'var(--muted)', textDecoration: 'none' }}>← Evaluation Queue</Link>
           <h1 style={{ fontSize: 19, fontWeight: 800 }}>Evaluation {bookingId.slice(0, 12)}</h1>
           {job?.classification && <span style={{ fontSize: 11, fontWeight: 700, color: '#34d399', padding: '3px 9px', borderRadius: 999, background: 'rgba(52,211,153,.14)' }}>{nice(job.classification)}</span>}
           <button style={{ ...btn(), marginLeft: 'auto' }} onClick={exportJson} disabled={!job}>Export</button>
@@ -326,7 +326,14 @@ function GroundTruthPanel(p: {
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         <input value={p.notes} onChange={(e) => p.setNotes(e.target.value)} placeholder="Why this number? (optional)"
           style={{ flex: '1 1 220px', padding: '7px 10px', background: 'transparent', border: '1px solid var(--line)', borderRadius: 9, color: 'var(--text)', fontSize: 12.5 }} />
-        <button disabled={!canSave} onClick={p.onSave} style={btn(true)}>
+        <button disabled={!canSave} onClick={() => {
+          // Explicit confirmation only when REPLACING an existing benchmark — recording a first
+          // one, or merging in the final invoiced price, needs no gate.
+          if (gt != null && p.quote.trim() !== '' && Number(p.quote) !== stored?.actualQuoteUsd) {
+            if (!window.confirm(`Replace the recorded ground truth of $${gt} with $${Number(p.quote)}? This re-scores the evaluation.`)) return
+          }
+          p.onSave()
+        }} style={btn(true)}>
           {gt == null ? 'Record ground truth' : 'Update ground truth'}
         </button>
       </div>
