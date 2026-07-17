@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireCrew } from '../_lib/crew'
+import { rateLimit } from '../../../lib/rate-limit'
 import { createRequest, listForStaff, cancelRequest, isLateRequest } from '../../../lib/timeoff'
 import { getStaff } from '../../../lib/staff'
 import { sendOwnerAlert } from '../../../lib/owner-alerts'
@@ -18,6 +19,12 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
 export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
+
+  // A submitted late request fires an owner SMS + email; throttle so it can't be
+  // looped into an owner-notification spam vector. Generous for legitimate use.
+  if (await rateLimit(req, 'timeoff', 10, 60 * 60_000)) {
+    return NextResponse.json({ ok: false, error: 'Too many requests. Please try again later.' }, { status: 429 })
+  }
 
   const body = await req.json().catch(() => ({}))
   const startDate = String(body?.startDate ?? '')

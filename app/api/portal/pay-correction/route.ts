@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireCrew } from '../_lib/crew'
+import { rateLimit } from '../../../lib/rate-limit'
 import { createCorrection, listForStaff } from '../../../lib/pay-corrections'
 import { getStaff } from '../../../lib/staff'
 import { sendOwnerAlert } from '../../../lib/owner-alerts'
@@ -18,8 +19,15 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
 
+  // Each submission fires an owner SMS + email (below). Throttle so a logged-in crew
+  // member can't loop this to drain the SMS/email budget or flood the owner.
+  if (await rateLimit(req, 'paycorrection', 5, 60 * 60_000)) {
+    return NextResponse.json({ ok: false, error: 'Too many requests. Please try again later.' }, { status: 429 })
+  }
+
   const body = await req.json().catch(() => ({}))
-  const message = String(body?.message ?? '').trim()
+  // Cap the free-text so an oversized payload can't bloat storage or the alert email.
+  const message = String(body?.message ?? '').trim().slice(0, 2000)
   if (!message) return NextResponse.json({ ok: false, error: 'Please describe what looks wrong.' }, { status: 400 })
 
   const staff = await getStaff(who.staffId)

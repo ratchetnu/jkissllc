@@ -20,9 +20,10 @@ export async function saveJob(j: UpdateAutomationJob): Promise<void> {
 }
 export async function listJobs(limit = 200): Promise<UpdateAutomationJob[]> {
   const ids = await redis.zrevrange(K_IDX, 0, Math.max(0, limit - 1))
-  const out: UpdateAutomationJob[] = []
-  for (const id of ids) { const j = await getJob(id); if (j) out.push(j) }
-  return out
+  // Batch the reads (activeJobForBusiness scans up to 500) instead of serial GETs.
+  // zrevrange already ordered the ids, so output order/contents are identical.
+  const jobs = await Promise.all(ids.map(getJob))
+  return jobs.filter((j): j is UpdateAutomationJob => j !== null)
 }
 export async function activeJobForBusiness(businessId: string): Promise<UpdateAutomationJob | null> {
   return (await listJobs(500)).find(j => j.businessId === businessId && AUTOMATION_ACTIVE.includes(j.status)) ?? null

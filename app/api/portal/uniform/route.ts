@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { put } from '@vercel/blob'
 import { requireCrew } from '../_lib/crew'
+import { rateLimit } from '../../../lib/rate-limit'
 import { saveUniformPhoto, getUniformPhoto, listUniformPhotos, uniformStatus } from '../../../lib/uniform'
 import { centralToday } from '../../../lib/dates'
 import { scopeBlobPath, sanitizeBlobSegment } from '../../../lib/platform/tenancy/blob-keys'
@@ -41,6 +42,11 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
 export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
+  // Each POST writes up to ~8MB to Blob; throttle so a logged-in crew member can't
+  // loop distinct images to fill storage. Comfortably above legit daily use.
+  if (await rateLimit(req, 'uniform', 12, 10 * 60_000)) {
+    return NextResponse.json({ error: 'Too many uploads. Please wait a few minutes.' }, { status: 429 })
+  }
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
   const image = typeof body.image === 'string' ? body.image : ''
   const m = image.match(/^data:(image\/(jpeg|png|webp|heic|heif));base64,(.+)$/)

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireCrew } from '../_lib/crew'
+import { rateLimit } from '../../../lib/rate-limit'
 import { getUser, setUserPassword } from '../../../lib/users'
 import { verifyPassword, passwordPolicyError } from '../../../lib/password'
 
@@ -9,6 +10,12 @@ import { verifyPassword, passwordPolicyError } from '../../../lib/password'
 export const POST = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
+
+  // Throttle the current-password check so a borrowed/still-open session can't
+  // brute-force `current` — the exact threat this handler is meant to defend against.
+  if (await rateLimit(req, 'pwchange', 5, 15 * 60_000)) {
+    return NextResponse.json({ ok: false, error: 'Too many attempts. Please wait a few minutes.' }, { status: 429 })
+  }
 
   const body = await req.json().catch(() => ({}))
   const current = String(body?.current ?? '')
