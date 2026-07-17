@@ -28,6 +28,7 @@ import { isAllowedPhotoUrl } from '../photo-url'
 import { evaluatePhotoQuality, type PhotoDescriptor, type PhotoQualityGateResult } from './photo-quality-gate'
 import { dedupePhotoUrls } from './photo-dedup'
 import { buildAnalysisV2Prompt, ANALYSIS_V2_PROMPT_VERSION } from './analysis-v2-prompt'
+import { estimateCostUsd } from './telemetry'
 import {
   normalizeAnalysisV2, reviewFallbackV2,
   type JunkPhotoAnalysisV2, type NormalizeV2Ctx, type ImageQuality,
@@ -52,6 +53,21 @@ export type AnalyzePhotosV2Result = {
   latencyMs?: number
   outcome: string            // 'completed' | 'no_usable_photos' | 'invalid_response' | provider outcome
   rawDebug?: string          // truncated raw model text, only when we fell back on invalid output
+  // Provider accounting, surfaced so callers can record what a run ACTUALLY cost rather
+  // than inventing a figure. Present only on a successful call that reported usage —
+  // undefined means "unknown", and callers must persist null rather than guess.
+  usage?: { inputTokens: number; outputTokens: number; totalTokens: number }
+  estCostUsd?: number
+  promptVersion?: string     // the V2 vision prompt label that actually ran (e.g. 'v2-2')
+  imageCount?: number        // usable images the model was actually shown (post-dedupe)
+}
+
+/** ANALYSIS_V2_PROMPT_VERSION is a label ('v2-2'); V2ShadowJob.promptVersion is numeric
+ *  because it forms the deployment key with model + estimatorVersion. Take the trailing
+ *  integer so a prompt bump reads as a distinct deployment instead of the "p?" we shipped. */
+export function promptVersionNumber(label: string | undefined): number | undefined {
+  const m = /(\d+)$/.exec(label ?? '')
+  return m ? Number(m[1]) : undefined
 }
 
 // Dependency-injection seams so tests can mock the AI + the quality gate without
@@ -282,5 +298,10 @@ export async function analyzePhotosV2(
     model: modelName,
     latencyMs,
     outcome: 'completed',
+    usage: res.usage,
+    // Cost comes from the SAME estimator the AI telemetry uses — never a second formula.
+    estCostUsd: res.usage ? estimateCostUsd(modelName, res.usage.inputTokens, res.usage.outputTokens) : undefined,
+    promptVersion: ANALYSIS_V2_PROMPT_VERSION,
+    imageCount: usablePhotos.length,
   }
 }
