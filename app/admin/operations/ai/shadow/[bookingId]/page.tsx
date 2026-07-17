@@ -174,6 +174,9 @@ export default function ShadowEvaluationPage({ params }: { params: Promise<{ boo
               })}
             />
 
+            {/* AI Learning categories — diagnostic tags over this stored evaluation (no AI). */}
+            <LearningCategoryPanel job={job} busy={busy} onSave={(categories) => act({ action: 'categorize', categories })} />
+
             {/* Owner actions */}
             <div style={card}>
               <span style={lab}>Owner actions (audited)</span>
@@ -332,6 +335,54 @@ function GroundTruthPanel(p: {
         <p style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 8 }}>
           Recorded by <strong>{stored.reviewedBy}</strong>{stored.reviewedAt ? ` on ${new Date(stored.reviewedAt).toLocaleString('en-US')}` : ''}. Edits are audited.
         </p>
+      )}
+    </div>
+  )
+}
+
+// ── AI Learning: owner failure-category tagging (multi-select, zero AI) ───────
+const LEARNING_CATS = [
+  'underestimated_volume', 'overestimated_volume', 'missed_hidden_debris', 'missed_heavy_material',
+  'disposal_cost_issue', 'labor_issue', 'distance_adjustment', 'customer_negotiation',
+  'minimum_job_pricing', 'access_difficulty', 'loading_efficiency', 'hazardous_items',
+  'appliances', 'furniture', 'yard_debris', 'construction_debris', 'mixed_load', 'other',
+]
+function LearningCategoryPanel({ job, busy, onSave }: {
+  job: { status?: string; learningCategories?: string[]; learningCategorizedBy?: string }
+  busy: boolean
+  onSave: (categories: string[]) => void
+}) {
+  const stored = job.learningCategories ?? []
+  const [sel, setSel] = useState<string[]>(stored)
+  const dirty = sel.slice().sort().join(',') !== stored.slice().sort().join(',')
+  const done = job.status === 'completed' || job.status === 'manual_review'
+  const toggle = (c: string) => setSel((prev) => prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c])
+  return (
+    <div style={card}>
+      <span style={lab}>AI Learning — failure categories</span>
+      <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '4px 0 8px' }}>
+        Why did this estimate differ? Tag one or more root causes. These feed the AI Learning heatmaps and
+        recommendations — they run no AI and never change the customer quote.
+        {!done && ' Available once the evaluation completes.'}
+      </p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {LEARNING_CATS.map((c) => {
+          const on = sel.includes(c)
+          return (
+            <button key={c} disabled={!done || busy} onClick={() => toggle(c)}
+              style={{ fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 999, cursor: done ? 'pointer' : 'not-allowed',
+                border: `1px solid ${on ? '#93c5fd' : 'var(--line)'}`, background: on ? 'color-mix(in srgb, #93c5fd 18%, transparent)' : 'transparent',
+                color: on ? '#93c5fd' : 'var(--muted)' }}>
+              {nice(c)}
+            </button>
+          )
+        })}
+      </div>
+      {done && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 }}>
+          <button disabled={!dirty || busy} onClick={() => onSave(sel)} style={btn(true)}>{dirty ? 'Save categories' : 'Saved'}</button>
+          {job.learningCategorizedBy && <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>Last set by {job.learningCategorizedBy}</span>}
+        </div>
       )}
     </div>
   )
