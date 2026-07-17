@@ -1,5 +1,16 @@
 # OpsPilot — Multi-Tenant SaaS Roadmap
 
+> ⚠️ **SUPERSEDED (2026-07-17).** This document reflects the codebase as of
+> **2026-07-08**, when it had *"zero tenancy primitives."* That premise is now
+> **out of date**: the tenancy foundation has since been built and merged to `main`
+> (Redis + Blob chokepoints wired, RBAC matrix, session-carried tenant identity, 138
+> `withTenantRoute`-wrapped routes) and sits dormant behind `TENANCY_ENABLED=false`.
+> For the **current** verified state, the domain classification, the highest-risk
+> remaining items, and the phased plan, read
+> **`docs/opspilot-os/tenant-isolation/audits/2026-07-17-multitenant-readiness-audit.md`**.
+> The analysis below is retained for its still-accurate key inventory and rationale,
+> but its "nothing exists yet" framing no longer holds.
+
 > **Status: planning only. No migration has been performed.**
 > This document exists so that when the migration does happen, nobody has to
 > rediscover where the landmines are. Every claim below is cited to `file:line`
