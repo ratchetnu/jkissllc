@@ -181,7 +181,7 @@ export default function AlertDetailPage({ params }: { params: Promise<{ id: stri
                 <span style={lab}>Related evaluations ({data.related!.length})</span>
                 <div style={{ display: 'grid', gap: 6 }}>
                   {data.related!.map((r) => (
-                    <Link key={r.bookingId} href={`/admin/operations/ai/shadow/${r.bookingId}`}
+                    <Link key={r.bookingId} href={`/admin/operations/ai/eval/${r.bookingId}`}
                           style={{ textDecoration: 'none', color: 'inherit', border: '1px solid var(--line)', borderRadius: 10, padding: '8px 10px', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', fontSize: 11.5 }}>
                       <strong style={{ fontSize: 12 }}>{r.bookingNumber ?? r.bookingId.slice(0, 10)}</strong>
                       <Chip text={r.status} />

@@ -22,8 +22,8 @@ type SectionDef = { id: AISection; label: string; href: string; hint: string }
 // swapped to its in-shell route as it lands.
 export const AI_SECTIONS: SectionDef[] = [
   { id: 'overview',    label: 'Overview',      href: '/admin/operations/ai',              hint: 'Health, attention, next step' },
-  { id: 'queue',       label: 'Evaluation Queue', href: '/admin/operations/ai/shadow/eligible', hint: 'Select, run, review' },
-  { id: 'performance', label: 'Performance',   href: '/admin/operations/ai/shadow',       hint: 'Accuracy, trends, leaderboards' },
+  { id: 'queue',       label: 'Evaluation Queue', href: '/admin/operations/ai/queue',       hint: 'Select, run, review' },
+  { id: 'performance', label: 'Performance',   href: '/admin/operations/ai/performance',  hint: 'Accuracy, trends, leaderboards' },
   { id: 'learning',    label: 'Review & Learning', href: '/admin/operations/ai/learning', hint: 'Ground truth, categories, history' },
   { id: 'models',      label: 'Models & Versions', href: '/admin/operations/ai/models',   hint: 'Version registry (read-only)' },
   { id: 'controls',    label: 'Usage & Controls', href: '/admin/operations/ai/controls',  hint: 'Budget, kill switch, usage' },

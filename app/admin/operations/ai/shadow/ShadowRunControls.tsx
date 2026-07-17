@@ -113,12 +113,12 @@ export default function ShadowRunControls({ bookingId, compact = false }: { book
           ? <ConfirmRun label="Rerun (1 new call)" onConfirm={() => act('rerun')} onCancel={() => setConfirmRun(null)} busy={!!busy} />
           : <button disabled={!!busy} onClick={() => setConfirmRun('rerun')} style={btn()}>Rerun</button>)}
 
-        {v.canOpen && <Link href={`/admin/operations/ai/shadow/${bookingId}`} style={{ ...btn('#a3e635'), textDecoration: 'none' }}>Open comparison →</Link>}
+        {v.canOpen && <Link href={`/admin/operations/ai/eval/${bookingId}`} style={{ ...btn('#a3e635'), textDecoration: 'none' }}>Open comparison →</Link>}
         {!busy && <button onClick={() => load()} style={{ ...btn(), fontSize: 11 }} title="Refresh status (no AI call)">↻</button>}
       </div>
 
       {v.status === 'awaiting_ground_truth' && (
-        <Link href={`/admin/operations/ai/shadow/${bookingId}`} style={{ fontSize: 11.5, color: '#a3e635', textDecoration: 'none' }}>
+        <Link href={`/admin/operations/ai/eval/${bookingId}`} style={{ fontSize: 11.5, color: '#a3e635', textDecoration: 'none' }}>
           → Record the amount you actually quoted to score this evaluation
         </Link>
       )}
