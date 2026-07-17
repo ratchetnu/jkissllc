@@ -19,8 +19,17 @@ test('mobile shows at most 5 items (4 primary + More)', () => {
   const primary = primaryNav(vis)
   assert.ok(primary.length <= MAX_PRIMARY - 1, 'at most 4 primary destinations')
   assert.ok(primary.length + 1 <= 5, 'primary + More ≤ 5')
-  // The four flagged-primary destinations are the mobile bar.
-  assert.deepEqual(primary.map(p => p.href), ['/admin/operations', '/admin/operations/book-now', '/admin/operations/list', '/admin/operations/messages'])
+  // The four flagged-primary destinations are the mobile bar. Schedule is elevated
+  // into the bar as the primary operational surface; Messages moves to the More sheet
+  // (Communication group) but stays fully reachable (asserted below).
+  assert.deepEqual(primary.map(p => p.href), ['/admin/operations', '/admin/operations/schedule', '/admin/operations/book-now', '/admin/operations/list'])
+})
+
+test('Messages stays reachable in the More sheet after Schedule is elevated', () => {
+  const vis = visibleNav(NAV_ITEMS, { role: 'admin', isOwner: true })
+  const groups = moreGroups(vis, primaryNav(vis))
+  const inMore = new Set(groups.flatMap(g => g.items.map(i => i.href)))
+  assert.ok(inMore.has('/admin/operations/messages'), 'Messages reachable via More')
 })
 
 test('every visible destination is reachable — primary OR in a More group (nothing lost)', () => {
