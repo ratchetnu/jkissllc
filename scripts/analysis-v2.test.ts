@@ -175,8 +175,8 @@ test('0 usable photos → manual-review fallback, no AI call', async () => {
 })
 
 test('prompt version const is stamped onto the analysis', async () => {
-  assert.equal(ANALYSIS_V2_PROMPT_VERSION, 'v2-1')
-  assert.equal(buildAnalysisV2Prompt(2).version, 'v2-1')
+  assert.equal(ANALYSIS_V2_PROMPT_VERSION, 'v2-2')
+  assert.equal(buildAnalysisV2Prompt(2).version, 'v2-2')
   const ids = ['img_1']
   const deps: AnalyzePhotosV2Deps = {
     evaluateQuality: () => gateFor(ids) as any,
@@ -186,7 +186,7 @@ test('prompt version const is stamped onto the analysis', async () => {
     { bookingId: 'b1', photoUrls: [blob('a.jpg')], nowIso: '2026-07-15T00:00:00Z' },
     deps,
   )
-  assert.equal(r.analysis.promptVersion, 'v2-1')
+  assert.equal(r.analysis.promptVersion, 'v2-2')
 })
 
 test('provider error → fail-soft manual-review fallback', async () => {
