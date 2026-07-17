@@ -53,7 +53,7 @@ export type AiTaskDeps = {
 
 export type AiTaskResult<T> =
   | { ok: true; data: T; text: string; callId: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number }; latencyMs: number; model: string; promptVersion: number; qualityScore: number }
-  | { ok: false; error: string; status: number; callId: string; outcome: AiCallOutcome }
+  | { ok: false; error: string; status: number; callId: string; outcome: AiCallOutcome; errorClass: string }
 
 // Coarse failure classification for observability dashboards.
 function classifyError(msg: string): string {
@@ -94,14 +94,14 @@ export async function runAiTask<T = Record<string, unknown>>(input: AiTaskInput,
   // 1) RBAC — role enforcement (only when a permission is required).
   if (input.requiredPermission && (!input.principal || !can(input.principal.role, input.requiredPermission))) {
     await write({ ...base, ok: false, outcome: 'forbidden', error: 'forbidden' })
-    return { ok: false, error: 'forbidden', status: 403, callId, outcome: 'forbidden' }
+    return { ok: false, error: 'forbidden', status: 403, callId, outcome: 'forbidden', errorClass: 'auth' }
   }
 
   // 2) Cost governance — refuse fail-soft when today's cap is reached.
   try {
     if (await isOverBudget()) {
       await write({ ...base, ok: false, outcome: 'budget_exceeded', error: 'daily AI budget reached' })
-      return { ok: false, error: 'The daily AI budget has been reached — please try again tomorrow.', status: 429, callId, outcome: 'budget_exceeded' }
+      return { ok: false, error: 'The daily AI budget has been reached — please try again tomorrow.', status: 429, callId, outcome: 'budget_exceeded', errorClass: 'budget' }
     }
   } catch { /* budget check is best-effort — never block on it */ }
 
@@ -133,7 +133,9 @@ export async function runAiTask<T = Record<string, unknown>>(input: AiTaskInput,
 
   if (!gen.ok) {
     await write({ ...versioned, ok: false, outcome: 'provider_error', error: gen.error, errorClass: lastClass, latencyMs, model, attempts, retried })
-    return { ok: false, error: gen.error, status: 503, callId, outcome: 'provider_error' }
+    // errorClass is the ONLY thing that distinguishes a retryable blip from a permanent
+    // billing/auth rejection. Callers need it to decide whether a retry can ever succeed.
+    return { ok: false, error: gen.error, status: 503, callId, outcome: 'provider_error', errorClass: lastClass }
   }
 
   // 6) Cost reconciliation: provider-reported cost when available, else estimate.
@@ -158,7 +160,7 @@ export async function runAiTask<T = Record<string, unknown>>(input: AiTaskInput,
     const v = validateJson(gen.text, input.schema)
     if (!v.ok) {
       await write({ ...usageBase, ok: false, outcome: 'invalid_response', error: v.error, responseValid: false })
-      return { ok: false, error: 'The AI returned an unexpected response.', status: 502, callId, outcome: 'invalid_response' }
+      return { ok: false, error: 'The AI returned an unexpected response.', status: 502, callId, outcome: 'invalid_response', errorClass: 'schema' }
     }
     await write({ ...usageBase, ok: true, outcome: 'success', responseValid: true })
     return { ok: true, data: v.value as T, text: gen.text, callId, usage: gen.usage, latencyMs, model: gen.model, promptVersion, qualityScore: quality.score }

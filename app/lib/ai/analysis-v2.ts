@@ -52,6 +52,7 @@ export type AnalyzePhotosV2Result = {
   callId?: string
   latencyMs?: number
   outcome: string            // 'completed' | 'no_usable_photos' | 'invalid_response' | provider outcome
+  errorClass?: string        // 'billing' | 'auth' | 'network' | 'rate_limit' | 'schema' | ... — decides retryability
   rawDebug?: string          // truncated raw model text, only when we fell back on invalid output
   // Provider accounting, surfaced so callers can record what a run ACTUALLY cost rather
   // than inventing a figure. Present only on a successful call that reported usage —
@@ -227,7 +228,7 @@ export async function analyzePhotosV2(
       gate,
       allImageIds,
     )
-    return { analysis, ok: false, callId: res.callId, outcome: res.outcome }
+    return { analysis, ok: false, callId: res.callId, outcome: res.outcome, errorClass: res.errorClass }
   }
 
   const modelName = res.model || ''

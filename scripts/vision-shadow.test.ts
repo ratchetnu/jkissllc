@@ -69,6 +69,12 @@ function memDeps(booking: Booking, over: Partial<ShadowDeps> = {}, env: Record<s
     analyze: async () => ({ analysis: {} as never, ok: true, outcome: 'ok', model: 'test-model', callId: 'c1', latencyMs: 1234 }),
     estimate: () => fakeEstimate(),
     clarify: () => [],
+    // Credit-protection deps default to an in-memory, permissive budget so worker tests
+    // that don't care about spend never touch Redis. The dedicated budget tests override these.
+    readSpend: async () => ({ evalsToday: 0, costTodayUsd: 0, attemptsForBooking: 0 }),
+    chargeSpend: async () => {},
+    recordSpendEvent: async () => {},
+    budget: { killed: false, maxEvalsPerDay: 1000, maxEvalsPerBooking: 1000, maxEstDailyCostUsd: 1000, maxAttempts: 2 },
     ...over,
   }
   return { deps, store }

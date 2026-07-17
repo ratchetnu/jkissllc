@@ -9,6 +9,8 @@ import type { Booking } from '../bookings'
 import { getBookingByToken } from '../bookings'
 import { isEnabled, type FeatureFlag } from '../platform/flags'
 import { analyzePhotosV2, promptVersionNumber } from '../ai/analysis-v2'
+import { decideShadowSpend, shadowBudgetFromEnv, type ShadowBudgetLimits, type ShadowSpendState } from './shadow-budget'
+import { chargeShadowSpend, recordShadowSpendEvent, readShadowSpend, shadowKillEngaged } from './shadow-store'
 import { estimateFromV2 } from './v2-bridge'
 import { clarificationsForV2 } from './clarify-v2'
 import { buildV2Comparison } from './shadow-comparison'
@@ -18,10 +20,10 @@ import {
 } from './shadow-store'
 import {
   evaluateShadowEligibility, isShadowDue, shadowRetryDecision, classifyShadowFailure,
-  shadowIdempotencyKey, shadowJobId, shadowDeadlineMs, shadowLeaseMs, shadowMaxAttempts,
+  shadowIdempotencyKey, shadowJobId, shadowDeadlineMs, shadowLeaseMs, shadowMaxAttempts, shadowBackoffMs,
   SHADOW_FUNCTION_BUDGET_MS, V2_ESTIMATOR_VERSION, type ShadowFlags,
 } from './shadow-policy'
-import { V2_SHADOW_JOB_VERSION, type V2ShadowJob, type V2ShadowCreatedBy, type V2ShadowFailure } from './shadow-types'
+import { V2_SHADOW_JOB_VERSION, SHADOW_TRANSIENT, type V2ShadowJob, type V2ShadowCreatedBy, type V2ShadowFailure } from './shadow-types'
 
 type EnvLike = Record<string, string | undefined>
 
@@ -39,6 +41,11 @@ export type ShadowDeps = {
   isExcluded?: (id: string) => Promise<boolean>
   isSelected?: (id: string) => Promise<boolean>
   lock?: <T>(id: string, fn: () => Promise<T>, onBusy: () => T, token: string) => Promise<T>
+  // AI credit protection (injectable so budget/kill-switch tests need no Redis).
+  readSpend?: (now: number) => Promise<ShadowSpendState>
+  chargeSpend?: (now: number, costUsd: number, wasRetry: boolean) => Promise<void>
+  recordSpendEvent?: (now: number, kind: 'preventedRetries' | 'budgetBlocked') => Promise<void>
+  budget?: ShadowBudgetLimits
 }
 
 function resolve(deps: ShadowDeps = {}) {
@@ -57,6 +64,11 @@ function resolve(deps: ShadowDeps = {}) {
     isSelected: deps.isSelected ?? storeIsSelected,
     lock: deps.lock ?? (<T>(id: string, fn: () => Promise<T>, onBusy: () => T, token: string) =>
       withShadowLock(id, fn, { onBusy, token, ttlMs: shadowLeaseMs(deps.env ?? process.env) })),
+    chargeSpend: deps.chargeSpend ?? chargeShadowSpend,
+    recordSpendEvent: deps.recordSpendEvent ?? recordShadowSpendEvent,
+    budget: deps.budget ?? shadowBudgetFromEnv(deps.env ?? process.env),
+    // Reads today's counters + this booking's prior attempts into the pure gate's state shape.
+    readSpend: deps.readSpend,
   }
 }
 
@@ -174,6 +186,13 @@ export async function processShadowJob(bookingId: string, deps?: ShadowDeps): Pr
   )
 }
 
+/** Bridge the Redis day-spend counters into the pure gate's state. attemptsForBooking comes
+ *  from the job itself (the counters are day-scoped; per-booking is job-scoped). */
+async function spendStateFromStore(now: number, attemptsForBooking: number): Promise<ShadowSpendState> {
+  const s = await readShadowSpend(now)
+  return { evalsToday: s.evals, costTodayUsd: s.costUsd, attemptsForBooking }
+}
+
 async function processShadowInner(bookingId: string, deps?: ShadowDeps): Promise<{ ok: boolean; status: string; reason?: string }> {
   const d = resolve(deps)
   const env = d.env
@@ -183,6 +202,32 @@ async function processShadowInner(bookingId: string, deps?: ShadowDeps): Promise
   const job = await d.getJob(bookingId)
   if (!job) return { ok: false, status: 'failed', reason: 'no_job' }
   if (!isShadowDue(job, now, shadowLeaseMs(env))) return { ok: false, status: job.status, reason: 'not_due' }
+
+  // ── AI credit-protection gate ────────────────────────────────────────────
+  // Runs BEFORE any state mutation or model call. A blocked job is parked as `retrying` (it
+  // re-checks next tick when a new day's budget frees up or the kill switch lifts) — never
+  // marked failed, because the model did nothing wrong. This gate spends ZERO credits: the
+  // whole point is to stop spend cheaply, before analyzePhotosV2 is ever reached.
+  // Effective budget = env defaults, with the runtime kill override folded in so an owner can
+  // halt inference without a redeploy. A test-injected budget is used verbatim (no store read).
+  const budget: ShadowBudgetLimits = d.budget
+    ? d.budget
+    : { ...shadowBudgetFromEnv(env), killed: await shadowKillEngaged(shadowBudgetFromEnv(env).killed) }
+  const spend: ShadowSpendState = d.readSpend
+    ? await d.readSpend(now)
+    : await spendStateFromStore(now, job.attempts)
+  // attemptsForBooking is always the job's own count — the day counters can't know it, and a
+  // test's readSpend stub shouldn't have to. This is what enforces the per-booking cap.
+  const decision = decideShadowSpend(budget, { ...spend, attemptsForBooking: job.attempts })
+  if (!decision.allowed) {
+    try { await d.recordSpendEvent(now, 'budgetBlocked') } catch { /* counter is best-effort */ }
+    job.status = 'retrying'
+    job.nextRetryAt = now + shadowBackoffMs(job.attempts)
+    job.failureSummary = decision.detail.slice(0, 240)
+    job.updatedAt = now
+    await d.saveJob(job)
+    return { ok: false, status: 'retrying', reason: `budget_${decision.block}` }
+  }
 
   // Enter processing (durable) BEFORE the slow call so a crash is recoverable.
   job.status = 'processing'
@@ -231,31 +276,43 @@ async function processShadowInner(bookingId: string, deps?: ShadowDeps): Promise
   }
 
   if (!v2.ok) {
-    const failure = classifyShadowFailure(v2.outcome)
+    const failure = classifyShadowFailure(v2.outcome, v2.errorClass)
+    const permanent = !SHADOW_TRANSIENT.includes(failure)
     applyFailure(job, failure, `V2 did not return a usable read (${v2.outcome})`, d.now(), maxAttempts)
+    // A PERMANENT failure (billing/auth/schema/unsupported/no-images) is a call we deliberately
+    // will NOT repeat — record it so the dashboard shows credits protected, not just spent. A
+    // transient failure that merely exhausted its attempts is not a "prevented" retry.
+    if (permanent) {
+      try { await d.recordSpendEvent(d.now(), 'preventedRetries') } catch { /* best-effort */ }
+    }
     await d.saveJob(job)
     return { ok: false, status: job.status, reason: v2.outcome }
   }
 
-  // Success — build the deterministic estimate + questions + comparison (model never prices).
+  // The inference SUCCEEDED — that is the part that cost credits. Charge it NOW, before the
+  // deterministic downstream (bridge/compare), so a later throw can never lose the cost record.
+  const wasRetry = job.attempts > 1
+  try { await d.chargeSpend(d.now(), v2.estCostUsd ?? 0, wasRetry) } catch { /* counter is best-effort */ }
+  // Stamp the paid-for telemetry immediately, so it survives even a downstream failure.
+  job.promptVersion = promptVersionNumber(v2.promptVersion) ?? job.promptVersion
+  job.estimatedCostUsd = v2.estCostUsd
+  job.providerUsage = v2.usage
+  job.model = v2.model
+  job.traceId = v2.callId
+  job.latencyMs = v2.latencyMs
+
+  // Deterministic tail: bridge → clarify → compare. These are PURE functions of the stored
+  // analysis, so if one throws it will throw again — retrying the AI call cannot help and would
+  // only re-spend. Priority #3: a downstream failure routes to manual_review (owner-priced),
+  // NEVER back to applyFailure/retry. The model call is made exactly once.
   try {
     const estimate = d.estimate(v2.analysis, { bookingId: b.token, serviceType: b.serviceType })
     const questions = d.clarify(v2.analysis)
     const comparison = buildV2Comparison(estimate, authoritativeBaseline(b), job.groundTruth)
     const endNow = d.now()
     job.status = estimate.manualReviewRequired ? 'manual_review' : 'completed'
-    // Stamp the deployment identity + provider accounting from what ACTUALLY ran, so the
-    // scorecard can tell one prompt version from another and cost analytics has real input.
-    // `estCostUsd` is undefined when the provider reported no usage — persist that as unknown
-    // rather than inventing a number.
-    job.promptVersion = promptVersionNumber(v2.promptVersion) ?? job.promptVersion
-    job.estimatedCostUsd = v2.estCostUsd
-    job.providerUsage = v2.usage
     job.result = { estimate, questions, ok: true, model: v2.model, analysisVersion: estimate.v2?.analysisVersion, promptVersion: job.promptVersion }
     job.comparison = comparison
-    job.model = v2.model
-    job.traceId = v2.callId
-    job.latencyMs = v2.latencyMs
     job.completedAt = endNow
     job.failureCategory = undefined
     job.failureSummary = undefined
@@ -263,9 +320,13 @@ async function processShadowInner(bookingId: string, deps?: ShadowDeps): Promise
     await d.saveJob(job)
     return { ok: true, status: job.status }
   } catch (e) {
-    applyFailure(job, 'internal_error', e instanceof Error ? e.message : 'bridge/compare threw', d.now(), maxAttempts)
+    const endNow = d.now()
+    job.status = 'manual_review'
+    job.completedAt = endNow
+    job.failureSummary = `V2 inference completed and was charged; deterministic processing failed and needs owner review: ${e instanceof Error ? e.message : 'error'}`.slice(0, 240)
+    job.updatedAt = endNow
     await d.saveJob(job)
-    return { ok: false, status: job.status, reason: 'bridge_error' }
+    return { ok: false, status: job.status, reason: 'downstream_error' }
   }
 }
 

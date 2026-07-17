@@ -23,7 +23,10 @@ export function shadowJobId(bookingId: string, photoVersion: number, estimatorVe
 export const DEFAULT_SHADOW_DEADLINE_MS = 210_000       // per-job graceful deadline (3.5m)
 export const DEFAULT_SHADOW_LEASE_MS = 8 * 60_000       // stale-processing reaper (>> maxDuration)
 export const SHADOW_FUNCTION_BUDGET_MS = 285_000        // never start a job past this in one cron run
-export const DEFAULT_SHADOW_MAX_ATTEMPTS = 3
+// One retry only: a transient failure gets exactly one more shot, and a permanent one
+// (billing/auth/schema/unsupported) gets zero. Was 3 — which meant up to ~6 gateway calls
+// on a billing failure that could never succeed.
+export const DEFAULT_SHADOW_MAX_ATTEMPTS = 2
 // Shadow is not urgent — back off generously so retries never crowd real work.
 const SHADOW_BACKOFF_MS = [5 * 60_000, 20 * 60_000]     // 5m, 20m (last value repeats)
 
@@ -138,7 +141,12 @@ export function shadowRetryDecision(attempts: number, failure: V2ShadowFailure, 
 }
 
 /** Map an analyzePhotosV2 outcome / thrown error into the shadow failure taxonomy. */
-export function classifyShadowFailure(outcome: string | undefined): V2ShadowFailure {
+export function classifyShadowFailure(outcome: string | undefined, errorClass?: string): V2ShadowFailure {
+  // errorClass wins when present: a `provider_error` outcome can be a transient blip OR a
+  // permanent billing/auth rejection, and only errorClass distinguishes them. Retrying a
+  // billing failure is pure wasted spend.
+  if (errorClass === 'billing' || errorClass === 'budget') return 'provider_billing'
+  if (errorClass === 'auth') return 'provider_auth'
   switch (outcome) {
     case 'timeout':
     case 'provider_timeout':
@@ -146,8 +154,9 @@ export function classifyShadowFailure(outcome: string | undefined): V2ShadowFail
     case 'rate_limited':
     case 'provider_error':
     case 'provider_unavailable':
-    case 'over_budget':
       return 'provider_unavailable'
+    case 'over_budget':
+      return 'provider_billing'
     case 'image_fetch':
     case 'image_access':
       return 'image_access'
