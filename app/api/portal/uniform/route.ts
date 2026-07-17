@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { put } from '@vercel/blob'
 import { requireCrew } from '../_lib/crew'
-import { saveUniformPhoto, getUniformPhoto } from '../../../lib/uniform'
+import { saveUniformPhoto, getUniformPhoto, listUniformPhotos, uniformStatus } from '../../../lib/uniform'
 import { centralToday } from '../../../lib/dates'
 import { scopeBlobPath, sanitizeBlobSegment } from '../../../lib/platform/tenancy/blob-keys'
 
@@ -23,8 +23,19 @@ export function uniformPhotoBlobPath(staffId: string, id: string, ext: string): 
 export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
-  const photo = await getUniformPhoto(who.staffId, centralToday())
-  return NextResponse.json({ uploaded: !!photo, url: photo?.url ?? null, at: photo?.uploadedAt ?? null })
+  const [photo, history] = await Promise.all([
+    getUniformPhoto(who.staffId, centralToday()),
+    listUniformPhotos(who.staffId, 10),
+  ])
+  return NextResponse.json({
+    uploaded: !!photo,
+    url: photo?.url ?? null,
+    at: photo?.uploadedAt ?? null,
+    status: photo ? uniformStatus(photo) : null,
+    reviewNote: photo?.reviewNote ?? null,
+    reviewedAt: photo?.reviewedAt ?? null,
+    history: history.map((h) => ({ date: h.date, url: h.url, at: h.uploadedAt, status: uniformStatus(h), reviewNote: h.reviewNote ?? null })),
+  })
 })
 
 export const POST = withTenantRoute(async (req: NextRequest) => {

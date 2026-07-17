@@ -8,23 +8,47 @@ import { centralToday } from './dates'
 //
 // Photo bytes live in Vercel Blob (public URL); this stores the pointer + timestamp,
 // mirroring how route.completionPhotos are handled.
+//
+// A photo carries a review status so a manager can approve or bounce it back: a
+// rejected photo prompts the crew member to resubmit (a fresh upload overwrites the
+// day's record and resets the status). Legacy records predate `status` — treat a
+// missing status as 'submitted' (uploaded, not yet reviewed).
+
+export type UniformStatus = 'submitted' | 'approved' | 'rejected'
 
 export type UniformPhoto = {
   staffId: string
   date: string          // YYYY-MM-DD Central
   url: string           // Vercel Blob URL
   uploadedAt: number
+  status?: UniformStatus // absent on legacy records → 'submitted'
+  reviewedAt?: number
+  reviewedBy?: string   // admin/manager sub who reviewed it
+  reviewNote?: string   // e.g. why it was rejected — shown to the crew member
 }
 
 const KEY = (staffId: string, date: string) => `uniform:${staffId}:${date}`
 const INDEX = (staffId: string) => `uniform:idx:${staffId}`
 const scoreOf = (date: string) => Number(date.replace(/-/g, ''))
 
-export async function saveUniformPhoto(staffId: string, url: string, date = centralToday()): Promise<UniformPhoto> {
-  const rec: UniformPhoto = { staffId, date, url, uploadedAt: Date.now() }
-  await redis.set(KEY(staffId, date), JSON.stringify(rec))
-  await redis.zadd(INDEX(staffId), scoreOf(date), date)
+// The effective status of a record (default 'submitted' for legacy rows).
+export const uniformStatus = (p: Pick<UniformPhoto, 'status'> | null | undefined): UniformStatus =>
+  p?.status ?? 'submitted'
+
+// A rejected photo is the only state that asks the crew member to act again.
+export const uniformNeedsResubmit = (p: UniformPhoto | null | undefined): boolean =>
+  !!p && uniformStatus(p) === 'rejected'
+
+async function writeUniformPhoto(rec: UniformPhoto): Promise<UniformPhoto> {
+  await redis.set(KEY(rec.staffId, rec.date), JSON.stringify(rec))
+  await redis.zadd(INDEX(rec.staffId), scoreOf(rec.date), rec.date)
   return rec
+}
+
+// A new upload (or resubmit) — always lands as a fresh 'submitted' photo, clearing
+// any prior review so a bounced photo starts its review over.
+export async function saveUniformPhoto(staffId: string, url: string, date = centralToday()): Promise<UniformPhoto> {
+  return writeUniformPhoto({ staffId, date, url, uploadedAt: Date.now(), status: 'submitted' })
 }
 
 export async function getUniformPhoto(staffId: string, date = centralToday()): Promise<UniformPhoto | null> {
@@ -36,6 +60,24 @@ export async function getUniformPhoto(staffId: string, date = centralToday()): P
 // The suppression signal: has this crew member uploaded today's uniform photo?
 export async function hasUniformToday(staffId: string, date = centralToday()): Promise<boolean> {
   return !!(await getUniformPhoto(staffId, date))
+}
+
+// Manager review — approve or reject an existing photo (does not change the photo
+// itself). Returns null if there's no photo for that day.
+export async function reviewUniformPhoto(
+  staffId: string,
+  date: string,
+  decision: 'approved' | 'rejected',
+  reviewedBy: string,
+  note?: string,
+): Promise<UniformPhoto | null> {
+  const existing = await getUniformPhoto(staffId, date)
+  if (!existing) return null
+  existing.status = decision
+  existing.reviewedAt = Date.now()
+  existing.reviewedBy = reviewedBy
+  existing.reviewNote = note?.trim() || undefined
+  return writeUniformPhoto(existing)
 }
 
 // Recent uploads for a crew profile (most recent first).

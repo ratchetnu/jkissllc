@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Bell, Camera, CheckCircle2, AlertTriangle, Radio } from 'lucide-react'
+import { Bell, Camera, CheckCircle2, AlertTriangle, Radio, Clock3 } from 'lucide-react'
 
 // The crew dashboard tasks feed (request Part 8): today's tasks, urgent dispatch
 // alerts, reminders, and one-tap acknowledgement — plus the daily uniform-photo
@@ -29,8 +29,12 @@ const ACK_BG: Record<string, string> = {
 }
 const ACK_FG: Record<string, string> = { need_help: '#111', having_issues: '#111' }
 
+type UniformInfo = { uploaded: boolean; status: 'submitted' | 'approved' | 'rejected' | null; at: number | null; reviewNote: string | null }
+const fmtTime = (ts: number) => new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+
 export default function CrewTasks() {
   const [feed, setFeed] = useState<Feed | null>(null)
+  const [uniform, setUniform] = useState<UniformInfo | null>(null)
   const [busy, setBusy] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
@@ -38,7 +42,15 @@ export default function CrewTasks() {
   const load = useCallback(async () => {
     try { const r = await fetch('/api/portal/tasks', { credentials: 'same-origin' }); if (r.ok) setFeed(await r.json()) } catch { /* ignore */ }
   }, [])
-  useEffect(() => { load() }, [load])
+  // Kept as a .then chain (not await) so setUniform runs in an async callback, not
+  // synchronously in the effect body.
+  const loadUniform = useCallback(() => {
+    fetch('/api/portal/uniform', { credentials: 'same-origin' })
+      .then(r => r.json())
+      .then(d => setUniform({ uploaded: !!d.uploaded, status: d.status ?? null, at: d.at ?? null, reviewNote: d.reviewNote ?? null }))
+      .catch(() => setUniform({ uploaded: false, status: null, at: null, reviewNote: null }))
+  }, [])
+  useEffect(() => { load(); loadUniform() }, [load, loadUniform])
 
   async function ack(t: Task, kind: string) {
     setBusy(t.id)
@@ -52,7 +64,7 @@ export default function CrewTasks() {
       const dataUrl = await new Promise<string>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result as string); fr.onerror = rej; fr.readAsDataURL(file) })
       const r = await fetch('/api/portal/uniform', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ image: dataUrl }) })
       if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'Upload failed'); return }
-      await load()
+      await Promise.all([load(), Promise.resolve(loadUniform())])
     } finally { setUploading(false) }
   }
 
@@ -62,7 +74,11 @@ export default function CrewTasks() {
   const urgent = pending.filter(t => t.origin === 'dispatch')
   const normal = pending.filter(t => t.origin !== 'dispatch')
   const done = tasks.filter(t => t.ackKind || t.completedAt)
-  const needsUniform = status?.hasActiveRouteToday && !status.uniform && !status.onTimeOff
+
+  // Uniform state (from the dedicated fetch): only relevant on a working day.
+  const uniformDay = !!status?.hasActiveRouteToday && !status?.onTimeOff
+  const uStatus: 'loading' | 'none' | 'submitted' | 'approved' | 'rejected' =
+    !uniform ? 'loading' : !uniform.uploaded ? 'none' : (uniform.status ?? 'submitted')
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -83,8 +99,10 @@ export default function CrewTasks() {
         </div>
       )}
 
-      {/* Uniform upload */}
-      {needsUniform && (
+      {/* Uniform photo — upload, awaiting review, rejected→resubmit. Approved shows
+          only as the status chip below. */}
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden onChange={e => { const f = e.target.files?.[0]; if (f) uploadUniform(f) }} />
+      {uniformDay && uStatus === 'none' && (
         <div className="os-card os-rise" style={{ padding: 16, border: '1px solid rgba(245,158,11,.35)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ width: 40, height: 40, borderRadius: 11, display: 'grid', placeItems: 'center', background: 'rgba(245,158,11,.15)', color: '#fcd34d', flexShrink: 0 }}><Camera size={20} /></div>
@@ -93,9 +111,34 @@ export default function CrewTasks() {
               <p style={{ fontSize: 12.5, color: 'var(--muted)' }}>Before you begin your route.</p>
             </div>
           </div>
-          <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden onChange={e => { const f = e.target.files?.[0]; if (f) uploadUniform(f) }} />
           <button onClick={() => fileRef.current?.click()} disabled={uploading} className="cc-action os-tap" style={{ width: '100%', marginTop: 12, background: '#f59e0b', color: '#111' }}>
             <Camera size={17} /> {uploading ? 'Uploading…' : 'Take / choose photo'}
+          </button>
+        </div>
+      )}
+      {uniformDay && uStatus === 'rejected' && (
+        <div className="os-card os-rise" style={{ padding: 16, border: '1px solid rgba(248,113,113,.4)', background: 'linear-gradient(135deg, rgba(248,113,113,.12), transparent)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 11, display: 'grid', placeItems: 'center', background: 'rgba(248,113,113,.16)', color: '#fca5a5', flexShrink: 0 }}><AlertTriangle size={20} /></div>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontWeight: 800, fontSize: 15 }}>Please resubmit your uniform photo</p>
+              {uniform?.reviewNote && <p style={{ fontSize: 12.5, color: '#fca5a5', marginTop: 2 }}>{uniform.reviewNote}</p>}
+            </div>
+          </div>
+          <button onClick={() => fileRef.current?.click()} disabled={uploading} className="cc-action os-tap" style={{ width: '100%', marginTop: 12, background: '#E0002A', color: '#fff' }}>
+            <Camera size={17} /> {uploading ? 'Uploading…' : 'Retake photo'}
+          </button>
+        </div>
+      )}
+      {uniformDay && uStatus === 'submitted' && (
+        <div className="os-card" style={{ padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 11 }}>
+          <Clock3 size={17} style={{ color: '#fcd34d', flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ fontSize: 13.5, fontWeight: 700 }}>Uniform photo submitted{uniform?.at ? ` · ${fmtTime(uniform.at)}` : ''}</p>
+            <p style={{ fontSize: 12, color: 'var(--muted)' }}>Awaiting review.</p>
+          </div>
+          <button onClick={() => fileRef.current?.click()} disabled={uploading} className="os-tap" style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', borderRadius: 9, padding: '6px 11px', cursor: 'pointer' }}>
+            {uploading ? '…' : 'Replace'}
           </button>
         </div>
       )}
@@ -105,7 +148,11 @@ export default function CrewTasks() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Chip ok={status.confirmed === true} label={status.confirmed ? 'Route confirmed' : 'Confirm route'} />
           <Chip ok={status.clockIn === 'in' || status.clockIn === 'out'} label={status.clockIn === 'out' ? 'Clocked out' : status.clockIn === 'in' ? 'Clocked in' : 'Clock in'} />
-          <Chip ok={status.uniform} label={status.uniform ? 'Uniform ✓' : 'Uniform'} />
+          <Chip
+            ok={uStatus === 'approved'}
+            warn={uStatus === 'rejected'}
+            label={uStatus === 'approved' ? 'Uniform ✓' : uStatus === 'rejected' ? 'Uniform — redo' : uStatus === 'submitted' ? 'Uniform — pending' : 'Uniform'}
+          />
         </div>
       )}
 
@@ -155,9 +202,12 @@ function AckRow({ t, busy, onAck }: { t: Task; busy: string; onAck: (t: Task, ki
   )
 }
 
-function Chip({ ok, label }: { ok: boolean; label: string }) {
+function Chip({ ok, label, warn = false }: { ok: boolean; label: string; warn?: boolean }) {
+  const border = ok ? 'rgba(34,197,94,.4)' : warn ? 'rgba(248,113,113,.45)' : 'var(--line)'
+  const bg = ok ? 'rgba(34,197,94,.12)' : warn ? 'rgba(248,113,113,.12)' : 'transparent'
+  const fg = ok ? '#86efac' : warn ? '#fca5a5' : 'var(--muted)'
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, border: `1px solid ${ok ? 'rgba(34,197,94,.4)' : 'var(--line)'}`, background: ok ? 'rgba(34,197,94,.12)' : 'transparent', color: ok ? '#86efac' : 'var(--muted)' }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, border: `1px solid ${border}`, background: bg, color: fg }}>
       {ok ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />} {label}
     </span>
   )
