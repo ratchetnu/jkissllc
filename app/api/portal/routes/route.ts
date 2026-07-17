@@ -39,6 +39,11 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
         declinedAt: me.declinedAt ?? null,
         clockInAt: me.clockInAt ?? null,
         clockOutAt: me.clockOutAt ?? null,
+        // Who else is on this route — names + roles only (never pay or phone), so a
+        // crew member knows who they're working with. Declined crew are omitted.
+        crew: (r.assignees ?? [])
+          .filter(a => a.staffId !== who.staffId && !a.declinedAt)
+          .map(a => ({ name: a.name, role: a.role ?? null })),
       }
     })
     .filter((x): x is NonNullable<typeof x> => x !== null)
@@ -51,5 +56,5 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
     .sort((a, b) => b.routeDate.localeCompare(a.routeDate))
     .slice(0, 50)
 
-  return NextResponse.json({ ok: true, upcoming, past, showPay })
+  return NextResponse.json({ ok: true, upcoming, past, showPay, today })
 })
