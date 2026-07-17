@@ -33,6 +33,22 @@ export type PlatformAuditAction =
   | 'reconcile.external_deployment_matched'
   | 'reconcile.ambiguous_match'
   | 'status.manual_correction'
+  // Owner responses to AI shadow alerts. Every state change an owner makes to an alert is
+  // attributed here — an alert that was silenced must be explainable months later.
+  | 'shadow_alert.acknowledged'
+  | 'shadow_alert.resolved'
+  | 'shadow_alert.muted'
+  | 'shadow_alert.unmuted'
+  | 'shadow_alert.note_added'
+  | 'shadow_alert.read'
+
+export const SHADOW_ALERT_AUDIT_ACTIONS: readonly PlatformAuditAction[] = [
+  'shadow_alert.acknowledged', 'shadow_alert.resolved', 'shadow_alert.muted',
+  'shadow_alert.unmuted', 'shadow_alert.note_added', 'shadow_alert.read',
+] as const
+
+export const isShadowAlertAuditAction = (a: string): a is PlatformAuditAction =>
+  (SHADOW_ALERT_AUDIT_ACTIONS as readonly string[]).includes(a)
 
 export type PlatformAuditEvent = {
   id: string                       // PAUD-{n}
@@ -44,6 +60,7 @@ export type PlatformAuditEvent = {
   businessId?: string
   updateKey?: string
   jobId?: string
+  alertId?: string                 // SAL-{n} — a shadow alert this event acted on
   deploymentId?: string            // Vercel deployment id
   releaseVersion?: string
   commit?: string
@@ -92,9 +109,9 @@ export async function listPlatformAudit(limit = 200): Promise<PlatformAuditEvent
   return raws.map(parse).filter((x): x is PlatformAuditEvent => x !== null)
 }
 
-/** History filtered to one job/update/business — scans the recent log (no per-ref index). */
+/** History filtered to one job/update/business/alert — scans the recent log (no per-ref index). */
 export async function listPlatformAuditForRef(
-  ref: { jobId?: string; updateKey?: string; businessId?: string },
+  ref: { jobId?: string; updateKey?: string; businessId?: string; alertId?: string },
   limit = 100,
 ): Promise<PlatformAuditEvent[]> {
   const recent = await listPlatformAudit(1000)
@@ -103,6 +120,8 @@ export async function listPlatformAuditForRef(
       (ref.jobId ? e.jobId === ref.jobId : true) &&
       (ref.updateKey ? e.updateKey === ref.updateKey : true) &&
       (ref.businessId ? e.businessId === ref.businessId : true) &&
-      (ref.jobId || ref.updateKey || ref.businessId ? true : false))
+      (ref.alertId ? e.alertId === ref.alertId : true) &&
+      // An empty ref must return nothing — never silently fall back to the whole log.
+      (ref.jobId || ref.updateKey || ref.businessId || ref.alertId ? true : false))
     .slice(0, limit)
 }

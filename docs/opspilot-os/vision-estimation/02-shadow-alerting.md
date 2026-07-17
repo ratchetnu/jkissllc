@@ -152,8 +152,90 @@ telemetry, per-item safety policies, readiness transitions, multi-model and mult
 isolation, business-scope inertness, determinism, dedup, idempotency, recovery, expiry, cooldown,
 `already_handled`, mute, escalation, bucket disjointness, and every owner transition.
 
+---
+
+# Increment 2: API, notification center, background execution
+
+## APIs
+
+| Route | Method | Auth | Gate |
+|---|---|---|---|
+| `/api/admin/shadow-alerts` | GET | `requirePlatformOwner` | `SHADOW_ALERTING_ENABLED` → `{enabled:false}` 200 |
+| `/api/admin/shadow-alerts?format=csv` | GET | `requirePlatformOwner` | same — exports the current filtered view |
+| `/api/admin/shadow-alerts/[id]` | GET | `requirePlatformOwner` | same |
+| `/api/admin/shadow-alerts/[id]` | POST | `requirePlatformOwner` | flag off → **403** (a write is refused, never silently no-op'd) |
+| `/api/cron/shadow-alerts` | GET | `CRON_SECRET` bearer, fail-closed | flag off → cheap no-op, no I/O |
+
+Authorization always runs **before** the flag check — a 401 on an alerting-enabled route proves
+the flag is not what protects it. Non-owners (including a non-owner `admin`) get **403**, not a
+hidden nav item: hiding is never the control.
+
+The list route is **read-only** — it renders what the evaluator already decided and never
+evaluates a policy, so opening the page cannot create an alert. Badge/severity counts come from
+the **full** set, not the filtered slice, so filtering to WARNING can never hide an open CRITICAL.
+
+`app/lib/estimation/shadow-alert-filters.ts` (pure) owns filtering, facets, summary, sort, and
+CSV export — mirroring `shadow-facets.ts`. Invalid query values are dropped rather than 500-ing.
+The CSV carries evidence *about the model* and references evaluations by id; it never inlines raw
+model output about a customer's property.
+
+## UI
+
+`/admin/operations/ai/alerts` (owner-only nav entry, `group: 'platform'`) — the notification
+center: open/unread/critical/escalated counts, readiness card, status tabs, severity/policy/
+model/deployment/business facets, search, date range, CSV export. Deep-links to
+`/admin/operations/ai/alerts/[id]`.
+
+The detail page shows the plain-language summary, the measurement (observed / threshold /
+previous baseline / sample / occurrences), first + most-recent detection, readiness at detection,
+related evaluations (read **live**, so they reflect the owner's latest classification rather than
+a stale copy), notes, the full audit timeline, and a deterministic **recommended owner action**
+per policy type. Any cause is labelled a **hypothesis** — the data shows the gap, not its cause.
+
+Both pages render the API and re-derive nothing. Relative times use the **fetch timestamp**, never
+`Date.now()` during render, and loading is *derived* from the request key rather than set inside an
+effect — so a stale response can never be mistaken for the current one.
+
+## Owner actions (all audited)
+
+`acknowledge` · `resolve` (with reason) · `mute` (**presets only** — 1h/24h/7d/30d; a free-form
+duration is how a "temporary" mute becomes permanent) · `unmute` · `note` · `mark_read`.
+
+Every action writes a `PlatformAuditEvent` with the real action name — `shadow_alert.*` members
+were **added to the union** rather than cast through `as never`, so the trail is type-checked.
+Events carry `alertId`, prior→new status, and the policy/severity/scope in `meta`. An owner
+silencing a CRITICAL safety alert must be explainable months later.
+
+## Background execution
+
+`/api/cron/shadow-alerts`, `*/15`, `maxDuration: 60`, per-tenant fan-out via
+`withBackgroundTenant` — the same shape as `/api/cron/vision-shadow`, on its own budget.
+
+Scheduled rather than event-based **on purpose**: the shadow worker emits at most 1 job per tenant
+per 10-minute tick, so a 15-minute pass detects a condition about as fast as one can arise, and the
+shadow worker path stays untouched. A run holds the Increment 1 lock, so an overlapping tick is a
+no-op (`skipped: 'locked'`) rather than a double-alert; retries are safe because evaluation is
+idempotent. Failures raise `shadow_alert_eval_failed` (WARNING) — deliberately distinct from both
+the authoritative-AI and shadow-worker health signals.
+
+**In-app delivery**: an opened alert IS delivered the moment it is persisted — the Alerts page
+reads the store, so there is no separate transport to fail. `deliveredChannels: ['in_app']` is
+stamped so the record is honest, and gives Increment 3's email transport a list to append to.
+
+**Scheduler health** is surfaced on the page from `shadow:alert:run`. An empty Alerts page means
+"nothing is wrong" only if the last run actually succeeded — so the page says which it is.
+
+## Tests
+
+`scripts/shadow-alert-api.test.ts` — 25 tests: every filter dimension, minSeverity as a floor,
+search, unread, date bounds, sort order, facets, summary (incl. the badge number and the empty
+set), query parsing of garbage, CSV escaping and header stability, the no-raw-output export
+invariant, audit-action union coverage, nav owner-gating, the `isPlatformOwner` matrix, real-route
+401 (unauthenticated), real-route 403 for live admin/manager/crew sessions, owner-reaches-but-flag-
+dormant for GET and POST, cron fail-closed, cron dormancy without touching Redis, and the cron
+schedule registration.
+
 ## Next
 
-- **Increment 2** — cron wiring, owner-only Alerts API + page, audited owner actions, in-app delivery.
-- **Increment 3** — email via `emailRaw` to the owner-alerts recipient, owner preferences, daily/weekly
-  summaries, observability surface.
+- **Increment 3** — email via `emailRaw` to the owner-alerts recipient, owner preferences,
+  daily/weekly summaries, observability surface.
