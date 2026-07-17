@@ -39,6 +39,12 @@ export const SHADOW_TERMINAL: V2ShadowStatus[] = ['completed', 'manual_review', 
 export type V2ShadowFailure =
   | 'provider_timeout'
   | 'provider_unavailable'
+  // Credit/billing exhaustion and auth rejection are PERMANENT until a human acts. They were
+  // previously flattened into `provider_unavailable`, which is transient — so every one of
+  // them was retried at ~2 gateway calls per attempt, burning credits on a call that could
+  // never succeed. That is exactly how the AI Gateway balance was consumed on 2026-07-17.
+  | 'provider_billing'
+  | 'provider_auth'
   | 'invalid_output'
   | 'image_access'
   | 'unsupported_image'
