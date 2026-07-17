@@ -93,3 +93,17 @@ test('photo upload exposes a live status and the submission error is an alert', 
     assert.ok(/\baria-label="[^"]+"/.test(fi), `file input needs an aria-label: ${fi.slice(0, 100)}…`)
   }
 })
+
+test('file inputs stay keyboard-reachable (no display:none / hidden that drops them from tab order)', () => {
+  // A styled <label> wraps each upload; `display:none`/`hidden` on the <input>
+  // removes it from the tab order entirely, so keyboard and screen-reader users
+  // can never open the picker (WCAG 2.1.1). The accessible pattern keeps the input
+  // in the tree via `.file-input-a11y` (visually hidden but focusable). Guard it.
+  const fileInputs = [...src.matchAll(/<input\b[^>]*type="file"[^>]*>/g)].map(m => m[0])
+  assert.ok(fileInputs.length >= 1, 'expected at least one file input')
+  for (const fi of fileInputs) {
+    assert.ok(!/\bhidden\b/.test(fi), `file input must not use the \`hidden\` attribute — use .file-input-a11y: ${fi.slice(0, 100)}…`)
+    assert.ok(!/display:\s*['"]?none/.test(fi), `file input must not be display:none — use .file-input-a11y: ${fi.slice(0, 100)}…`)
+    assert.ok(/\bfile-input-a11y\b/.test(fi), `file input should be visually hidden via .file-input-a11y (keeps it focusable): ${fi.slice(0, 100)}…`)
+  }
+})

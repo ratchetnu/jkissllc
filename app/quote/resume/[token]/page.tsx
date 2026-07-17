@@ -173,10 +173,10 @@ function Resume({ token }: { token: string }) {
               {wantsPhotos && (
                 <div className="glass-card p-5 mb-5" style={{ borderRadius: 18 }}>
                   <p className="font-bold text-white mb-3">Add the photos</p>
-                  <label className="flex flex-col items-center justify-center text-center rounded-2xl" style={{ padding: '30px 20px', cursor: 'pointer', border: '1.5px dashed rgba(255,255,255,.2)' }}>
+                  <label className="file-label flex flex-col items-center justify-center text-center rounded-2xl" style={{ padding: '30px 20px', cursor: 'pointer', border: '1.5px dashed rgba(255,255,255,.2)' }}>
                     <Camera size={24} style={{ color: RED, marginBottom: 8 }} />
                     <span className="font-bold text-white text-sm">Tap to add photos</span>
-                    <input type="file" accept="image/*" multiple hidden onChange={e => { const f = Array.from(e.target.files ?? []); e.target.value = ''; if (f.length) addFiles(f) }} />
+                    <input type="file" aria-label="Add photos of your items" accept="image/*" multiple className="file-input-a11y" onChange={e => { const f = Array.from(e.target.files ?? []); e.target.value = ''; if (f.length) addFiles(f) }} />
                   </label>
                   {photos.length > 0 && (
                     <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mt-3">

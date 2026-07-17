@@ -417,10 +417,10 @@ function AiControlCenter() {
   const { data: a, err, loading, reload } = useJson<Analytics>(needsAnalytics ? '/api/admin/ai/analytics' : null)
 
   return (
-    <div style={{ maxWidth: 940, margin: '0 auto' }}>
-      <div className="os-rise" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+    <div style={{ width: '100%', maxWidth: 940, margin: '0 auto', minWidth: 0 }}>
+      <div className="os-rise" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6, minWidth: 0 }}>
         <Sparkles size={26} style={{ color: 'var(--red-glow)' }} />
-        <h1 className="jkos-h" style={{ fontSize: 'clamp(26px,6vw,38px)', flex: 1 }}>AI Control Center</h1>
+        <h1 className="jkos-h" style={{ fontSize: 'clamp(26px,6vw,38px)', flex: 1, minWidth: 0 }}>AI Control Center</h1>
         {needsAnalytics && <button onClick={reload} className="os-tap" aria-label="Refresh" style={{ ...miniBtn, height: 36 }}><RefreshCw size={15} /> Refresh</button>}
       </div>
       <p className="os-rise" style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16 }}>Enterprise AI operations: observability, cost, quality, prompt management, and A/B — all read-only/draft-only. AI never changes bookings, pay, or claims.</p>

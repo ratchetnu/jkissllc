@@ -1078,7 +1078,7 @@ function StepPhotos(props: {
         onDragOver={e => { e.preventDefault(); props.setDragOver(true) }}
         onDragLeave={() => props.setDragOver(false)}
         onDrop={e => { e.preventDefault(); props.setDragOver(false); if (e.dataTransfer.files?.length) props.onAdd(e.dataTransfer.files) }}
-        className="flex flex-col items-center justify-center text-center rounded-2xl wiz-ease"
+        className="file-label flex flex-col items-center justify-center text-center rounded-2xl wiz-ease"
         style={{ padding: '38px 20px', cursor: 'pointer', border: `1.5px dashed ${props.dragOver ? RED : 'rgba(255,255,255,.18)'}`, background: props.dragOver ? 'rgba(224,0,42,.06)' : 'rgba(255,255,255,.02)' }}
       >
         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 52, height: 52, borderRadius: 999, background: 'rgba(224,0,42,.12)', color: RED, marginBottom: 12 }}>
@@ -1086,7 +1086,7 @@ function StepPhotos(props: {
         </span>
         <p className="font-bold text-white">Tap to take a photo or choose from your library</p>
         <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>JPG, PNG or HEIC · up to {MAX_PHOTOS} photos · ~6MB each</p>
-        <input type="file" aria-label="Upload photos of your items, junk, debris, rooms, or property" accept="image/*" multiple onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; if (files.length) props.onAdd(files) }} style={{ display: 'none' }} />
+        <input type="file" aria-label="Upload photos of your items, junk, debris, rooms, or property" accept="image/*" multiple onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; if (files.length) props.onAdd(files) }} className="file-input-a11y" />
       </label>
 
       {/* How to take useful photos (helps the estimate). */}
@@ -1391,9 +1391,9 @@ function StepReview(props: {
                               <img src={props.bookProof} alt="Your Zelle confirmation" style={{ display: 'block', width: '100%', maxHeight: 220, objectFit: 'contain', background: 'rgba(0,0,0,.2)' }} />
                             </div>
                           ) : null}
-                          <label className="flex items-center justify-center gap-2 rounded-xl px-4 py-3 cursor-pointer text-sm font-semibold" style={{ border: '1px dashed rgba(255,255,255,.25)', color: '#fff' }}>
+                          <label className="file-label flex items-center justify-center gap-2 rounded-xl px-4 py-3 cursor-pointer text-sm font-semibold" style={{ border: '1px dashed rgba(255,255,255,.25)', color: '#fff' }}>
                             <span role="status" aria-live="polite" aria-atomic="true">{props.proofReading ? 'Reading…' : props.bookProof ? '↻ Choose a different screenshot' : '📷 Upload payment screenshot'}</span>
-                            <input type="file" aria-label="Upload your Zelle payment screenshot" aria-busy={props.proofReading} accept="image/jpeg,image/png,image/webp,image/heic,image/heif" hidden onChange={e => { const f = e.target.files?.[0]; if (f) props.onBookProof(f) }} />
+                            <input type="file" aria-label="Upload your Zelle payment screenshot" aria-busy={props.proofReading} accept="image/jpeg,image/png,image/webp,image/heic,image/heif" className="file-input-a11y" onChange={e => { const f = e.target.files?.[0]; if (f) props.onBookProof(f) }} />
                           </label>
                         </div>
                       )}

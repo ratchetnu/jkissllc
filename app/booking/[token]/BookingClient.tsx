@@ -563,9 +563,9 @@ function ManualPaymentForm({ token, balance, deposit, onDone, onCancel }: { toke
               <img src={preview} alt="Your payment confirmation" style={{ display: 'block', width: '100%', maxHeight: 260, objectFit: 'contain', background: 'rgba(0,0,0,.2)' }} />
             </div>
           ) : null}
-          <label className="flex items-center justify-center gap-2 rounded-xl px-4 py-3 cursor-pointer text-sm font-semibold" style={{ border: '1px dashed rgba(255,255,255,.25)', color: 'var(--text)' }}>
-            {reading ? 'Reading…' : preview ? '↻ Choose a different screenshot' : '📷 Upload screenshot'}
-            <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" hidden onChange={onFile} />
+          <label className="file-label flex items-center justify-center gap-2 rounded-xl px-4 py-3 cursor-pointer text-sm font-semibold" style={{ border: '1px dashed rgba(255,255,255,.25)', color: 'var(--text)' }}>
+            <span role="status" aria-live="polite" aria-atomic="true">{reading ? 'Reading…' : preview ? '↻ Choose a different screenshot' : '📷 Upload screenshot'}</span>
+            <input type="file" aria-label="Upload your payment confirmation screenshot" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" className="file-input-a11y" onChange={onFile} />
           </label>
         </div>
       )}
