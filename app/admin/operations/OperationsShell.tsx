@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import { useAdminSession } from '../useAdminSession'
-import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, Settings, LogOut, Search, Plus, Zap, Rocket, Wallet, MoreHorizontal, X, FlaskConical, BellRing, GraduationCap, Sparkles, Send } from 'lucide-react'
+import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, Settings, LogOut, Search, Plus, Zap, Rocket, Wallet, MoreHorizontal, X, FlaskConical, BellRing, GraduationCap, Sparkles, Send, CalendarDays } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import CommandPalette from './CommandPalette'
 import LastLogin from './LastLogin'
@@ -16,6 +16,7 @@ import { NAV_ITEMS, visibleNav, primaryNav, moreGroups } from './nav-config'
 // tabs are hidden by role AND gated server-side on the matching route (hiding is never the control).
 const ICONS: Record<string, LucideIcon> = {
   '/admin/operations': Home,
+  '/admin/operations/schedule': CalendarDays,
   '/admin/operations/book-now': Zap,
   '/admin/operations/list': ClipboardList,
   '/admin/operations/employees': Users,

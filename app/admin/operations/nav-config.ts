@@ -17,6 +17,7 @@ export type NavItem = {
 // Order matters for the desktop dock + the More sheet within each group.
 export const NAV_ITEMS: NavItem[] = [
   { href: '/admin/operations', label: 'Home', group: 'work', primary: true },
+  { href: '/admin/operations/schedule', label: 'Schedule', group: 'work', primary: true },
   { href: '/admin/operations/book-now', label: 'Book Now', group: 'work', primary: true },
   { href: '/admin/operations/list', label: 'Operations', group: 'work', primary: true },
   { href: '/admin/operations/messages', label: 'Messages', group: 'comms', primary: true },
