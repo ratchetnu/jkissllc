@@ -330,7 +330,9 @@ export const FIXTURES: Fixture[] = [
     groundTruth: {
       expectedCategories: ['appliance'], expectedItemCount: 3,
       expectedVolumeCuYd: [2, 4], expectedLoadTier: 'eighth',
-      expectManualReview: false, expectHazard: false, expectSpecialty: false, expectClarification: true,
+      // A refrigerant appliance (refrigerator) is a TRUE specialty — refrigerant recovery
+      // requires certified handling, so it correctly routes to manual review (per policy).
+      expectManualReview: true, expectHazard: false, expectSpecialty: true, expectClarification: true,
     },
   },
 

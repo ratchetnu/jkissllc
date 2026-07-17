@@ -20,6 +20,7 @@
 
 import type { JunkPhotoAnalysisV2, ConfidenceBand } from '../ai/analysis-schema-v2'
 import type { VolumeEstimate } from './types'
+import { detectSpecialty } from './specialty-taxonomy'
 
 export const CONFIDENCE_VERSION = 1
 
@@ -191,10 +192,17 @@ export function computeConfidence(
     manualReviewReasons.push('Possible hazardous materials.')
     capLow()
   }
-  const specialty = (disp.specialtyItems && disp.specialtyItems.length > 0) ||
-    inventory.some((o) => (o.specialHandling ?? []).length > 0)
-  if (specialty && !hazard) {
-    penalize(P.specialty, 'Specialty item (piano / hot tub / safe) needs a handling check.')
+  // TRUE specialty only — match a curated item taxonomy against the model's structured
+  // description/category + explicit specialtyItems. Generic operational notes (a
+  // specialHandling like "2-person lift" / "disassembly" / "e-waste") must NOT trigger a
+  // specialty review, or every ordinary job (desk, boxes, sofa, brush) is forced to manual.
+  const specialtyMatch = detectSpecialty({
+    descriptions: inventory.map((o) => o.description),
+    categories: inventory.map((o) => o.category),
+    specialtyItems: disp.specialtyItems,
+  })
+  if (specialtyMatch && !hazard) {
+    penalize(P.specialty, `Specialty item (${specialtyMatch}) needs a handling check.`)
     manualReviewReasons.push('Specialty item needs a handling check.')
     capMedium()
   }
@@ -256,7 +264,7 @@ export function computeConfidence(
   const manualReview =
     band === 'low' ||
     hazard ||
-    specialty ||
+    !!specialtyMatch ||
     !!v2.manualReviewRequired ||
     manualReviewReasons.length > 0
 
