@@ -26,6 +26,7 @@ import type { ModelMessage } from 'ai'
 import { runAiTask } from './service'
 import { isAllowedPhotoUrl } from '../photo-url'
 import { evaluatePhotoQuality, type PhotoDescriptor, type PhotoQualityGateResult } from './photo-quality-gate'
+import { dedupePhotoUrls } from './photo-dedup'
 import { buildAnalysisV2Prompt, ANALYSIS_V2_PROMPT_VERSION } from './analysis-v2-prompt'
 import {
   normalizeAnalysisV2, reviewFallbackV2,
@@ -58,6 +59,7 @@ export type AnalyzePhotosV2Result = {
 export type AnalyzePhotosV2Deps = {
   runAi?: typeof runAiTask
   evaluateQuality?: typeof evaluatePhotoQuality
+  dedupe?: typeof dedupePhotoUrls
 }
 
 const providerOf = (model: string): string => (model.includes('/') ? model.split('/')[0] : 'vercel-ai-gateway')
@@ -123,7 +125,13 @@ export async function analyzePhotosV2(
   const evaluateQuality = deps.evaluateQuality ?? evaluatePhotoQuality
 
   // Defense-in-depth: only ever hand our own Blob-hosted images to the provider.
-  const photos = (Array.isArray(input.photoUrls) ? input.photoUrls : []).filter(isAllowedPhotoUrl).slice(0, MAX_PHOTOS)
+  const allowed = (Array.isArray(input.photoUrls) ? input.photoUrls : []).filter(isAllowedPhotoUrl).slice(0, MAX_PHOTOS)
+  // Collapse EXACT byte-duplicate uploads before analysis so a repeat photo can never
+  // multiply the inventory/volume (deterministic backstop to prompt rule 4). Fail-open.
+  // Skipped for a single photo — one image can't duplicate itself (also avoids a needless fetch).
+  const dd = allowed.length > 1 ? await (deps.dedupe ?? dedupePhotoUrls)(allowed) : { uniqueUrls: allowed, duplicateCount: 0 }
+  const photos = dd.uniqueUrls
+  if (dd.duplicateCount > 0) console.log(`[analysis-v2] collapsed ${dd.duplicateCount} duplicate photo(s)`)
   const allImageIds =
     Array.isArray(input.imageIds) && input.imageIds.length
       ? photos.map((_, i) => String(input.imageIds![i] ?? `img_${i + 1}`))
