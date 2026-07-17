@@ -98,8 +98,12 @@ export async function generateAI(opts: {
   maxOutputTokens?: number
   temperature?: number
   model?: string          // per-feature routing override (Phase 2); defaults to MODEL
+  timeoutMs?: number      // per-call abort timeout override; defaults to aiCallTimeoutMs(). Callers on a
+                          // longer function budget (e.g. the vision-shadow cron, maxDuration 300s) pass a
+                          // higher value for slow heavy-detail vision calls.
 }): Promise<AiGenResult> {
   const model = opts.model || MODEL
+  const timeoutMs = opts.timeoutMs && opts.timeoutMs > 0 ? opts.timeoutMs : aiCallTimeoutMs()
   try {
     const res = await generateText({
       model,
@@ -107,7 +111,7 @@ export async function generateAI(opts: {
       ...(opts.messages ? { messages: opts.messages } : { prompt: opts.prompt ?? '' }),
       maxOutputTokens: opts.maxOutputTokens ?? 700,
       temperature: opts.temperature ?? 0.5,
-      abortSignal: AbortSignal.timeout(aiCallTimeoutMs()),
+      abortSignal: AbortSignal.timeout(timeoutMs),
     })
     // Usage field naming varies across AI SDK versions — read defensively.
     const u = (res.usage ?? {}) as unknown as Record<string, number | undefined>

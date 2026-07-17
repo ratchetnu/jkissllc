@@ -35,11 +35,12 @@ export type AiTaskInput = {
   messages?: ModelMessage[]        // multimodal / chat input; overrides the prompt string when present
   maxOutputTokens?: number
   temperature?: number
+  timeoutMs?: number               // per-call abort override (slow heavy-detail vision on a long-budget cron)
   requestChars?: number
 }
 
 export type AiTaskDeps = {
-  generate?: (o: { system?: string; prompt?: string; messages?: ModelMessage[]; maxOutputTokens?: number; temperature?: number; model?: string }) => Promise<AiGenResult>
+  generate?: (o: { system?: string; prompt?: string; messages?: ModelMessage[]; maxOutputTokens?: number; temperature?: number; model?: string; timeoutMs?: number }) => Promise<AiGenResult>
   record?: (rec: AiCallRecord) => Promise<void>
   now?: () => number
   isOverBudget?: () => Promise<boolean>
@@ -119,7 +120,7 @@ export async function runAiTask<T = Record<string, unknown>>(input: AiTaskInput,
   while (attempts < maxAttempts) {
     attempts++
     try {
-      gen = await generate({ system: resolved.system, prompt: input.messages ? undefined : resolved.prompt, messages: input.messages, model, maxOutputTokens: input.maxOutputTokens, temperature: input.temperature })
+      gen = await generate({ system: resolved.system, prompt: input.messages ? undefined : resolved.prompt, messages: input.messages, model, maxOutputTokens: input.maxOutputTokens, temperature: input.temperature, timeoutMs: input.timeoutMs })
     } catch (e) {
       gen = { ok: false, error: e instanceof Error ? e.message : 'AI request failed' }
     }
