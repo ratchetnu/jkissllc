@@ -298,9 +298,9 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
             <textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
               placeholder="Optional note — how it went, anything dispatch should know…"
               style={{ width: '100%', padding: '11px 12px', borderRadius: 10, background: 'rgba(255,255,255,.04)', border: '1px solid var(--line)', color: 'var(--text)', fontSize: 14, resize: 'vertical', fontFamily: 'inherit' }} />
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 10, padding: '9px 13px', borderRadius: 10, border: '1px solid var(--line)', background: 'rgba(255,255,255,.03)', fontSize: 13.5, fontWeight: 600, cursor: photos.length >= 6 ? 'not-allowed' : 'pointer', color: 'var(--muted)', opacity: photos.length >= 6 ? .5 : 1 }}>
+            <label className="file-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 10, padding: '9px 13px', borderRadius: 10, border: '1px solid var(--line)', background: 'rgba(255,255,255,.03)', fontSize: 13.5, fontWeight: 600, cursor: photos.length >= 6 ? 'not-allowed' : 'pointer', color: 'var(--muted)', opacity: photos.length >= 6 ? .5 : 1 }}>
               <Camera size={16} /> {uploading ? 'Uploading…' : photos.length >= 6 ? 'Max 6 photos' : 'Add photo'}
-              <input type="file" accept="image/*" capture="environment" multiple onChange={onPickPhotos} style={{ display: 'none' }} disabled={uploading || photos.length >= 6} />
+              <input type="file" aria-label="Add a photo to this route" accept="image/*" capture="environment" multiple onChange={onPickPhotos} className="file-input-a11y" disabled={uploading || photos.length >= 6} />
             </label>
             {photos.length > 0 && (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>

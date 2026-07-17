@@ -77,6 +77,29 @@ img, svg, video, canvas, iframe, embed, object { max-width: 100%; }
   border-radius: 4px;
 }
 
+/* Accessible hidden file input. `display:none`/`hidden` drops a native <input
+   type="file"> out of the tab order entirely, so a styled <label> wrapping it is
+   reachable only by mouse/touch — keyboard and screen-reader users can't open the
+   picker. This keeps the control in the tab order and the accessibility tree
+   (Tab lands on it, Enter/Space opens the picker) while it stays visually hidden
+   behind its label. Pair with `.file-label` so the focus ring shows on the label. */
+.file-input-a11y {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.file-label:focus-within {
+  outline: 2px solid #ff4d6d;
+  outline-offset: 2px;
+}
+
 /* Skeleton loading shimmer */
 .skeleton {
   position: relative;

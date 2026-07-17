@@ -642,9 +642,9 @@ function EmployeeForm({ existing, onDone, onCancel }: { existing?: Staff; onDone
       {!existing && <p style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 12 }}>New crew member</p>}
       <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginBottom: 12 }}>
         <Avatar name={previewStaff.name} photoUrl={previewStaff.photoUrl} size={56} />
-        <label style={{ ...btnSm, cursor: uploading ? 'wait' : 'pointer' }}>
+        <label className="file-label" style={{ ...btnSm, cursor: uploading ? 'wait' : 'pointer' }}>
           <Camera size={14} /> {uploading ? 'Uploading…' : photoUrl ? 'Change photo' : 'Add photo'}
-          <input type="file" accept="image/*" onChange={pickPhoto} style={{ display: 'none' }} disabled={uploading} />
+          <input type="file" aria-label={photoUrl ? 'Change crew photo' : 'Add crew photo'} accept="image/*" onChange={pickPhoto} className="file-input-a11y" disabled={uploading} />
         </label>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10 }}>

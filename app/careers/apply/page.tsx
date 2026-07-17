@@ -292,9 +292,9 @@ export default function ApplyPage() {
                           <p className="text-sm font-bold text-white">{d.label} {docs[d.kind] && <span style={{ color: '#34d399' }}>✓</span>}</p>
                           <p className="text-xs" style={{ color: 'var(--muted)' }}>{d.help}</p>
                         </div>
-                        <label className="btn-ghost" style={{ padding: '9px 14px', fontSize: 13, cursor: docBusy === d.kind ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>
+                        <label className="file-label btn-ghost" style={{ padding: '9px 14px', fontSize: 13, cursor: docBusy === d.kind ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>
                           {docBusy === d.kind ? 'Uploading…' : docs[d.kind] ? 'Replace' : '📷 Upload'}
-                          <input type="file" accept="image/*" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) uploadDoc(d.kind, f) }} disabled={docBusy === d.kind} style={{ display: 'none' }} />
+                          <input type="file" aria-label={`Upload ${d.label}`} accept="image/*" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) uploadDoc(d.kind, f) }} disabled={docBusy === d.kind} className="file-input-a11y" />
                         </label>
                       </div>
                       {previews[d.kind] && (

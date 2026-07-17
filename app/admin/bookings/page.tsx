@@ -2036,9 +2036,9 @@ function BookingForm({ booking, prefill, onClose, onSaved }: { booking?: Booking
       {/* ── Invoice photos ─────────────────────────────────────────── */}
       <div>
         <label style={lab}>Invoice Photos</label>
-        <label className="btn-ghost" style={{ padding: '12px 18px', fontSize: 14, cursor: uploading ? 'wait' : 'pointer', display: 'inline-flex' }}>
+        <label className="file-label btn-ghost" style={{ padding: '12px 18px', fontSize: 14, cursor: uploading ? 'wait' : 'pointer', display: 'inline-flex' }}>
           {uploading ? 'Uploading…' : photos.length ? '+ Add More Photos' : '+ Add Photos'}
-          <input type="file" accept="image/*" multiple onChange={onPickFiles} disabled={uploading} style={{ display: 'none' }} />
+          <input type="file" aria-label="Add invoice photos" accept="image/*" multiple onChange={onPickFiles} disabled={uploading} className="file-input-a11y" />
         </label>
         {uploadErr && <p className="text-sm mt-2" style={{ color: '#f87171' }}>{uploadErr}</p>}
         {photos.length > 0 && (
