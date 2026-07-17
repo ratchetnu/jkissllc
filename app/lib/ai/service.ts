@@ -5,7 +5,7 @@ import { tenantId } from '../tenant'
 import { getPrompt } from './prompts'
 import { resolvePrompt, type ResolvedPrompt } from './prompt-store'
 import { validateJson, type ObjectSchema } from './schema'
-import { recordAiCall, estimateCostUsd, type AiCallRecord, type AiCallOutcome, type CostSource } from './telemetry'
+import { recordAiCall, estimateCostDetailed, type AiCallRecord, type AiCallOutcome, type CostSource, type AiCallKind } from './telemetry'
 import { modelForFeature } from './routing'
 import { overBudget, addCost } from './budget'
 import { scoreResponse, type QualityResult } from './quality'
@@ -37,6 +37,12 @@ export type AiTaskInput = {
   temperature?: number
   timeoutMs?: number               // per-call abort override (slow heavy-detail vision on a long-budget cron)
   requestChars?: number
+  // ── Telemetry attribution (all optional; recorded when supplied) ──
+  kind?: AiCallKind                // primary (default) | shadow | fallback | mock | suppressed
+  bookingId?: string               // joins the audit row back to the booking it served
+  jobId?: string                   // durable job / idempotency key this call served
+  imageCount?: number              // images sent to the model (multimodal cost driver)
+  queuedAt?: number                // when the work was enqueued — for queue-latency accounting
 }
 
 export type AiTaskDeps = {
@@ -82,12 +88,15 @@ export async function runAiTask<T = Record<string, unknown>>(input: AiTaskInput,
   const callId = crypto.randomUUID()
   const builtinVersion = getPrompt(input.taskId).version   // throws on unknown taskId (guarded by tests)
 
+  const at = now()
   const base: Omit<AiCallRecord, 'ok' | 'outcome'> = {
-    id: callId, at: now(), tenantId: tid,
+    id: callId, at, tenantId: tid,
     actor: input.principal?.sub ?? 'public', role: input.principal?.role ?? 'public',
     feature: input.feature, taskId: input.taskId, promptVersion: builtinVersion,
     model: '', latencyMs: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0,
     estCostUsd: 0, requestChars: input.requestChars ?? 0, responseValid: false,
+    kind: input.kind ?? 'primary', bookingId: input.bookingId, jobId: input.jobId,
+    imageCount: input.imageCount, queuedAt: input.queuedAt, createdAt: at,
   }
   const write = async (rec: AiCallRecord) => { try { await record(rec) } catch (e) { console.error('[ai/service] telemetry', e) } }
 
@@ -113,7 +122,7 @@ export async function runAiTask<T = Record<string, unknown>>(input: AiTaskInput,
 
   // 4) per-feature model + 5) model call with fail-soft retries.
   const model = modelForFeature(input.feature)
-  const start = now()
+  const startedAt = now()
   let gen: AiGenResult = { ok: false, error: 'not run' }
   let attempts = 0
   let lastClass = 'other'
@@ -128,18 +137,25 @@ export async function runAiTask<T = Record<string, unknown>>(input: AiTaskInput,
     lastClass = classifyError(gen.error)
     if (!isTransient(lastClass)) break   // don't retry permanent failures (billing/auth/bad request)
   }
-  const latencyMs = Math.max(0, now() - start)
+  const completedAt = now()
+  const latencyMs = Math.max(0, completedAt - startedAt)   // processing latency (model call)
   const retried = attempts > 1
+  // Queue + total latency (only meaningful when the caller supplied queuedAt).
+  const queueLatencyMs = input.queuedAt != null ? Math.max(0, startedAt - input.queuedAt) : undefined
+  const totalLatencyMs = input.queuedAt != null ? Math.max(0, completedAt - input.queuedAt) : latencyMs
+  const timing = { startedAt, completedAt, queueLatencyMs, totalLatencyMs }
 
   if (!gen.ok) {
-    await write({ ...versioned, ok: false, outcome: 'provider_error', error: gen.error, errorClass: lastClass, latencyMs, model, attempts, retried })
+    await write({ ...versioned, ok: false, outcome: 'provider_error', error: gen.error, errorClass: lastClass, providerErrorCode: gen.errorKind ?? lastClass, latencyMs, model, attempts, retried, ...timing })
     // errorClass is the ONLY thing that distinguishes a retryable blip from a permanent
     // billing/auth rejection. Callers need it to decide whether a retry can ever succeed.
     return { ok: false, error: gen.error, status: 503, callId, outcome: 'provider_error', errorClass: lastClass }
   }
 
-  // 6) Cost reconciliation: provider-reported cost when available, else estimate.
-  const estCostUsd = estimateCostUsd(gen.model, gen.usage.inputTokens, gen.usage.outputTokens)
+  // 6) Cost reconciliation: provider-reported cost when available, else estimate. The
+  // estimate carries its provenance (which cost sheet, whether the rate was a fallback).
+  const cost = estimateCostDetailed(gen.model, gen.usage.inputTokens, gen.usage.outputTokens)
+  const estCostUsd = cost.usd
   const hasActual = typeof gen.providerCostUsd === 'number' && Number.isFinite(gen.providerCostUsd)
   const costSource: CostSource = hasActual ? 'actual' : 'estimated'
   const chargedCost = hasActual ? (gen.providerCostUsd as number) : estCostUsd
@@ -149,9 +165,10 @@ export async function runAiTask<T = Record<string, unknown>>(input: AiTaskInput,
   const quality = score(input.feature, gen.text)
 
   const usageBase: Omit<AiCallRecord, 'ok' | 'outcome' | 'responseValid'> = {
-    ...versioned, model: gen.model, latencyMs, attempts, retried,
+    ...versioned, model: gen.model, latencyMs, attempts, retried, ...timing,
     inputTokens: gen.usage.inputTokens, outputTokens: gen.usage.outputTokens, totalTokens: gen.usage.totalTokens,
     estCostUsd, actualCostUsd: hasActual ? (gen.providerCostUsd as number) : undefined, costSource,
+    costTableVersion: cost.tableVersion, rateFallback: cost.rateFallback,
     qualityScore: quality.score, qualityFlags: quality.flags,
   }
 

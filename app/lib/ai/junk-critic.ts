@@ -61,6 +61,8 @@ export async function reviewJunkAnalysis(input: {
   const res = await runAiTask({
     taskId: 'ops.junkAnalysisReview', feature: 'ops.junkAnalysisReview',
     vars: {}, messages, maxOutputTokens: 500, temperature: 0.1, requestChars: photos.join(',').length,
+    // Telemetry attribution: an independent second-opinion (fallback/backup) pass.
+    kind: 'fallback', imageCount: photos.length,
   })
   if (!res.ok) return null
 
