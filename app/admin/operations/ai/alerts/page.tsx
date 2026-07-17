@@ -168,7 +168,7 @@ function AlertsInner() {
                style={{ ...seg, border: '1px solid var(--line)', borderRadius: 9, textDecoration: 'none', color: 'var(--text)' }}>
               Export CSV
             </a>
-            <Link href="/admin/operations/ai/shadow" style={{ ...seg, border: '1px solid var(--line)', borderRadius: 9, textDecoration: 'none', color: 'var(--text)' }}>
+            <Link href="/admin/operations/ai/performance" style={{ ...seg, border: '1px solid var(--line)', borderRadius: 9, textDecoration: 'none', color: 'var(--text)' }}>
               Shadow Analytics →
             </Link>
           </div>
@@ -305,7 +305,7 @@ function ReadinessCard({ r }: { r: { tier: string; score: number; evaluated: num
       {r.blockers.length > 0 && (
         <div style={{ fontSize: 12, color: '#f87171', flex: '1 1 240px' }}>Blockers: {r.blockers.join(' ')}</div>
       )}
-      <Link href="/admin/operations/ai/shadow" style={{ ...seg, marginLeft: 'auto', border: '1px solid var(--line)', borderRadius: 9, textDecoration: 'none', color: 'var(--text)' }}>
+      <Link href="/admin/operations/ai/performance" style={{ ...seg, marginLeft: 'auto', border: '1px solid var(--line)', borderRadius: 9, textDecoration: 'none', color: 'var(--text)' }}>
         Readiness detail →
       </Link>
     </div>

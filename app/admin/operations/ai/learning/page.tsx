@@ -48,7 +48,6 @@ type Payload = {
   explorer?: { matched: number; rows: ExplorerRow[] }
 }
 
-const BOARDS = [{ k: 'byPromptVersion', label: 'Prompt version' }, { k: 'byModel', label: 'Model' }, { k: 'byDeployment', label: 'Deployment' }, { k: 'byEstimatorVersion', label: 'Estimator' }] as const
 
 export default function LearningPage() {
   return <Suspense fallback={null}><Inner /></Suspense>
@@ -61,8 +60,6 @@ function Inner() {
   const [category, setCategory] = useState(sp.get('category') ?? '')
   const [outcome, setOutcome] = useState(sp.get('outcome') ?? '')
   const [qDraft, setQDraft] = useState(sp.get('q') ?? '')
-  const [board, setBoard] = useState<typeof BOARDS[number]['k']>('byPromptVersion')
-  const [trend, setTrend] = useState<'weekly' | 'monthly'>('weekly')
 
   const [q, setQ] = useState(qDraft)
   useEffect(() => { const t = setTimeout(() => setQ(qDraft), 400); return () => clearTimeout(t) }, [qDraft])
@@ -106,12 +103,12 @@ function Inner() {
       <div style={{ display: 'grid', gap: 14, paddingBottom: 40 }}>
         <header style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
           <div>
-            <h1 style={{ fontSize: 20, fontWeight: 800, margin: 0 }}>🎓 AI Learning</h1>
-            <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--muted)' }}>Why estimates differ, and whether V2 is improving. Derived entirely from recorded evaluations — no AI is run here.</p>
+            <h1 style={{ fontSize: 20, fontWeight: 800, margin: 0 }}>🎓 Review &amp; Learning</h1>
+            <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--muted)' }}>Recorded owner feedback and validated readiness evidence. Nothing here retrains a model — it is the accumulated record of what you reviewed. Accuracy trends live in Performance. No AI is run here.</p>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <a href={`/api/admin/shadow-learning?${query}${query ? '&' : ''}format=csv`} style={{ ...seg, border: '1px solid var(--line)', borderRadius: 9, textDecoration: 'none', color: 'var(--text)' }}>Export CSV</a>
-            <Link href="/admin/operations/ai/shadow" style={{ ...seg, border: '1px solid var(--line)', borderRadius: 9, textDecoration: 'none', color: 'var(--text)' }}>Shadow Analytics →</Link>
+            <Link href="/admin/operations/ai/performance" style={{ ...seg, border: '1px solid var(--line)', borderRadius: 9, textDecoration: 'none', color: 'var(--text)' }}>Performance →</Link>
           </div>
         </header>
 
@@ -162,7 +159,7 @@ function Inner() {
             {/* Recommendations */}
             {(data.recommendations?.length ?? 0) > 0 && (
               <div style={{ ...card, display: 'grid', gap: 8 }}>
-                <span style={lab}>Recommendations (deterministic — no AI)</span>
+                <span style={lab}>Learning signals (deterministic, from recorded feedback — no AI)</span>
                 {data.recommendations!.map((rec, i) => (
                   <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12.5 }}>
                     <span style={{ fontSize: 9.5, fontWeight: 800, padding: '2px 6px', borderRadius: 5, marginTop: 1, color: REC_COLOR[rec.severity], background: `color-mix(in srgb, ${REC_COLOR[rec.severity]} 15%, transparent)`, border: `1px solid color-mix(in srgb, ${REC_COLOR[rec.severity]} 35%, transparent)` }}>{rec.severity.toUpperCase()}</span>
@@ -172,44 +169,18 @@ function Inner() {
               </div>
             )}
 
-            {/* Trends */}
-            <div style={{ ...card, display: 'grid', gap: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <span style={lab}>Accuracy trend</span>
-                <div style={{ display: 'inline-flex', border: '1px solid var(--line)', borderRadius: 8, overflow: 'hidden' }}>
-                  {(['weekly', 'monthly'] as const).map((t) => (
-                    <button key={t} onClick={() => setTrend(t)} style={{ ...seg, ...(trend === t ? { background: 'var(--text)', color: 'var(--card)' } : {}) }}>{t}</button>
-                  ))}
-                </div>
-                <div style={{ marginLeft: 'auto', display: 'flex', gap: 14, fontSize: 11 }}>
-                  <Legend c={V1C} label="V1 error" /><Legend c={V2C} label="V2 error" />
-                </div>
-              </div>
-              <TrendChart buckets={data.trends?.[trend] ?? []} />
-            </div>
-
-            {/* Leaderboard */}
-            <div style={{ ...card, display: 'grid', gap: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <span style={lab}>Performance leaderboard</span>
-                <select value={board} onChange={(e) => setBoard(e.target.value as typeof board)} style={selectStyle}>
-                  {BOARDS.map((b) => <option key={b.k} value={b.k}>{b.label}</option>)}
-                </select>
-              </div>
-              <Leaderboard rows={data.leaderboards?.[board] ?? []} />
-            </div>
-
-            {/* Category heatmap */}
+            {/* Recurring failure patterns — owner-tagged categories, worst first. This is the
+                learning signal: where reviewed evaluations cluster, not a live accuracy metric. */}
             {(data.heatmap?.length ?? 0) > 0 && (
               <div style={{ ...card, display: 'grid', gap: 8 }}>
-                <span style={lab}>Problem areas by category (worst first)</span>
+                <span style={lab}>Recurring failure patterns (from owner categories)</span>
                 <Heatmap cats={data.heatmap!} />
               </div>
             )}
 
             {/* Accuracy explorer */}
             <div style={{ ...card, display: 'grid', gap: 10 }}>
-              <span style={lab}>Accuracy explorer</span>
+              <span style={lab}>Reviewed examples &amp; ground-truth history</span>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 <input value={qDraft} onChange={(e) => setQDraft(e.target.value)} placeholder="Search booking, note, category…" style={{ ...inputStyle, flex: '1 1 180px' }} />
                 <select value={outcome} onChange={(e) => setOutcome(e.target.value)} style={selectStyle}>
@@ -256,59 +227,6 @@ function WinBar({ v2, v1, tie }: { v2: number | null; v1: number | null; tie: nu
 }
 
 // A twin-line trend: V1 error and V2 error per bucket (one y-axis, % error, lower is better).
-function TrendChart({ buckets }: { buckets: TB[] }) {
-  const W = 640, H = 150, PAD = 24
-  const withData = buckets.filter((b) => b.count > 0)
-  if (withData.length < 2) return <div style={{ fontSize: 12, color: 'var(--muted)' }}>Not enough dated evaluations to chart a trend yet.</div>
-  const all = buckets.flatMap((b) => [b.avgV1ErrorPct, b.avgV2ErrorPct]).filter((x): x is number => typeof x === 'number')
-  const max = Math.max(10, ...all)
-  const x = (i: number) => PAD + (i / Math.max(1, buckets.length - 1)) * (W - 2 * PAD)
-  const y = (v: number) => H - PAD - (v / max) * (H - 2 * PAD)
-  // Build a polyline over the points that HAVE a value, so a gap (no evaluations that period)
-  // doesn't yank the line to zero. First plotted point is a moveto, the rest lineto.
-  const path = (key: 'avgV1ErrorPct' | 'avgV2ErrorPct') => {
-    const pts = buckets.map((b, i) => ({ i, v: b[key] })).filter((p): p is { i: number; v: number } => typeof p.v === 'number')
-    return pts.map((p, k) => `${k === 0 ? 'M' : 'L'}${x(p.i)},${y(p.v)}`).join(' ')
-  }
-  return (
-    <div style={{ overflowX: 'auto' }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: 420 }} role="img" aria-label="Accuracy trend: V1 and V2 error per period">
-        <line x1={PAD} y1={H - PAD} x2={W - PAD} y2={H - PAD} stroke="var(--line)" />
-        <path d={path('avgV1ErrorPct')} fill="none" stroke={V1C} strokeWidth={2} />
-        <path d={path('avgV2ErrorPct')} fill="none" stroke={V2C} strokeWidth={2} />
-        {buckets.map((b, i) => <text key={i} x={x(i)} y={H - 6} fontSize={8} fill="var(--muted)" textAnchor="middle">{b.label}</text>)}
-        <text x={PAD} y={12} fontSize={8} fill="var(--muted)">{max}% err</text>
-      </svg>
-    </div>
-  )
-}
-
-function Leaderboard({ rows }: { rows: Row[] }) {
-  if (!rows.length) return <div style={{ fontSize: 12, color: 'var(--muted)' }}>No benchmarked evaluations to rank yet.</div>
-  return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 460 }}>
-        <thead><tr style={{ color: 'var(--muted)', textAlign: 'left' }}>
-          {['Version', 'n', 'Avg err', 'Median', 'Improvement', 'Win rate', 'Confidence'].map((h) => <th key={h} style={{ padding: '4px 8px', fontSize: 10, textTransform: 'uppercase', letterSpacing: '.04em' }}>{h}</th>)}
-        </tr></thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.key} style={{ borderTop: '1px solid var(--line)' }}>
-              <td style={{ padding: '6px 8px', fontWeight: 700 }}>{r.label}</td>
-              <td style={{ padding: '6px 8px' }}>{r.sampleSize}</td>
-              <td style={{ padding: '6px 8px' }}>{pct(r.avgErrorPct)}</td>
-              <td style={{ padding: '6px 8px' }}>{pct(r.medianErrorPct)}</td>
-              <td style={{ padding: '6px 8px', color: (r.avgImprovementPct ?? 0) >= 0 ? V2C : V1C }}>{pct(r.avgImprovementPct)}</td>
-              <td style={{ padding: '6px 8px' }}>{pct(r.winRatePct)}</td>
-              <td style={{ padding: '6px 8px' }}>{r.avgConfidence != null ? `${Math.round(r.avgConfidence * 100)}%` : '—'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
 function Heatmap({ cats }: { cats: Cat[] }) {
   const max = Math.max(1, ...cats.map((c) => c.avgErrorPct ?? 0))
   return (
@@ -343,7 +261,7 @@ function ExplorerTable({ rows }: { rows: ExplorerRow[] }) {
         <tbody>
           {rows.map((e) => (
             <tr key={e.bookingId} style={{ borderTop: '1px solid var(--line)' }}>
-              <td style={{ padding: '6px 8px' }}><Link href={`/admin/operations/ai/shadow/${e.bookingId}`} style={{ color: NEUTRAL, textDecoration: 'none' }}>{e.bookingNumber ?? e.bookingId.slice(0, 8)}</Link></td>
+              <td style={{ padding: '6px 8px' }}><Link href={`/admin/operations/ai/eval/${e.bookingId}`} style={{ color: NEUTRAL, textDecoration: 'none' }}>{e.bookingNumber ?? e.bookingId.slice(0, 8)}</Link></td>
               <td style={{ padding: '6px 8px' }}>{usd(e.groundTruthUsd)}</td>
               <td style={{ padding: '6px 8px' }}>{usd(e.v1Usd)}</td>
               <td style={{ padding: '6px 8px' }}>{usd(e.v2Usd)}</td>

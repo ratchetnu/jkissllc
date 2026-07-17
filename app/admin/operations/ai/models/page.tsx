@@ -17,7 +17,7 @@ export default function AIModelsSectionPage() {
           <p style={{ margin: 0, fontSize: 13, color: 'var(--muted)', lineHeight: 1.5 }}>
             A read-only registry ranking every estimator, prompt, model, and deployment version by accuracy,
             win rate, median error, confidence, sample size, and cost is being assembled here. Until it lands,
-            per-version performance is in <Link href="/admin/operations/ai/shadow" style={{ color: '#93c5fd', textDecoration: 'none' }}>Performance → leaderboard</Link> and
+            per-version performance is in <Link href="/admin/operations/ai/performance" style={{ color: '#93c5fd', textDecoration: 'none' }}>Performance → leaderboard</Link> and
             the live-model registry is in <Link href="/admin/operations/ai/controls" style={{ color: '#93c5fd', textDecoration: 'none' }}>Usage &amp; Controls</Link>. No model is ever promoted from here.
           </p>
         </div>
