@@ -85,4 +85,3 @@ export function getEventDef(event: CommEvent): CommEventDef {
 export function isCommEvent(v: unknown): v is CommEvent {
   return typeof v === 'string' && v in EVENT_BY_ID
 }
-</content>

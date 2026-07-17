@@ -272,4 +272,3 @@ export function renderTemplate(event: CommEvent, ctx: CommContext, channels?: Co
 export function previewTemplate(event: CommEvent, ctx?: Partial<CommContext>): Rendered {
   return renderTemplate(event, withSample(ctx))
 }
-</content>

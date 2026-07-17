@@ -40,4 +40,3 @@ export function emailShell(heading: string, innerHtml: string): string {
 export function unsubLine(): string {
   return `<p style="color:#aaa;font-size:11px;margin:14px 0 0">You're receiving this because you have an active job with ${esc(COMPANY.legalName)}. Reply STOP to any text to opt out of reminders.</p>`
 }
-</content>

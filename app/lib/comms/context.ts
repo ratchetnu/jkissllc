@@ -71,4 +71,3 @@ export const SAMPLE_CONTEXT: Readonly<CommContext> = Object.freeze({
 export function withSample(ctx?: Partial<CommContext>): CommContext {
   return { ...SAMPLE_CONTEXT, ...(ctx ?? {}) }
 }
-</content>
