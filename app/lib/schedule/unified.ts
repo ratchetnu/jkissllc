@@ -11,10 +11,21 @@
 // records and calls the projectors here; nothing is persisted, so there is no
 // duplicate job to keep in sync and no historical data to migrate. Source records
 // stay the owners of their own detail (photos, quotes, AI, confirmations, pay).
+//
+// MULTI-INDUSTRY BY DESIGN (Operion editions). The core `ScheduleItem` is a GENERIC
+// operational job — it carries a `serviceKey` slug + human `serviceLabel` + an open
+// `meta` bag, never an industry-specific enum. Each source (a customer Booking, a
+// contract Route, and any future intake — HVAC, plumbing, electrical, roofing,
+// landscaping, pest control, cleaning, general field service) is projected by its
+// own ADAPTER function (`bookingToScheduleItem`, `routeToScheduleItem`, …). Adding a
+// new edition = adding a new adapter that fills the SAME generic shape; the schedule
+// engine, conflict detection, API, and UI need no change. Conflict detection is
+// service-agnostic (it reasons over crew / vehicle / equipment / time only), so it
+// works for every edition unchanged. See docs/opspilot-os/unified-schedule-multi-industry.md.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import {
-  type Booking, type BookingStatus, type ServiceType,
+  type Booking, type BookingStatus,
   BOOKING_STATUS_LABEL, SERVICE_LABELS,
   effectiveServiceDate, netInvoiceCents, balanceDueCents, paymentSummaryStatus,
   type PaymentSummaryStatus,
@@ -57,6 +68,13 @@ export type ScheduleCrew = {
   confirmed?: boolean
 }
 
+// Open, service-specific metadata bag. A junk-removal job puts loadSize here; a
+// freight job would put weight; an HVAC job a unit model — WITHOUT changing the
+// core schema. Values are display-safe scalars only. The UI renders these as
+// generic "chips" and never assumes a particular industry's keys exist.
+export type ScheduleMeta = Record<string, string | number | boolean>
+export type ScheduleMetaField = { label: string; value: string }
+
 export type ScheduleItem = {
   id: string                     // stable, unique across sources: `${kind}:${sourceRecordId}`
   kind: ScheduleKind
@@ -64,8 +82,9 @@ export type ScheduleItem = {
   sourceRecordId: string         // booking token / route token
   number: string                 // JK-B-1042 / JK-R-1001
 
-  serviceType?: ServiceType
-  serviceLabel: string
+  serviceKey?: string            // GENERIC service slug (e.g. 'junk-removal', 'hvac', 'contract-route')
+  serviceLabel: string           // human display label — industry-neutral to render
+  meta: ScheduleMetaField[]      // service-specific detail as generic label/value chips
   title: string                  // customer name (booking) or business name (route)
   address?: string
 
@@ -165,6 +184,13 @@ export function bookingToScheduleItem(b: Booking): ScheduleItem {
   const placementDate = scheduled ? date : (requestedDate ?? '')
   const sortMinutes = parseTimeToMinutes(timeLabel) ?? UNTIMED
 
+  // Service-specific detail as generic chips — the engine/UI never assume these keys.
+  const meta: ScheduleMetaField[] = []
+  if (b.bookNow?.loadSizeLabel) meta.push({ label: 'Load', value: b.bookNow.loadSizeLabel })
+  if (typeof b.jobUnits === 'number') meta.push({ label: 'Units', value: String(b.jobUnits) })
+  if (typeof b.estimatedHours === 'number') meta.push({ label: 'Est. hours', value: String(b.estimatedHours) })
+  if (b.bookNow?.addOns?.length) meta.push({ label: 'Add-ons', value: b.bookNow.addOns.join(', ') })
+
   return {
     id: `booking:${b.token}`,
     kind: 'booking',
@@ -172,8 +198,9 @@ export function bookingToScheduleItem(b: Booking): ScheduleItem {
     sourceRecordId: b.token,
     number: b.bookingNumber,
 
-    serviceType: b.serviceType,
+    serviceKey: b.serviceType,
     serviceLabel: SERVICE_LABELS[b.serviceType] ?? 'Service',
+    meta,
     title: b.customerName || 'Customer',
     address: b.jobSiteAddress || b.pickupAddress || b.dropoffAddress || undefined,
 
@@ -230,8 +257,9 @@ export function routeToScheduleItem(r: RouteRecord): ScheduleItem {
     sourceRecordId: r.token,
     number: r.routeNumber,
 
-    serviceType: undefined,
+    serviceKey: 'contract-route',
     serviceLabel: 'Contract Route',
+    meta: r.description ? [{ label: 'Detail', value: r.description.slice(0, 80) }] : [],
     title: r.businessName || 'Route',
     address: r.reportAddress || undefined,
 

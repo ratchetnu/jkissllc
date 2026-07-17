@@ -9,8 +9,8 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-import type { Booking, BookingStatus, ServiceType } from '../app/lib/bookings'
-import type { RouteRecord, Assignee, RouteStatus } from '../app/lib/routes'
+import type { Booking, BookingStatus } from '../app/lib/bookings'
+import type { RouteRecord, Assignee } from '../app/lib/routes'
 import {
   bookingToScheduleItem, routeToScheduleItem, mergeSchedule,
   itemsForDay, itemsInRange, unscheduledItems, pendingItems, scheduleCounts,
@@ -311,6 +311,32 @@ test('conflictsByItem and summarize aggregate correctly', () => {
   const s = summarizeConflicts(conflicts)
   assert.equal(s.total, conflicts.length)
   assert.equal(s.errors + s.warnings, conflicts.length)
+})
+
+// ── multi-industry / service-agnostic engine (Operion editions) ──────────────
+test('the core item is generic: any service projects via serviceKey + label + meta chips', () => {
+  const it = bookingToScheduleItem(booking({
+    serviceType: 'moving',
+    jobUnits: 3, estimatedHours: 4,
+    bookNow: { loadSizeLabel: 'Half Truck', addOns: ['Piano', 'Stairs'] },
+  }))
+  assert.equal(it.serviceKey, 'moving')
+  assert.equal(it.serviceLabel, 'Moving Service')
+  // Service-specific detail is generic label/value chips — no industry assumption.
+  const labels = it.meta.map(m => m.label)
+  assert.ok(labels.includes('Load') && labels.includes('Units') && labels.includes('Add-ons'))
+})
+
+test('conflict detection is service-agnostic — a crew clash fires across different service types', () => {
+  const day = '2026-07-20'
+  const conflicts = detectConflicts(mergeSchedule({
+    bookings: [
+      // Two entirely different "editions" sharing one crew member at overlapping times.
+      booking({ serviceType: 'moving', status: 'confirmed', selectedDate: day, selectedWindow: '8:00 AM', jobSiteAddress: 'A St', assignedTo: 'Sam' }),
+      booking({ serviceType: 'estate-cleanout', status: 'confirmed', selectedDate: day, selectedWindow: '8:30 AM', jobSiteAddress: 'B St', assignedTo: 'Sam' }),
+    ],
+  }))
+  assert.equal(conflicts.filter(c => c.type === 'crew_overlap').length, 1)
 })
 
 // ── no AI on the scheduling path (Phase 11 hard requirement) ─────────────────
