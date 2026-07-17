@@ -55,6 +55,20 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
   //
   // Recording ground truth runs ZERO inference: refreshComparison rebuilds the verdict from
   // the STORED V2 estimate + the stored V1 baseline via the pure buildV2Comparison.
+  if (body?.action === 'categorize') {
+    const b = await getBookingByToken(bookingId)
+    if (!b) return NextResponse.json({ error: 'booking_not_found' }, { status: 404 })
+    const r = await handleShadowAdminAction('shadow-categorize', b, body, actor, 'admin', now)
+    if (r.status === 200) {
+      await recordPlatformAudit({
+        actor, actorType: 'owner', source: 'shadow-workspace', action: 'status.manual_correction',
+        jobId: job.shadowJobId, summary: `Set learning categories for shadow ${job.bookingNumber ?? bookingId}`,
+        traceId: job.traceId, meta: { categories: body.categories },
+      })
+    }
+    return NextResponse.json(r.body, { status: r.status })
+  }
+
   if (body?.action === 'ground_truth') {
     const b = await getBookingByToken(bookingId)
     if (!b) return NextResponse.json({ error: 'booking_not_found' }, { status: 404 })
