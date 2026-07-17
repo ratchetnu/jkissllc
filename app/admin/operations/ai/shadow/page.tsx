@@ -272,13 +272,14 @@ function Disagreements({ items }: { items: Disagreement[] }) {
   return (
     <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
       {items.map((d, i) => (
-        <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '9px 11px', border: '1px solid var(--line)', borderRadius: 10, flexWrap: 'wrap' }}>
+        <a key={i} href={`/admin/operations/ai/shadow/${encodeURIComponent(d.bookingId)}`} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '9px 11px', border: '1px solid var(--line)', borderRadius: 10, flexWrap: 'wrap', textDecoration: 'none', color: 'inherit' }}>
           <span style={{ width: 8, height: 8, borderRadius: 999, background: SEV[d.severity] ?? 'var(--muted)', flexShrink: 0 }} />
           <span style={{ fontSize: 11.5, fontWeight: 700, color: SEV[d.severity] ?? 'var(--text)', textTransform: 'uppercase', letterSpacing: '.03em', minWidth: 130 }}>{nice(d.kind)}</span>
           <span style={{ fontSize: 12.5, color: 'var(--text)', flex: 1, minWidth: 180 }}>{d.detail}</span>
           {typeof d.quoteDeltaUsd === 'number' && <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)' }}>Δ {usd(d.quoteDeltaUsd)}</span>}
           <code style={{ fontSize: 10.5, color: 'var(--muted)' }}>{d.bookingId.slice(0, 10)}</code>
-        </div>
+          <span style={{ fontSize: 13, color: 'var(--muted)' }}>›</span>
+        </a>
       ))}
     </div>
   )

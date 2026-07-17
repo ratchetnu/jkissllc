@@ -6,7 +6,10 @@ import { listShadowJobs } from '../../../lib/estimation/shadow-store'
 import { computeShadowMetrics } from '../../../lib/estimation/shadow-metrics'
 import {
   computeShadowAnalytics, detectDisagreements, modelScorecards, readinessScore,
+  timeSeriesRollup, type RollupWindow,
 } from '../../../lib/estimation/shadow-analytics'
+
+const WINDOWS: RollupWindow[] = ['24h', '7d', '30d', '90d']
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -24,6 +27,8 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
   if (!isEnabled('SHADOW_ANALYTICS_ENABLED')) {
     return NextResponse.json({ enabled: false, reason: 'SHADOW_ANALYTICS_ENABLED is off' })
   }
+  const w = req.nextUrl.searchParams.get('window')
+  const window: RollupWindow = WINDOWS.includes(w as RollupWindow) ? (w as RollupWindow) : '7d'
   try {
     const jobs = await listShadowJobs(SHADOW_JOB_SAMPLE)
     return NextResponse.json({
@@ -34,6 +39,8 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
       scorecards: modelScorecards(jobs),
       readiness: readinessScore(jobs),
       metrics: computeShadowMetrics(jobs),
+      window,
+      rollup: timeSeriesRollup(jobs, window, Date.now()),
     })
   } catch {
     return NextResponse.json({ error: 'shadow analytics unavailable' }, { status: 500 })

@@ -162,7 +162,24 @@ export type V2ShadowJob = {
   reviewedAt?: number
   reviewedBy?: string
   skippedReason?: string
+  // ── Owner evaluation workspace (Increment 3) — classification + notes + assignment.
+  // Owner-only, audited; shadow-only diagnostics, never a customer price. All optional so
+  // existing stored jobs stay valid (no migration).
+  classification?: ShadowClassification
+  classifiedBy?: string
+  classifiedAt?: number
+  assignee?: string
+  ownerNotes?: { note: string; by: string; at: number }[]
 }
+
+/** How the owner classified a shadow disagreement/evaluation (evidence for model promotion). */
+export type ShadowClassification =
+  | 'false_positive'        // V2 was wrong to flag/escalate
+  | 'false_negative'        // V2 wrongly auto-quoted where a human was needed
+  | 'needs_investigation'
+  | 'expected_difference'   // the V1/V2 gap is understood + acceptable
+  | 'accepted_v2'           // V2's read is the better one
+  | 'ignored'
 
 /** A booking is excluded from shadow analysis (owner opt-out); stored separately. */
 export type V2ShadowExclusion = { bookingId: string; reason?: string; by?: string; at: number }

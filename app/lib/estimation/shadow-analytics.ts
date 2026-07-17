@@ -65,6 +65,53 @@ export function computeShadowAnalytics(jobs: V2ShadowJob[]): ShadowAnalytics {
   }
 }
 
+// ── Time-series rollups (Phase 5) — bucketed trend over a window ─────────────
+export type RollupWindow = '24h' | '7d' | '30d' | '90d'
+export type RollupBucket = { start: number; end: number; count: number; agreementPct: number; autoQuotePct: number; avgConfidence: number | null; avgLatencyMs: number | null }
+
+const HOUR = 3_600_000, DAY = 24 * HOUR
+// window → [total span, bucket size]. 24h→hourly, 7d/30d→daily, 90d→weekly.
+const WINDOW_SPEC: Record<RollupWindow, [number, number]> = {
+  '24h': [DAY, HOUR], '7d': [7 * DAY, DAY], '30d': [30 * DAY, DAY], '90d': [90 * DAY, 7 * DAY],
+}
+
+/** Bucket evaluated jobs across a trailing window (or an explicit [from,to]) into a trend series.
+ *  Each bucket carries the agreement/auto-quote/confidence/latency for jobs completed within it. */
+export function timeSeriesRollup(
+  jobs: V2ShadowJob[],
+  window: RollupWindow,
+  now: number,
+  range?: { from?: number; to?: number },
+): RollupBucket[] {
+  const [span, size] = WINDOW_SPEC[window]
+  const to = range?.to ?? now
+  const from = range?.from ?? to - span
+  const nBuckets = Math.max(1, Math.ceil((to - from) / size))
+  const buckets: RollupBucket[] = Array.from({ length: nBuckets }, (_, i) => ({
+    start: from + i * size, end: from + (i + 1) * size, count: 0, agreementPct: 0, autoQuotePct: 0, avgConfidence: null, avgLatencyMs: null,
+  }))
+  const acc = buckets.map(() => ({ agree: 0, auto: 0, conf: [] as number[], lat: [] as number[] }))
+  for (const j of evaluated(jobs)) {
+    const t = j.completedAt ?? j.updatedAt
+    if (t < from || t >= to) continue
+    const idx = Math.min(nBuckets - 1, Math.floor((t - from) / size))
+    const c = j.comparison as V2Comparison
+    buckets[idx].count++
+    if ((c.outcome === 'equivalent' || c.outcome === 'better_than_authoritative') && !c.manualReviewDiffers) acc[idx].agree++
+    if (!c.shadowManualReview) acc[idx].auto++
+    const score = j.result?.estimate?.confidenceScore
+    if (typeof score === 'number') acc[idx].conf.push(score)
+    if (typeof j.latencyMs === 'number' && j.latencyMs > 0) acc[idx].lat.push(j.latencyMs)
+  }
+  return buckets.map((b, i) => ({
+    ...b,
+    agreementPct: pct(acc[i].agree, b.count),
+    autoQuotePct: pct(acc[i].auto, b.count),
+    avgConfidence: mean(acc[i].conf),
+    avgLatencyMs: acc[i].lat.length ? Math.round(acc[i].lat.reduce((s, x) => s + x, 0) / acc[i].lat.length) : null,
+  }))
+}
+
 // ── FP / FN + disagreement detection (Phase 6) ───────────────────────────────
 export type DisagreementKind =
   | 'possible_false_positive'   // V2 reviewed, V1 auto-quoted (V2 may be over-cautious)
