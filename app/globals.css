@@ -557,6 +557,16 @@ h1, h2, h3, .display { font-family: var(--font-display); font-feature-settings: 
 .os-expand > div { overflow: hidden; }
 .os-dock-item { transition: color .18s var(--os-ease), background .18s var(--os-ease), transform .18s var(--os-spring); }
 .os-dock-item:active { transform: scale(.9); }
+/* Mouse-over affordance for inactive dock options. Items set background/color
+   inline, so the hover has to win with !important; the active red pill keeps its
+   look because .is-active is excluded. Pointer-only (no sticky highlight on touch). */
+@media (hover: hover) {
+  .os-dock-item:not(.is-active):hover {
+    background: color-mix(in srgb, var(--card) 88%, #fff 12%) !important;
+    color: var(--text) !important;
+    transform: translateY(-1px);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .os-tap, .os-rise, .os-expand, .os-dock-item { animation: none !important; transition: none !important; }
 }

@@ -40,6 +40,16 @@ const iStyle: React.CSSProperties = {
   border: '1px solid var(--line)', borderRadius: 12, color: 'var(--text)', fontSize: 15, outline: 'none',
 }
 
+// This shell is rendered *inside each page*, not a shared layout, so it fully
+// unmounts/remounts on every navigation. Without a cache, the two async flags
+// below reset to their initial values on each remount and then resolve a beat
+// later — that widens the center-anchored dock (owner-only tabs appear, the Book
+// Now badge appears) and re-centers the whole bar: a visible sideways "twitch" on
+// every click. Seeding state from the last known values (module-scoped, so it
+// survives remounts within the tab) keeps the dock's width stable, so it settles
+// at most once per session instead of on every navigation.
+const navCache = { isOwner: false, bookNowNew: 0 }
+
 export default function OperationsShell({ children }: { children: React.ReactNode }) {
   const { authed, checked, error, loading, login, signOut, lastLogin, role } = useAdminSession()
   const [password, setPassword] = useState('')
@@ -50,12 +60,12 @@ export default function OperationsShell({ children }: { children: React.ReactNod
   // Attention badge for the Book Now dock item: count of online submissions still
   // awaiting the owner (new / awaiting photos / AI / approval / quote-ready).
   // One fail-soft fetch; refreshed when you navigate back to the Home or queue.
-  const [bookNowNew, setBookNowNew] = useState(0)
+  const [bookNowNew, setBookNowNew] = useState(navCache.bookNowNew)
   useEffect(() => {
     let live = true
     fetch('/api/admin/book-now', { credentials: 'same-origin' })
       .then(r => (r.ok ? r.json() : null))
-      .then(j => { if (live && j?.counts) { const c = j.counts; setBookNowNew(c.new + c.awaiting_photos + c.ai_queued + c.ai_processing + c.ai_failed + c.manual_review + c.quote_ready) } })
+      .then(j => { if (live && j?.counts) { const c = j.counts; const total = c.new + c.awaiting_photos + c.ai_queued + c.ai_processing + c.ai_failed + c.manual_review + c.quote_ready; navCache.bookNowNew = total; setBookNowNew(total) } })
       .catch(() => {})
     return () => { live = false }
   }, [pathname])
@@ -72,13 +82,13 @@ export default function OperationsShell({ children }: { children: React.ReactNod
 
   // Platform (Operion Update Center) is platform-owner-only. Ask the server; the real
   // gate is requirePlatformOwner on every platform route — this just hides the link.
-  const [isPlatformOwner, setIsPlatformOwner] = useState(false)
+  const [isPlatformOwner, setIsPlatformOwner] = useState(navCache.isOwner)
   useEffect(() => {
     if (!authed) return
     let live = true
     fetch('/api/admin/platform/whoami', { credentials: 'same-origin' })
       .then(r => (r.ok ? r.json() : null))
-      .then(j => { if (live) setIsPlatformOwner(!!j?.owner) })
+      .then(j => { if (live) { const owner = !!j?.owner; navCache.isOwner = owner; setIsPlatformOwner(owner) } })
       .catch(() => {})
     return () => { live = false }
   }, [authed])
@@ -165,7 +175,7 @@ export default function OperationsShell({ children }: { children: React.ReactNod
         {nav.map(n => {
           const active = n.href === activeHref; const Icon = ICONS[n.href] ?? Home
           return (
-            <Link key={n.href} href={n.href} className="os-dock-item" style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 999, fontSize: 13.5, fontWeight: 700, textDecoration: 'none', color: active ? '#fff' : 'var(--muted)', background: active ? 'var(--red)' : 'transparent' }}>
+            <Link key={n.href} href={n.href} className={`os-dock-item${active ? ' is-active' : ''}`} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 999, fontSize: 13.5, fontWeight: 700, textDecoration: 'none', color: active ? '#fff' : 'var(--muted)', background: active ? 'var(--red)' : 'transparent' }}>
               <Icon size={17} /> {n.label}
               {n.href === '/admin/operations/book-now' && bookNowNew > 0 && (
                 <span aria-label={`${bookNowNew} new`} style={{ marginLeft: 2, fontSize: 10.5, fontWeight: 800, background: active ? '#fff' : 'var(--red)', color: active ? 'var(--red)' : '#fff', borderRadius: 999, minWidth: 17, height: 17, padding: '0 5px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{bookNowNew}</span>
@@ -180,7 +190,7 @@ export default function OperationsShell({ children }: { children: React.ReactNod
         {primary.map(n => {
           const active = n.href === activeHref; const Icon = ICONS[n.href] ?? Home
           return (
-            <Link key={n.href} href={n.href} aria-label={n.label} className="os-dock-item" style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: active ? 7 : 0, padding: active ? '9px 15px' : '9px', borderRadius: 999, textDecoration: 'none', color: active ? '#fff' : 'var(--muted)', background: active ? 'var(--red)' : 'transparent' }}>
+            <Link key={n.href} href={n.href} aria-label={n.label} className={`os-dock-item${active ? ' is-active' : ''}`} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: active ? 7 : 0, padding: active ? '9px 15px' : '9px', borderRadius: 999, textDecoration: 'none', color: active ? '#fff' : 'var(--muted)', background: active ? 'var(--red)' : 'transparent' }}>
               <Icon size={20} />
               {active && <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>{n.label}</span>}
               {n.href === '/admin/operations/book-now' && bookNowNew > 0 && (
@@ -190,7 +200,7 @@ export default function OperationsShell({ children }: { children: React.ReactNod
           )
         })}
         {/* More — opens the grouped sheet; active-highlighted when the current page lives inside it */}
-        <button aria-label="More" aria-expanded={moreOpen} onClick={() => setMoreOpen(v => !v)} className="os-dock-item os-tap" style={{ display: 'inline-flex', alignItems: 'center', gap: (moreOpen || inMoreActive) ? 7 : 0, padding: (moreOpen || inMoreActive) ? '9px 15px' : '9px', borderRadius: 999, border: 'none', cursor: 'pointer', color: (moreOpen || inMoreActive) ? '#fff' : 'var(--muted)', background: (moreOpen || inMoreActive) ? 'var(--red)' : 'transparent' }}>
+        <button aria-label="More" aria-expanded={moreOpen} onClick={() => setMoreOpen(v => !v)} className={`os-dock-item os-tap${(moreOpen || inMoreActive) ? ' is-active' : ''}`} style={{ display: 'inline-flex', alignItems: 'center', gap: (moreOpen || inMoreActive) ? 7 : 0, padding: (moreOpen || inMoreActive) ? '9px 15px' : '9px', borderRadius: 999, border: 'none', cursor: 'pointer', color: (moreOpen || inMoreActive) ? '#fff' : 'var(--muted)', background: (moreOpen || inMoreActive) ? 'var(--red)' : 'transparent' }}>
           <MoreHorizontal size={20} />
           {(moreOpen || inMoreActive) && <span style={{ fontSize: 13, fontWeight: 700 }}>More</span>}
         </button>
