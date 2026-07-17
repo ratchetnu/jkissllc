@@ -8,6 +8,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import dynamic from 'next/dynamic'
+import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import OperationsShell from '../../OperationsShell'
 import type { TrendMetric } from './TrendChart'
@@ -153,7 +154,8 @@ function ShadowAnalyticsInner() {
         <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
           <h1 style={{ fontSize: 22, fontWeight: 800 }}>🧪 AI Shadow Analytics</h1>
           <span style={{ fontSize: 12, color: 'var(--muted)' }}>V2 evaluated against V1 on real traffic — V1 stays customer-facing.</span>
-          <button style={{ ...btn, marginLeft: 'auto' }} disabled={loading} onClick={() => load()}>{loading ? 'Loading…' : 'Refresh'}</button>
+          <Link href="/admin/operations/ai/shadow/eligible" style={{ ...btn, marginLeft: 'auto', textDecoration: 'none' }}>Select / run jobs →</Link>
+          <button style={btn} disabled={loading} onClick={() => load()}>{loading ? 'Loading…' : 'Refresh'}</button>
         </div>
 
         {err && <div style={{ ...card, color: '#f87171', fontSize: 13 }}>{err}</div>}

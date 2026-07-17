@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation'
 import { ArrowLeft, Camera, ExternalLink, Send, RefreshCw, CheckCircle2, MessageSquarePlus, AlertTriangle } from 'lucide-react'
 import OperationsShell from '../../OperationsShell'
 import WorkflowTimeline from '../../../bookings/WorkflowTimeline'
+import ShadowRunControls from '../../ai/shadow/ShadowRunControls'
 import { fmtTs, money } from '../../ui'
 import { SERVICE_LABELS, INFO_REQUEST_FIELD_LABEL, type Booking, type InfoRequestField } from '../../../../lib/bookings'
 import {
@@ -243,6 +244,13 @@ function Detail({ token }: { token: string }) {
           <ExternalLink size={13} /> Open full estimate editor (modify / approve / send quote)
         </Link>
       </Section>
+
+      {/* Owner-only V2 shadow evaluation controls. Never affects this booking's V1 quote. */}
+      {isOwner && (
+        <Section title="V2 Shadow Evaluation">
+          <ShadowRunControls bookingId={token} />
+        </Section>
+      )}
 
       {/* ── Estate / property cleanout (Estate Cleanout edition) ───────────── */}
       {review?.isEstate && review.estate && (
