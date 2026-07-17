@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { Sparkles, RefreshCw, AlertTriangle, Gauge, Activity, LayoutGrid, FileText, DollarSign, TerminalSquare, FlaskConical, Check, X, RotateCcw, Play } from 'lucide-react'
-import OperationsShell from '../OperationsShell'
-import { Stat, fmtTs } from '../ui'
+import OperationsShell from '../../OperationsShell'
+import AICommandShell from '../AICommandShell'
+import { Stat, fmtTs } from '../../ui'
 
 // ── shared formatters ────────────────────────────────────────────────────────
 const usd = (n: number) => (n >= 1 ? `$${n.toFixed(2)}` : `$${(n ?? 0).toFixed(4)}`)
@@ -445,6 +446,16 @@ function AiControlCenter() {
   )
 }
 
-export default function AiControlCenterPage() {
-  return <OperationsShell><AiControlCenter /></OperationsShell>
+// Interim home for the live-V1 AI observability (usage, cost, quality, registry, prompts),
+// now a section of the AI Command Center. Increment 3 splits the version registry out into
+// Models and reorganizes the operational controls; until then it renders here intact so no
+// capability is lost during the consolidation.
+export default function AiControlsSectionPage() {
+  return (
+    <OperationsShell>
+      <AICommandShell section="controls" title="Usage & Controls">
+        <AiControlCenter />
+      </AICommandShell>
+    </OperationsShell>
+  )
 }

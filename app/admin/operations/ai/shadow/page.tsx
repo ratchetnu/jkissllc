@@ -11,6 +11,7 @@ import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import OperationsShell from '../../OperationsShell'
+import AICommandShell from '../AICommandShell'
 import type { TrendMetric } from './TrendChart'
 
 // Heavy chart code is lazy-loaded (own chunk, no SSR) so it never weighs on first paint.
@@ -148,7 +149,7 @@ function ShadowAnalyticsInner() {
   const facets = data?.facets
 
   return (
-    <OperationsShell>
+    <OperationsShell><AICommandShell section="performance" title="Performance">
       <div style={{ display: 'grid', gap: 14, maxWidth: 1120, margin: '0 auto' }}>
         {/* Header */}
         <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
@@ -280,7 +281,7 @@ function ShadowAnalyticsInner() {
           <div style={{ ...card, fontSize: 12.5, color: 'var(--muted)' }}>No shadow evaluations yet. Enable the <code>VISION_SHADOW_*</code> flags (a separate, deliberate step) to start collecting real comparisons.</div>
         )}
       </div>
-    </OperationsShell>
+    </AICommandShell></OperationsShell>
   )
 }
 

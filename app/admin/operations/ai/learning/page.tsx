@@ -11,6 +11,7 @@ import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import OperationsShell from '../../OperationsShell'
+import AICommandShell from '../AICommandShell'
 
 const card: React.CSSProperties = { background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 14, padding: 16 }
 const lab: React.CSSProperties = { display: 'block', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--muted)', marginBottom: 4 }
@@ -101,7 +102,7 @@ function Inner() {
   const r = data?.readiness
 
   return (
-    <OperationsShell>
+    <OperationsShell><AICommandShell section="learning" title="Review & Learning">
       <div style={{ display: 'grid', gap: 14, paddingBottom: 40 }}>
         <header style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
           <div>
@@ -232,7 +233,7 @@ function Inner() {
           </>
         )}
       </div>
-    </OperationsShell>
+    </AICommandShell></OperationsShell>
   )
 }
 
