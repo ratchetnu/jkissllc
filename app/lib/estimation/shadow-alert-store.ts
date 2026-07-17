@@ -180,6 +180,12 @@ export async function runShadowAlertEvaluation(opts?: {
       nextId: (i) => `SAL-${base + i}`,
     })
 
+    // In-app delivery: an opened alert IS delivered the moment it is persisted — the Alerts
+    // page reads the store, so there is no separate transport to fail. Stamping it keeps the
+    // record honest about what actually reached the owner, and gives Increment 3's email
+    // transport a channel list to append to rather than invent.
+    for (const a of result.opened) a.deliveredChannels = ['in_app']
+
     // Persist the four disjoint buckets the reconciler produced.
     const toPersist = [...result.opened, ...result.updated, ...result.resolved, ...result.expired]
     for (const a of toPersist) await saveAlert(a)

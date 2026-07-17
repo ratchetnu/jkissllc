@@ -28,6 +28,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/admin/operations/settings', label: 'Settings', group: 'platform', adminOnly: true },
   { href: '/admin/operations/platform', label: 'Platform', group: 'platform', adminOnly: true, ownerOnly: true },
   { href: '/admin/operations/ai/shadow', label: 'Shadow AI', group: 'platform', adminOnly: true, ownerOnly: true },
+  { href: '/admin/operations/ai/alerts', label: 'AI Alerts', group: 'platform', adminOnly: true, ownerOnly: true },
 ]
 
 export const GROUP_LABELS: Record<NavGroup, string> = { work: 'Work', finance: 'Finance', comms: 'Communication', platform: 'Platform' }
