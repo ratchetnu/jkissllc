@@ -3,6 +3,11 @@ import {
   type Booking, type AiJob, type AiJobErrorCode, type AiJobStatus,
 } from './bookings'
 import { buildPhotoEstimate } from './ai/photo-estimate'
+import { currentTenantId } from './platform/tenancy/context'
+import {
+  breakerEnabled, breakerAllows, inProbeWindow, recordOutcome, isOutageClass,
+  loadBreaker, saveBreaker,
+} from './ai-recovery'
 // V2 shadow analysis is fully DECOUPLED: after the authoritative estimate reaches a
 // terminal state we only ENQUEUE an independent shadow job (a cheap, fail-soft Redis
 // write). The heavy V2 vision call runs later in its OWN cron/worker/queue, never in
@@ -411,6 +416,23 @@ export async function runDueAiJobs(limit = 10): Promise<{ processed: number; res
   const results: { token: string; status: AiJobStatus }[] = []
   const runStart = now()
   const deadlineMs = aiJobDeadlineMs()
+
+  // Provider-outage circuit breaker (flag-gated; default OFF ⇒ this whole block is
+  // inert and the loop below is unchanged). When ON, a sustained provider outage
+  // opens the breaker and we PARK — jobs stay due, attempts untouched — instead of
+  // letting every job burn MAX_ATTEMPTS into terminal `retry_exhausted` (the retry
+  // storm). Once the cooldown elapses we run a SINGLE probe and re-check.
+  const useBreaker = breakerEnabled()
+  const tenantId = (() => { try { return currentTenantId() ?? 'default' } catch { return 'default' } })()
+  let breaker = useBreaker ? await loadBreaker(tenantId) : null
+  if (breaker && !breakerAllows(breaker)) {
+    // Outage cooldown in effect — skip this tick entirely. The next tick past the
+    // cooldown runs a probe. Manual "Run AI" remains available as the operator escape.
+    console.log(`[book-now-ai] provider breaker OPEN (tenant=${tenantId}) — parking ${due.length} due job(s) this tick`)
+    return { processed: 0, results }
+  }
+  const probing = breaker ? inProbeWindow(breaker) : false
+
   for (const b of due) {
     // Never start a job that can't finish its full deadline before the function's own
     // wall-clock ceiling — a late job would be hard-killed mid-run and stick. It stays
@@ -418,7 +440,28 @@ export async function runDueAiJobs(limit = 10): Promise<{ processed: number; res
     if (now() - runStart + deadlineMs > FUNCTION_BUDGET_MS) break
     const r = await processAiJob(b.token, { initiatedBy: 'cron' })
     results.push({ token: b.token, status: r.status })
+
+    if (breaker) {
+      // Fold the outcome into the breaker. A provider-outage-class failure trips it;
+      // any provider response (success or a non-outage error) resets it.
+      const outage = !r.ok && isOutageClass(r.errorCode)
+      breaker = recordOutcome(breaker, outage, now())
+      // TODO(telemetry, Session 1): emit a breaker-transition datapoint here.
+      if (breaker.phase === 'open') {
+        // (Re-)opened this tick — stop hammering immediately; the rest stay due.
+        await saveBreaker(tenantId, breaker)
+        return { processed: results.length, results }
+      }
+      if (probing) {
+        // A half-open probe SUCCEEDED (breaker is now closed). Persist recovery and
+        // stop after this single job; the next tick drains the rest normally. This
+        // caps an ongoing outage at one burned attempt per cooldown, not a batch.
+        await saveBreaker(tenantId, breaker)
+        return { processed: results.length, results }
+      }
+    }
   }
+  if (breaker) await saveBreaker(tenantId, breaker)
   return { processed: results.length, results }
 }
 
