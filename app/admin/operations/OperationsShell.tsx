@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import { useAdminSession } from '../useAdminSession'
-import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, Settings, LogOut, Search, Plus, Zap, Rocket, Wallet, MoreHorizontal, X, FlaskConical, BellRing, GraduationCap, Sparkles, Send, CalendarDays } from 'lucide-react'
+import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, Settings, LogOut, Search, Plus, Zap, Rocket, Wallet, MoreHorizontal, X, FlaskConical, BellRing, GraduationCap, Sparkles, Send, CalendarDays, Tag } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import CommandPalette from './CommandPalette'
 import LastLogin from './LastLogin'
@@ -27,6 +27,7 @@ const ICONS: Record<string, LucideIcon> = {
   '/admin/operations/messages': MessageSquare,
   '/admin/operations/communications': Send,
   '/admin/operations/settings': Settings,
+  '/admin/operations/release': Tag,
   '/admin/operations/platform': Rocket,
   '/admin/operations/ai': Sparkles,
   '/admin/operations/ai/shadow': FlaskConical,
