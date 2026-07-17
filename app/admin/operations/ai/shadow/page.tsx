@@ -53,7 +53,7 @@ type Readiness = { tier: string; score: number; reasons: string[]; blockers: str
 type Metrics = { total: number; queued: number; processing: number; completed: number; failed: number; timedOut: number; retries: number; awaitingReview: number; avgRuntimeMs: number | null; totalEstCostUsd: number }
 type FacetOption = { value: string; label: string; count: number }
 type Facets = { models: FacetOption[]; deployments: FacetOption[]; businesses: FacetOption[] }
-type Bucket = { start: number; end: number; count: number; agreementPct: number; autoQuotePct: number; avgConfidence: number | null; avgLatencyMs: number | null }
+type Bucket = { start: number; end: number; count: number; groundTruthCount: number; agreementPct: number; autoQuotePct: number; avgConfidence: number | null; avgLatencyMs: number | null }
 type Payload = { enabled: boolean; reason?: string; sampled?: number; matched?: number; facets?: Facets; analytics?: Analytics; disagreements?: Disagreement[]; scorecards?: Scorecard[]; readiness?: Readiness; metrics?: Metrics; window?: string; rollup?: Bucket[] }
 
 const WINDOWS: { k: string; label: string }[] = [{ k: '24h', label: '24h' }, { k: '7d', label: '7d' }, { k: '30d', label: '30d' }, { k: '90d', label: '90d' }]

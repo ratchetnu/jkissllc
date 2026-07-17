@@ -9,6 +9,7 @@
 // behavior; gated by SHADOW_ANALYTICS_ENABLED at the route layer.
 
 import type { V2ShadowJob, V2Comparison } from './shadow-types'
+import { groundTruthQuote } from './shadow-comparison'
 
 const evaluated = (jobs: V2ShadowJob[]) => jobs.filter((j) => j.comparison && (j.status === 'completed' || j.status === 'manual_review'))
 const round = (n: number, dp = 2) => { const f = 10 ** dp; return Math.round(n * f) / f }
@@ -18,9 +19,17 @@ const mean = (xs: number[]) => (xs.length ? round(xs.reduce((s, x) => s + x, 0) 
 // ── Aggregate analytics ──────────────────────────────────────────────────────
 export type ShadowAnalytics = {
   total: number
-  evaluated: number
-  agreementPct: number          // outcome equivalent|better AND manual-review does not differ
-  disagreementPct: number
+  evaluated: number             // completed/manual_review WITH a stored comparison
+  /** Of `evaluated`, those with an owner-confirmed benchmark — the ONLY population on which
+   *  a verdict of equivalent/better/worse is possible, and therefore the only honest
+   *  denominator for agreement. */
+  groundTruthEvaluated: number
+  /** Of `evaluated`, those still needing the owner's actual number. NOT disagreements —
+   *  they are unjudged. Counting them against the model reports a 0% agreement rate for a
+   *  model that may be performing perfectly. */
+  awaitingGroundTruth: number
+  agreementPct: number          // outcome equivalent|better AND manual-review does not differ, of groundTruthEvaluated
+  disagreementPct: number       // of groundTruthEvaluated
   autoQuoteRate: number         // V2 shadow auto-quoted (not manual review), of evaluated
   manualReviewRate: number
   avgConfidence: number | null
@@ -29,17 +38,31 @@ export type ShadowAnalytics = {
   avgAbsQuoteDeltaUsd: number | null
   manualReviewDiffers: number
   reviewReasonFrequency: Record<string, number>
+  /** Mean |estimate − ground truth| ÷ ground truth, as a %. The head-to-head the owner
+   *  actually cares about: which estimator is closer to reality. Null until ground truth exists. */
+  avgV1ErrorPct: number | null
+  avgV2ErrorPct: number | null
 }
 
 export function computeShadowAnalytics(jobs: V2ShadowJob[]): ShadowAnalytics {
   const ev = evaluated(jobs)
   const conf = { high: 0, medium: 0, low: 0 }
   const reasonFreq: Record<string, number> = {}
-  let agree = 0, autoQuote = 0, mrDiffers = 0
+  let agree = 0, autoQuote = 0, mrDiffers = 0, gtCount = 0
   const confScores: number[] = [], deltas: number[] = []
+  const v1Errors: number[] = [], v2Errors: number[] = []
   for (const j of ev) {
     const c = j.comparison as V2Comparison
-    if ((c.outcome === 'equivalent' || c.outcome === 'better_than_authoritative') && !c.manualReviewDiffers) agree++
+    // Agreement is only meaningful against the owner's confirmed number. Without it,
+    // classifyOutcome cannot return equivalent/better by construction, so scoring these
+    // as disagreements would pin the rate at 0% no matter how well V2 performs.
+    const gt = groundTruthQuote(j.groundTruth)
+    if (gt !== null) {
+      gtCount++
+      if ((c.outcome === 'equivalent' || c.outcome === 'better_than_authoritative') && !c.manualReviewDiffers) agree++
+      if (typeof c.authoritativeRecommendedUsd === 'number') v1Errors.push(Math.abs(c.authoritativeRecommendedUsd - gt) / gt * 100)
+      v2Errors.push(Math.abs(c.shadowRecommendedUsd - gt) / gt * 100)
+    }
     if (!c.shadowManualReview) autoQuote++
     if (c.manualReviewDiffers) mrDiffers++
     const band = c.shadowConfidenceBand
@@ -52,11 +75,15 @@ export function computeShadowAnalytics(jobs: V2ShadowJob[]): ShadowAnalytics {
   return {
     total: jobs.length,
     evaluated: ev.length,
-    agreementPct: pct(agree, ev.length),
-    disagreementPct: pct(ev.length - agree, ev.length),
+    groundTruthEvaluated: gtCount,
+    awaitingGroundTruth: ev.length - gtCount,
+    agreementPct: pct(agree, gtCount),
+    disagreementPct: pct(gtCount - agree, gtCount),
     autoQuoteRate: pct(autoQuote, ev.length),
     manualReviewRate: pct(ev.length - autoQuote, ev.length),
     avgConfidence: mean(confScores),
+    avgV1ErrorPct: mean(v1Errors),
+    avgV2ErrorPct: mean(v2Errors),
     confidenceDistribution: conf,
     avgQuoteDeltaUsd: mean(deltas),
     avgAbsQuoteDeltaUsd: mean(deltas.map(Math.abs)),
@@ -67,7 +94,14 @@ export function computeShadowAnalytics(jobs: V2ShadowJob[]): ShadowAnalytics {
 
 // ── Time-series rollups (Phase 5) — bucketed trend over a window ─────────────
 export type RollupWindow = '24h' | '7d' | '30d' | '90d'
-export type RollupBucket = { start: number; end: number; count: number; agreementPct: number; autoQuotePct: number; avgConfidence: number | null; avgLatencyMs: number | null }
+export type RollupBucket = {
+  start: number; end: number
+  count: number                 // evaluations completed in the bucket
+  groundTruthCount: number      // of those, how many the owner has benchmarked
+  agreementPct: number          // over groundTruthCount — same denominator as computeShadowAnalytics
+  autoQuotePct: number          // over count
+  avgConfidence: number | null; avgLatencyMs: number | null
+}
 
 const HOUR = 3_600_000, DAY = 24 * HOUR
 // window → [total span, bucket size]. 24h→hourly, 7d/30d→daily, 90d→weekly.
@@ -88,7 +122,7 @@ export function timeSeriesRollup(
   const from = range?.from ?? to - span
   const nBuckets = Math.max(1, Math.ceil((to - from) / size))
   const buckets: RollupBucket[] = Array.from({ length: nBuckets }, (_, i) => ({
-    start: from + i * size, end: from + (i + 1) * size, count: 0, agreementPct: 0, autoQuotePct: 0, avgConfidence: null, avgLatencyMs: null,
+    start: from + i * size, end: from + (i + 1) * size, count: 0, groundTruthCount: 0, agreementPct: 0, autoQuotePct: 0, avgConfidence: null, avgLatencyMs: null,
   }))
   const acc = buckets.map(() => ({ agree: 0, auto: 0, conf: [] as number[], lat: [] as number[] }))
   for (const j of evaluated(jobs)) {
@@ -97,7 +131,11 @@ export function timeSeriesRollup(
     const idx = Math.min(nBuckets - 1, Math.floor((t - from) / size))
     const c = j.comparison as V2Comparison
     buckets[idx].count++
-    if ((c.outcome === 'equivalent' || c.outcome === 'better_than_authoritative') && !c.manualReviewDiffers) acc[idx].agree++
+    const gt = groundTruthQuote(j.groundTruth)
+    if (gt !== null) {
+      buckets[idx].groundTruthCount++
+      if ((c.outcome === 'equivalent' || c.outcome === 'better_than_authoritative') && !c.manualReviewDiffers) acc[idx].agree++
+    }
     if (!c.shadowManualReview) acc[idx].auto++
     const score = j.result?.estimate?.confidenceScore
     if (typeof score === 'number') acc[idx].conf.push(score)
@@ -105,7 +143,7 @@ export function timeSeriesRollup(
   }
   return buckets.map((b, i) => ({
     ...b,
-    agreementPct: pct(acc[i].agree, b.count),
+    agreementPct: pct(acc[i].agree, b.groundTruthCount),
     autoQuotePct: pct(acc[i].auto, b.count),
     avgConfidence: mean(acc[i].conf),
     avgLatencyMs: acc[i].lat.length ? Math.round(acc[i].lat.reduce((s, x) => s + x, 0) / acc[i].lat.length) : null,
@@ -232,17 +270,23 @@ export function readinessScore(
     blockers.push(`${fns} possible false-negative(s): V2 auto-quotes where V1 reviews.`)
     return { tier: 'BLOCKED', score: 0, reasons, blockers }
   }
-  if (a.evaluated < thresholds.minSample) {
-    reasons.push(`Only ${a.evaluated}/${thresholds.minSample} evaluated — need more shadow traffic.`)
-    return { tier: 'NEEDS_MORE_DATA', score: round(a.evaluated / thresholds.minSample, 2), reasons, blockers }
+  // Readiness gates on GROUND-TRUTH-BACKED evidence, not raw volume. An evaluation with no
+  // owner-confirmed number has not been judged — counting it toward a promotion decision
+  // would mean promoting on unverified evidence, which is the one thing this whole
+  // subsystem exists to prevent.
+  if (a.groundTruthEvaluated < thresholds.minSample) {
+    reasons.push(`Only ${a.groundTruthEvaluated}/${thresholds.minSample} evaluated with owner ground truth — record what you actually quoted to make these count.`)
+    if (a.awaitingGroundTruth > 0) reasons.push(`${a.awaitingGroundTruth} completed evaluation(s) are awaiting ground truth.`)
+    return { tier: 'NEEDS_MORE_DATA', score: round(a.groundTruthEvaluated / thresholds.minSample, 2), reasons, blockers }
   }
   let tier: ReadinessTier = 'READY_FOR_EXPANDED_SHADOW'
-  reasons.push(`${a.evaluated} evaluated; agreement ${a.agreementPct}%.`)
-  if (a.evaluated >= thresholds.rolloutSample && a.agreementPct >= thresholds.customerAgreementPct) {
+  reasons.push(`${a.groundTruthEvaluated} ground-truth-verified evaluation(s); agreement ${a.agreementPct}%.`)
+  if (a.awaitingGroundTruth > 0) reasons.push(`${a.awaitingGroundTruth} more awaiting ground truth.`)
+  if (a.groundTruthEvaluated >= thresholds.rolloutSample && a.agreementPct >= thresholds.customerAgreementPct) {
     tier = 'READY_FOR_CUSTOMER_ROLLOUT'
-  } else if (a.evaluated >= thresholds.expandedSample && a.agreementPct >= thresholds.minAgreementPct) {
+  } else if (a.groundTruthEvaluated >= thresholds.expandedSample && a.agreementPct >= thresholds.minAgreementPct) {
     tier = 'READY_FOR_LIMITED_ROLLOUT'
   }
-  const score = round(Math.min(1, (a.agreementPct / 100) * Math.min(1, a.evaluated / thresholds.rolloutSample)), 2)
+  const score = round(Math.min(1, (a.agreementPct / 100) * Math.min(1, a.groundTruthEvaluated / thresholds.rolloutSample)), 2)
   return { tier, score, reasons, blockers }
 }
