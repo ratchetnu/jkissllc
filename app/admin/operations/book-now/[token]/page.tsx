@@ -11,7 +11,7 @@ import { fmtTs, money } from '../../ui'
 import { SERVICE_LABELS, INFO_REQUEST_FIELD_LABEL, type Booking, type InfoRequestField } from '../../../../lib/bookings'
 import {
   bookNowStage, bookNowServiceGroup, aiStatus, quoteStatus, paymentStatus, ownerAlertStatus,
-  confirmationStatus, BOOK_NOW_STAGE_LABEL,
+  confirmationStatus, BOOK_NOW_STAGE_LABEL, isActiveAiJob,
 } from '../../../../lib/book-now-queue'
 import { buildOwnerReviewModel } from '../../../../lib/ai/confirmation-review'
 
@@ -56,8 +56,13 @@ function Detail({ token }: { token: string }) {
       .then(r => r.ok ? r.json() : null).then(d => setIsOwner(d?.role === 'admin')).catch(() => {})
   }, [])
 
-  const load = useCallback(async () => {
-    setLoading(true); setError('')
+  // `background` refreshes data in place WITHOUT toggling the full-page loading
+  // state, so the short-poll below updates the AI card silently instead of blanking
+  // the whole page to "Loading…" every 6s (the auto-refresh regression). Mirrors the
+  // background-poll pattern already used by the Book Now queue list page.
+  const load = useCallback(async (background = false) => {
+    if (!background) setLoading(true)
+    setError('')
     try {
       const res = await fetch('/api/admin/book-now', { credentials: 'same-origin' })
       if (res.status === 401) { setError('Session expired — reload.'); return }
@@ -67,16 +72,17 @@ function Detail({ token }: { token: string }) {
       setB(found)
       if (!found) setError('Request not found.')
     } catch (e) { setError(e instanceof Error ? e.message : 'Failed') }
-    finally { setLoading(false) }
+    finally { if (!background) setLoading(false) }
   }, [token])
   useEffect(() => { load() }, [load])
 
   // Short-poll while the AI job is actively moving so the owner watches it advance
-  // without refreshing. Stops as soon as it reaches a terminal state.
-  const activeJob = [b?.aiJob?.status, b?.finalAiJob?.status].some(s => s === 'queued' || s === 'processing' || s === 'retrying')
+  // without refreshing. Stops as soon as it reaches a terminal state. The poll is a
+  // BACKGROUND refresh — it must never flip the page into its loading state.
+  const activeJob = b ? isActiveAiJob(b) : false
   useEffect(() => {
     if (!activeJob) return
-    const t = setInterval(() => { load() }, 6000)
+    const t = setInterval(() => { load(true) }, 6000)
     return () => clearInterval(t)
   }, [activeJob, load])
 

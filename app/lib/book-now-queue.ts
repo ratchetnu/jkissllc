@@ -1,5 +1,5 @@
 import {
-  type Booking, type ServiceType,
+  type Booking, type ServiceType, type AiJobStatus,
   JUNK_SERVICE_TYPES,
 } from './bookings'
 import { centralToday } from './dates'
@@ -210,6 +210,19 @@ const AWAITING_AI_SET = new Set<BookNowStage>(AWAITING_AI_STAGES)
 /** True iff this request is in any of the AWAITING_AI_STAGES (canonical predicate). */
 export function isAwaitingAi(b: Booking): boolean {
   return AWAITING_AI_SET.has(bookNowStage(b))
+}
+
+// ── Live AI-job predicate (drives the detail page's short-poll) ──────────────
+// True iff the initial OR the final AI job is still MOVING (queued / processing /
+// retrying). The Book Now detail page short-polls ONLY while this is true and stops
+// at a terminal state, so a completed / failed / manual-review request (or one with
+// no AI job) never keeps polling. Pure + exported so the poll trigger is unit-tested
+// and can't silently regress into an endless reload.
+const ACTIVE_AI_JOB_STATUSES: readonly AiJobStatus[] = ['queued', 'processing', 'retrying']
+export function isActiveAiJob(b: Pick<Booking, 'aiJob' | 'finalAiJob'>): boolean {
+  return [b.aiJob?.status, b.finalAiJob?.status].some(
+    (s): s is AiJobStatus => s !== undefined && ACTIVE_AI_JOB_STATUSES.includes(s),
+  )
 }
 
 // ── Booked-date helpers — "Booked Today" must key off when the booking was
