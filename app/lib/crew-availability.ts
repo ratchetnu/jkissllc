@@ -43,7 +43,8 @@ export function emptyDays(): Record<DowKey, DayAvailability> {
 // Normalize a submitted days object: coerce to booleans, keep times only when
 // available, and fill sensible defaults so a day marked available always has a
 // window. Rejects an end that isn't after start (falls back to defaults).
-function normalizeDays(input: unknown): Record<DowKey, DayAvailability> {
+// Exported for unit testing — it is the server-side validation of crew input.
+export function normalizeDays(input: unknown): Record<DowKey, DayAvailability> {
   const src = (input && typeof input === 'object') ? input as Record<string, unknown> : {}
   const out = emptyDays()
   for (const k of DOW_KEYS) {
