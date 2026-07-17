@@ -17,6 +17,7 @@ import {
   parseTimeToMinutes, itemDay,
 } from '../app/lib/schedule/unified'
 import { detectConflicts, conflictsByItem, summarizeConflicts } from '../app/lib/schedule/conflicts'
+import { can } from '../app/lib/rbac'
 
 // ── factories ────────────────────────────────────────────────────────────────
 let n = 1000
@@ -337,6 +338,16 @@ test('conflict detection is service-agnostic — a crew clash fires across diffe
     ],
   }))
   assert.equal(conflicts.filter(c => c.type === 'crew_overlap').length, 1)
+})
+
+// ── authorization: the value/money gate the schedule API applies ─────────────
+test('schedule value (money) is gated to profitability:view — admin sees it, manager does not', () => {
+  // The API includes ScheduleItem.valueCents only when can(role, 'profitability:view').
+  assert.equal(can('admin', 'profitability:view'), true)
+  assert.equal(can('manager', 'profitability:view'), false)
+  assert.equal(can('crew', 'profitability:view'), false)
+  // Crew never reach the staff-gated schedule feed at all.
+  assert.equal(can('crew', 'routes:view'), false)
 })
 
 // ── no AI on the scheduling path (Phase 11 hard requirement) ─────────────────
