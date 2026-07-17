@@ -23,7 +23,7 @@ import {
   shadowIdempotencyKey, shadowJobId, shadowDeadlineMs, shadowLeaseMs, shadowMaxAttempts, shadowBackoffMs,
   SHADOW_FUNCTION_BUDGET_MS, V2_ESTIMATOR_VERSION, type ShadowFlags,
 } from './shadow-policy'
-import { V2_SHADOW_JOB_VERSION, SHADOW_TRANSIENT, type V2ShadowJob, type V2ShadowCreatedBy, type V2ShadowFailure } from './shadow-types'
+import { V2_SHADOW_JOB_VERSION, SHADOW_TRANSIENT, MAX_SHADOW_PRIOR_RUNS, type V2ShadowJob, type V2ShadowCreatedBy, type V2ShadowFailure, type ShadowRunSnapshot } from './shadow-types'
 
 type EnvLike = Record<string, string | undefined>
 
@@ -90,6 +90,28 @@ function authoritativeBaseline(b: Booking): { recommendedUsd?: number; decision?
   return { recommendedUsd: est?.pricing?.recommendedUsd, decision: est?.decision }
 }
 
+/** Snapshot a job's current completed run into its history list (newest last, bounded). Only a
+ *  run that actually completed is worth remembering; a never-run queued job adds nothing. */
+function appendPriorRun(prior: V2ShadowJob | null): ShadowRunSnapshot[] | undefined {
+  if (!prior) return undefined
+  const history = prior.priorRuns ?? []
+  const ran = prior.status === 'completed' || prior.status === 'manual_review' || prior.status === 'failed'
+  if (!ran) return history.length ? history : undefined
+  const snap: ShadowRunSnapshot = {
+    at: prior.completedAt ?? prior.updatedAt,
+    model: prior.model,
+    promptVersion: prior.promptVersion,
+    status: prior.status,
+    outcome: prior.comparison?.outcome,
+    shadowRecommendedUsd: prior.comparison?.shadowRecommendedUsd,
+    quoteDeltaUsd: prior.comparison?.quoteDeltaUsd,
+    estimatedCostUsd: prior.estimatedCostUsd,
+    latencyMs: prior.latencyMs,
+    attempts: prior.attempts,
+  }
+  return [...history, snap].slice(-MAX_SHADOW_PRIOR_RUNS)
+}
+
 // ── Enqueue (Phase 5) — called AFTER authoritative terminal, or by owner ─────
 export type EnqueueResult = { enqueued: boolean; reason: string; job?: V2ShadowJob }
 
@@ -107,7 +129,11 @@ export async function enqueueShadowJobForBooking(
   const now = d.now()
   const pv = photoVersion(b)
   const idem = shadowIdempotencyKey(b.token, V2_ESTIMATOR_VERSION, pv)
-  const existing = opts.force ? null : await d.getJob(b.token)
+  // On a forced rerun we still READ the existing job (to carry ground truth + history
+  // forward); `force` only bypasses the "already done" eligibility block, it never discards
+  // what the prior run learned.
+  const prior = await d.getJob(b.token)
+  const existing = opts.force ? null : prior
 
   const elig = evaluateShadowEligibility(
     {
@@ -138,7 +164,9 @@ export async function enqueueShadowJobForBooking(
     attempts: 0,
     createdBy: opts.createdBy,
     // preserve any prior owner ground truth across a re-run
-    groundTruth: existing?.groundTruth,
+    groundTruth: (existing ?? prior)?.groundTruth,
+    // carry the full prior-run history, and append the run we are about to overwrite
+    priorRuns: opts.force ? appendPriorRun(prior) : prior?.priorRuns,
     queuedAt: now,
     nextRetryAt: now,
     updatedAt: now,
@@ -333,6 +361,53 @@ async function processShadowInner(bookingId: string, deps?: ShadowDeps): Promise
 // ── Cron entry point ─────────────────────────────────────────────────────────
 /** Process due shadow jobs, bounded by count AND a wall-clock budget. Gated by the
  *  worker flag — off ⇒ a pure no-op (no scan, no AI). */
+// ── Owner run-status snapshot (PURE reads only — ZERO AI) ────────────────────
+/**
+ * Everything the owner UI needs to render a booking's shadow status and gate its actions:
+ * eligibility (via the same evaluateShadowEligibility the enqueue path uses), the stored job,
+ * and the live budget/spend snapshot. Makes NO model call — it only reads state.
+ */
+export async function shadowStatusForBooking(b: Booking, deps?: ShadowDeps): Promise<{
+  bookingId: string
+  selected: boolean
+  excluded: boolean
+  eligible: boolean
+  eligibilityReason: string
+  job: V2ShadowJob | null
+  imageCount: number
+  budget: ShadowBudgetLimits
+  spend: ShadowSpendState
+}> {
+  const d = resolve(deps)
+  const now = d.now()
+  const pv = photoVersion(b)
+  const [job, selected, excluded] = await Promise.all([d.getJob(b.token), d.isSelected(b.token), d.isExcluded(b.token)])
+  const elig = evaluateShadowEligibility(
+    {
+      bookingId: b.token,
+      idempotencyKey: shadowIdempotencyKey(b.token, V2_ESTIMATOR_VERSION, pv),
+      photoCount: pv,
+      isTest: b.isTest,
+      cancelled: !!b.archived,
+      authoritativeTerminal: authoritativeTerminal(b),
+      excluded,
+      selected,
+      existingJob: job ? { status: job.status, idempotencyKey: job.idempotencyKey } : null,
+      // manualEnqueue: report eligibility as the owner's "run" path would see it, so the UI's
+      // gating matches what actually happens when they click Run.
+      manualEnqueue: true,
+    },
+    shadowFlags(d.env),
+  )
+  const budget: ShadowBudgetLimits = d.budget
+    ? d.budget
+    : { ...shadowBudgetFromEnv(d.env), killed: await shadowKillEngaged(shadowBudgetFromEnv(d.env).killed) }
+  const spend: ShadowSpendState = d.readSpend
+    ? await d.readSpend(now)
+    : { ...(await readShadowSpend(now).then((r) => ({ evalsToday: r.evals, costTodayUsd: r.costUsd }))), attemptsForBooking: job?.attempts ?? 0 }
+  return { bookingId: b.token, selected, excluded, eligible: elig.eligible, eligibilityReason: elig.reason, job, imageCount: pv, budget, spend }
+}
+
 export async function runDueShadowJobs(limit = 1, deps?: ShadowDeps): Promise<{ processed: number; results: { bookingId: string; status: string }[] }> {
   const d = resolve(deps)
   if (!isEnabled('VISION_SHADOW_WORKER_ENABLED', d.env)) return { processed: 0, results: [] }
