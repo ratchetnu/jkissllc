@@ -14,6 +14,7 @@
 
 import type { ModelMessage } from 'ai'
 import { runAiTask } from './service'
+import { updateAiCall } from './telemetry'
 import { isAllowedPhotoUrl } from '../photo-url'
 import {
   normalizeAnalysis, reviewFallbackAnalysis,
@@ -75,6 +76,10 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
     maxOutputTokens: 1600,
     temperature: 0.2,
     requestChars: photos.join(',').length,
+    // Telemetry attribution: the authoritative (primary) V1 Book Now vision pass.
+    kind: 'primary',
+    bookingId: input.bookingId,
+    imageCount: photos.length,
   })
 
   if (!res.ok) {
@@ -92,6 +97,9 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
 
   const analysis = normalizeAnalysis(raw, { ...ctx, modelName: res.model, modelProvider: providerOf(res.model) })
   const usable = analysis.normalizedItems.length > 0
+  // Attach the model's confidence to the telemetry record post-hoc (it's only known
+  // after normalization). Fire-and-forget + fail-soft — never delays the estimate.
+  void updateAiCall(res.callId, { confidenceScore: analysis.confidence?.overall })
   return {
     analysis,
     ok: usable,

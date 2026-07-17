@@ -210,6 +210,12 @@ export async function analyzePhotosV2(
       // (maxDuration 300s), so it needs more than the 30s default AI timeout or it aborts.
       timeoutMs: visionAnalysisTimeoutMs(),
       requestChars: usablePhotos.join(',').length,
+      // Telemetry attribution: V2 is an off-path SHADOW evaluation. Recording this as
+      // `shadow` (not `primary`) is what lets cost dashboards separate shadow spend from
+      // the authoritative V1 pass — both otherwise share feature `ops.junkAnalysis`.
+      kind: 'shadow',
+      bookingId: input.bookingId,
+      imageCount: usablePhotos.length,
     })
   } catch {
     // runAiTask is itself fail-soft, but guard anyway — never throw into the caller.
@@ -256,6 +262,9 @@ export async function analyzePhotosV2(
       maxOutputTokens: 4000,
       temperature: 0,
       requestChars: usablePhotos.join(',').length,
+      kind: 'shadow',
+      bookingId: input.bookingId,
+      imageCount: usablePhotos.length,
     }).catch(() => null)
 
     if (repair && repair.ok) {
