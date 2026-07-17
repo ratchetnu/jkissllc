@@ -6,7 +6,7 @@ import { useParams } from 'next/navigation'
 import { ArrowLeft, Camera, ExternalLink, Send, RefreshCw, CheckCircle2, MessageSquarePlus, AlertTriangle } from 'lucide-react'
 import OperationsShell from '../../OperationsShell'
 import WorkflowTimeline from '../../../bookings/WorkflowTimeline'
-import ShadowRunControls from '../../ai/shadow/ShadowRunControls'
+import BookingAICard from '../../ai/BookingAICard'
 import { fmtTs, money } from '../../ui'
 import { SERVICE_LABELS, INFO_REQUEST_FIELD_LABEL, type Booking, type InfoRequestField } from '../../../../lib/bookings'
 import {
@@ -245,10 +245,11 @@ function Detail({ token }: { token: string }) {
         </Link>
       </Section>
 
-      {/* Owner-only V2 shadow evaluation controls. Never affects this booking's V1 quote. */}
+      {/* Owner-only compact AI card — a glance + one action; the full workflow is in the
+          AI Command Center. Never affects this booking's V1 quote. */}
       {isOwner && (
-        <Section title="V2 Shadow Evaluation">
-          <ShadowRunControls bookingId={token} />
+        <Section title="AI (V2 Shadow)">
+          <BookingAICard bookingId={token} />
         </Section>
       )}
 
