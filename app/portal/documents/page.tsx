@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { FileText, FileSignature, Receipt, ShieldCheck, GraduationCap, ClipboardList, Download, ExternalLink } from 'lucide-react'
-import PortalShell from '../PortalShell'
 
 type Category = 'agreement' | 'policy' | 'training' | 'tax' | 'job' | 'other'
 type DocItem = {
@@ -97,8 +96,6 @@ function Documents() {
 
 export default function DocumentsPage() {
   return (
-    <PortalShell>
-      <Documents />
-    </PortalShell>
+    <Documents />
   )
 }

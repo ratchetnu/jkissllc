@@ -3,7 +3,6 @@
 import { use, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Printer } from 'lucide-react'
-import PortalShell from '../../../PortalShell'
 import PayStatementDoc from '../../../../components/PayStatementDoc'
 import type { PayStatement } from '../../../../lib/pay-statements'
 
@@ -34,5 +33,5 @@ function StatementView({ id }: { id: string }) {
 
 export default function PortalStatementPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
-  return <PortalShell><StatementView id={id} /></PortalShell>
+  return <StatementView id={id} />
 }

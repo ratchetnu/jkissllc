@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Send, Bell, Radio, MessageSquare } from 'lucide-react'
-import PortalShell from '../PortalShell'
 
 // The crew inbox (request Part 12, crew side). Full conversation with dispatch —
 // reminders, blasts, and two-way messages — in one clean, mobile-first thread.
@@ -85,5 +84,5 @@ function Inbox() {
 }
 
 export default function PortalMessagesPage() {
-  return <PortalShell><Inbox /></PortalShell>
+  return <Inbox />
 }

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { Mail, Phone, Check } from 'lucide-react'
-import PortalShell from '../PortalShell'
 
 const iStyle: React.CSSProperties = {
   width: '100%', padding: '12px 14px', background: 'color-mix(in srgb, var(--card) 90%, transparent)',
@@ -98,5 +97,5 @@ function Profile() {
 }
 
 export default function ProfilePage() {
-  return <PortalShell><Profile /></PortalShell>
+  return <Profile />
 }

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Check, Copy, CalendarDays } from 'lucide-react'
-import PortalShell from '../PortalShell'
 import { fmtLongDay } from '../ui'
 
 const DOW_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const
@@ -155,5 +154,5 @@ function Availability() {
 const miniBtn: React.CSSProperties = { padding: '7px 11px', fontSize: 12, fontWeight: 700, borderRadius: 9, background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', color: 'var(--muted)', cursor: 'pointer' }
 
 export default function AvailabilityPage() {
-  return <PortalShell><Availability /></PortalShell>
+  return <Availability />
 }

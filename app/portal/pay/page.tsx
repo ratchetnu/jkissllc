@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { FileText, MessageSquareWarning, Check } from 'lucide-react'
-import PortalShell from '../PortalShell'
 import { money, fmtDay } from '../ui'
 
 type CompLine = { routeNumber: string; businessName: string; date: string; payCents: number }
@@ -190,5 +189,5 @@ function MyPay() {
 }
 
 export default function MyPayPage() {
-  return <PortalShell><MyPay /></PortalShell>
+  return <MyPay />
 }

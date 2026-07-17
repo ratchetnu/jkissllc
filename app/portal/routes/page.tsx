@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { MapPin, CheckCircle2, ArrowRight } from 'lucide-react'
-import PortalShell from '../PortalShell'
 import { money, fmtDay, statusOf } from '../ui'
 
 type Route = {
@@ -76,5 +75,5 @@ function MyRoutes() {
 }
 
 export default function MyRoutesPage() {
-  return <PortalShell><MyRoutes /></PortalShell>
+  return <MyRoutes />
 }
