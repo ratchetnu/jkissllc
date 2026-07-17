@@ -62,6 +62,13 @@ export type AnalyzePhotosV2Deps = {
 
 const providerOf = (model: string): string => (model.includes('/') ? model.split('/')[0] : 'vercel-ai-gateway')
 
+/** Abort timeout for the heavy V2 vision call. Defaults to 90s (the shadow cron has a 300s
+ *  budget) — well above the ~40–55s the multi-pass call takes. Override with AI_VISION_TIMEOUT_MS. */
+function visionAnalysisTimeoutMs(): number {
+  const raw = Number(process.env.AI_VISION_TIMEOUT_MS)
+  return Number.isFinite(raw) && raw > 0 ? raw : 90_000
+}
+
 // Extract the first balanced-looking JSON object from model text. Fail-soft.
 function parseJsonObject(text: string): unknown {
   try {
@@ -174,6 +181,9 @@ export async function analyzePhotosV2(
       messages,
       maxOutputTokens: 4000,
       temperature: 0.15,
+      // The V2 multi-pass call is heavy (~40–55s) and runs on the vision-shadow cron
+      // (maxDuration 300s), so it needs more than the 30s default AI timeout or it aborts.
+      timeoutMs: visionAnalysisTimeoutMs(),
       requestChars: usablePhotos.join(',').length,
     })
   } catch {
