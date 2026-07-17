@@ -40,6 +40,10 @@ export type FeatureFlag =
   | 'OPERION_PRODUCTION_PROMOTION_ENABLED'// allow owner-approved production promotion
   | 'OPERION_AI_ADAPTATION_ENABLED'       // allow the AI-assisted source→target adaptation strategy
   | 'OPERION_AUTOMATIC_ROLLBACK_ENABLED'  // allow automatic rollback (only where a verified path exists)  // the independent shadow cron actually processes jobs
+  // Operion Shadow Analytics — the read-only AI-evaluation control center over the existing
+  // persisted shadow jobs. Pure analytics + dashboard; enables NO shadow processing and
+  // changes NO customer behavior. Safe to enable independently of the VISION_SHADOW_* flags.
+  | 'SHADOW_ANALYTICS_ENABLED'
 
 export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   TENANCY_ENABLED: false,
@@ -83,6 +87,7 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   OPERION_PRODUCTION_PROMOTION_ENABLED: false,
   OPERION_AI_ADAPTATION_ENABLED: false,
   OPERION_AUTOMATIC_ROLLBACK_ENABLED: false,
+  SHADOW_ANALYTICS_ENABLED: false,
 }
 
 export const ALL_FLAGS = Object.keys(FLAG_DEFAULTS) as FeatureFlag[]
