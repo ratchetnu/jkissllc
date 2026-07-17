@@ -68,11 +68,14 @@ function toRow(m: Message): CommHistoryRow {
   }
 }
 
-export async function listCommHistory(filter: CommHistoryFilter = {}): Promise<CommHistoryRow[]> {
+export async function listCommHistory(
+  filter: CommHistoryFilter = {},
+  loader: (limit: number) => Promise<Message[]> = listRecent,
+): Promise<CommHistoryRow[]> {
   const scanLimit = filter.scanLimit ?? 500
   const limit = filter.limit ?? 200
   const includeSimulated = filter.includeSimulated ?? true
-  const raw = await listRecent(scanLimit)
+  const raw = await loader(scanLimit)
   const rows = raw.map(toRow).filter(r => {
     // onlyComms: keep only rows the comms layer wrote (carry an event or simulated tag).
     if (filter.onlyComms && !r.event && !r.simulated) return false
