@@ -237,19 +237,20 @@ test('every owner transition has a real audit action in the platform union', () 
 
 // ── navigation ───────────────────────────────────────────────────────────────
 
-test('nav: AI Alerts is owner-only and platform-grouped', () => {
-  const item = NAV_ITEMS.find((i) => i.href === '/admin/operations/ai/alerts')
-  assert.ok(item, 'the Alerts destination exists')
-  assert.equal(item!.ownerOnly, true)
-  assert.equal(item!.adminOnly, true)
-  assert.equal(item!.group, 'platform')
-  assert.ok(!item!.primary, 'must not take a mobile primary slot from real work')
+test('nav: Alerts is reached THROUGH the consolidated AI Command Center, not a top-level entry', () => {
+  // Post-consolidation: Alerts is a section of the AI Command Center, not its own nav item.
+  // The single owner-only /admin/operations/ai entry is what gates the whole AI surface.
+  assert.ok(!NAV_ITEMS.some((i) => i.href === '/admin/operations/ai/alerts'), 'no top-level AI Alerts entry')
+  const cc = NAV_ITEMS.find((i) => i.href === '/admin/operations/ai')
+  assert.ok(cc, 'the AI Command Center is the single AI destination')
+  assert.equal(cc!.ownerOnly, true)
+  assert.equal(cc!.adminOnly, true)
+  assert.equal(cc!.group, 'platform')
 
-  const owner = visibleNav(NAV_ITEMS, { role: 'admin', isOwner: true })
-  assert.ok(owner.some((i) => i.href === '/admin/operations/ai/alerts'))
+  assert.ok(visibleNav(NAV_ITEMS, { role: 'admin', isOwner: true }).some((i) => i.href === '/admin/operations/ai'))
   for (const ctx of [{ role: 'admin', isOwner: false }, { role: 'manager', isOwner: false }, { role: 'crew', isOwner: false }]) {
-    assert.ok(!visibleNav(NAV_ITEMS, ctx).some((i) => i.href === '/admin/operations/ai/alerts'),
-      `${ctx.role} (owner=${ctx.isOwner}) must not see AI Alerts`)
+    assert.ok(!visibleNav(NAV_ITEMS, ctx).some((i) => i.href === '/admin/operations/ai'),
+      `${ctx.role} (owner=${ctx.isOwner}) must not see the AI Command Center`)
   }
 })
 
