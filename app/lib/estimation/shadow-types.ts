@@ -193,6 +193,12 @@ export type V2ShadowJob = {
   classifiedAt?: number
   assignee?: string
   ownerNotes?: { note: string; by: string; at: number }[]
+  // AI Learning: owner-assigned failure/root-cause categories for a completed evaluation
+  // (multi-select). Diagnostic metadata over an ALREADY-STORED evaluation — recording them
+  // runs zero inference and never touches the customer-facing quote.
+  learningCategories?: string[]
+  learningCategorizedBy?: string
+  learningCategorizedAt?: number
   // Prior completed runs, newest last — captured when an owner reruns, so a rerun creates a
   // new attempt WITHOUT erasing what the previous run found. Bounded; carries no raw model
   // output, only the comparison summary + telemetry needed to audit the change over time.

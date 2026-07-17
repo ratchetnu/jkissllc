@@ -17,11 +17,12 @@ import {
 } from './v2-corrections'
 import type { V2ShadowJob, V2GroundTruth } from './shadow-types'
 import { isGroundTruthSource } from './shadow-types'
+import { isLearningCategory, LEARNING_CATEGORIES } from './shadow-learning'
 
 export const SHADOW_ADMIN_ACTIONS = new Set([
   'shadow-enqueue', 'shadow-rerun', 'shadow-cancel', 'shadow-retry',
   'shadow-exclude', 'shadow-include', 'shadow-select', 'shadow-unselect',
-  'shadow-ground-truth', 'shadow-mark-reviewed', 'shadow-delete',
+  'shadow-ground-truth', 'shadow-mark-reviewed', 'shadow-categorize', 'shadow-delete',
   'v2-correct-item', 'v2-mark-duplicate', 'v2-set-tier', 'v2-set-surcharge', 'v2-override',
 ])
 
@@ -148,6 +149,20 @@ export async function handleShadowAdminAction(
       if (!job) return { status: 404, body: { error: 'No shadow job.' } }
       job.reviewedAt = now
       job.reviewedBy = actor
+      job.updatedAt = now
+      await saveShadowJob(job)
+      return { status: 200, body: { ok: true, shadowJob: job } }
+    }
+    // AI Learning: owner assigns/clears failure categories on a completed evaluation. Diagnostic
+    // metadata over a stored evaluation — no inference, no customer-facing effect.
+    case 'shadow-categorize': {
+      const job = await getShadowJob(bookingId)
+      if (!job) return { status: 404, body: { error: 'No shadow job.' } }
+      const raw = Array.isArray(body.categories) ? body.categories : []
+      const cats = [...new Set(raw.filter(isLearningCategory))].slice(0, LEARNING_CATEGORIES.length)
+      job.learningCategories = cats
+      job.learningCategorizedBy = actor
+      job.learningCategorizedAt = now
       job.updatedAt = now
       await saveShadowJob(job)
       return { status: 200, body: { ok: true, shadowJob: job } }
