@@ -18,7 +18,7 @@ const ACTIONS: Item[] = [
   { id: 'a-biz', label: 'Businesses', Icon: Building2, href: '/admin/operations/businesses', group: 'Go to' },
   { id: 'a-equip', label: 'Equipment', sub: 'Trucks & gear', Icon: Truck, href: '/admin/operations/equipment', group: 'Go to' },
   { id: 'a-set', label: 'Settings', Icon: Settings, href: '/admin/operations/settings', group: 'Go to' },
-  { id: 'a-ai', label: 'AI Control Center', sub: 'AI usage, cost & quality', Icon: Sparkles, href: '/admin/operations/ai', group: 'Go to' },
+  { id: 'a-ai', label: 'AI Command Center', sub: 'Shadow evaluation, learning & controls', Icon: Sparkles, href: '/admin/operations/ai', group: 'Go to' },
   { id: 'a-ops-wl', label: 'Operion Waitlist', sub: 'Early-access requests', Icon: Rocket, href: '/admin/opspilot', group: 'Go to' },
 ]
 
