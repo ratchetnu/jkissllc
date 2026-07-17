@@ -37,6 +37,7 @@ import type { InventoryCategory } from '../ai/inventory-taxonomy'
 import { estimateFromV2, type EstimateFromV2Opts, type EstimationResultV2 } from './v2-bridge'
 import { clarificationsForV2 } from './clarify-v2'
 import { LOAD_TIERS, type LoadTierKey } from './load-tier'
+import { detectSpecialty } from './specialty-taxonomy'
 
 export const EVAL_HARNESS_VERSION = 1
 
@@ -181,15 +182,15 @@ function predictedHazard(fx: Fixture, res: EstimationResultV2): boolean {
   )
 }
 
-// Specialty signal (piano / hot tub / safe) as confidence.ts defines it — object-level
-// specialHandling or a called-out specialty item — NOT the taxonomy specialHandling flag
-// (tires carry that but are a surcharge item, not a "specialty").
+// Specialty signal as confidence.ts NOW defines it — the deterministic specialty TAXONOMY
+// matched against item description/category + explicit specialtyItems. NOT generic
+// specialHandling notes (a "2-person lift" / "disassembly" is a surcharge, never a specialty).
 function predictedSpecialty(fx: Fixture, res: EstimationResultV2): boolean {
-  return (
-    (res.v2.specialtyItems?.length ?? 0) > 0 ||
-    (fx.analysis.disposalAssessment?.specialtyItems?.length ?? 0) > 0 ||
-    (fx.analysis.unifiedInventory ?? []).some((o) => (o.specialHandling ?? []).length > 0)
-  )
+  return detectSpecialty({
+    descriptions: (fx.analysis.unifiedInventory ?? []).map((o) => o.description),
+    categories: (fx.analysis.unifiedInventory ?? []).map((o) => o.category),
+    specialtyItems: [...(fx.analysis.disposalAssessment?.specialtyItems ?? []), ...(res.v2.specialtyItems ?? [])],
+  }) !== null
 }
 
 function evalCase(fx: Fixture, opts?: RunEvalOpts): PerCaseResult {
