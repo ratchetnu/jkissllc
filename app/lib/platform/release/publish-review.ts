@@ -14,6 +14,8 @@ export interface PublishReviewBusiness {
   name: string
   edition?: string
   productionUrl?: string
+  releaseStatus?: string    // the resolver status label (e.g. 'Ready to publish')
+  testOnly?: boolean        // refused for promotion by default (sandbox etc.)
 }
 
 export interface PublishReviewVersion {
@@ -35,6 +37,7 @@ export type VerificationCheckState = 'pass' | 'warn' | 'fail' | 'skip'
 export interface PublishReviewVerification {
   checks: { name: string; state: VerificationCheckState }[]
   verifiedAt?: number
+  verificationAgeMs?: number
   fresh: boolean
 }
 
@@ -45,6 +48,13 @@ export interface PublishReviewFilesChanged {
   envChanges: boolean
   rollbackSupported: boolean
   diffUrl?: string          // external link (rendered, not fetched)
+  // `available` is false in 3B.2B — the raw diff (counts/areas) is read at execution time (3B.2C/3B.3).
+  available?: boolean
+  additions?: number
+  deletions?: number
+  changedAreas?: string[]
+  workflowChange?: boolean
+  highRiskFiles?: boolean
 }
 
 export type RollbackStrategy = 'instant_promote' | 'git_revert' | 'none'
@@ -52,6 +62,8 @@ export interface PublishReviewRollback {
   targetDeploymentId?: string
   targetVersion?: string
   strategy: RollbackStrategy
+  ready: boolean            // true only when a known-good prior production deployment is captured
+  warning?: string
 }
 
 /** Eligibility as PRESENTATION data (decoupled from the 3B.1 engine). 3B.2B maps the
@@ -62,6 +74,7 @@ export interface PublishReviewEligibility {
   warnings: number
   failed: number
   items: ChecklistItem[]
+  blockingReasons?: { code: string; message: string }[]
 }
 
 export interface PublishReviewRisk {
