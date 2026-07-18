@@ -20,7 +20,6 @@
 
 import { readFileSync } from 'node:fs'
 
-const ENV_FILE = process.argv[2] || '.env.preview.local'
 function loadEnv(path) {
   const out = {}
   for (const line of readFileSync(path, 'utf8').split('\n')) {
@@ -33,10 +32,22 @@ function loadEnv(path) {
   return out
 }
 
-const env = loadEnv(new URL(`../${ENV_FILE}`, import.meta.url).pathname)
-const URL_ = env.KV_REST_API_URL
-const TOKEN = env.KV_REST_API_TOKEN
-if (!URL_ || !TOKEN) { console.error(`Missing KV_REST_API_URL / KV_REST_API_TOKEN in ${ENV_FILE}`); process.exit(1) }
+// Creds resolution (in order): env vars → a bare token as the first CLI arg → an env file.
+// The KV URL is the shared platform store; it is NOT a secret, so it defaults here and only
+// the write TOKEN needs to be supplied.
+const DEFAULT_KV_URL = 'https://smooth-vulture-92540.upstash.io'
+const arg = process.argv[2]
+const argIsToken = arg && !arg.includes('/') && !arg.endsWith('.local') && !arg.endsWith('.env')
+let URL_ = process.env.KV_REST_API_URL || DEFAULT_KV_URL
+let TOKEN = process.env.KV_REST_API_TOKEN || (argIsToken ? arg : undefined)
+if (!TOKEN && arg && !argIsToken) {
+  try {
+    const env = loadEnv(new URL(`../${arg}`, import.meta.url).pathname)
+    URL_ = env.KV_REST_API_URL || URL_
+    TOKEN = env.KV_REST_API_TOKEN
+  } catch { /* fall through to error */ }
+}
+if (!TOKEN) { console.error('No KV write token. Pass it as the first argument, or set KV_REST_API_TOKEN.'); process.exit(1) }
 
 async function call(args) {
   const res = await fetch(URL_, {
@@ -173,4 +184,4 @@ console.log('  business  ' + K_BIZ + BIZ_ID + '  (role=target, current=0.1.0)')
 console.log('  update    ' + K_UPD + UPDATE_KEY + '  (0.1.0 -> 0.1.1, approved, eligible)')
 console.log('  compat    ' + K_COMPAT + UPDATE_KEY + '  (compatible)')
 console.log('  install   ' + (INSTALL_ID ? `set (${INSTALL_ID}) — configurationStatus=ready` : 'NOT set — click "Validate GitHub Connection" in Release Center'))
-console.log('Reset any time with: node scripts/reset-operion-sandbox.mjs ' + ENV_FILE)
+console.log('Reset any time with: node scripts/reset-operion-sandbox.mjs <token>')
