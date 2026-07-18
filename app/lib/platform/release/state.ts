@@ -9,6 +9,9 @@
 // runs the whole flow (check → plan → validate → Preview → verify → present) and pauses
 // only for the deliberate Production approval, which becomes "Publish to Production".
 
+import type { PromotionPhase } from './promotion-state'
+import { PROMOTION_PHASE_TO_RELEASE } from './promotion-state'
+
 export type ReleaseStatus =
   | 'not_initialized'
   | 'up_to_date'
@@ -18,6 +21,16 @@ export type ReleaseStatus =
   | 'ready_to_publish'
   | 'action_required'
   | 'verification_failed'
+  // ── Production-promotion states (Increment 3B.1; additive, inert until later increments).
+  //    Reached ONLY when a promotion phase is present; otherwise the resolver is unchanged. ──
+  | 'awaiting_approval'
+  | 'publishing'
+  | 'verifying_production'
+  | 'published'
+  | 'publish_failed'
+  | 'rolling_back'
+  | 'rolled_back'
+  | 'rollback_failed'
 
 export type PrimaryAction =
   | 'set_up'        // Set Up
@@ -27,6 +40,8 @@ export type PrimaryAction =
   | 'publish'       // Publish to Production (the approval gate)
   | 'resolve'       // Resolve
   | 'retry'         // Retry
+  | 'view_publish_progress' // View Publishing (while a promotion runs)
+  | 'rollback'      // Roll Back (restore prior production)
 
 /** Human labels — the ENTIRE externally-visible status vocabulary. */
 export const STATUS_LABEL: Record<ReleaseStatus, string> = {
@@ -38,6 +53,14 @@ export const STATUS_LABEL: Record<ReleaseStatus, string> = {
   ready_to_publish: 'Ready to publish',
   action_required: 'Action required',
   verification_failed: 'Verification failed',
+  awaiting_approval: 'Awaiting approval',
+  publishing: 'Publishing…',
+  verifying_production: 'Verifying production…',
+  published: 'Published',
+  publish_failed: 'Publish failed',
+  rolling_back: 'Rolling back…',
+  rolled_back: 'Rolled back',
+  rollback_failed: 'Rollback failed',
 }
 
 export const ACTION_LABEL: Record<PrimaryAction, string> = {
@@ -48,6 +71,8 @@ export const ACTION_LABEL: Record<PrimaryAction, string> = {
   publish: 'Publish to Production',
   resolve: 'Resolve',
   retry: 'Retry',
+  view_publish_progress: 'View Publishing',
+  rollback: 'Roll Back',
 }
 
 export type StatusTone = 'ok' | 'attention' | 'busy' | 'critical' | 'neutral'
@@ -55,9 +80,14 @@ export function statusTone(s: ReleaseStatus): StatusTone {
   switch (s) {
     case 'up_to_date': return 'ok'
     case 'ready_to_publish': case 'preview_ready': return 'ok'
+    case 'published': return 'ok'
     case 'update_available': return 'attention'
+    case 'awaiting_approval': return 'attention'
     case 'updating': return 'busy'
+    case 'publishing': case 'verifying_production': case 'rolling_back': return 'busy'
     case 'action_required': case 'verification_failed': return 'critical'
+    case 'publish_failed': case 'rollback_failed': return 'critical'
+    case 'rolled_back': return 'attention'
     case 'not_initialized': return 'neutral'
   }
 }
@@ -84,6 +114,9 @@ export type ReleaseSignals = {
   blocking: string[]      // hard blockers (details-only text)
   driftReasons: string[]  // collapsed drift notes (details-only text)
   lastUpdatedAt?: number
+  /** Production-promotion phase (Increment 3B.1). Absent for every preview-only flow —
+   *  when unset the resolver behaves EXACTLY as in Increment 3A. */
+  promotion?: PromotionPhase
 }
 
 export type ReleaseState = {
@@ -114,6 +147,13 @@ export function resolveReleaseState(s: ReleaseSignals): ReleaseState {
     status, statusLabel: STATUS_LABEL[status], tone: statusTone(status),
     action, actionLabel: ACTION_LABEL[action], ...base,
   })
+
+  // Production-promotion phases dominate the display when present (Increment 3B.1). This
+  // branch is inert for every preview-only flow (promotion undefined) — nothing below changes.
+  if (s.promotion) {
+    const m = PROMOTION_PHASE_TO_RELEASE[s.promotion]
+    return out(m.status, m.action)
+  }
 
   if (!s.initialized) return out('not_initialized', 'set_up')
   if (s.job === 'failed' || s.verificationFailed) return out('verification_failed', 'retry')
