@@ -11,8 +11,47 @@ import {
   sandboxBusinessValid, sandboxProductValid, sandboxReconciliationValid,
 } from '../app/lib/platform/sandbox/records'
 import { diagnose, repair, type SandboxDeps } from '../app/lib/platform/sandbox/service'
+import { sandboxHealth, SANDBOX_HEALTH_LABEL, type SandboxHealthInput } from '../app/lib/platform/sandbox/health'
 import type { PlatformBusiness, PlatformUpdate, UpdateCompatibility } from '../app/lib/platform/updates/types'
 import type { SyncProduct, ReconciliationRecord } from '../app/lib/platform/sync/types'
+
+// ── Diagnostics health label (Cleanup Item 2) ────────────────────────────────
+const present: SandboxHealthInput['records'] = { business: 'present', product: 'present', reconciliation: 'present', update: 'present', compat: 'present' }
+const allMissing: SandboxHealthInput['records'] = { business: 'missing', product: 'missing', reconciliation: 'missing', update: 'missing', compat: 'missing' }
+const diagWith = (resolvedStatus: string | null, records: SandboxHealthInput['records'] = present, queryReturnsSandbox = true): SandboxHealthInput => ({ records, queryReturnsSandbox, resolvedStatus })
+
+test('sandbox health: missing only when no record exists', () => {
+  assert.equal(sandboxHealth(null), 'missing')
+  assert.equal(sandboxHealth(diagWith(null, allMissing, false)), 'missing')
+  // record present (product) but query didn't return it yet → still present, not missing
+  assert.equal(sandboxHealth(diagWith(null, present, false)), 'present')
+})
+
+test('sandbox health: ready across healthy lifecycle states', () => {
+  for (const s of ['Update available', 'Ready to publish', 'Up to date', 'Preview ready']) {
+    assert.equal(sandboxHealth(diagWith(s)), 'ready', `${s} → ready`)
+  }
+})
+
+test('sandbox health: present while mid-flow / not set up', () => {
+  for (const s of ['Updating…', 'Not set up', 'Checking', 'Preparing Preview', 'Deploying Preview', 'Verifying Preview']) {
+    assert.equal(sandboxHealth(diagWith(s)), 'present', `${s} → present`)
+  }
+})
+
+test('sandbox health: needs attention when record exists but workflow failed', () => {
+  assert.equal(sandboxHealth(diagWith('Verification failed')), 'attention')
+  assert.equal(sandboxHealth(diagWith('Action required')), 'attention')
+  // never "missing" while the record is still there
+  assert.notEqual(sandboxHealth(diagWith('Verification failed')), 'missing')
+})
+
+test('sandbox health: the four labels are distinct + human', () => {
+  assert.deepEqual(
+    Object.values(SANDBOX_HEALTH_LABEL),
+    ['Sandbox missing', 'Sandbox present', 'Sandbox ready', 'Sandbox needs attention'],
+  )
+})
 
 const PREVIEW = { vercelEnv: 'preview', requestHost: 'jkissllc-git-x.vercel.app', kvStoreHost: 'operion-preview-1234.upstash.io', repairFlagEnabled: true }
 
