@@ -70,17 +70,21 @@ const PREVIEW_PROJECT_ID = 'prj_Uqxm4MMxZJzD3EwXgfACqnMsUeD4'
 const INSTALL_ID = process.env.OPERION_SANDBOX_INSTALLATION_ID || undefined
 const now = Date.now()
 
+// updates store (the Update action reads these)
 const K_BIZ = 'platform:business:'
 const K_BIZ_IDX = 'platform:business:index'
 const K_UPD = 'platform:update:'
 const K_UPD_IDX = 'platform:update:index'
 const K_COMPAT = 'platform:compat:'
+// sync store (the Release Center *Businesses list* iterates these — a business only shows if a
+// matching SyncProduct exists; the updates-store record above only enriches that row).
+const K_PROD = 'platform:sync:product:'
+const K_PROD_IDX = 'platform:sync:product:index'
+const K_LATEST = 'platform:sync:latest:'
+const K_REC = 'platform:sync:rec:'
+const K_HIST_IDX = 'platform:sync:history:'
 
-const existing = await call(['GET', K_BIZ + BIZ_ID])
-if (existing && !process.env.FORCE) {
-  console.log('Sandbox business already registered — re-run with FORCE=1 to overwrite the record.')
-  process.exit(0)
-}
+// Idempotent: every write below is a SET/ZADD upsert, so re-running is safe (no early return).
 
 const PASS = {
   typecheck: 'passed', lint: 'passed', tests: 'passed', build: 'passed',
@@ -173,15 +177,67 @@ const compat = {
   updatedAt: now,
 }
 
+// ── Sync product (drives the Businesses LIST) ────────────────────────────────
+const product = {
+  recordVersion: 1,
+  id: BIZ_ID,
+  displayName: 'Operion Sandbox — TEST ONLY',
+  productType: 'standalone',
+  status: 'active',
+  sourceProvider: 'github',
+  githubOwner: 'ratchetnu', githubRepo: 'operion-sandbox',
+  defaultBranch: 'main',
+  deploymentProvider: 'vercel', vercelProject: 'operion-sandbox',
+  healthPath: '/api/health',
+  platformSourceId: null,               // self-contained: the 0.1.1 update lives in this repo
+  supportsPlatformSync: true,           // so the "update available" signal is applicable
+  supportsDeploymentTracking: true,
+  createdAt: now, updatedAt: now,
+}
+
+// ── Reconciliation snapshot: makes the row read "Update available (0.1.0 → 0.1.1)" ──
+const recId = `${BIZ_ID}:${now}`
+const reconciliation = {
+  recordVersion: 1,
+  id: recId,
+  productId: BIZ_ID,
+  checkedAt: now,
+  trigger: 'seed',
+  platformSync: {
+    applicable: true,
+    currentBaselineVersion: '0.1.0', currentBaselineCommit: MAIN_COMMIT,
+    latestBaselineVersion: '0.1.1', latestBaselineCommit: SOURCE_COMMIT,
+    commitsBehind: 1, compatibility: 'compatible',
+    updateAvailable: true, safeToSync: true, state: 'attention',
+    detail: 'A newer sandbox version (0.1.1) is available.',
+  },
+  deployment: {
+    applicable: true, gitConnected: true,
+    deployedCommit: MAIN_COMMIT, mainCommit: MAIN_COMMIT, behindBy: 0, deployedAt: now,
+    environment: 'preview', health: 'unknown', upToDate: true,
+    commitLabel: MAIN_COMMIT.slice(0, 7), statusLabel: 'Up to date', state: 'ok',
+  },
+  ok: true, failed: false,
+}
+
+// updates store
 await call(['SET', K_BIZ + BIZ_ID, JSON.stringify(business)])
 await call(['ZADD', K_BIZ_IDX, now, BIZ_ID])
 await call(['SET', K_UPD + UPDATE_KEY, JSON.stringify(update)])
 await call(['ZADD', K_UPD_IDX, now, UPDATE_KEY])
 await call(['SET', K_COMPAT + UPDATE_KEY, JSON.stringify({ [BIZ_ID]: compat })])
+// sync store (product + latest reconciliation + history)
+await call(['SET', K_PROD + BIZ_ID, JSON.stringify(product)])
+await call(['ZADD', K_PROD_IDX, now, BIZ_ID])
+await call(['SET', K_LATEST + BIZ_ID, JSON.stringify(reconciliation)])
+await call(['SET', K_REC + recId, JSON.stringify(reconciliation)])
+await call(['ZADD', K_HIST_IDX + BIZ_ID, now, recId])
 
 console.log('Seeded Operion Sandbox (TEST ONLY):')
-console.log('  business  ' + K_BIZ + BIZ_ID + '  (role=target, current=0.1.0)')
-console.log('  update    ' + K_UPD + UPDATE_KEY + '  (0.1.0 -> 0.1.1, approved, eligible)')
-console.log('  compat    ' + K_COMPAT + UPDATE_KEY + '  (compatible)')
-console.log('  install   ' + (INSTALL_ID ? `set (${INSTALL_ID}) — configurationStatus=ready` : 'NOT set — click "Validate GitHub Connection" in Release Center'))
+console.log('  sync product  ' + K_PROD + BIZ_ID + '  (drives the Businesses list)')
+console.log('  reconciliation ' + K_LATEST + BIZ_ID + '  (update available 0.1.0 -> 0.1.1)')
+console.log('  business      ' + K_BIZ + BIZ_ID + '  (role=target, current=0.1.0)')
+console.log('  update        ' + K_UPD + UPDATE_KEY + '  (0.1.0 -> 0.1.1, approved, eligible)')
+console.log('  compat        ' + K_COMPAT + UPDATE_KEY + '  (compatible)')
+console.log('  install       ' + (INSTALL_ID ? `set (${INSTALL_ID}) — configurationStatus=ready` : 'NOT set — click "Validate GitHub Connection" in Release Center'))
 console.log('Reset any time with: node scripts/reset-operion-sandbox.mjs <token>')

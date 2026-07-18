@@ -46,10 +46,18 @@ async function call(args) {
 const BIZ_ID = 'operion-sandbox'
 const UPDATE_KEY = 'SBX-011'
 
+// updates store
 await call(['DEL', 'platform:business:' + BIZ_ID])
 await call(['ZREM', 'platform:business:index', BIZ_ID])
 await call(['DEL', 'platform:update:' + UPDATE_KEY])
 await call(['ZREM', 'platform:update:index', UPDATE_KEY])
 await call(['DEL', 'platform:compat:' + UPDATE_KEY])
+// sync store — delete each history reconciliation record, then the indexes/latest/product
+const recIds = (await call(['ZRANGE', 'platform:sync:history:' + BIZ_ID, '0', '-1'])) || []
+for (const rid of recIds) await call(['DEL', 'platform:sync:rec:' + rid])
+await call(['DEL', 'platform:sync:history:' + BIZ_ID])
+await call(['DEL', 'platform:sync:latest:' + BIZ_ID])
+await call(['DEL', 'platform:sync:product:' + BIZ_ID])
+await call(['ZREM', 'platform:sync:product:index', BIZ_ID])
 
-console.log('Removed Operion Sandbox registry rows (business + update + compat). Live businesses untouched.')
+console.log('Removed Operion Sandbox rows (sync product + reconciliation + business + update + compat). Live businesses untouched.')
