@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw, GitCommitHorizontal, Server, CalendarClock, Flag, AlertTriangle, CheckCircle2, XCircle, MinusCircle, Clock, Rocket, ShieldCheck, Building2, ChevronDown } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { osLabel, osMiniBtn } from '../ui'
+import { sandboxHealth, SANDBOX_HEALTH_LABEL, SANDBOX_HEALTH_TONE } from '../../../lib/platform/sandbox/health'
 
 // ── Read-only Release Center ─────────────────────────────────────────────────
 // Displays the current build, resolved feature-flag states, and the curated release
@@ -352,13 +353,14 @@ function SandboxAdvanced({ onRepaired }: { onRepaired: () => void }) {
     } catch { setMsg('Repair failed to run.') } finally { setBusy(false); setConfirming(false) }
   }
 
-  const sandboxOk = !!diag?.queryReturnsSandbox && diag?.resolvedStatus === 'Update available'
+  const health = sandboxHealth(diag)
+  const healthTone = SANDBOX_HEALTH_TONE[health]
   return (
     <div style={{ marginTop: 16, padding: 12, border: '1px solid var(--line)', borderRadius: 12, background: 'rgba(255,255,255,.02)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={osLabel}>Advanced · Sandbox</span>
         <Chip fg="#fcd34d" bg="rgba(245,158,11,.15)">PREVIEW ONLY</Chip>
-        {diag && <Chip fg={sandboxOk ? '#86efac' : '#fca5a5'} bg={sandboxOk ? 'rgba(34,197,94,.16)' : 'rgba(239,68,68,.16)'}>{sandboxOk ? 'Sandbox visible' : 'Sandbox missing'}</Chip>}
+        {diag && <Chip fg={healthTone.fg} bg={healthTone.bg}>{SANDBOX_HEALTH_LABEL[health]}</Chip>}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <button onClick={check} disabled={busy} style={osMiniBtn}>Check Sandbox</button>
           {!confirming
