@@ -55,6 +55,11 @@ export type FeatureFlag =
   // surface. Observes only: promotes no model, enables no shadow traffic, sends no customer
   // anything. Email delivery is a separate flag (added with the transport in Increment 3).
   | 'SHADOW_ALERTING_ENABLED'
+  // Operion Sandbox repair — gates the owner-only, PREVIEW-ONLY diagnostics + repair of the
+  // disposable operion-sandbox KV records (its seed landed in the wrong store). Writes ONLY
+  // operion-sandbox keys, never a live business, never in Production. Must be set in Preview
+  // ONLY — never add it to the Production environment. OFF = the routes 404 and the UI hides.
+  | 'OPERION_SANDBOX_REPAIR_ENABLED'
 
 export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   TENANCY_ENABLED: false,
@@ -105,6 +110,9 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   // Read-only alert evaluation over the persisted shadow jobs. Safe to enable independently
   // of the VISION_SHADOW_* flags: with the shadow worker off it simply finds nothing new.
   SHADOW_ALERTING_ENABLED: false,
+  // Sandbox repair — OFF everywhere by default. Enabled in PREVIEW ONLY when the owner needs
+  // to reseed the operion-sandbox test records into the Preview store. Never set in Production.
+  OPERION_SANDBOX_REPAIR_ENABLED: false,
 }
 
 export const ALL_FLAGS = Object.keys(FLAG_DEFAULTS) as FeatureFlag[]

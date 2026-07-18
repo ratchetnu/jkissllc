@@ -1,5 +1,14 @@
 # 21 — Design System Foundation — Operion
 
+> **2026-07-18:** the primitives are now **token-driven and the single import
+> surface** (`@/app/components/ui`): a full global token scale (spacing / radius /
+> shadow / motion / type / status) was promoted to `:root`, the primitives were
+> rebuilt on it (fixing the inverted `--ink` text color + a missing `spin`
+> keyframe), and the library was expanded (Button taxonomy, Input/Textarea/
+> SearchInput/CurrencyInput/Toggle/Segmented, PageHeader/Toolbar/KpiRow/Progress/
+> Avatar) with one status vocabulary. **Guide: [`docs/design-system/README.md`](../design-system/README.md).**
+
+
 > Originally branch `opspilot/platform-foundation` (legacy internal identifier),
 > 2026-07-12.
 >
