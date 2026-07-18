@@ -23,5 +23,13 @@ export { PageHeader, Toolbar, KpiRow, Progress, Avatar } from './scaffolding'
 // Overlays + navigation.
 export { Dialog, Drawer, Tabs } from './overlays'
 
+// Deliberate-action framework (reusable high-consequence action UI — 3B.2A).
+export { DeliberateActionDrawer, TypedConfirm, RiskBanner, EligibilityChecklist } from './deliberate-action'
+export {
+  matchesConfirmation, riskPresentation, canConfirmDeliberateAction, summarizeChecklist,
+  checklistStateLabel, checklistStateGlyph, checklistStateColor,
+  type RiskLevel, type ChecklistItem, type ChecklistState, type ChecklistSummary,
+} from './deliberate-action-logic'
+
 // AI surfaces.
 export { AiExplanation, InsightCard, ApprovalCard } from './ai'
