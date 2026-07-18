@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw, GitCommitHorizontal, Server, CalendarClock, Flag, AlertTriangle, CheckCircle2, XCircle, MinusCircle, Clock, Rocket, ShieldCheck, Building2, ChevronDown } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
-import { osLabel } from '../ui'
+import { osLabel, osMiniBtn } from '../ui'
 
 // ── Read-only Release Center ─────────────────────────────────────────────────
 // Displays the current build, resolved feature-flag states, and the curated release
@@ -286,6 +286,7 @@ function Businesses() {
   const [views, setViews] = useState<BizView[] | null>(null)
   const [updatesEnabled, setUpdatesEnabled] = useState(false)
   const [show, setShow] = useState(false)
+  const [nonce, setNonce] = useState(0) // bump to re-fetch (e.g. after a sandbox repair)
   useEffect(() => {
     let live = true
     fetch('/api/admin/release/businesses', { credentials: 'same-origin' })
@@ -293,14 +294,96 @@ function Businesses() {
       .then(j => { if (live && j?.businesses) { setViews(j.businesses); setUpdatesEnabled(!!j.updatesEnabled); setShow(true) } })
       .catch(() => {})
     return () => { live = false }
-  }, [])
+  }, [nonce])
   if (!show || !views) return null // owner-only: silently absent for non-owners
   return (
     <Section title="Businesses" icon={Building2}>
       {views.length === 0
         ? <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>No businesses registered yet.</p>
         : <div style={{ display: 'grid', gap: 10 }}>{views.map(b => <BusinessRow key={b.id} b={b} updatesEnabled={updatesEnabled} />)}</div>}
+      <SandboxAdvanced onRepaired={() => setNonce(n => n + 1)} />
     </Section>
+  )
+}
+
+// ── Advanced · Sandbox repair (owner + PREVIEW + OPERION_SANDBOX_REPAIR_ENABLED only) ──
+// Renders NOTHING unless the diagnostics endpoint answers 200 — which only happens
+// for a platform owner, in Preview, with the flag on. Never appears in Production.
+type SandboxDiag = {
+  environment: string
+  records: Record<'business' | 'product' | 'reconciliation' | 'update' | 'compat', 'present' | 'malformed' | 'missing'>
+  queryReturnsSandbox: boolean; currentVersion: string | null; availableVersion: string | null
+  resolvedStatus: string | null; resolvedAction: string | null
+  visibleBusinesses: { id: string; name: string }[]; needsRepair: boolean; notes: string[]
+}
+const miniDanger: React.CSSProperties = { ...osMiniBtn, color: '#fca5a5', borderColor: 'rgba(239,68,68,.4)' }
+
+function SandboxAdvanced({ onRepaired }: { onRepaired: () => void }) {
+  const [diag, setDiag] = useState<SandboxDiag | null>(null)
+  const [avail, setAvail] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+
+  const check = useCallback(async () => {
+    setBusy(true); setMsg(null)
+    try {
+      const r = await fetch('/api/admin/release/sandbox/diagnostics', { credentials: 'same-origin' })
+      if (!r.ok) { setAvail(false); return }
+      const j = await r.json(); setDiag(j.diagnostics); setAvail(true)
+    } catch { setAvail(false) } finally { setBusy(false) }
+  }, [])
+  useEffect(() => { check() }, [check])
+  if (!avail) return null // hidden in Production / for non-owners / flag off
+
+  const runRepair = async () => {
+    setBusy(true); setMsg(null)
+    try {
+      const r = await fetch('/api/admin/release/sandbox/repair', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug: 'operion-sandbox', confirm: 'operion-sandbox' }),
+      })
+      const j = await r.json()
+      if (!r.ok) { setMsg(`Repair refused: ${(j.refusals || []).join(', ') || r.status}`); return }
+      setDiag(j.diagnostics)
+      setMsg(`Repaired. Wrote ${j.keysWritten.length} record(s), ${j.keysUnchanged.length} already valid. Live records unchanged: ${j.integrity.liveRecordsUnchanged ? 'yes' : 'NO — investigate'}.`)
+      onRepaired()
+    } catch { setMsg('Repair failed to run.') } finally { setBusy(false); setConfirming(false) }
+  }
+
+  const sandboxOk = !!diag?.queryReturnsSandbox && diag?.resolvedStatus === 'Update available'
+  return (
+    <div style={{ marginTop: 16, padding: 12, border: '1px solid var(--line)', borderRadius: 12, background: 'rgba(255,255,255,.02)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={osLabel}>Advanced · Sandbox</span>
+        <Chip fg="#fcd34d" bg="rgba(245,158,11,.15)">PREVIEW ONLY</Chip>
+        {diag && <Chip fg={sandboxOk ? '#86efac' : '#fca5a5'} bg={sandboxOk ? 'rgba(34,197,94,.16)' : 'rgba(239,68,68,.16)'}>{sandboxOk ? 'Sandbox visible' : 'Sandbox missing'}</Chip>}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button onClick={check} disabled={busy} style={osMiniBtn}>Check Sandbox</button>
+          {!confirming
+            ? <button onClick={() => setConfirming(true)} disabled={busy} style={miniDanger}>Repair Sandbox</button>
+            : <button onClick={runRepair} disabled={busy} style={miniDanger}>Confirm — repair now</button>}
+        </div>
+      </div>
+      {msg && <p style={{ fontSize: 12.5, color: 'var(--text)', margin: '10px 0 0' }}>{msg}</p>}
+      {diag && (
+        <>
+          <button onClick={() => setOpen(o => !o)} style={{ ...osLabel, background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginTop: 8 }}>
+            {open ? 'Hide details' : 'Show details'}
+          </button>
+          {open && (
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6, display: 'grid', gap: 3 }}>
+              <div>Environment: {diag.environment}</div>
+              <div>Records — business: {diag.records.business}, product: {diag.records.product}, reconciliation: {diag.records.reconciliation}, update: {diag.records.update}, compat: {diag.records.compat}</div>
+              <div>Query returns sandbox: {String(diag.queryReturnsSandbox)} · version {diag.currentVersion ?? '—'} → {diag.availableVersion ?? '—'} · status {diag.resolvedStatus ?? '—'} · action {diag.resolvedAction ?? '—'}</div>
+              <div>Visible businesses: {diag.visibleBusinesses.map(b => b.id).join(', ') || '(none)'}</div>
+              {diag.notes.map((n, i) => <div key={i}>• {n}</div>)}
+            </div>
+          )}
+        </>
+      )}
+    </div>
   )
 }
 
