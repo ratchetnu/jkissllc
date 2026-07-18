@@ -153,6 +153,41 @@ export class VercelPreviewProvider {
     return { ok: true, data: { deploymentId: id, url: absUrl(match.url), inspectorUrl: this.inspector(id), state, ready: state === 'ready', failed: state === 'error' || state === 'canceled' } }
   }
 
+  // ── Latest PRODUCTION deployment info for Sync Status (read-only) ────────────
+  // Returns the newest production deployment with the fields the Update Center needs:
+  // its git commit sha (undefined for CLI/non-git deployments — a valid, expected state,
+  // NOT an error), when it was created, and its ready/health state.
+  async readProductionInfo(project: string, teamId?: string): Promise<ProviderResult<{
+    deploymentId: string; url?: string; state: PreviewState; commitSha?: string; gitConnected: boolean; createdAt?: number; target: string
+  } | null>> {
+    if (!this.configured) return { ok: false, error: 'VERCEL_TOKEN not configured', category: 'not_configured' }
+    if (!project) return { ok: false, error: 'project required', category: 'config' }
+    const scope = (explicit?: string) => { const id = explicit || this.teamId; return id ? `&teamId=${encodeURIComponent(id)}` : '' }
+    let res
+    try { res = await this.fetch(`${API}/v6/deployments?projectId=${encodeURIComponent(project)}&target=production${scope(teamId)}&limit=1`, { headers: this.headers() }) }
+    catch { return { ok: false, error: 'Vercel API unreachable', category: 'network' } }
+    if (res.status === 401 || res.status === 403) return { ok: false, error: 'Vercel auth/permission denied', category: 'permission' }
+    if (res.status === 404) return { ok: false, error: 'Vercel project not found', category: 'not_found' }
+    if (!res.ok) return { ok: false, error: `list deployments failed (${res.status})`, category: 'api' }
+    const b = (await res.json().catch(() => null)) as { deployments?: Array<{ uid?: string; id?: string; url?: string; readyState?: string; state?: string; target?: string | null; createdAt?: number; created?: number; meta?: { githubCommitSha?: string } }> } | null
+    const d = (b?.deployments ?? [])[0]
+    if (!d) return { ok: true, data: null }
+    const commitSha = d.meta?.githubCommitSha || undefined
+    const id = d.uid ?? d.id ?? ''
+    return {
+      ok: true,
+      data: {
+        deploymentId: id,
+        url: absUrl(d.url),
+        state: mapReadyState(d.readyState ?? d.state),
+        commitSha,
+        gitConnected: !!commitSha,
+        createdAt: d.createdAt ?? d.created,
+        target: d.target ?? 'production',
+      },
+    }
+  }
+
   // ── Read a Preview deployment's current state ───────────────────────────────
   async readPreviewDeployment(deploymentId: string, teamId?: string): Promise<ProviderResult<PreviewDeployment>> {
     if (!this.configured) return { ok: false, error: 'VERCEL_TOKEN not configured', category: 'not_configured' }

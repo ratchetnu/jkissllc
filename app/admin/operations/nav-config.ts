@@ -30,6 +30,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/admin/operations/settings', label: 'Settings', group: 'platform', adminOnly: true },
   { href: '/admin/operations/release', label: 'Release Center', group: 'platform', adminOnly: true },
   { href: '/admin/operations/platform', label: 'Platform', group: 'platform', adminOnly: true, ownerOnly: true },
+  { href: '/admin/operations/sync', label: 'Sync Status', group: 'platform', adminOnly: true, ownerOnly: true },
   { href: '/admin/operations/ai', label: 'AI Command Center', group: 'platform', adminOnly: true, ownerOnly: true },
 ]
 

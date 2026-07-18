@@ -40,6 +40,12 @@ export type FeatureFlag =
   | 'OPERION_PRODUCTION_PROMOTION_ENABLED'// allow owner-approved production promotion
   | 'OPERION_AI_ADAPTATION_ENABLED'       // allow the AI-assisted source→target adaptation strategy
   | 'OPERION_AUTOMATIC_ROLLBACK_ENABLED'  // allow automatic rollback (only where a verified path exists)  // the independent shadow cron actually processes jobs
+  // Operion Sync Status — the read-only, multi-product reconciliation surface in the
+  // Update Center. Reconciles each registered product's Platform Sync Status (vs its
+  // configured source platform's baseline) and Deployment Status (live deploy vs its own
+  // repo main) by READING GitHub + Vercel. Writes nothing to any repo or deployment and
+  // enables no automation. OFF = the surface + its cron are inert (byte-identical today).
+  | 'OPERION_SYNC_STATUS_ENABLED'
   // Operion Shadow Analytics — the read-only AI-evaluation control center over the existing
   // persisted shadow jobs. Pure analytics + dashboard; enables NO shadow processing and
   // changes NO customer behavior. Safe to enable independently of the VISION_SHADOW_* flags.
@@ -92,6 +98,9 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   OPERION_PRODUCTION_PROMOTION_ENABLED: false,
   OPERION_AI_ADAPTATION_ENABLED: false,
   OPERION_AUTOMATIC_ROLLBACK_ENABLED: false,
+  // Read-only multi-product reconciliation surface. OFF = the Sync Status dashboard + its
+  // cron are inert; providers are never called. Enabling it only turns on READ reconciliation.
+  OPERION_SYNC_STATUS_ENABLED: false,
   SHADOW_ANALYTICS_ENABLED: false,
   // Read-only alert evaluation over the persisted shadow jobs. Safe to enable independently
   // of the VISION_SHADOW_* flags: with the shadow worker off it simply finds nothing new.
