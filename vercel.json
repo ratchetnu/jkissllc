@@ -6,6 +6,7 @@
     { "path": "/api/cron/ai-jobs", "schedule": "*/3 * * * *" },
     { "path": "/api/cron/vision-shadow", "schedule": "*/10 * * * *" },
     { "path": "/api/cron/shadow-alerts", "schedule": "*/15 * * * *" },
-    { "path": "/api/cron/operion-reconcile", "schedule": "*/5 * * * *" }
+    { "path": "/api/cron/operion-reconcile", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/operion-sync", "schedule": "*/15 * * * *" }
   ]
 }

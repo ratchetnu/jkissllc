@@ -148,6 +148,31 @@ export class GitHubActionsProvider implements UpdateAutomationProvider {
       return { contentBase64, sha256 }
     })
   }
+  // Compare two commits/refs (read-only). ahead_by = commits `head` has that `base` lacks.
+  // Sync Status uses base=target's synced baseline, head=source main → aheadBy = how many
+  // source commits the target hasn't taken yet.
+  compareCommits(installationId: string, repo: RepoRef, base: string, head: string) {
+    return this.get(
+      installationId,
+      `/repos/${repo.owner}/${repo.name}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`,
+      (b) => {
+        const r = b as { ahead_by?: number; behind_by?: number; status?: string; total_commits?: number }
+        return { aheadBy: r.ahead_by ?? 0, behindBy: r.behind_by ?? 0, status: r.status ?? 'unknown', totalCommits: r.total_commits ?? 0 }
+      },
+    )
+  }
+  // Branch HEAD with its commit date — "latest commit on main" + when it landed.
+  readBranchHead(installationId: string, repo: RepoRef, branch: string) {
+    return this.get(
+      installationId,
+      `/repos/${repo.owner}/${repo.name}/branches/${encodeURIComponent(branch)}`,
+      (b) => {
+        const r = b as { commit: { sha: string; commit?: { committer?: { date?: string }; author?: { date?: string } } } }
+        const date = r.commit.commit?.committer?.date ?? r.commit.commit?.author?.date
+        return { sha: r.commit.sha, committedAt: date ? Date.parse(date) : undefined }
+      },
+    )
+  }
   readPullRequest(installationId: string, repo: RepoRef, number: number) {
     return this.get(installationId, `/repos/${repo.owner}/${repo.name}/pulls/${number}`, (b) => { const r = b as { head: { sha: string }; mergeable: boolean; html_url: string }; return { headSha: r.head.sha, mergeable: !!r.mergeable, url: r.html_url } })
   }
