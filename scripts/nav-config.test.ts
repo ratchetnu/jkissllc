@@ -1,61 +1,113 @@
-// Operion operations navigation model — pure tests (role-aware, ≤5 mobile items).
+// Operion operations navigation model — pure tests (Apple-style IA, role-aware).
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { NAV_ITEMS, visibleNav, primaryNav, moreGroups, MAX_PRIMARY } from '../app/admin/operations/nav-config'
+import {
+  NAV_ITEMS, BOOK_NOW_HREF, visibleNav, desktopPrimaryNav, mobilePrimaryNav, menuGroups, mobileMoreGroups,
+} from '../app/admin/operations/nav-config'
 
-test('visibleNav: managers lose adminOnly; Platform is owner-only', () => {
-  const owner = visibleNav(NAV_ITEMS, { role: 'admin', isOwner: true })
+const ownerCtx = { role: 'admin', isOwner: true }
+
+test('visibleNav: managers lose adminOnly; owner-only stays owner-only (permissions unchanged)', () => {
+  const owner = visibleNav(NAV_ITEMS, ownerCtx)
   assert.ok(owner.some(n => n.href === '/admin/operations/settings'))
   assert.ok(owner.some(n => n.href === '/admin/operations/platform'))
+  assert.ok(owner.some(n => n.href === '/admin/operations/sync'))
+  assert.ok(owner.some(n => n.href === '/admin/operations/ai'))
+
   const manager = visibleNav(NAV_ITEMS, { role: 'manager', isOwner: false })
   assert.ok(!manager.some(n => n.href === '/admin/operations/settings'), 'manager: no Settings')
   assert.ok(!manager.some(n => n.href === '/admin/operations/platform'), 'manager: no Platform')
+  assert.ok(!manager.some(n => n.href === '/admin/operations/sync'), 'manager: no Sync Status')
+  assert.ok(!manager.some(n => n.href === '/admin/operations/ai'), 'manager: no AI Command Center')
+
   const adminNonOwner = visibleNav(NAV_ITEMS, { role: 'admin', isOwner: false })
   assert.ok(!adminNonOwner.some(n => n.href === '/admin/operations/platform'), 'non-owner: no Platform')
+  assert.ok(!adminNonOwner.some(n => n.href === '/admin/operations/sync'), 'non-owner: no Sync Status')
+  assert.ok(!adminNonOwner.some(n => n.href === '/admin/operations/ai'), 'non-owner: no AI Command Center')
+  // Non-owner admin keeps admin-only-but-not-owner destinations.
+  assert.ok(adminNonOwner.some(n => n.href === '/admin/operations/settings'), 'admin keeps Settings')
+  assert.ok(adminNonOwner.some(n => n.href === '/admin/operations/release'), 'admin keeps Release Center')
 })
 
-test('mobile shows at most 5 items (4 primary + More)', () => {
-  const vis = visibleNav(NAV_ITEMS, { role: 'admin', isOwner: true })
-  const primary = primaryNav(vis)
-  assert.ok(primary.length <= MAX_PRIMARY - 1, 'at most 4 primary destinations')
-  assert.ok(primary.length + 1 <= 5, 'primary + More ≤ 5')
-  // The four flagged-primary destinations are the mobile bar. Schedule is elevated
-  // into the bar as the primary operational surface; Messages moves to the More sheet
-  // (Communication group) but stays fully reachable (asserted below).
-  assert.deepEqual(primary.map(p => p.href), ['/admin/operations', '/admin/operations/schedule', '/admin/operations/book-now', '/admin/operations/list'])
+test('desktop centre = Home, Schedule, Operations, Messages, Crew (in order)', () => {
+  const vis = visibleNav(NAV_ITEMS, ownerCtx)
+  assert.deepEqual(desktopPrimaryNav(vis).map(n => n.href), [
+    '/admin/operations', '/admin/operations/schedule', '/admin/operations/list',
+    '/admin/operations/messages', '/admin/operations/employees',
+  ])
 })
 
-test('Messages stays reachable in the More sheet after Schedule is elevated', () => {
-  const vis = visibleNav(NAV_ITEMS, { role: 'admin', isOwner: true })
-  const groups = moreGroups(vis, primaryNav(vis))
-  const inMore = new Set(groups.flatMap(g => g.items.map(i => i.href)))
-  assert.ok(inMore.has('/admin/operations/messages'), 'Messages reachable via More')
+test('mobile bar = Home, Schedule, Operations, Messages (Crew + Book Now handled separately)', () => {
+  const vis = visibleNav(NAV_ITEMS, ownerCtx)
+  const mob = mobilePrimaryNav(vis)
+  assert.deepEqual(mob.map(n => n.href), [
+    '/admin/operations', '/admin/operations/schedule', '/admin/operations/list', '/admin/operations/messages',
+  ])
+  assert.ok(!mob.some(n => n.href === BOOK_NOW_HREF), 'Book Now is the raised centre action, not a bar item')
+  assert.ok(!mob.some(n => n.href === '/admin/operations/employees'), 'Crew lives in the mobile More sheet')
 })
 
-test('every visible destination is reachable — primary OR in a More group (nothing lost)', () => {
-  const vis = visibleNav(NAV_ITEMS, { role: 'admin', isOwner: true })
-  const primary = primaryNav(vis)
-  const groups = moreGroups(vis, primary)
-  const reachable = new Set([...primary.map(p => p.href), ...groups.flatMap(g => g.items.map(i => i.href))])
-  for (const n of vis) assert.ok(reachable.has(n.href), `${n.href} must be reachable`)
-  // No destination appears in both primary and More.
-  const inMore = new Set(groups.flatMap(g => g.items.map(i => i.href)))
-  for (const p of primary) assert.ok(!inMore.has(p.href), `${p.href} not duplicated in More`)
+test('Book Now is never a plain nav pill — excluded from centre, mega-menu, and both bars', () => {
+  const vis = visibleNav(NAV_ITEMS, ownerCtx)
+  const inCentre = desktopPrimaryNav(vis).some(n => n.href === BOOK_NOW_HREF)
+  const inMega = menuGroups(vis).flatMap(g => g.items).some(n => n.href === BOOK_NOW_HREF)
+  const inMobBar = mobilePrimaryNav(vis).some(n => n.href === BOOK_NOW_HREF)
+  const inMobMore = mobileMoreGroups(vis).flatMap(g => g.items).some(n => n.href === BOOK_NOW_HREF)
+  assert.ok(!inCentre && !inMega && !inMobBar && !inMobMore, 'Book Now surfaces only as bell + centre action')
 })
 
-test('More groups are ordered + non-empty; Pay lives under Finance', () => {
-  const vis = visibleNav(NAV_ITEMS, { role: 'admin', isOwner: true })
-  const groups = moreGroups(vis, primaryNav(vis))
+test('desktop mega-menu categories are ordered + non-empty, with the reference grouping', () => {
+  const vis = visibleNav(NAV_ITEMS, ownerCtx)
+  const groups = menuGroups(vis)
+  assert.deepEqual(groups.map(g => g.key), ['comms', 'business', 'finance', 'release', 'platform'])
   assert.ok(groups.every(g => g.items.length > 0), 'no empty groups')
-  const finance = groups.find(g => g.group === 'finance')
-  assert.ok(finance?.items.some(i => i.href === '/admin/operations/pay-statements'), 'Pay under Finance')
-  assert.ok(groups.some(g => g.group === 'platform' && g.items.some(i => i.href === '/admin/operations/settings')), 'Settings under Platform')
+  const byKey = (k: string) => groups.find(g => g.key === k)!.items.map(i => i.href)
+  assert.ok(byKey('comms').includes('/admin/operations/communications'))
+  assert.ok(byKey('comms').includes('/admin/operations/ai'), 'AI Command Center under Communication')
+  assert.deepEqual(byKey('business'), ['/admin/operations/businesses', '/admin/operations/equipment', '/admin/operations/claims'])
+  assert.deepEqual(byKey('finance'), ['/admin/operations/pay-statements', '/admin/operations/settings'])
+  assert.deepEqual(byKey('release'), ['/admin/operations/release'])
+  assert.deepEqual(byKey('platform'), ['/admin/operations/platform', '/admin/operations/sync'])
 })
 
-test('manager More menu excludes owner/admin-only destinations', () => {
+test('mobile More sheet leads with Team (Crew), then the categories', () => {
+  const vis = visibleNav(NAV_ITEMS, ownerCtx)
+  const groups = mobileMoreGroups(vis)
+  assert.equal(groups[0].key, 'team')
+  assert.deepEqual(groups[0].items.map(i => i.href), ['/admin/operations/employees'])
+  assert.deepEqual(groups.slice(1).map(g => g.key), ['comms', 'business', 'finance', 'release', 'platform'])
+})
+
+test('nothing is lost — every visible destination is reachable on desktop AND on mobile', () => {
+  const vis = visibleNav(NAV_ITEMS, ownerCtx)
+  const desktopReach = new Set<string>([
+    ...desktopPrimaryNav(vis).map(n => n.href),
+    ...menuGroups(vis).flatMap(g => g.items.map(i => i.href)),
+    BOOK_NOW_HREF, // the notification indicator
+  ])
+  const mobileReach = new Set<string>([
+    ...mobilePrimaryNav(vis).map(n => n.href),
+    ...mobileMoreGroups(vis).flatMap(g => g.items.map(i => i.href)),
+    BOOK_NOW_HREF, // the raised centre action
+  ])
+  for (const n of vis) {
+    assert.ok(desktopReach.has(n.href), `${n.href} reachable on desktop`)
+    assert.ok(mobileReach.has(n.href), `${n.href} reachable on mobile`)
+  }
+})
+
+test('no destination is duplicated between the desktop centre and the mega-menu', () => {
+  const vis = visibleNav(NAV_ITEMS, ownerCtx)
+  const centre = new Set(desktopPrimaryNav(vis).map(n => n.href))
+  for (const n of menuGroups(vis).flatMap(g => g.items)) {
+    assert.ok(!centre.has(n.href), `${n.href} not in both centre and mega-menu`)
+  }
+})
+
+test('manager mega-menu + sheet exclude owner/admin-only destinations', () => {
   const vis = visibleNav(NAV_ITEMS, { role: 'manager', isOwner: false })
-  const groups = moreGroups(vis, primaryNav(vis))
-  const hrefs = groups.flatMap(g => g.items.map(i => i.href))
-  assert.ok(!hrefs.includes('/admin/operations/settings'))
-  assert.ok(!hrefs.includes('/admin/operations/platform'))
+  const hrefs = [...menuGroups(vis), ...mobileMoreGroups(vis)].flatMap(g => g.items.map(i => i.href))
+  for (const gone of ['/admin/operations/settings', '/admin/operations/platform', '/admin/operations/sync', '/admin/operations/ai']) {
+    assert.ok(!hrefs.includes(gone), `manager must not see ${gone}`)
+  }
 })

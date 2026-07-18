@@ -16,7 +16,7 @@ type Role = 'admin' | 'manager' | 'crew' | null
 // state from the cache lets remounts render immediately (already checked/authed) while
 // still refreshing in the background — the fetch is now non-blocking, not a full-screen
 // gate. Cleared on a hard reload; kept in sync on login/sign-out below.
-let cachedSession: { authed: boolean; role: Role; lastLogin: LoginRecord | null } | null = null
+let cachedSession: { authed: boolean; role: Role; lastLogin: LoginRecord | null; name: string | null } | null = null
 
 export function useAdminSession() {
   const [authed, setAuthed] = useState(cachedSession?.authed ?? false)
@@ -25,6 +25,7 @@ export function useAdminSession() {
   const [loading, setLoading] = useState(false)
   const [lastLogin, setLastLogin] = useState<LoginRecord | null>(cachedSession?.lastLogin ?? null)
   const [role, setRole] = useState<Role>(cachedSession?.role ?? null)
+  const [name, setName] = useState<string | null>(cachedSession?.name ?? null)
 
   useEffect(() => {
     let live = true
@@ -32,8 +33,8 @@ export function useAdminSession() {
       .then(r => r.json())
       .then(d => {
         if (!live) return
-        cachedSession = { authed: !!d.authed, role: d.role ?? null, lastLogin: d.lastLogin ?? null }
-        setAuthed(cachedSession.authed); setLastLogin(cachedSession.lastLogin); setRole(cachedSession.role)
+        cachedSession = { authed: !!d.authed, role: d.role ?? null, lastLogin: d.lastLogin ?? null, name: d.name ?? null }
+        setAuthed(cachedSession.authed); setLastLogin(cachedSession.lastLogin); setRole(cachedSession.role); setName(cachedSession.name)
       })
       .catch(() => {})
       .finally(() => { if (live) setChecked(true) })
@@ -55,7 +56,7 @@ export function useAdminSession() {
         if (res.ok && d.ok) {
           if (d.role === 'crew') { window.location.href = '/portal'; return true }
           setAuthed(true); setRole(d.role ?? null)
-          cachedSession = { authed: true, role: d.role ?? null, lastLogin: cachedSession?.lastLogin ?? null }
+          cachedSession = { authed: true, role: d.role ?? null, lastLogin: cachedSession?.lastLogin ?? null, name: cachedSession?.name ?? null }
           return true
         }
         setError(d.error ?? 'Incorrect email or password'); return false
@@ -67,7 +68,7 @@ export function useAdminSession() {
       const d = await res.json()
       if (res.ok && d.valid) {
         setAuthed(true); setRole('admin')
-        cachedSession = { authed: true, role: 'admin', lastLogin: cachedSession?.lastLogin ?? null }
+        cachedSession = { authed: true, role: 'admin', lastLogin: cachedSession?.lastLogin ?? null, name: cachedSession?.name ?? null }
         return true
       }
       setError(d.error ?? 'Incorrect password'); return false
@@ -77,11 +78,11 @@ export function useAdminSession() {
 
   const signOut = useCallback(async () => {
     try { await fetch('/api/admin/logout', { method: 'POST', credentials: 'same-origin' }) } catch {}
-    setAuthed(false); setRole(null)
-    cachedSession = { authed: false, role: null, lastLogin: cachedSession?.lastLogin ?? null }
+    setAuthed(false); setRole(null); setName(null)
+    cachedSession = { authed: false, role: null, lastLogin: cachedSession?.lastLogin ?? null, name: null }
   }, [])
 
   useIdleLogout(authed, signOut)
 
-  return { authed, checked, error, loading, login, signOut, lastLogin, role }
+  return { authed, checked, error, loading, login, signOut, lastLogin, role, name }
 }
