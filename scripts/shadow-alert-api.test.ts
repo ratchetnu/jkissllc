@@ -245,7 +245,7 @@ test('nav: Alerts is reached THROUGH the consolidated AI Command Center, not a t
   assert.ok(cc, 'the AI Command Center is the single AI destination')
   assert.equal(cc!.ownerOnly, true)
   assert.equal(cc!.adminOnly, true)
-  assert.equal(cc!.group, 'platform')
+  assert.equal(cc!.group, 'comms') // AI Command Center lives under the Communication category
 
   assert.ok(visibleNav(NAV_ITEMS, { role: 'admin', isOwner: true }).some((i) => i.href === '/admin/operations/ai'))
   for (const ctx of [{ role: 'admin', isOwner: false }, { role: 'manager', isOwner: false }, { role: 'crew', isOwner: false }]) {
