@@ -48,13 +48,22 @@ export interface PublishReviewFilesChanged {
   envChanges: boolean
   rollbackSupported: boolean
   diffUrl?: string          // external link (rendered, not fetched)
-  // `available` is false in 3B.2B — the raw diff (counts/areas) is read at execution time (3B.2C/3B.3).
+  // `available` is false until enriched (3B.2D) with a verified GitHub compare.
   available?: boolean
   additions?: number
   deletions?: number
   changedAreas?: string[]
   workflowChange?: boolean
   highRiskFiles?: boolean
+  // ── 3B.2D enrichment (verified GitHub compare; all optional / backward-compatible) ──
+  commitCount?: number
+  changedFilePaths?: string[]
+  /** Exact file evidence behind each high-risk indicator (verified path matches only). */
+  highRiskDetails?: { category: string; file: string }[]
+  /** Base…head resolved to the same commit — nothing changed. */
+  identical?: boolean
+  /** GitHub truncated the file list for a very large diff — counts may be partial. */
+  truncated?: boolean
 }
 
 export type RollbackStrategy = 'instant_promote' | 'git_revert' | 'none'
@@ -64,6 +73,14 @@ export interface PublishReviewRollback {
   strategy: RollbackStrategy
   ready: boolean            // true only when a known-good prior production deployment is captured
   warning?: string
+  // ── 3B.2D enrichment — verified prior-production metadata (display-only) ──
+  targetUrl?: string
+  targetCommit?: string
+  targetDeployedAt?: number
+  /** True only when the rollback target has a deployment id + commit + timestamp. */
+  metadataComplete?: boolean
+  /** Sanitized, display-only readiness warnings (e.g. no git commit on the deploy). */
+  warnings?: string[]
 }
 
 /** Eligibility as PRESENTATION data (decoupled from the 3B.1 engine). 3B.2B maps the

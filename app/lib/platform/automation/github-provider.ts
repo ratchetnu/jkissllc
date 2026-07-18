@@ -161,6 +161,38 @@ export class GitHubActionsProvider implements UpdateAutomationProvider {
       },
     )
   }
+  // Detailed compare (read-only) for Publish Review — base…head with per-file diff
+  // stats. Increment 3B.2D. Returns the changed files (path + status + additions +
+  // deletions), the commit count, and summed additions/deletions. Same GET compare
+  // endpoint as compareCommits — no write path. `files` may be truncated by GitHub for
+  // very large diffs (top-level `files` caps at 300); we surface `truncated` so the
+  // caller can warn rather than imply completeness.
+  compareCommitsDetailed(installationId: string, repo: RepoRef, base: string, head: string) {
+    return this.get(
+      installationId,
+      `/repos/${repo.owner}/${repo.name}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`,
+      (b) => {
+        const r = b as {
+          ahead_by?: number; behind_by?: number; status?: string; total_commits?: number
+          files?: { filename?: string; status?: string; additions?: number; deletions?: number; changes?: number }[]
+        }
+        const files = (r.files ?? []).map((f) => ({ filename: f.filename ?? '', status: f.status ?? 'modified', additions: f.additions ?? 0, deletions: f.deletions ?? 0 }))
+        const additions = files.reduce((s, f) => s + (f.additions ?? 0), 0)
+        const deletions = files.reduce((s, f) => s + (f.deletions ?? 0), 0)
+        return {
+          aheadBy: r.ahead_by ?? 0,
+          behindBy: r.behind_by ?? 0,
+          status: r.status ?? 'unknown',
+          totalCommits: r.total_commits ?? 0,
+          fileCount: files.length,
+          files,
+          additions,
+          deletions,
+          truncated: files.length >= 300,
+        }
+      },
+    )
+  }
   // Branch HEAD with its commit date — "latest commit on main" + when it landed.
   readBranchHead(installationId: string, repo: RepoRef, branch: string) {
     return this.get(

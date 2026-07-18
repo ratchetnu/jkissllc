@@ -9,8 +9,9 @@
 
 import type { EligibilityResult } from './promotion-eligibility'
 import type {
-  PublishReview, PublishReviewEligibility, PublishReviewRisk, PublishReviewVerification, VerificationCheckState,
+  PublishReview, PublishReviewEligibility, PublishReviewFilesChanged, PublishReviewRisk, PublishReviewRollback, PublishReviewVerification, VerificationCheckState,
 } from './publish-review'
+import type { CompareEnrichment } from './publish-review-enrichment'
 import type { ChecklistItem } from '../../../components/ui/deliberate-action-logic'
 import { classifyReleaseType, normalizeVersion, isBehind } from './versions'
 
@@ -32,6 +33,8 @@ export type BuildPublishReviewInput = {
   } | null
   currentProduction?: { deploymentId?: string; deployedAt?: number; deployedCommit?: string; version?: string; readyState?: string; url?: string } | null
   candidate?: { version?: string; commit?: string; branch?: string } | null
+  /** Verified GitHub compare (3B.2D). Absent/null ⇒ filesChanged stays Unavailable. */
+  changeCompare?: CompareEnrichment | null
   update?: {
     key?: string; title?: string; summary?: string; technicalImpact?: string
     migrationRequired?: boolean; environmentChangeRequired?: boolean; secretRequired?: boolean
@@ -90,6 +93,69 @@ function deriveRisk(u: BuildPublishReviewInput['update'], releaseType: string): 
   return { level: 'info', title: 'Low risk', detail: u?.rollbackSupported ? 'Reversible; no migration.' : 'No migration or breaking change detected.' }
 }
 
+// Verified compare → filesChanged presentation. Without a compare, stays the explicit
+// "read at execution time" Unavailable state (backward-compatible with 3B.2C).
+function toFilesChanged(input: BuildPublishReviewInput): PublishReviewFilesChanged {
+  const c = input.changeCompare
+  const u = input.update
+  const commonMigrations = !!u?.migrationRequired
+  const commonEnv = !!u?.environmentChangeRequired
+  if (!c) {
+    return {
+      fileCount: 0, available: false,
+      summary: 'Change details are read from the verified diff at execution time (not fetched in this review).',
+      migrations: commonMigrations, envChanges: commonEnv, rollbackSupported: !!u?.rollbackSupported,
+      workflowChange: undefined, highRiskFiles: undefined, diffUrl: input.job?.pullRequestUrl,
+    }
+  }
+  const paths = c.files.map((f) => f.filename).filter(Boolean)
+  const summary = c.identical
+    ? 'No changes — the candidate commit matches current production.'
+    : `${c.fileCount} file${c.fileCount === 1 ? '' : 's'} · +${c.additions} / −${c.deletions} · ${c.totalCommits} commit${c.totalCommits === 1 ? '' : 's'}`
+  return {
+    fileCount: c.fileCount,
+    available: true,
+    summary,
+    // Verified path evidence takes precedence; fall back to the declared update flags.
+    migrations: c.migrationChange || commonMigrations,
+    envChanges: c.envConfigChange || commonEnv,
+    rollbackSupported: !!u?.rollbackSupported,
+    diffUrl: input.job?.pullRequestUrl,
+    additions: c.additions,
+    deletions: c.deletions,
+    changedAreas: c.changedAreas,
+    workflowChange: c.workflowChange,
+    highRiskFiles: c.highRisk,
+    commitCount: c.totalCommits,
+    changedFilePaths: paths,
+    highRiskDetails: c.highRiskFiles,
+    identical: c.identical,
+    truncated: c.truncated,
+  }
+}
+
+// Verified current-production deployment → rollback-readiness presentation (display-only).
+function toRollback(input: BuildPublishReviewInput, currentVersion?: string): PublishReviewRollback {
+  const p = input.currentProduction
+  const hasTarget = !!p?.deploymentId
+  const metadataComplete = !!(p?.deploymentId && p?.deployedCommit && p?.deployedAt)
+  const warnings: string[] = []
+  if (hasTarget && !p?.deployedCommit) warnings.push('The current production deployment has no linked git commit (rollback target commit is unknown).')
+  if (hasTarget && !p?.deployedAt) warnings.push('The current production deployment timestamp is unavailable.')
+  return {
+    targetDeploymentId: p?.deploymentId,
+    targetVersion: currentVersion,
+    targetUrl: p?.url,
+    targetCommit: p?.deployedCommit,
+    targetDeployedAt: p?.deployedAt,
+    strategy: 'instant_promote',
+    ready: hasTarget,
+    metadataComplete,
+    warning: hasTarget ? undefined : 'No captured production deployment yet — the rollback target is set when publishing begins.',
+    warnings: warnings.length ? warnings : undefined,
+  }
+}
+
 export function buildPublishReview(input: BuildPublishReviewInput): PublishReviewResult {
   const warnings: string[] = []
   const source = { business: !!input.business, job: !!input.job, update: !!input.update, production: !!input.currentProduction?.deploymentId }
@@ -106,7 +172,6 @@ export function buildPublishReview(input: BuildPublishReviewInput): PublishRevie
   if (!candidateCommit) warnings.push('candidate commit unavailable')
   if (!input.currentProduction?.deploymentId) warnings.push('current production deployment id unavailable (captured at execution time)')
 
-  const rollbackReady = !!input.currentProduction?.deploymentId
   const correlationId = candidateCommit ? `rel-${b.id}-${candidateCommit.slice(0, 7)}` : `rel-${b.id}-pending`
 
   const review: PublishReview = {
@@ -118,22 +183,8 @@ export function buildPublishReview(input: BuildPublishReviewInput): PublishRevie
       readyState: input.job?.previewDeploymentId ? (input.job.status === 'awaiting_owner_review' || input.job.status === 'completed' ? 'READY' : undefined) : undefined,
     },
     verification: toVerification(input),
-    filesChanged: {
-      fileCount: 0, available: false,
-      summary: 'Change details are read from the verified diff at execution time (not fetched in this review).',
-      migrations: !!input.update?.migrationRequired,
-      envChanges: !!input.update?.environmentChangeRequired,
-      rollbackSupported: !!input.update?.rollbackSupported,
-      workflowChange: undefined, highRiskFiles: undefined,
-      diffUrl: input.job?.pullRequestUrl,
-    },
-    rollback: {
-      targetDeploymentId: input.currentProduction?.deploymentId,
-      targetVersion: currentVersion,
-      strategy: 'instant_promote',
-      ready: rollbackReady,
-      warning: rollbackReady ? undefined : 'No captured production deployment yet — the rollback target is set when publishing begins.',
-    },
+    filesChanged: toFilesChanged(input),
+    rollback: toRollback(input, currentVersion),
     eligibility: toEligibilityPresentation(input.eligibility),
     risk: deriveRisk(input.update, releaseType),
     audit: {
