@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw, GitCommitHorizontal, Server, CalendarClock, Flag, AlertTriangle, CheckCircle2, XCircle, MinusCircle, Clock, Rocket, ShieldCheck, Building2, ChevronDown } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { osLabel, osMiniBtn } from '../ui'
+import { PublishReviewDrawer } from './PublishReviewDrawer'
+import { showReviewRelease } from './publish-review-view'
 import { sandboxHealth, SANDBOX_HEALTH_LABEL, SANDBOX_HEALTH_TONE } from '../../../lib/platform/sandbox/health'
 
 // ── Read-only Release Center ─────────────────────────────────────────────────
@@ -142,6 +144,7 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
   const [hasJob, setHasJob] = useState(b.status === 'updating')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
+  const [reviewOpen, setReviewOpen] = useState(false)
   const ivRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const t = TONE[b.tone]
   const emphatic = b.action === 'update' || b.action === 'publish' || b.action === 'resolve' || b.action === 'retry' || b.action === 'set_up'
@@ -194,6 +197,13 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
           </div>
         </div>
         <Chip fg={t.fg} bg={t.bg}>{b.statusLabel}</Chip>
+        {/* Read-only review entry — deliberately quiet (never resembles a Production action). */}
+        {showReviewRelease(b.action) && (
+          <button onClick={() => setReviewOpen(true)} className="os-tap"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', color: 'var(--text)', background: 'transparent', border: '1px solid var(--line)' }}>
+            Review release
+          </button>
+        )}
         <button onClick={onPrimary} disabled={busy} className="os-tap"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: busy ? 'default' : 'pointer', opacity: busy ? .7 : 1,
             color: emphatic ? '#fff' : 'var(--text)', background: emphatic ? 'var(--red)' : 'transparent', border: emphatic ? '1px solid transparent' : '1px solid var(--line)' }}>
@@ -279,6 +289,7 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
           </details>
         </div>
       )}
+      <PublishReviewDrawer businessId={b.id} businessName={b.name} open={reviewOpen} onClose={() => setReviewOpen(false)} />
     </div>
   )
 }
