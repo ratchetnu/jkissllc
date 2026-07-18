@@ -9,8 +9,8 @@
 import { type ReactNode } from 'react'
 import { Card, StatusBadge, Button, type Tone } from './primitives'
 
-const INK = 'var(--ink, #f3f4f6)'
-const INK_MUTED = 'var(--ink-muted, #9ca3af)'
+const INK = 'var(--text)'
+const INK_MUTED = 'var(--muted)'
 
 function confidenceTone(c: number): Tone {
   return c >= 0.8 ? 'green' : c >= 0.5 ? 'amber' : 'grey'
@@ -19,7 +19,7 @@ function confidenceTone(c: number): Tone {
 // ── AiExplanation ────────────────────────────────────────────────────────────
 export function AiExplanation({ explanation, confidence, evidence }: { explanation: string; confidence: number; evidence?: string[] }) {
   return (
-    <div style={{ borderLeft: '3px solid var(--red, #E0002A)', paddingLeft: 12 }}>
+    <div style={{ borderLeft: '3px solid var(--red)', paddingLeft: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.06em', color: INK_MUTED }}>AI</span>
         <StatusBadge tone={confidenceTone(confidence)}>{Math.round(confidence * 100)}% confidence</StatusBadge>
@@ -72,7 +72,7 @@ export function ApprovalCard({ request, onApprove, onReject }: {
         <StatusBadge tone={request.riskClass === 'restricted' ? 'red' : request.riskClass === 'high' ? 'amber' : 'grey'}>{request.riskClass}</StatusBadge>
       </div>
       <div style={{ fontSize: 12, color: INK_MUTED, marginTop: 2 }}>Requested by {request.requestingWorkerId}</div>
-      <div style={{ marginTop: 10, padding: 10, background: 'color-mix(in srgb, var(--ink,#fff) 6%, transparent)', borderRadius: 10, fontSize: 13, color: INK }}>{request.actionPreview}</div>
+      <div style={{ marginTop: 10, padding: 10, background: 'color-mix(in srgb, #fff 6%, transparent)', borderRadius: 'var(--radius-sm)', fontSize: 13, color: INK }}>{request.actionPreview}</div>
       <div style={{ marginTop: 10 }}>
         <AiExplanation explanation={request.explanation} confidence={request.confidence} evidence={[`Expected impact: ${request.expectedImpact}`]} />
       </div>

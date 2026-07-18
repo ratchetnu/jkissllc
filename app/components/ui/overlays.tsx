@@ -7,9 +7,9 @@
 
 import { type ReactNode, useEffect, useRef } from 'react'
 
-const RADIUS = 'var(--os-radius, 18px)'
-const SURFACE = 'var(--surface-2, #16161a)'
-const INK = 'var(--ink, #f3f4f6)'
+const RADIUS = 'var(--radius-lg)'
+const SURFACE = 'var(--card)'
+const INK = 'var(--text)'
 const SCRIM = 'color-mix(in srgb, #000 55%, transparent)'
 
 function focusables(root: HTMLElement): HTMLElement[] {
@@ -52,11 +52,11 @@ export function Dialog({ open, onClose, title, children }: { open: boolean; onCl
   const ref = useFocusTrap(open, onClose)
   if (!open) return null
   return (
-    <div onMouseDown={onClose} style={{ position: 'fixed', inset: 0, background: SCRIM, display: 'grid', placeItems: 'center', zIndex: 1000, padding: 16 }}>
+    <div onMouseDown={onClose} style={{ position: 'fixed', inset: 0, background: SCRIM, display: 'grid', placeItems: 'center', zIndex: 'var(--z-overlay)' as unknown as number, padding: 16 }}>
       <div ref={ref} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
-        style={{ background: SURFACE, color: INK, borderRadius: RADIUS, width: 'min(520px, 96vw)', maxHeight: '90vh', overflow: 'auto', boxShadow: 'var(--os-shadow, 0 20px 60px rgba(0,0,0,.5))' }}>
-        <div style={{ padding: '16px 18px', borderBottom: '1px solid rgba(255,255,255,.08)', fontWeight: 700 }}>{title}</div>
+        style={{ background: SURFACE, color: INK, borderRadius: RADIUS, width: 'min(520px, 96vw)', maxHeight: '90vh', overflow: 'auto', boxShadow: 'var(--shadow-lg)' }}>
+        <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--line)', fontWeight: 700 }}>{title}</div>
         <div style={{ padding: 18 }}>{children}</div>
       </div>
     </div>
@@ -68,11 +68,11 @@ export function Drawer({ open, onClose, title, side = 'right', children }: { ope
   const ref = useFocusTrap(open, onClose)
   if (!open) return null
   return (
-    <div onMouseDown={onClose} style={{ position: 'fixed', inset: 0, background: SCRIM, zIndex: 1000, display: 'flex', justifyContent: side === 'right' ? 'flex-end' : 'flex-start' }}>
+    <div onMouseDown={onClose} style={{ position: 'fixed', inset: 0, background: SCRIM, zIndex: 'var(--z-overlay)' as unknown as number, display: 'flex', justifyContent: side === 'right' ? 'flex-end' : 'flex-start' }}>
       <div ref={ref} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
-        style={{ background: SURFACE, color: INK, width: 'min(460px, 94vw)', height: '100%', overflow: 'auto', boxShadow: 'var(--os-shadow, 0 20px 60px rgba(0,0,0,.5))' }}>
-        <div style={{ padding: '16px 18px', borderBottom: '1px solid rgba(255,255,255,.08)', fontWeight: 700 }}>{title}</div>
+        style={{ background: SURFACE, color: INK, width: 'min(460px, 94vw)', height: '100%', overflow: 'auto', boxShadow: 'var(--shadow-lg)' }}>
+        <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--line)', fontWeight: 700 }}>{title}</div>
         <div style={{ padding: 18 }}>{children}</div>
       </div>
     </div>
@@ -88,13 +88,13 @@ export function Tabs({ tabs, value, onChange }: { tabs: { id: string; label: str
     onChange(tabs[next].id)
   }
   return (
-    <div role="tablist" style={{ display: 'flex', gap: 4, borderBottom: '1px solid rgba(255,255,255,.08)' }}>
+    <div role="tablist" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--line)' }}>
       {tabs.map((t, i) => {
         const selected = t.id === value
         return (
           <button key={t.id} role="tab" aria-selected={selected} tabIndex={selected ? 0 : -1}
             onClick={() => onChange(t.id)} onKeyDown={(e) => onKey(e, i)}
-            style={{ padding: '10px 14px', background: 'transparent', border: 'none', cursor: 'pointer', color: selected ? INK : 'var(--ink-muted, #9ca3af)', fontWeight: selected ? 700 : 500, borderBottom: selected ? '2px solid var(--red, #E0002A)' : '2px solid transparent' }}>
+            style={{ padding: '10px 14px', background: 'transparent', border: 'none', cursor: 'pointer', color: selected ? INK : 'var(--muted)', fontWeight: selected ? 700 : 500, borderBottom: selected ? '2px solid var(--red)' : '2px solid transparent' }}>
             {t.label}
           </button>
         )
