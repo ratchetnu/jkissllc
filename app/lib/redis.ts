@@ -129,3 +129,13 @@ export const redis = {
     return call(['EVAL', script, scoped.length, ...scoped, ...args])
   },
 }
+
+// The configured KV store HOST (non-secret), or '' when unset. Exposed so callers can
+// make store-identity decisions (e.g. "is this the production store?") WITHOUT importing
+// the raw credential env — the bypass-detection gate forbids KV_REST_API references
+// outside this file, so this is the one sanctioned way to learn which store is wired.
+export function kvHost(): string {
+  const url = process.env.KV_REST_API_URL
+  if (!url) return ''
+  try { return new URL(url).host } catch { return '' }
+}

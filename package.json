@@ -17,7 +17,8 @@
     "eval:photo-estimator": "npx --yes tsx@4 scripts/eval-photo-estimator.mjs",
     "predeploy": "npx tsc --noEmit && npm run test:ai:regression",
     "test": "npx --yes tsx@4 --test scripts/*.test.ts",
-    "audit:mobile": "node scripts/mobile-overflow-audit.mjs"
+    "audit:mobile": "node scripts/mobile-overflow-audit.mjs",
+    "operion:sandbox:verify": "node scripts/operion-sandbox-verify.mjs"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",
