@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePlatformOwner } from '../../_lib/session'
+import { isEnabled } from '../../../../lib/platform/flags'
 import { buildBusinessReleaseViews } from '../../../../lib/platform/release/projection'
 
 export const runtime = 'nodejs'
@@ -13,5 +14,7 @@ export const dynamic = 'force-dynamic'
 export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePlatformOwner(req)
   if (who instanceof NextResponse) return who
-  return NextResponse.json({ ok: true, businesses: await buildBusinessReleaseViews() })
+  // `updatesEnabled` lets the UI render Update as live vs. a calm "not enabled here" — the
+  // real gate is OPERION_AUTOMATION_ENABLED, re-checked server-side on every Update call.
+  return NextResponse.json({ ok: true, updatesEnabled: isEnabled('OPERION_AUTOMATION_ENABLED'), businesses: await buildBusinessReleaseViews() })
 })

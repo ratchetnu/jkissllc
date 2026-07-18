@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw, GitCommitHorizontal, Server, CalendarClock, Flag, AlertTriangle, CheckCircle2, XCircle, MinusCircle, Clock, Rocket, ShieldCheck, Building2, ChevronDown } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { osLabel } from '../ui'
@@ -132,11 +132,53 @@ function timeAgo(at?: number): string {
   return `${Math.floor(h / 24)}d ago`
 }
 
-function BusinessRow({ b }: { b: BizView }) {
+const LIVE_STEPS = ['Checking', 'Preparing Preview', 'Deploying Preview', 'Verifying Preview', 'Ready to Publish']
+type Prog = { step: number; stepLabel: string; message: string; running: boolean; previewReady: boolean; blocked: boolean; canRetry: boolean; issue?: string }
+
+function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolean }) {
   const [open, setOpen] = useState(false)
+  const [prog, setProg] = useState<Prog | null>(null)
+  const [hasJob, setHasJob] = useState(b.status === 'updating')
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+  const ivRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const t = TONE[b.tone]
   const emphatic = b.action === 'update' || b.action === 'publish' || b.action === 'resolve' || b.action === 'retry' || b.action === 'set_up'
-  const step = activeStep(b.status)
+
+  const stop = () => { if (ivRef.current) { clearInterval(ivRef.current); ivRef.current = null } }
+  const poll = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/admin/release/businesses/${b.id}/update`, { credentials: 'same-origin' })
+      if (!r.ok) return
+      const j = await r.json()
+      setHasJob(!!j.hasJob)
+      if (j.progress) { setProg(j.progress); if (!j.progress.running) stop() }
+    } catch { /* fail-soft */ }
+  }, [b.id])
+  const startPoll = useCallback(() => { stop(); poll(); ivRef.current = setInterval(poll, 3000) }, [poll])
+  useEffect(() => () => stop(), [])
+  // Resume progress after a page refresh mid-update — the state comes from the real job.
+  useEffect(() => { if (open && b.status === 'updating') startPoll() }, [open, b.status, startPoll])
+
+  async function send(body: object) {
+    setBusy(true)
+    try { await fetch(`/api/admin/release/businesses/${b.id}/update`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) }
+    finally { setBusy(false) }
+  }
+  async function onPrimary() {
+    setNote(''); setOpen(true)
+    if (b.action === 'update') {
+      if (!updatesEnabled) { setNote('Updates aren’t enabled here yet.'); return }
+      await send({}); startPoll()
+    } else if (b.action === 'view_progress') { startPoll() }
+    else if (b.action === 'retry') { await send({ action: 'retry' }); startPoll() }
+    else if (b.action === 'publish') { setNote('Publishing to production is a separate step (coming next).') }
+    else if (b.action === 'set_up') { setNote('The setup assistant is coming next.') }
+    // 'check' / others simply open the details
+  }
+
+  const step = prog ? prog.step : activeStep(b.status)
+  const liveActive = hasJob || !!prog
   return (
     <div style={{ borderRadius: 14, background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)', overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px' }}>
@@ -151,11 +193,10 @@ function BusinessRow({ b }: { b: BizView }) {
           </div>
         </div>
         <Chip fg={t.fg} bg={t.bg}>{b.statusLabel}</Chip>
-        <button onClick={() => setOpen(v => !v)} className="os-tap"
-          title="Opens details — updating becomes available in a later step"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
+        <button onClick={onPrimary} disabled={busy} className="os-tap"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: busy ? 'default' : 'pointer', opacity: busy ? .7 : 1,
             color: emphatic ? '#fff' : 'var(--text)', background: emphatic ? 'var(--red)' : 'transparent', border: emphatic ? '1px solid transparent' : '1px solid var(--line)' }}>
-          {b.actionLabel}
+          {busy ? 'Working…' : b.actionLabel}
         </button>
         <button onClick={() => setOpen(v => !v)} aria-label={open ? 'Hide details' : 'View details'} className="os-tap"
           style={{ display: 'inline-flex', padding: 7, borderRadius: 999, color: 'var(--muted)', background: 'transparent', border: '1px solid var(--line)', cursor: 'pointer' }}>
@@ -165,28 +206,40 @@ function BusinessRow({ b }: { b: BizView }) {
 
       {open && (
         <div style={{ padding: '4px 16px 16px', borderTop: '1px solid var(--line)', display: 'grid', gap: 14 }}>
-          <p style={{ fontSize: 13, color: 'var(--text)', margin: '12px 0 0', lineHeight: 1.5 }}>{b.detail.updateSummary}</p>
+          {note && <p style={{ fontSize: 12.5, color: 'var(--muted)', margin: '12px 0 0' }}>{note}</p>}
+          <p style={{ fontSize: 13, color: 'var(--text)', margin: note ? 0 : '12px 0 0', lineHeight: 1.5 }}>{b.detail.updateSummary}</p>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div><div style={{ ...osLabel, marginBottom: 4 }}>Current version</div><div className="tabular-nums" style={{ fontSize: 14, fontWeight: 700 }}>{b.installedVersion}</div></div>
             <div><div style={{ ...osLabel, marginBottom: 4 }}>Latest version</div><div className="tabular-nums" style={{ fontSize: 14, fontWeight: 700 }}>{b.latestVersion}</div></div>
           </div>
 
-          {/* Guided steps — the Update flow runs these automatically (preview only for now) */}
+          {/* Guided flow — LIVE steps driven by the real job when one is running, else a calm preview. */}
           <div>
             <div style={{ ...osLabel, marginBottom: 8 }}>Update flow</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              {STEPS.map((s, i) => (
+              {(liveActive ? LIVE_STEPS : STEPS).map((s, i) => (
                 <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ fontSize: 11.5, fontWeight: 700, padding: '4px 10px', borderRadius: 999,
                     color: i <= step ? 'var(--text)' : 'var(--muted)',
                     background: i === step ? 'color-mix(in srgb, #fff 9%, var(--card))' : 'transparent',
                     border: `1px solid ${i === step ? 'var(--line)' : 'transparent'}` }}>{s}</span>
-                  {i < STEPS.length - 1 && <span style={{ color: 'var(--muted)', opacity: .5 }}>›</span>}
+                  {i < (liveActive ? LIVE_STEPS : STEPS).length - 1 && <span style={{ color: 'var(--muted)', opacity: .5 }}>›</span>}
                 </span>
               ))}
             </div>
-            <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '6px 0 0' }}>Update runs these automatically and pauses only to publish to production.</p>
+            {prog
+              ? <p style={{ fontSize: 12, color: prog.blocked ? '#fca5a5' : 'var(--text)', margin: '8px 0 0', display: 'flex', alignItems: 'center', gap: 7 }}>
+                  {prog.running && <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite', color: 'var(--muted)' }} />}{prog.message}
+                </p>
+              : <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '6px 0 0' }}>Update runs these automatically and pauses only to publish to production.</p>}
+            {prog?.blocked && prog.issue && (
+              <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12.5, color: '#fca5a5' }}>{prog.issue}</span>
+                {prog.canRetry && <button onClick={async () => { setNote(''); await send({ action: 'retry' }); startPoll() }} disabled={busy} className="os-tap" style={{ fontSize: 12, fontWeight: 700, padding: '6px 11px', borderRadius: 9, color: 'var(--text)', background: 'transparent', border: '1px solid var(--line)', cursor: 'pointer' }}>Retry</button>}
+              </div>
+            )}
+            {prog?.previewReady && <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '6px 0 0' }}>Publishing to production is a separate, deliberate step (coming next).</p>}
           </div>
 
           <div style={{ display: 'grid', gap: 4 }}>
@@ -231,12 +284,13 @@ function BusinessRow({ b }: { b: BizView }) {
 
 function Businesses() {
   const [views, setViews] = useState<BizView[] | null>(null)
+  const [updatesEnabled, setUpdatesEnabled] = useState(false)
   const [show, setShow] = useState(false)
   useEffect(() => {
     let live = true
     fetch('/api/admin/release/businesses', { credentials: 'same-origin' })
       .then(r => (r.ok ? r.json() : null))
-      .then(j => { if (live && j?.businesses) { setViews(j.businesses); setShow(true) } })
+      .then(j => { if (live && j?.businesses) { setViews(j.businesses); setUpdatesEnabled(!!j.updatesEnabled); setShow(true) } })
       .catch(() => {})
     return () => { live = false }
   }, [])
@@ -245,7 +299,7 @@ function Businesses() {
     <Section title="Businesses" icon={Building2}>
       {views.length === 0
         ? <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>No businesses registered yet.</p>
-        : <div style={{ display: 'grid', gap: 10 }}>{views.map(b => <BusinessRow key={b.id} b={b} />)}</div>}
+        : <div style={{ display: 'grid', gap: 10 }}>{views.map(b => <BusinessRow key={b.id} b={b} updatesEnabled={updatesEnabled} />)}</div>}
     </Section>
   )
 }
