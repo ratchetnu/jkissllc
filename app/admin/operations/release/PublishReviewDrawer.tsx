@@ -75,22 +75,38 @@ export function PublishReviewContent({ review, warnings }: { review: PublishRevi
       <Sect title="Change summary">
         {fc.available === false
           ? <Row label="Diff">Unavailable — read from the verified diff at execution time</Row>
-          : <>
-              <Row label="Files changed">{orUnavailable(fc.fileCount)}</Row>
-              <Row label="Additions / deletions">{orUnavailable(fc.additions)} / {orUnavailable(fc.deletions)}</Row>
-              <Row label="Changed areas">{fc.changedAreas?.length ? fc.changedAreas.join(', ') : 'Unavailable'}</Row>
-            </>}
+          : fc.identical
+            ? <Row label="Diff">No changes — candidate matches current production</Row>
+            : <>
+                <Row label="Files changed">{orUnavailable(fc.fileCount)}</Row>
+                <Row label="Commits">{orUnavailable(fc.commitCount)}</Row>
+                <Row label="Additions / deletions">{orUnavailable(fc.additions)} / {orUnavailable(fc.deletions)}</Row>
+                <Row label="Changed areas">{fc.changedAreas?.length ? fc.changedAreas.join(', ') : 'Unavailable'}</Row>
+                {fc.truncated && <Row label="Note">Large diff — file list truncated by GitHub; counts may be partial</Row>}
+              </>}
         <Row label="Migration">{fc.migrations ? 'Yes' : 'No'}</Row>
         <Row label="Env change">{fc.envChanges ? 'Yes' : 'No'}</Row>
         <Row label="Workflow change">{fc.workflowChange == null ? 'Unavailable' : fc.workflowChange ? 'Yes' : 'No'}</Row>
         <Row label="High-risk files">{fc.highRiskFiles == null ? 'Unavailable' : fc.highRiskFiles ? 'Yes' : 'No'}</Row>
+        {fc.highRiskDetails && fc.highRiskDetails.length > 0 && (
+          <ul style={{ margin: '2px 0 0', paddingLeft: 18, fontSize: 12, color: 'var(--muted)', display: 'grid', gap: 2 }}>
+            {fc.highRiskDetails.map((h, i) => (
+              <li key={i}><span style={{ color: 'var(--status-bad-fg)' }}>{h.category}</span> — <code style={{ overflowWrap: 'anywhere' }}>{h.file}</code></li>
+            ))}
+          </ul>
+        )}
         <Row label="Rollback supported">{fc.rollbackSupported ? 'Yes' : 'No'}</Row>
       </Sect>
 
       <Sect title="Rollback readiness">
         <Row label="Prior production version">{orUnavailable(v.rollback.targetVersion)}</Row>
         <Row label="Prior production deployment">{orUnavailable(v.rollback.targetDeploymentId)}</Row>
+        <Row label="Prior production commit">{orUnavailable(v.rollback.targetCommit)}</Row>
+        <Row label="Prior production URL">{orUnavailable(v.rollback.targetUrl)}</Row>
+        <Row label="Prior production deployed">{v.rollback.targetDeployedAt ? verificationAgeLabel(review.evaluatedAt - v.rollback.targetDeployedAt) : 'Unavailable'}</Row>
+        <Row label="Target metadata">{v.rollback.metadataComplete == null ? (v.rollback.ready ? 'Partial' : 'Unavailable') : v.rollback.metadataComplete ? 'Complete' : 'Partial'}</Row>
         <Row label="Rollback target ready">{v.rollback.ready ? 'Yes' : 'No'}</Row>
+        {v.rollback.warnings?.map((w, i) => <RiskBanner key={i} level="warning" title="Rollback">{w}</RiskBanner>)}
         {v.rollback.warning && <RiskBanner level="info" title="Rollback">{v.rollback.warning}</RiskBanner>}
       </Sect>
 

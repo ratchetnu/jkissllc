@@ -9,16 +9,21 @@ import { evaluatePromotionEligibility } from '../../../../../../lib/platform/rel
 import { PROMOTION_ACTIVE } from '../../../../../../lib/platform/automation/promotion'
 import { isTestOnlyBusiness } from '../../../../../../lib/platform/release/promotion-guards'
 import { buildPublishReview } from '../../../../../../lib/platform/release/build-publish-review'
+import { enrichPublishReview } from '../../../../../../lib/platform/release/publish-review-enrichment'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 // GET /api/admin/release/businesses/[id]/publish-review
-// Increment 3B.2B — owner-only, READ-ONLY. Assembles the Publish Review payload from
-// internal KV only (business + newest job + latest reconciliation + update) and the pure
-// eligibility engine. It NEVER mutates a Business, creates a promotion run, acquires a
-// lock, transitions state, or calls GitHub/Vercel. Returns review data even when
-// ineligible (so blockers are visible). No secrets, no raw env, no provider error bodies.
+// Increment 3B.2D — owner-only, READ-ONLY. Assembles the Publish Review payload from
+// internal KV (business + newest job + latest reconciliation + update) and the pure
+// eligibility engine, then ENRICHES it with VERIFIED provider READS: the current READY
+// Vercel production deployment and a GitHub compare (current prod ↔ candidate commit).
+// Enrichment is read-only, time-bounded, and independently fail-soft — a provider being
+// unavailable degrades that section to "Unavailable" with a sanitized warning, never a
+// failure. It NEVER mutates a Business, creates a promotion run/lock, transitions state,
+// dispatches a workflow, or calls any provider WRITE. No secrets, no raw env, no raw
+// provider error bodies. Returns review data even when ineligible (so blockers show).
 type Ctx = { params: Promise<{ id: string }> }
 const noStore = { 'Cache-Control': 'no-store, no-cache, must-revalidate', Pragma: 'no-cache' }
 
@@ -66,6 +71,25 @@ export const GET = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
     candidateVersion,
   })
 
+  // ── Read-only provider enrichment (fail-soft, time-bounded, no writes) ────────
+  const candidateCommit = job?.targetCommit || job?.approvedCommit
+  const enrichment = await enrichPublishReview({
+    now,
+    business: business ? {
+      id: business.id, repoName: business.repoName, repositoryOwner: business.repositoryOwner,
+      repositoryNameOnly: business.repositoryNameOnly, githubInstallationId: business.githubInstallationId,
+      productionProjectId: business.productionProjectId, deployProject: business.deployProject,
+    } : null,
+    baseCommit: ps?.currentBaselineCommit,
+    headCommit: candidateCommit,
+  })
+  const prod = enrichment.production
+  // Verified Vercel production deployment when available; else the local reconciliation
+  // baseline (id still unavailable → rollback stays "not ready", exactly as before).
+  const currentProduction = prod
+    ? { deploymentId: prod.deploymentId, url: prod.url, deployedAt: prod.createdAt ?? prod.readyAt, deployedCommit: prod.commitSha ?? ps?.currentBaselineCommit, version: ps?.currentBaselineVersion, readyState: prod.state }
+    : ps ? { deploymentId: undefined, deployedCommit: ps.currentBaselineCommit, version: ps.currentBaselineVersion } : null
+
   const result = buildPublishReview({
     now,
     ownerSub: who.sub,
@@ -81,9 +105,9 @@ export const GET = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
       pullRequestNumber: job.pullRequestNumber, pullRequestUrl: job.pullRequestUrl,
       previewDeploymentId: job.previewDeploymentId, previewUrl: job.previewUrl, updatedAt: job.updatedAt,
     } : null,
-    // Current production deployment id/url are captured at execution time — unavailable here.
-    currentProduction: ps ? { deploymentId: undefined, deployedCommit: ps.currentBaselineCommit, version: ps.currentBaselineVersion } : null,
-    candidate: { version: candidateVersion, commit: job?.targetCommit || job?.approvedCommit, branch: job?.workBranch },
+    currentProduction,
+    changeCompare: enrichment.compare,
+    candidate: { version: candidateVersion, commit: candidateCommit, branch: job?.workBranch },
     update: update ? {
       key: update.key, title: update.title, summary: update.summary, technicalImpact: update.technicalImpact,
       migrationRequired: update.migrationRequired, environmentChangeRequired: update.environmentChangeRequired,
@@ -96,8 +120,10 @@ export const GET = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
   if (!result.ok) {
     return NextResponse.json({ ok: false, refusal: result.refusal }, { status: 404, headers: noStore })
   }
+  // Merge builder + enrichment warnings (both already sanitized), de-duplicated.
+  const warnings = [...new Set([...result.warnings, ...enrichment.warnings])]
   return NextResponse.json(
-    { ok: true, eligible: result.review!.eligibility.eligible, review: result.review, warnings: result.warnings },
+    { ok: true, eligible: result.review!.eligibility.eligible, review: result.review, warnings },
     { headers: noStore },
   )
 })

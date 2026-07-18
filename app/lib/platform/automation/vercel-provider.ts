@@ -188,6 +188,53 @@ export class VercelPreviewProvider {
     }
   }
 
+  // ── Latest READY PRODUCTION deployment for Publish Review (read-only) ────────
+  // Increment 3B.2D. Lists recent production deployments and returns the newest one
+  // whose target is verified 'production' AND whose state is READY — the exact
+  // "what is live right now" the owner review needs. Never assumes the newest row is
+  // production without checking target/environment; returns null (→ Unavailable) if no
+  // READY production deployment is found. GET only — no promote/redeploy/alias.
+  async readProductionForReview(project: string, teamId?: string): Promise<ProviderResult<{
+    deploymentId: string; url?: string; inspectorUrl?: string; state: PreviewState; ready: boolean
+    commitSha?: string; branch?: string; gitConnected: boolean; createdAt?: number; readyAt?: number; target: string
+  } | null>> {
+    if (!this.configured) return { ok: false, error: 'VERCEL_TOKEN not configured', category: 'not_configured' }
+    if (!project) return { ok: false, error: 'project required', category: 'config' }
+    const scope = (explicit?: string) => { const id = explicit || this.teamId; return id ? `&teamId=${encodeURIComponent(id)}` : '' }
+    let res
+    try { res = await this.fetch(`${API}/v6/deployments?projectId=${encodeURIComponent(project)}&target=production${scope(teamId)}&limit=20`, { headers: this.headers() }) }
+    catch { return { ok: false, error: 'Vercel API unreachable', category: 'network' } }
+    if (res.status === 401 || res.status === 403) return { ok: false, error: 'Vercel auth/permission denied', category: 'permission' }
+    if (res.status === 404) return { ok: false, error: 'Vercel project not found', category: 'not_found' }
+    if (!res.ok) return { ok: false, error: `list deployments failed (${res.status})`, category: 'api' }
+    const b = (await res.json().catch(() => null)) as { deployments?: Array<{ uid?: string; id?: string; url?: string; readyState?: string; state?: string; target?: string | null; createdAt?: number; created?: number; ready?: number; meta?: { githubCommitSha?: string; githubCommitRef?: string } }> } | null
+    // Verified production only (target MUST be exactly 'production' — a null/preview target
+    // is never assumed to be production), then newest READY (fall back to nothing — never guess).
+    const prod = (b?.deployments ?? []).filter((d) => d.target === 'production')
+    const sorted = prod.slice().sort((x, y) => (y.createdAt ?? y.created ?? 0) - (x.createdAt ?? x.created ?? 0))
+    const match = sorted.find((d) => mapReadyState(d.readyState ?? d.state) === 'ready')
+    if (!match) return { ok: true, data: null }
+    const state = mapReadyState(match.readyState ?? match.state)
+    const id = match.uid ?? match.id ?? ''
+    const commitSha = match.meta?.githubCommitSha || undefined
+    return {
+      ok: true,
+      data: {
+        deploymentId: id,
+        url: absUrl(match.url),
+        inspectorUrl: id ? this.inspector(id) : undefined,
+        state,
+        ready: state === 'ready',
+        commitSha,
+        branch: match.meta?.githubCommitRef || undefined,
+        gitConnected: !!commitSha,
+        createdAt: match.createdAt ?? match.created,
+        readyAt: match.ready,
+        target: match.target ?? 'production',
+      },
+    }
+  }
+
   // ── Read a Preview deployment's current state ───────────────────────────────
   async readPreviewDeployment(deploymentId: string, teamId?: string): Promise<ProviderResult<PreviewDeployment>> {
     if (!this.configured) return { ok: false, error: 'VERCEL_TOKEN not configured', category: 'not_configured' }
@@ -282,6 +329,7 @@ export class StubPreviewProvider {
   createPreviewDeployment() { return this.fail<PreviewDeployment>() }
   findPreviewByBranch() { return this.fail<PreviewDeployment | null>() }
   findProductionDeployment() { return this.fail<PreviewDeployment | null>() }
+  readProductionForReview() { return this.fail<{ deploymentId: string; url?: string; inspectorUrl?: string; state: PreviewState; ready: boolean; commitSha?: string; branch?: string; gitConnected: boolean; createdAt?: number; readyAt?: number; target: string } | null>() }
   promoteProduction() { return this.fail<{ promoted: boolean }>() }
   readPreviewDeployment() { return this.fail<PreviewDeployment>() }
   waitForPreviewReady() { return this.fail<PreviewDeployment>() }
