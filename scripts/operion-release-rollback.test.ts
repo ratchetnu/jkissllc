@@ -10,6 +10,13 @@ import {
   type RollbackGateInput,
 } from '../app/lib/platform/release/rollback'
 import { readRollbackTarget } from '../app/lib/platform/release/production-deployment'
+import { productionProjectFor } from '../app/lib/platform/production-project'
+
+test('production target: explicit Production id, then legacy deployProject, never Preview', () => {
+  assert.equal(productionProjectFor({ productionProjectId: 'prod-explicit', deployProject: 'prod-legacy' }), 'prod-explicit')
+  assert.equal(productionProjectFor({ productionProjectId: undefined, deployProject: 'prod-legacy' }), 'prod-legacy')
+  assert.equal(productionProjectFor({ productionProjectId: undefined, deployProject: undefined }), undefined)
+})
 
 // ── PURE: phrase + mode + ux ──────────────────────────────────────────────────
 test('rollback phrase: ROLLBACK <SLUG> FROM PRODUCTION, distinct + non-generic', () => {
@@ -181,6 +188,12 @@ test('safety: rollback modules never merge/dispatch/mutate-business/touch-secret
       assert.equal(s.includes(bad), false, `${f} must not reference ${bad}`)
     }
   }
+})
+test('safety: Production orchestration never falls back to previewProjectId', () => {
+  const s = src('../app/lib/platform/automation/orchestrator.ts')
+  assert.equal(/productionProjectId\s*\|\|\s*[^\n]*previewProjectId/.test(s), false)
+  assert.match(s, /productionProjectFor\(input\.business\)/)
+  assert.ok((s.match(/productionProjectFor\(business\)/g) ?? []).length >= 3)
 })
 test('safety: rollback route is owner-gated, flag-gated, no-store, LIVE only in prod runtime', () => {
   const s = src('../app/api/admin/release/businesses/[id]/rollback/route.ts')

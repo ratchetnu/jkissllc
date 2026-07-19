@@ -113,10 +113,23 @@ test('readiness membership uses named checks rather than display-order slices', 
 test('Release Center exposes readiness and no longer claims rollback is unavailable', () => {
   const page = fs.readFileSync(path.join(ROOT, 'app/admin/operations/release/page.tsx'), 'utf8')
   const publish = fs.readFileSync(path.join(ROOT, 'app/admin/operations/release/ProductionPublishPanel.tsx'), 'utf8')
-  assert.match(page, /Activation Readiness/)
-  assert.match(page, /controlled rollback/i)
+  assert.match(page, /Ready Check/)
+  assert.match(page, /PublishReviewDrawer/)
   assert.doesNotMatch(page, /No deploy or rollback controls/)
   assert.doesNotMatch(publish, /rollback is not implemented/i)
+})
+
+test('Release Center defaults to a compact plain-language workspace', () => {
+  const page = fs.readFileSync(path.join(ROOT, 'app/admin/operations/release/page.tsx'), 'utf8')
+  const readiness = fs.readFileSync(path.join(ROOT, 'app/admin/operations/release/ActivationReadinessPanel.tsx'), 'utf8')
+  assert.match(page, /useState\('updates'\)/)
+  for (const label of ['Updates', 'Ready Check', 'History', 'System Details']) assert.match(page, new RegExp(label))
+  assert.match(page, /tab === 'system'/)
+  assert.match(page, /View feature controls/)
+  assert.match(page, /Test updates, review what changed, and safely publish/)
+  assert.match(readiness, /Nothing changes from this screen/)
+  assert.match(readiness, /Live publishing/)
+  assert.doesNotMatch(readiness, /Read-only evidence for staged activation/)
 })
 
 test('shared tab list wraps every Release Center tab into narrow screens', () => {

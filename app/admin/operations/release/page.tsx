@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { RefreshCw, GitCommitHorizontal, Server, CalendarClock, Flag, AlertTriangle, CheckCircle2, XCircle, MinusCircle, Clock, Rocket, ShieldCheck, Building2, ChevronDown } from 'lucide-react'
+import { RefreshCw, GitCommitHorizontal, Server, CalendarClock, Flag, AlertTriangle, CheckCircle2, XCircle, MinusCircle, Clock, Rocket, ShieldCheck, ChevronDown } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { osLabel, osMiniBtn } from '../ui'
 import { Tabs } from '../../../components/ui'
@@ -119,7 +119,7 @@ const TONE: Record<BizTone, { fg: string; bg: string }> = {
   critical: { fg: '#fca5a5', bg: 'rgba(239,68,68,.16)' },
   neutral: { fg: '#94a3b8', bg: 'rgba(255,255,255,.06)' },
 }
-const STEPS = ['Check', 'Review', 'Preview', 'Verify', 'Promote']
+const STEPS = ['Check', 'Review', 'Test', 'Verify', 'Publish']
 function activeStep(status: string): number {
   if (status === 'update_available') return 1
   if (status === 'updating' || status === 'preview_ready') return 2
@@ -136,7 +136,7 @@ function timeAgo(at?: number): string {
   return `${Math.floor(h / 24)}d ago`
 }
 
-const LIVE_STEPS = ['Checking', 'Preparing Preview', 'Deploying Preview', 'Verifying Preview', 'Ready to Publish']
+const LIVE_STEPS = ['Checking', 'Preparing test', 'Opening test site', 'Running safety checks', 'Ready to publish']
 type Prog = { step: number; stepLabel: string; message: string; running: boolean; previewReady: boolean; blocked: boolean; canRetry: boolean; issue?: string }
 
 function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolean }) {
@@ -195,10 +195,9 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
         <div style={{ minWidth: 0, flex: '1 1 190px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 15, fontWeight: 700, overflowWrap: 'anywhere' }}>{b.name}</span>
-            <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>{b.edition}</span>
           </div>
           <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3 }}>
-            Version <span className="tabular-nums" style={{ color: 'var(--text)', fontWeight: 600 }}>{b.installedVersion}</span>
+            Current version <span className="tabular-nums" style={{ color: 'var(--text)', fontWeight: 600 }}>{b.installedVersion}</span>
             <span style={{ opacity: .5 }}> · Updated {timeAgo(b.lastUpdatedAt)}</span>
           </div>
         </div>
@@ -231,7 +230,7 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
 
           {/* Guided flow — LIVE steps driven by the real job when one is running, else a calm preview. */}
           <div>
-            <div style={{ ...osLabel, marginBottom: 8 }}>Update flow</div>
+            <div style={{ ...osLabel, marginBottom: 8 }}>What happens next</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               {(liveActive ? LIVE_STEPS : STEPS).map((s, i) => (
                 <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -247,19 +246,19 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
               ? <p style={{ fontSize: 12, color: prog.blocked ? '#fca5a5' : 'var(--text)', margin: '8px 0 0', display: 'flex', alignItems: 'center', gap: 7 }}>
                   {prog.running && <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite', color: 'var(--muted)' }} />}{prog.message}
                 </p>
-              : <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '6px 0 0' }}>Update runs these automatically and pauses only to publish to production.</p>}
+              : <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '6px 0 0' }}>Operion handles these steps and always pauses before changing the live site.</p>}
             {prog?.blocked && prog.issue && (
               <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 12.5, color: '#fca5a5' }}>{prog.issue}</span>
                 {prog.canRetry && <button onClick={async () => { setNote(''); await send({ action: 'retry' }); startPoll() }} disabled={busy} className="os-tap" style={{ fontSize: 12, fontWeight: 700, padding: '6px 11px', borderRadius: 9, color: 'var(--text)', background: 'transparent', border: '1px solid var(--line)', cursor: 'pointer' }}>Retry</button>}
               </div>
             )}
-            {prog?.previewReady && <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '6px 0 0' }}>Publishing to production is a separate, deliberate step — use “Publish to Production” to review, approve, and publish.</p>}
+            {prog?.previewReady && <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '6px 0 0' }}>Your test is ready. Choose “Publish to Production” to review everything before the live site changes.</p>}
           </div>
 
           <div style={{ display: 'grid', gap: 4 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span style={{ fontSize: 12.5, color: 'var(--muted)' }}>Preview</span><span style={{ fontSize: 12.5, color: 'var(--text)', textAlign: 'right' }}>{b.detail.previewStatus}</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span style={{ fontSize: 12.5, color: 'var(--muted)' }}>Checks</span><span style={{ fontSize: 12.5, color: 'var(--text)', textAlign: 'right' }}>{b.detail.validationSummary}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span style={{ fontSize: 12.5, color: 'var(--muted)' }}>Test site</span><span style={{ fontSize: 12.5, color: 'var(--text)', textAlign: 'right' }}>{b.detail.previewStatus}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span style={{ fontSize: 12.5, color: 'var(--muted)' }}>Safety checks</span><span style={{ fontSize: 12.5, color: 'var(--text)', textAlign: 'right' }}>{b.detail.validationSummary}</span></div>
           </div>
 
           {b.detail.attention.length > 0 && (
@@ -285,8 +284,9 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
           )}
 
           <details>
-            <summary style={{ ...osLabel, cursor: 'pointer', listStyle: 'none' }}>Advanced</summary>
+            <summary style={{ ...osLabel, cursor: 'pointer', listStyle: 'none' }}>Technical details</summary>
             <div style={{ display: 'grid', gap: 4, marginTop: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, color: 'var(--muted)' }}><span>Edition</span><span style={{ color: 'var(--text)' }}>{b.edition}</span></div>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, color: 'var(--muted)' }}><span>Connection</span><span style={{ color: 'var(--text)' }}>{b.detail.connection}</span></div>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, color: 'var(--muted)' }}><span>Last checked</span><span style={{ color: 'var(--text)' }}>{timeAgo(b.detail.lastCheckedAt)}</span></div>
             </div>
@@ -303,7 +303,6 @@ function Businesses() {
   const [updatesEnabled, setUpdatesEnabled] = useState(false)
   const [show, setShow] = useState(false)
   const [nonce, setNonce] = useState(0) // bump to re-fetch (e.g. after a sandbox repair)
-  const [tab, setTab] = useState('businesses')
   useEffect(() => {
     let live = true
     fetch('/api/admin/release/businesses', { credentials: 'same-origin' })
@@ -313,21 +312,12 @@ function Businesses() {
     return () => { live = false }
   }, [nonce])
   if (!show || !views) return null // owner-only: silently absent for non-owners
-  return (
-    <Section title="Release Center" icon={Building2}>
-      <div style={{ marginBottom: 12 }}>
-        <Tabs value={tab} onChange={setTab} tabs={[{ id: 'businesses', label: 'Businesses' }, { id: 'readiness', label: 'Activation Readiness' }, { id: 'history', label: 'Release History' }]} />
+  return views.length === 0
+    ? <Section title="Updates" icon={Rocket}><p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>No businesses have been added yet.</p></Section>
+    : <div style={{ display: 'grid', gap: 10 }}>
+        {views.map(b => <BusinessRow key={b.id} b={b} updatesEnabled={updatesEnabled} />)}
+        <SandboxAdvanced onRepaired={() => setNonce(n => n + 1)} />
       </div>
-      {tab === 'businesses' ? (
-        <>
-          {views.length === 0
-            ? <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>No businesses registered yet.</p>
-            : <div style={{ display: 'grid', gap: 10 }}>{views.map(b => <BusinessRow key={b.id} b={b} updatesEnabled={updatesEnabled} />)}</div>}
-          <SandboxAdvanced onRepaired={() => setNonce(n => n + 1)} />
-        </>
-      ) : tab === 'readiness' ? <ActivationReadinessPanel /> : <ReleaseHistoryPanel />}
-    </Section>
-  )
 }
 
 // ── Advanced · Sandbox repair (owner + PREVIEW + OPERION_SANDBOX_REPAIR_ENABLED only) ──
@@ -452,6 +442,7 @@ function ReleaseCenter() {
   const [snap, setSnap] = useState<Snapshot | null>(null)
   const [state, setState] = useState<'loading' | 'ok' | 'error' | 'forbidden'>('loading')
   const [busy, setBusy] = useState(false)
+  const [tab, setTab] = useState('updates')
 
   const load = useCallback(async () => {
     setBusy(true)
@@ -472,7 +463,7 @@ function ReleaseCenter() {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h1 className="jkos-h" style={{ fontSize: 24, margin: 0 }}>Release Center</h1>
-          <p style={{ fontSize: 13, color: 'var(--muted)', margin: '4px 0 0' }}>Build status, staged activation readiness, owner-approved publishing, release history, and controlled rollback.</p>
+          <p style={{ fontSize: 13, color: 'var(--muted)', margin: '4px 0 0' }}>Test updates, review what changed, and safely publish when you’re ready.</p>
         </div>
         <button onClick={load} disabled={busy} className="os-tap" aria-label="Refresh"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', background: 'var(--card)', border: '1px solid var(--line)', cursor: 'pointer' }}>
@@ -500,10 +491,31 @@ function ReleaseCenter() {
 
       {state === 'ok' && snap && (
         <>
-          {/* Businesses — the unified release view (platform-owner only; absent otherwise) */}
-          <Businesses />
+          <div className="os-card" style={{ padding: '2px 14px 0' }}>
+            <Tabs value={tab} onChange={setTab} tabs={[
+              { id: 'updates', label: 'Updates' },
+              { id: 'readiness', label: 'Ready Check' },
+              { id: 'history', label: 'History' },
+              { id: 'system', label: 'System Details' },
+            ]} />
+          </div>
 
-          {/* Build info — graceful when metadata is unavailable */}
+          {tab === 'updates' && <Businesses />}
+
+          {tab === 'readiness' && (
+            <Section title="Ready Check" icon={ShieldCheck}>
+              <ActivationReadinessPanel />
+            </Section>
+          )}
+
+          {tab === 'history' && (
+            <Section title="History" icon={Clock}>
+              <ReleaseHistoryPanel />
+            </Section>
+          )}
+
+          {tab === 'system' && <div style={{ display: 'grid', gap: 16 }}>
+          {/* Technical information is intentionally off the default path. */}
           <Section title="Current build" icon={Server}>
             {!snap.build.available && (
               <p style={{ fontSize: 12.5, color: '#fcd34d', margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -527,14 +539,16 @@ function ReleaseCenter() {
             {snap.current ? <ReleaseCard r={snap.current} /> : <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>No release notes on record yet.</p>}
           </Section>
 
-          {/* Feature flags */}
-          <Section title="Feature flags" icon={Flag}>
+          {/* Feature flags stay collapsed until an owner asks for technical detail. */}
+          <Section title="Feature controls" icon={Flag}>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
               <Chip fg="#86efac" bg="rgba(34,197,94,.16)">{snap.flagSummary.enabled} on</Chip>
               <Chip fg="#94a3b8" bg="rgba(255,255,255,.06)">{snap.flagSummary.disabled} off</Chip>
               <Chip fg="#fcd34d" bg="rgba(245,158,11,.15)">{snap.flagSummary.overridden} non-default</Chip>
             </div>
-            <div style={{ display: 'grid', gap: 16 }}>
+            <details>
+              <summary style={{ cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>View feature controls</summary>
+              <div style={{ display: 'grid', gap: 16, marginTop: 14 }}>
               {CATEGORY_ORDER.filter(cat => snap.flags.some(f => f.category === cat)).map(cat => (
                 <div key={cat}>
                   <div style={{ ...osLabel, marginBottom: 8 }}>{cat}</div>
@@ -556,7 +570,8 @@ function ReleaseCenter() {
                   </div>
                 </div>
               ))}
-            </div>
+              </div>
+            </details>
           </Section>
 
           {/* Migration status */}
@@ -573,7 +588,7 @@ function ReleaseCenter() {
             <Bullets items={snap.knownIssues} />
           </Section>
 
-          {/* History */}
+          {/* Earlier release notes */}
           {snap.history.length > 0 && (
             <Section title="Earlier releases" icon={Clock}>
               <div style={{ display: 'grid', gap: 20 }}>
@@ -581,9 +596,10 @@ function ReleaseCenter() {
               </div>
             </Section>
           )}
+          </div>}
 
           <p style={{ fontSize: 11, color: 'var(--muted)', textAlign: 'center', margin: '4px 0 0' }}>
-            Snapshot generated {new Date(snap.generatedAt).toLocaleString()} · read-only
+            Last checked {new Date(snap.generatedAt).toLocaleString()}
           </p>
         </>
       )}
