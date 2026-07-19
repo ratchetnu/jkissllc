@@ -69,7 +69,7 @@ export function evaluatePreflight(x: PreflightInput): PreflightResult {
 
   // Soft (non-blocking) documentation gates.
   add('flags_documented', 'Feature flags documented (if any)', !x.update.featureFlagRequired || !!(x.update.ownerNotes || x.update.technicalImpact), false, 'document the feature flag(s) in owner notes')
-  add('rollback_documented', 'Rollback path documented', x.update.rollbackSupported || !!x.business.rollbackWorkflowFile, false, 'no rollback path recorded')
+  add('rollback_documented', 'Rollback path documented', x.update.rollbackSupported, false, 'no rollback path recorded')
 
   const ok = g.every(gate => gate.ok || !gate.blocking)
   return { ok, gates: g }
@@ -95,7 +95,7 @@ export function commitDriftDetected(approvedCommit: string | undefined, currentC
   return !!approvedCommit && !!currentCommit && approvedCommit !== currentCommit
 }
 export function automaticRollbackEligible(opts: {
-  enabled: boolean; rollbackWorkflowFile?: string; irreversibleMigration: boolean; previousVerifiedCommit?: string
+  enabled: boolean; productionProjectId?: string; irreversibleMigration: boolean; previousVerifiedCommit?: string
 }): boolean {
-  return opts.enabled && !!opts.rollbackWorkflowFile && !opts.irreversibleMigration && !!opts.previousVerifiedCommit
+  return opts.enabled && !!opts.productionProjectId && !opts.irreversibleMigration && !!opts.previousVerifiedCommit
 }

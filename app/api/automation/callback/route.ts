@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isEnabled } from '../../../lib/platform/flags'
-import { verifyCallback, validateCallbackPayload, callbackMatchesJob } from '../../../lib/platform/automation/callback'
+import { verifyCallback, validateCallbackPayload, callbackMatchesJob, previewFailureStatus } from '../../../lib/platform/automation/callback'
 import { getJob, saveJob, callbackSeen, markCallbackSeen } from '../../../lib/platform/automation/store'
 
 export const runtime = 'nodejs'
@@ -47,11 +47,10 @@ export async function POST(req: NextRequest) {
   } else {
     job.failureCategory = (p.status === 'tests_failed' ? 'tests_failed' : p.status === 'build_failed' ? 'build_failed' : p.status === 'apply_failed' ? 'apply_failed' : p.status === 'preview_failed' ? 'preview_failed' : 'provider_error')
     job.failureSummary = p.errorSummary ?? p.status
-    // OPERION_AUTOMATIC_ROLLBACK_ENABLED consumer: when the job was flagged eligible at
-    // prepare (flag on + verified rollback path), a failure auto-routes to rollback_required
-    // instead of a plain terminal failure. Off ⇒ eligible=false ⇒ unchanged behavior.
-    const failed = p.status === 'build_failed' ? 'build_failed' : 'failed'
-    job.status = job.automaticRollbackEligible ? 'rollback_required' : failed
+    // This callback is Preview-only. A Preview apply/test/build failure has not changed
+    // Production and must never request a Production rollback. Only advancePromotion(),
+    // after an owner-approved merge/deploy fails verification, may set rollback_required.
+    job.status = previewFailureStatus(p.status)
   }
   job.updatedAt = now
   await saveJob(job)

@@ -100,7 +100,7 @@ export function evaluateActivationReadiness(input: ActivationReadinessInput): Ac
       check('production_allowed', 'Production promotion permitted', b.allowProductionPromotion === true, 'business', 'Business permits controlled production promotion.', 'Business does not permit production promotion.'),
       check('current_production', 'Current production deployment known', !!rollback?.currentDeploymentId, 'rollback', 'Current production deployment is known.', 'Current production deployment could not be verified.'),
       check('rollback_target', 'Prior rollback target known', !!rollback?.targetDeploymentId, 'rollback', 'A distinct prior production deployment is available.', 'No prior known-good production deployment is available.'),
-      check('rollback_workflow', 'Automatic rollback workflow configured', !!b.rollbackWorkflowFile, 'rollback', 'Rollback workflow is configured.', 'Rollback workflow file is missing; controlled manual rollback can still be used.'),
+      check('rollback_executor', 'Automatic rollback execution path', isVercelProjectAllowed(project) && !!rollback?.targetDeploymentId, 'rollback', 'The server-side Vercel rollback executor has a prior known-good target.', 'Automatic rollback needs an allowlisted Production project and a prior known-good deployment.'),
     ]
     const readyForPreview = namedChecksPass(checks, PREVIEW_BUSINESS_CHECKS)
     const readyForProduction = namedChecksPass(checks, PRODUCTION_BUSINESS_CHECKS)
@@ -130,7 +130,7 @@ export function evaluateActivationReadiness(input: ActivationReadinessInput): Ac
     ...productionStage.checks.filter((c) => c.kind !== 'flag'),
     check('ai_adaptation_flag', 'AI adaptation enabled', input.flags.aiAdaptation, 'flag', 'AI adaptation is enabled.', 'OPERION_AI_ADAPTATION_ENABLED is off.'),
     check('automatic_rollback_flag', 'Automatic rollback enabled', input.flags.automaticRollback, 'flag', 'Automatic rollback is enabled.', 'OPERION_AUTOMATIC_ROLLBACK_ENABLED is off.'),
-    check('all_rollback_workflows', 'Rollback workflows configured', hasBusiness && businesses.every((b) => b.checks.find((c) => c.id === 'rollback_workflow')?.ok), 'rollback', 'Every active business has an automatic rollback workflow.', 'Automatic rollback remains blocked until every active business has a rollback workflow.'),
+    check('all_rollback_executors', 'Rollback execution paths verified', hasBusiness && businesses.every((b) => b.checks.find((c) => c.id === 'rollback_executor')?.ok), 'rollback', 'Every active business has a server-side rollback executor and prior known-good target.', 'Automatic rollback remains blocked until every active business has an allowlisted project and prior known-good deployment.'),
   ])
 
   const providerStage = stage('provider_access', 'Provider access', 'Read-only access required before any automation flag is enabled.', providerChecks)
