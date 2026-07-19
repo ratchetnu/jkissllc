@@ -2,6 +2,7 @@
 // invariants (esp. the owner-gated production boundary), preflight gates, server-side
 // allowlists, signed callbacks, and the fail-closed provider. No Redis, no network.
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
 
@@ -114,8 +115,22 @@ test('target workflow validates refs before checkout without hardcoding its host
   assert.ok(guardAt >= 0 && guardAt < checkoutAt)
   assert.doesNotMatch(workflow, /ALLOWED_REPO|ratchetnu\/jkissllc/)
   assert.match(workflow, /TARGET_BRANCH: \$\{\{ inputs\.targetBranch \}\}/)
-  assert.match(workflow, /\^operion\/\[a-z0-9\]\[a-z0-9_-\]\*\(\/\[a-z0-9\]\[a-z0-9_-\]\*\)\*\$/)
+  assert.match(workflow, /\[\[ "\$TARGET_BRANCH" =~ \^operion\/\[a-z0-9\]\[a-z0-9_-\]\*\(\/\[a-z0-9\]\[a-z0-9_-\]\*\)\*\$ \]\]/)
+  assert.doesNotMatch(workflow, /printf[^\n]*TARGET_BRANCH[^\n]*\|[^\n]*grep/)
   assert.match(workflow, /missing deploymentRequestId/)
+})
+test('target workflow branch guard rejects multiline and malformed refs as a whole value', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/operion-update.yml', import.meta.url), 'utf8')
+  const guardLine = workflow.split('\n').find((line) => line.includes('! [[ "$TARGET_BRANCH" =~'))?.trim()
+  assert.ok(guardLine)
+  const guardCondition = guardLine.replace(/^if /, '').replace(/; then$/, '')
+  const accepts = (branch: string) => spawnSync('bash', ['-c', `if ${guardCondition}; then exit 1; fi`], {
+    env: { ...process.env, TARGET_BRANCH: branch },
+  }).status === 0
+  assert.equal(accepts('operion/upd-1007'), true)
+  for (const branch of ['operion/ok\nevil', 'operion/ok\revil', 'operion//evil', 'operion/evil/', 'operion/../main', 'main']) {
+    assert.equal(accepts(branch), false, `must reject ${JSON.stringify(branch)}`)
+  }
 })
 test('target workflow never expands dispatch inputs directly inside shell source', () => {
   const workflow = readFileSync(new URL('../.github/workflows/operion-update.yml', import.meta.url), 'utf8')
