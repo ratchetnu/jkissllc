@@ -97,6 +97,9 @@ test('dashboard: summary metrics + sticky top bar render; expand/collapse defaul
   assert.match(html, /role="tab"/)
   // Collapsible panels expose a labelled region for AT.
   assert.match(html, /role="region"/)
+  // Heading hierarchy: business name h2, section disclosures wrapped in h3.
+  assert.match(html, /<h2[^>]*>Supercharged Enterprises<\/h2>/)
+  assert.match(html, /<h3[^>]*><button/)
 })
 
 test('dashboard: file list is capped (never a giant list) — first few shown + remainder counted', () => {

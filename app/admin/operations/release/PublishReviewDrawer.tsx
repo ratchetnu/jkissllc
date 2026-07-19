@@ -37,16 +37,19 @@ function Collapse({ title, badge, defaultOpen = false, children }: { title: stri
   const panelId = useId()
   return (
     <Card style={{ padding: 0, overflow: 'hidden' }}>
-      <button
-        type="button" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((o) => !o)}
-        style={{ width: '100%', minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 14px', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text)', font: 'inherit', textAlign: 'left' }}
-      >
-        <span style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)', minWidth: 0, overflowWrap: 'anywhere' }}>{title}</span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          {badge}
-          <span aria-hidden style={{ color: 'var(--muted)', fontSize: 12, width: 12, textAlign: 'center' }}>{open ? '▾' : '▸'}</span>
-        </span>
-      </button>
+      {/* Accordion pattern: a heading wraps the disclosure button for screen-reader nav. */}
+      <h3 style={{ margin: 0 }}>
+        <button
+          type="button" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((o) => !o)}
+          style={{ width: '100%', minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 14px', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text)', font: 'inherit', textAlign: 'left' }}
+        >
+          <span style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)', minWidth: 0, overflowWrap: 'anywhere' }}>{title}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            {badge}
+            <span aria-hidden style={{ color: 'var(--muted)', fontSize: 12, width: 12, textAlign: 'center' }}>{open ? '▾' : '▸'}</span>
+          </span>
+        </button>
+      </h3>
       <div id={panelId} role="region" aria-label={title} hidden={!open} style={{ padding: '0 14px 14px' }}>{children}</div>
     </Card>
   )
@@ -134,7 +137,7 @@ export function PublishReviewContent({ review, warnings }: { review: PublishRevi
       <div style={{ position: 'sticky', top: 0, zIndex: 3, background: 'var(--surface)', paddingBottom: 8, borderBottom: '1px solid var(--line)' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 8, justifyContent: 'space-between' }}>
           <div style={{ display: 'grid', gap: 4, minWidth: 0 }}>
-            <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-.01em', overflowWrap: 'anywhere' }}>{v.business.name}</div>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, letterSpacing: '-.01em', overflowWrap: 'anywhere' }}>{v.business.name}</h2>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               <Pill tone="info">Production</Pill>
               {v.business.testOnly && <Pill tone="warn">Test-only</Pill>}
