@@ -45,7 +45,7 @@ jobs:
           if [ -z "$DEPLOYMENT_REQUEST_ID" ]; then
             echo "::error::missing deploymentRequestId"; exit 1
           fi
-          if [ "${#TARGET_BRANCH}" -gt 128 ] || ! printf '%s' "$TARGET_BRANCH" | grep -Eq '^operion/[a-z0-9][a-z0-9_-]*(/[a-z0-9][a-z0-9_-]*)*$'; then
+          if [ "${#TARGET_BRANCH}" -gt 128 ] || ! [[ "$TARGET_BRANCH" =~ ^operion/[a-z0-9][a-z0-9_-]*(/[a-z0-9][a-z0-9_-]*)*$ ]]; then
             echo "::error::targetBranch must be an operion/ path with lowercase alphanumeric, underscore, or hyphen segments"; exit 1
           fi
           echo "request validated for automation-owned branch"
