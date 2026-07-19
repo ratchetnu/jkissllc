@@ -12,7 +12,7 @@ import { getPreviewProvider } from '../../../../../../lib/platform/automation/ve
 import { APPROVAL_TARGET, type ApprovalBinding } from '../../../../../../lib/platform/release/approval'
 import { getActiveApprovalFor } from '../../../../../../lib/platform/release/approval-store'
 import { evaluatePublishGate, publishPhrase, publishUxState, resolvePublishMode } from '../../../../../../lib/platform/release/publish'
-import { executePublish, type PromoteFn } from '../../../../../../lib/platform/release/publish-executor'
+import { executePublish, type PromoteFn, type VerifyFn } from '../../../../../../lib/platform/release/publish-executor'
 import { getLatestPublishFor, getPublishByApproval, type ReleasePublish } from '../../../../../../lib/platform/release/publish-store'
 
 export const runtime = 'nodejs'
@@ -150,10 +150,19 @@ export const POST = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
   const promote: PromoteFn = mode === 'live'
     ? async (project, dep) => { const r = await vercel.promoteProduction(project, dep); return r.ok ? { ok: true, promotedDeploymentId: dep } : { ok: false, error: r.error, category: r.category } }
     : async (_project, dep) => ({ ok: true, promotedDeploymentId: dep })   // simulated — no Vercel call
+  // LIVE-only truthful verification: read whether the promoted deployment is now the live,
+  // READY production deployment. Omitted in SIMULATED mode (no verifying step is claimed).
+  const verify: VerifyFn | undefined = mode === 'live'
+    ? async (project, dep) => {
+        const r = await vercel.readProductionForReview(project)
+        if (!r.ok) return { error: r.error }
+        return { ready: !!r.data && r.data.deploymentId === dep && r.data.ready }
+      }
+    : undefined
 
   const result = await executePublish({
     now: s.now, actor: who.sub, business: { id: s.business!.id, slug: s.slug, project: s.project },
-    approval: gate.approval, binding: gate.binding, mode, promote,
+    approval: gate.approval, binding: gate.binding, mode, promote, verify,
   })
 
   if (!result.ok) {

@@ -12,8 +12,8 @@ import { Dialog, TypedConfirm, Button, StatusBadge, Alert } from '../../../compo
 import type { Tone } from '../../../components/ui'
 
 type PublishView = {
-  state: 'idle' | 'publishing' | 'queued' | 'waiting' | 'ready' | 'completed' | 'failed'
-  id?: string; status?: 'promoting' | 'completed' | 'failed'; mode?: 'live' | 'simulated'
+  state: 'idle' | 'publishing' | 'queued' | 'verifying' | 'ready' | 'failed'
+  id?: string; status?: 'promoting' | 'verifying' | 'completed' | 'failed'; mode?: 'live' | 'simulated'
   releaseId?: string; sourceDeploymentId?: string; promotedDeploymentId?: string
   failureReason?: string; startedAt?: number; completedAt?: number
 }
@@ -32,9 +32,10 @@ type PublishStatus = {
 }
 
 const UX_LABEL: Record<PublishView['state'], string> = {
-  idle: '', publishing: 'Publishing…', queued: 'Promotion queued…', waiting: 'Waiting for Production…',
-  ready: 'Deployment READY', completed: 'Promotion complete', failed: 'Promotion failed',
+  idle: 'Ready to publish', publishing: 'Publishing…', queued: 'Promotion queued…',
+  verifying: 'Verifying Production…', ready: 'Production READY', failed: 'Publish failed',
 }
+const NON_TERMINAL = new Set(['promoting', 'verifying'])
 
 function ageLabel(ms: number | undefined): string {
   if (ms == null) return 'Unavailable'
@@ -65,6 +66,15 @@ export function ProductionPublishPanel({ businessId }: { businessId: string }) {
   const reload = useCallback(() => { const ac = new AbortController(); abortRef.current?.abort(); abortRef.current = ac; fetchStatus(ac.signal) }, [fetchStatus])
   useEffect(() => { const ac = new AbortController(); abortRef.current = ac; fetchStatus(ac.signal); return () => ac.abort() }, [fetchStatus])
 
+  // Poll only while a publish is genuinely in a non-terminal state (promoting/verifying).
+  // Synchronous execution usually resolves before the first tick; this covers cross-session
+  // viewing and the LIVE verifying window. Never polls once terminal.
+  useEffect(() => {
+    if (!status || !NON_TERMINAL.has(status.publish.status ?? '')) return
+    const iv = setInterval(reload, 2500)
+    return () => clearInterval(iv)
+  }, [status, reload])
+
   const submit = async () => {
     if (!status?.business || !matched) return
     setBusy(true); setMsg(null)
@@ -75,8 +85,8 @@ export function ProductionPublishPanel({ businessId }: { businessId: string }) {
       })
       const j = await res.json().catch(() => ({}))
       if (res.ok && j?.ok) {
-        const done = j.publish?.state === 'completed'
-        setMsg({ tone: done ? 'good' : 'info', text: j.idempotent ? 'This release was already published (no duplicate promotion).' : done ? `Promotion complete${j.mode === 'simulated' ? ' (simulated — no real production change)' : ''}.` : 'Publishing…' })
+        const done = j.publish?.state === 'ready'
+        setMsg({ tone: done ? 'good' : 'info', text: j.idempotent ? 'This release was already published (no duplicate promotion).' : done ? `Production READY${j.mode === 'simulated' ? ' (simulated — no real production change)' : ''}.` : 'Publishing…' })
         setDialogOpen(false); setPhrase(''); setMatched(false); reload()
       } else {
         setMsg({ tone: 'bad', text: j?.message ?? 'Publish was not performed.' })
@@ -92,7 +102,10 @@ export function ProductionPublishPanel({ businessId }: { businessId: string }) {
   if (!status.approvalGateEnabled) return null
 
   const p = status.publish
-  const showButton = status.publishEnabled && status.ready && (p.state === 'idle' || p.state === 'failed')
+  const inProgress = p.state === 'queued' || p.state === 'verifying'
+  const showButton = status.publishEnabled && status.ready && (p.state === 'idle' || p.state === 'failed') && !busy
+  const badgeTone: Tone = p.state === 'ready' ? 'good' : p.state === 'failed' ? 'bad' : p.state === 'idle' ? 'neutral' : 'info'
+  const badgeLabel = busy ? UX_LABEL.publishing : UX_LABEL[p.state]
   const modeBadge = <StatusBadge tone={status.mode === 'live' ? 'bad' : 'info'} dot={false}>{status.mode === 'live' ? 'LIVE' : 'Simulated'}</StatusBadge>
 
   return (
@@ -100,21 +113,23 @@ export function ProductionPublishPanel({ businessId }: { businessId: string }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
         <h3 style={{ margin: 0, fontSize: 11.5, fontWeight: 800, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)' }}>Publish to production</h3>
         <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
-          {p.state !== 'idle' && <StatusBadge tone={p.state === 'completed' ? 'good' : p.state === 'failed' ? 'bad' : 'info'}>{UX_LABEL[p.state]}</StatusBadge>}
+          <StatusBadge tone={busy ? 'info' : badgeTone}>{badgeLabel}</StatusBadge>
           {modeBadge}
         </span>
       </div>
 
-      {/* Progress / outcome */}
-      {p.state === 'publishing' && <Alert tone="info">Publishing… promotion queued… waiting for Production…</Alert>}
-      {p.state === 'completed' && (
-        <Alert tone="good" title="Promotion complete">
+      {/* Progress / outcome — truthful states only */}
+      {(busy || inProgress) && (
+        <Alert tone="info">{busy ? 'Publishing…' : p.state === 'verifying' ? 'Verifying Production…' : 'Promotion queued…'}</Alert>
+      )}
+      {p.state === 'ready' && !busy && (
+        <Alert tone="good" title="Production READY">
           The approved Preview deployment was promoted to Production{p.mode === 'simulated' ? ' (simulated — no real production change was made)' : ''}.
           {p.promotedDeploymentId ? <> Deployment <code>{p.promotedDeploymentId}</code>.</> : null}
         </Alert>
       )}
-      {p.state === 'failed' && (
-        <Alert tone="bad" title="Promotion failed">
+      {p.state === 'failed' && !busy && (
+        <Alert tone="bad" title="Publish failed">
           {p.failureReason ?? 'The production promotion failed.'} · Retry is not available in this phase · Rollback is not implemented yet.
         </Alert>
       )}

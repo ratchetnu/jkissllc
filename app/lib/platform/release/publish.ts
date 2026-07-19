@@ -32,9 +32,15 @@ export function resolvePublishMode(env: Record<string, string | undefined> = pro
   return isProd && isEnabled('OPERION_PRODUCTION_PROMOTION_ENABLED', env) ? 'live' : 'simulated'
 }
 
-export type PublishRecordStatus = 'promoting' | 'completed' | 'failed'
+// Truthful, reachable statuses only:
+//   promoting  — approval consumed, promotion request issued ("Promotion queued")
+//   verifying  — LIVE-only: promotion accepted, confirming Production is READY (real read)
+//   completed  — Production is READY ("Production READY")
+//   failed     — the promotion or its verification failed ("Publish failed")
+// SIMULATED runs never enter `verifying` (there is nothing real to verify) — it is never faked.
+export type PublishRecordStatus = 'promoting' | 'verifying' | 'completed' | 'failed'
 export type PublishUxState =
-  | 'idle' | 'publishing' | 'queued' | 'waiting' | 'ready' | 'completed' | 'failed'
+  | 'idle' | 'publishing' | 'queued' | 'verifying' | 'ready' | 'failed'
 
 export type PublishGateRefusalCode =
   | 'OWNER_REQUIRED' | 'APPROVAL_GATE_DISABLED' | 'PUBLISH_DISABLED'
@@ -111,8 +117,9 @@ function no(code: PublishGateRefusalCode, message: string): PublishGateResult {
 /** Map a stored publish status to the calm owner UX state. */
 export function publishUxState(status: PublishRecordStatus | undefined): PublishUxState {
   switch (status) {
-    case 'promoting': return 'publishing'
-    case 'completed': return 'completed'
+    case 'promoting': return 'queued'
+    case 'verifying': return 'verifying'
+    case 'completed': return 'ready'
     case 'failed': return 'failed'
     default: return 'idle'
   }

@@ -17,7 +17,7 @@
 import { consumeApproval } from './approval-store'
 import { releaseBindingFingerprint, type ReleaseApproval, type ApprovalBinding } from './approval'
 import {
-  acquirePublishLock, releasePublishLock, startPublish, completePublish, failPublish, getPublishByApproval,
+  acquirePublishLock, releasePublishLock, startPublish, markVerifying, completePublish, failPublish, getPublishByApproval,
   type ReleasePublish,
 } from './publish-store'
 import { recordPlatformAudit } from '../updates/audit'
@@ -27,6 +27,13 @@ export type PromoteFn = (
   deploymentId: string,
 ) => Promise<{ ok: true; promotedDeploymentId?: string } | { ok: false; error: string; category?: string }>
 
+/** LIVE-only production verification — reads whether the promoted deployment is now READY.
+ *  Absent in SIMULATED mode (there is nothing real to verify — the state is never faked). */
+export type VerifyFn = (
+  project: string,
+  deploymentId: string,
+) => Promise<{ ready: boolean } | { error: string }>
+
 export type ExecutePublishInput = {
   now: number
   actor: string
@@ -35,6 +42,7 @@ export type ExecutePublishInput = {
   binding: ApprovalBinding
   mode: 'live' | 'simulated'
   promote: PromoteFn
+  verify?: VerifyFn
 }
 
 export type ExecutePublishResult =
@@ -72,15 +80,34 @@ export async function executePublish(i: ExecutePublishInput): Promise<ExecutePub
     try { res = await i.promote(i.business.project, i.binding.sourceDeploymentId) }
     catch (e) { res = { ok: false, error: e instanceof Error ? e.message : 'promotion error' } }
 
-    if (res.ok) {
-      const done = await completePublish(publish.id, i.now, res.promotedDeploymentId ?? i.binding.sourceDeploymentId)
-      await audit(i, 'deployment.promoted', `Deployment ${i.binding.sourceDeploymentId} promoted to production (${i.mode})`, { publishId: publish.id, deploymentId: i.binding.sourceDeploymentId, mode: i.mode })
-      await audit(i, 'publish.completed', `Publish ${publish.id} completed (${i.mode})`, { publishId: publish.id, mode: i.mode })
-      return { ok: true, publish: done ?? publish, idempotent: false }
+    if (!res.ok) {
+      const failed = await failPublish(publish.id, i.now, res.error)
+      await audit(i, 'publish.failed', `Publish ${publish.id} failed: ${res.error}`, { publishId: publish.id, mode: i.mode })
+      return { ok: false, code: 'PROMOTE_FAILED', message: 'the production promotion failed', publish: failed ?? publish }
     }
-    const failed = await failPublish(publish.id, i.now, res.error)
-    await audit(i, 'publish.failed', `Publish ${publish.id} failed: ${res.error}`, { publishId: publish.id, mode: i.mode })
-    return { ok: false, code: 'PROMOTE_FAILED', message: 'the production promotion failed', publish: failed ?? publish }
+    const promotedId = res.promotedDeploymentId ?? i.binding.sourceDeploymentId
+    await audit(i, 'deployment.promoted', `Deployment ${i.binding.sourceDeploymentId} promoted to production (${i.mode})`, { publishId: publish.id, deploymentId: i.binding.sourceDeploymentId, mode: i.mode })
+
+    // LIVE mode confirms Production is truly READY with a real read (never faked). SIMULATED
+    // mode has nothing real to verify → it completes directly and shows no verifying step.
+    if (i.mode === 'live' && i.verify) {
+      await markVerifying(publish.id, i.now, promotedId)
+      const v = await i.verify(i.business.project, promotedId)
+      if ('error' in v) {
+        const failed = await failPublish(publish.id, i.now, `production verification failed: ${v.error}`)
+        await audit(i, 'publish.failed', `Publish ${publish.id} verification failed: ${v.error}`, { publishId: publish.id, mode: i.mode })
+        return { ok: false, code: 'PROMOTE_FAILED', message: 'production verification failed', publish: failed ?? publish }
+      }
+      if (!v.ready) {
+        const failed = await failPublish(publish.id, i.now, 'promoted deployment did not reach READY')
+        await audit(i, 'publish.failed', `Publish ${publish.id} did not reach READY`, { publishId: publish.id, mode: i.mode })
+        return { ok: false, code: 'PROMOTE_FAILED', message: 'the promoted deployment did not reach READY', publish: failed ?? publish }
+      }
+    }
+
+    const done = await completePublish(publish.id, i.now, promotedId)
+    await audit(i, 'publish.completed', `Publish ${publish.id} completed (${i.mode})`, { publishId: publish.id, mode: i.mode })
+    return { ok: true, publish: done ?? publish, idempotent: false }
   } finally {
     await releasePublishLock(i.business.id)
   }

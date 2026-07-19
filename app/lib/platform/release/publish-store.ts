@@ -97,6 +97,15 @@ export async function startPublish(n: NewPublish): Promise<ReleasePublish> {
   return p
 }
 
+/** LIVE-only: the promotion was accepted; we are confirming Production is READY. */
+export async function markVerifying(id: string, now: number, promotedDeploymentId?: string): Promise<ReleasePublish | null> {
+  const p = await getPublish(id)
+  if (!p) return null
+  const v: ReleasePublish = { ...p, status: 'verifying', promotedDeploymentId: promotedDeploymentId ?? p.promotedDeploymentId, updatedAt: now }
+  await savePublish(v)
+  return v
+}
+
 export async function completePublish(id: string, now: number, promotedDeploymentId?: string): Promise<ReleasePublish | null> {
   const p = await getPublish(id)
   if (!p) return null

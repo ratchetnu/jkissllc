@@ -51,9 +51,10 @@ test('mode: live ONLY in Production runtime + flag; simulated everywhere else', 
   assert.equal(resolvePublishMode({ VERCEL_ENV: 'preview', OPERION_PRODUCTION_PROMOTION_ENABLED: 'true' }), 'simulated') // preview
   assert.equal(resolvePublishMode({}), 'simulated')
 })
-test('ux state mapping', () => {
-  assert.equal(publishUxState('promoting'), 'publishing')
-  assert.equal(publishUxState('completed'), 'completed')
+test('ux state mapping — truthful states', () => {
+  assert.equal(publishUxState('promoting'), 'queued')
+  assert.equal(publishUxState('verifying'), 'verifying')
+  assert.equal(publishUxState('completed'), 'ready')
   assert.equal(publishUxState('failed'), 'failed')
   assert.equal(publishUxState(undefined), 'idle')
 })
@@ -184,6 +185,52 @@ test('executor: promote failure → publish.failed, approval still consumed (no 
     const actions = (await listPlatformAuditForRef({ businessId: 'jkiss' }, 50)).map((e) => e.action)
     assert.ok(actions.includes('publish.failed' as never))
     assert.equal(actions.includes('publish.completed' as never), false)
+  } finally { fake.restore() }
+})
+
+test('executor: LIVE verify READY → completed (real verification, not faked)', async () => {
+  const fake = installFakeKv()
+  try {
+    const { executePublish } = await import('../app/lib/platform/release/publish-executor')
+    const now = 14_000_000
+    const approval = await seedActiveApproval(now, { id: 'supercharged', slug: 'supercharged' })
+    const promote = spyPromote({ ok: true, promotedDeploymentId: 'dpl_prev9' })
+    const verifyCalls: string[] = []
+    const verify = async (_p: string, dep: string) => { verifyCalls.push(dep); return { ready: true } }
+    const r = await executePublish({ now: now + 1, actor: 'owner', business: { id: 'supercharged', slug: 'supercharged', project: 'jkissllc' }, approval, binding: BINDING, mode: 'live', promote: promote.fn, verify })
+    assert.equal(r.ok, true)
+    assert.equal(r.ok && r.publish.status, 'completed')
+    assert.deepEqual(verifyCalls, ['dpl_prev9'])                // verification actually ran
+  } finally { fake.restore() }
+})
+
+test('executor: LIVE verify NOT READY → failed (no fake completion)', async () => {
+  const fake = installFakeKv()
+  try {
+    const { executePublish } = await import('../app/lib/platform/release/publish-executor')
+    const now = 15_000_000
+    const approval = await seedActiveApproval(now, { id: 'jkiss', slug: 'jkiss' }, { ...BINDING, businessId: 'jkiss' })
+    const promote = spyPromote({ ok: true, promotedDeploymentId: 'dpl_prev9' })
+    const verify = async () => ({ ready: false })
+    const r = await executePublish({ now: now + 1, actor: 'owner', business: { id: 'jkiss', slug: 'jkiss', project: 'jkissllc' }, approval, binding: { ...BINDING, businessId: 'jkiss' }, mode: 'live', promote: promote.fn, verify })
+    assert.equal(r.ok, false)
+    assert.equal(!r.ok && r.code, 'PROMOTE_FAILED')
+    assert.equal(!r.ok && r.publish?.status, 'failed')          // never faked to completed
+  } finally { fake.restore() }
+})
+
+test('executor: SIMULATED mode never verifies (no verifying step claimed)', async () => {
+  const fake = installFakeKv()
+  try {
+    const { executePublish } = await import('../app/lib/platform/release/publish-executor')
+    const now = 16_000_000
+    const approval = await seedActiveApproval(now, { id: 'supercharged', slug: 'supercharged' })
+    const promote = spyPromote({ ok: true, promotedDeploymentId: 'dpl_prev9' })
+    let verifyCalled = false
+    const verify = async () => { verifyCalled = true; return { ready: true } }
+    const r = await executePublish({ now: now + 1, actor: 'owner', business: { id: 'supercharged', slug: 'supercharged', project: 'jkissllc' }, approval, binding: BINDING, mode: 'simulated', promote: promote.fn, verify })
+    assert.equal(r.ok && r.publish.status, 'completed')
+    assert.equal(verifyCalled, false)                           // simulated never claims verification
   } finally { fake.restore() }
 })
 
