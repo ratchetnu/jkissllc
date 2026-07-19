@@ -24,9 +24,11 @@ but the default under uncertainty is **roll back**.
 3. Confirm `/admin/operations/release` shows the restored commit + `production`.
 4. Smoke the previously-broken flow.
 
-> This sprint provides **no** automated rollback control. Rollback is performed by a
-> human in the Vercel dashboard/CLI. The `OPERION_AUTOMATIC_ROLLBACK_ENABLED` flag is
-> OFF and out of scope here (doc 15).
+> Operion now provides an **owner-only controlled rollback** from Release History when a
+> distinct prior READY production deployment is available. It requires the release gate,
+> production-promotion flag, and the exact typed rollback phrase, and it records the result
+> in release history. Vercel CLI remains the break-glass fallback. Fully automatic rollback
+> is separate and remains behind `OPERION_AUTOMATIC_ROLLBACK_ENABLED` (doc 15).
 
 ## Config / flag rollback
 

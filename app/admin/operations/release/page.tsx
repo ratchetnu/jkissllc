@@ -7,12 +7,12 @@ import { osLabel, osMiniBtn } from '../ui'
 import { Tabs } from '../../../components/ui'
 import { PublishReviewDrawer } from './PublishReviewDrawer'
 import { ReleaseHistoryPanel } from './ReleaseHistoryPanel'
+import { ActivationReadinessPanel } from './ActivationReadinessPanel'
 import { sandboxHealth, SANDBOX_HEALTH_LABEL, SANDBOX_HEALTH_TONE } from '../../../lib/platform/sandbox/health'
 
-// ── Read-only Release Center ─────────────────────────────────────────────────
-// Displays the current build, resolved feature-flag states, and the curated release
-// snapshot from GET /api/admin/release (admin-only). READ-ONLY: the only action is a
-// re-fetch. No control here deploys, rolls back, merges, or mutates anything.
+// ── Release Center ───────────────────────────────────────────────────────────
+// The build/flags snapshot and activation-readiness views are read-only. Deliberate
+// publish/rollback controls live in their separately owner-gated, typed-confirmed panels.
 
 type CheckState = 'passed' | 'failed' | 'skipped' | 'pending' | 'not_applicable'
 type VerificationLine = { label: string; state: CheckState; note?: string }
@@ -316,7 +316,7 @@ function Businesses() {
   return (
     <Section title="Release Center" icon={Building2}>
       <div style={{ marginBottom: 12 }}>
-        <Tabs value={tab} onChange={setTab} tabs={[{ id: 'businesses', label: 'Businesses' }, { id: 'history', label: 'Release History' }]} />
+        <Tabs value={tab} onChange={setTab} tabs={[{ id: 'businesses', label: 'Businesses' }, { id: 'readiness', label: 'Activation Readiness' }, { id: 'history', label: 'Release History' }]} />
       </div>
       {tab === 'businesses' ? (
         <>
@@ -325,7 +325,7 @@ function Businesses() {
             : <div style={{ display: 'grid', gap: 10 }}>{views.map(b => <BusinessRow key={b.id} b={b} updatesEnabled={updatesEnabled} />)}</div>}
           <SandboxAdvanced onRepaired={() => setNonce(n => n + 1)} />
         </>
-      ) : <ReleaseHistoryPanel />}
+      ) : tab === 'readiness' ? <ActivationReadinessPanel /> : <ReleaseHistoryPanel />}
     </Section>
   )
 }
@@ -472,7 +472,7 @@ function ReleaseCenter() {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h1 className="jkos-h" style={{ fontSize: 24, margin: 0 }}>Release Center</h1>
-          <p style={{ fontSize: 13, color: 'var(--muted)', margin: '4px 0 0' }}>Read-only build, feature-flag, and release status. No deploy or rollback controls.</p>
+          <p style={{ fontSize: 13, color: 'var(--muted)', margin: '4px 0 0' }}>Build status, staged activation readiness, owner-approved publishing, release history, and controlled rollback.</p>
         </div>
         <button onClick={load} disabled={busy} className="os-tap" aria-label="Refresh"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', background: 'var(--card)', border: '1px solid var(--line)', cursor: 'pointer' }}>

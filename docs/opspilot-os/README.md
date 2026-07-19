@@ -29,7 +29,21 @@ written 2026-07-08 and is now **stale in several material ways** (see
 `01-current-state-assessment.md` §0). The older roadmap remains useful for its
 Redis key inventory; where the two disagree, **this blueprint is authoritative.**
 
-## Status Update — 2026-07-14 (platform now branded **Operion**)
+## Status Update — 2026-07-19
+
+- **Tenant-safe boundaries and dark-launch validation are complete.** The 2026-07-15
+  changelog is newer than the original status below: Blob write paths and public/Stripe
+  tenant resolution shipped, and the isolated Preview walkthrough recorded 95 successful
+  requests with no dangerous tenant mismatch. `TENANCY_ENABLED` remains off; stable-ID
+  payroll migration and final dual-write activation evidence are still required.
+- **Controlled releases are implemented through Increment 3B.6.** Eligibility, owner
+  approval, typed-confirmation publish, production verification, release history, and
+  typed-confirmation rollback are on `main`. Production execution flags remain off.
+- **Increment 3B.7 adds read-only Activation Readiness.** It evaluates provider access,
+  business allowlists/configuration, current/prior production deployments, rollback paths,
+  and resolved flags without exposing credentials or changing external state.
+
+## Historical Status Update — 2026-07-14 (platform now branded **Operion**)
 
 This blueprint was **reconciled with shipped work on 2026-07-14**: every document
 below was compared against the current repository and updated in place, and the
@@ -43,7 +57,7 @@ the summary of what shipped since the 2026-07-12 baseline follows.
 **What has shipped since 2026-07-12 (this blueprint's baseline):**
 
 - **S1 — Tenant Context Wiring (the recommended tenancy foundation) is DONE and on `main`/prod.** `withTenantRoute` now establishes per-request tenant context on **104 request handlers** + explicit per-tenant context on **3 crons + 3 webhooks**. `TENANCY_ENABLED` remains **false**, so it is a **live no-op** (byte-identical behavior); the `app/lib/redis.ts` chokepoint fails **closed** if the flag is flipped without context, and a `scripts/bypass-detection.test.ts` CI gate blocks any Redis bypass. See `05-multi-tenant-architecture.md` + `tenant-isolation/`.
-- **Isolated dark-launch preview provisioned.** A separate Upstash Redis (`OperionPreview`) + Blob store (`operion-preview-blob`) back the Vercel **Preview** environment, with `TENANCY_DARK_LAUNCH=true` (and `TENANCY_ENABLED=false`) **Preview-only**. Preview is now data-isolated from Production. Dark-launch telemetry validation (exercise workflows → inspect `tenancy:dark-launch-mismatch`) is the next gate before activation; **not yet performed** (needs a browser walkthrough).
+- **Isolated dark-launch preview provisioned.** This was the status on 2026-07-14; the walkthrough was subsequently completed on 2026-07-15. See the current status above and `CHANGELOG.md`.
 - **CI hardened to a blocking full gate.** `.github/workflows/ai-regression.yml` was AI-only; it now runs **tsc → full `npm test` (586 cases, incl. tenant-isolation, bypass-detection, rbac, authorization-coverage, security-hardening, AI regression) → `next build`** on Node 24 (pinned via `engines` + `.nvmrc`). Test count grew 296 → **586**.
 - **Book Now admin redesign shipped to prod** — `/admin/operations/book-now` is now an enterprise dashboard (KPI row, toolbar, grouped-accordion filters, full-width table with sort/bulk, slide-over drawer). **UI-only; all APIs/filters/actions preserved.**
 - **Admin auth reconciled** — `ADMIN_PASSWORD` unified from `.env.local` across Production/Preview/Development; a too-short 89-day-old Production `ADMIN_SESSION_SECRET` was rotated (the min-16-char check now enforced; doc encryption unaffected as it derives from `DOC_ENCRYPTION_KEY`).

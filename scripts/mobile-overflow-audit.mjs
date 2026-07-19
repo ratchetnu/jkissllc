@@ -2,7 +2,8 @@
 // tool — run with:  npm run audit:mobile
 //
 //   PW_EXE=<chrome-headless-shell path> BASE=http://localhost:3111 \
-//     [SHOT_DIR=shots] [LABEL=run] [ONLY=/,/quote] [ADMIN_PASSWORD=…] \
+//     [SHOT_DIR=shots] [LABEL=run] [ONLY=/,/quote] [ADMIN_PASSWORD=…]
+//     [CLICK_TEXT="Activation Readiness"] \
 //     node scripts/mobile-overflow-audit.mjs
 //
 // For every route × viewport it verifies documentElement.scrollWidth ==
@@ -19,6 +20,7 @@ const PW_EXE = process.env.PW_EXE || undefined
 const SHOT_DIR = process.env.SHOT_DIR || null
 const LABEL = process.env.LABEL || 'run'
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null
+const CLICK_TEXT = process.env.CLICK_TEXT || null
 const SHOT_WIDTHS = new Set([320, 390, 768, 1280])
 
 const VIEWPORTS = [
@@ -46,7 +48,17 @@ async function maybeAuth(ctx) {
   if (!pw) return false
   try {
     const res = await ctx.request.post(`${BASE}/api/admin/auth`, { data: { password: pw } })
-    return res.ok()
+    if (!res.ok()) return false
+    // Production correctly marks the session Secure. Local HTTP audits cannot send that
+    // cookie automatically, so install the returned token into this isolated localhost
+    // browser context with secure=false. Never logs or persists the token.
+    if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(BASE)) {
+      const setCookie = res.headers()['set-cookie'] || ''
+      const match = setCookie.match(/(?:^|[,;]\s*)jk_admin_session=([^;]+)/)
+      if (match) await ctx.addCookies([{ name: 'jk_admin_session', value: match[1], url: BASE, httpOnly: true, secure: false, sameSite: 'Lax' }])
+    }
+    const check = await ctx.request.get(`${BASE}/api/admin/platform/whoami`)
+    return check.ok() && (await check.json().catch(() => null))?.owner === true
   } catch { return false }
 }
 
@@ -65,6 +77,15 @@ for (const path of PATHS) {
     try {
       const resp = await page.goto(BASE + path, { waitUntil: 'domcontentloaded', timeout: 20000 })
       await page.waitForTimeout(500)
+      if (CLICK_TEXT) {
+        const target = page.getByRole('tab', { name: CLICK_TEXT, exact: true })
+        await target.waitFor({ state: 'visible', timeout: 5000 })
+        const targetCount = await target.count()
+        if (targetCount !== 1) throw new Error(`CLICK_TEXT target count ${targetCount}: ${CLICK_TEXT}`)
+        await target.click()
+        const loadingPanel = page.locator('.skeleton')
+        if (await loadingPanel.count() === 1) await loadingPanel.waitFor({ state: 'hidden', timeout: 10000 }).catch(() => {})
+      }
       const m = await page.evaluate(() => {
         const de = document.documentElement
         const sw = de.scrollWidth, cw = de.clientWidth
