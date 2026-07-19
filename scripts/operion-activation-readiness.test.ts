@@ -64,6 +64,15 @@ test('production remains blocked without a distinct prior deployment', () => {
   assert.equal(result.stages.find((s) => s.id === 'controlled_production')?.state, 'blocked')
 })
 
+test('owner approval is fail-closed unless both policy fields are explicitly true', () => {
+  const missingNewPolicy = evaluateActivationReadiness(input({ businesses: [business({ requireOwnerApproval: undefined })] }))
+  const disabledLegacyPolicy = evaluateActivationReadiness(input({ businesses: [business({ manualApprovalRequired: false })] }))
+  assert.equal(missingNewPolicy.safeToEnablePreview, true)
+  assert.equal(missingNewPolicy.safeToEnableProduction, false)
+  assert.equal(disabledLegacyPolicy.safeToEnableProduction, false)
+  assert.equal(missingNewPolicy.businesses[0].checks.find((c) => c.id === 'owner_approval')?.ok, false)
+})
+
 test('automatic rollback remains blocked until every business has a rollback workflow', () => {
   const result = evaluateActivationReadiness(input({ businesses: [business({ rollbackWorkflowFile: undefined })] }))
   assert.equal(result.safeToEnableProduction, true) // controlled typed rollback uses the deployment target
@@ -84,6 +93,14 @@ test('activation API is owner-only, no-store, read-only, and returns no secret v
   assert.match(route, /export const GET/)
   assert.doesNotMatch(route, /export const (POST|PUT|PATCH|DELETE)/)
   assert.doesNotMatch(route, /process\.env\[[^\]]+\]|Object\.entries\(process\.env\)|\.value\b/)
+})
+
+test('readiness membership uses named checks rather than display-order slices', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'app/lib/platform/release/activation-readiness.ts'), 'utf8')
+  assert.match(source, /PREVIEW_BUSINESS_CHECKS/)
+  assert.match(source, /PRODUCTION_BUSINESS_CHECKS/)
+  assert.match(source, /namedChecksPass/)
+  assert.doesNotMatch(source, /checks\.slice\(/)
 })
 
 test('Release Center exposes readiness and no longer claims rollback is unavailable', () => {
