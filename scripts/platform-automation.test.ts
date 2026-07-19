@@ -3,6 +3,7 @@
 // allowlists, signed callbacks, and the fail-closed provider. No Redis, no network.
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 
 import {
   canTransition, isTerminal, isActive, stepFor, isProductionApprovalTransition, isProductionPhase, STEP_ORDER,
@@ -92,6 +93,15 @@ test('repo + branch allowlists reject anything unregistered', () => {
   assert.equal(isBranchAllowed(b, 'attacker-branch', 'target'), false)
   assert.equal(workBranchFor('UPD-1001'), 'operion/upd-1001')
   assert.equal(workBranchFor('../../etc/passwd'), 'operion/------etc-passwd')  // sanitized: no slashes/dots, no path traversal
+})
+test('J KISS workflow refuses non-Operion force-push targets before checkout', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/operion-update.yml', import.meta.url), 'utf8')
+  const guardAt = workflow.indexOf('- name: Validate request')
+  const checkoutAt = workflow.indexOf('- name: Checkout target')
+  assert.ok(guardAt >= 0 && guardAt < checkoutAt)
+  assert.match(workflow, /ALLOWED_REPO: "ratchetnu\/jkissllc"/)
+  assert.match(workflow, /case "\$\{\{ inputs\.targetBranch \}\}" in[\s\S]*operion\/\*/)
+  assert.match(workflow, /missing deploymentRequestId/)
 })
 test('commit drift + automatic rollback eligibility', () => {
   assert.equal(commitDriftDetected('abc', 'abc'), false)
