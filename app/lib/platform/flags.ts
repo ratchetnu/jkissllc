@@ -60,6 +60,13 @@ export type FeatureFlag =
   // operion-sandbox keys, never a live business, never in Production. Must be set in Preview
   // ONLY — never add it to the Production environment. OFF = the routes 404 and the UI hides.
   | 'OPERION_SANDBOX_REPAIR_ENABLED'
+  // Operion Release Center — owner approval + typed-confirmation GATE (Increment 3B.3).
+  // Gates ONLY the read/write of pre-publish approval records: the owner types the exact
+  // release phrase to record a single-use, short-lived, release-bound approval. It records
+  // INTENT — it NEVER publishes, merges, deploys, rolls back, or mutates a business. OFF
+  // (incl. Production) = the approval routes 404 and no approval can be created. The actual
+  // publish execution stays gated by OPERION_PRODUCTION_PROMOTION_ENABLED in a later phase.
+  | 'OPERION_APPROVAL_GATE_ENABLED'
 
 export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   TENANCY_ENABLED: false,
@@ -113,6 +120,9 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   // Sandbox repair — OFF everywhere by default. Enabled in PREVIEW ONLY when the owner needs
   // to reseed the operion-sandbox test records into the Preview store. Never set in Production.
   OPERION_SANDBOX_REPAIR_ENABLED: false,
+  // Approval gate — OFF everywhere by default (incl. Production). Enabled in PREVIEW ONLY to
+  // exercise the owner approval + typed-confirmation workflow. Records intent only; no publish.
+  OPERION_APPROVAL_GATE_ENABLED: false,
 }
 
 export const ALL_FLAGS = Object.keys(FLAG_DEFAULTS) as FeatureFlag[]
