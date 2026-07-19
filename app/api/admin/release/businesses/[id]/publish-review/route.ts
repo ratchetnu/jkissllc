@@ -42,6 +42,22 @@ export const GET = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
   const verified = !!job && (job.status === 'awaiting_owner_review' || job.status === 'completed')
   const candidateVersion = ps?.latestBaselineVersion
   const testOnly = isTestOnlyBusiness(business)
+  // ── Read-only provider enrichment (fail-soft, time-bounded, no writes) ────────
+  // Runs BEFORE eligibility so the real production deployment id feeds the eligibility engine
+  // (else it always fails PRODUCTION_DEPLOYMENT_UNKNOWN / ROLLBACK_TARGET_MISSING / AUDIT_CONTEXT
+  // and the displayed eligibility would disagree with the approval/publish gates).
+  const candidateCommit = job?.targetCommit || job?.approvedCommit
+  const enrichment = await enrichPublishReview({
+    now,
+    business: business ? {
+      id: business.id, repoName: business.repoName, repositoryOwner: business.repositoryOwner,
+      repositoryNameOnly: business.repositoryNameOnly, githubInstallationId: business.githubInstallationId,
+      productionProjectId: business.productionProjectId, deployProject: business.deployProject,
+    } : null,
+    baseCommit: ps?.currentBaselineCommit,
+    headCommit: candidateCommit,
+  })
+  const prod = enrichment.production
 
   const eligibility = evaluatePromotionEligibility({
     now,
@@ -60,7 +76,7 @@ export const GET = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
       previewDeploymentId: job.previewDeploymentId, previewUrl: job.previewUrl, productionDeploymentId: job.productionDeploymentId,
     } : null,
     previewDeployment: job?.previewDeploymentId ? { id: job.previewDeploymentId, readyState: verified ? 'READY' : 'BUILDING', commit: job.targetCommit } : null,
-    currentProduction: ps ? { deploymentId: undefined, version: ps.currentBaselineVersion, commit: ps.currentBaselineCommit } : null,
+    currentProduction: (ps || prod) ? { deploymentId: prod?.deploymentId, version: ps?.currentBaselineVersion, commit: prod?.commitSha ?? ps?.currentBaselineCommit } : null,
     candidateBranchHead: undefined,
     verification: job ? { passed: verified, at: job.updatedAt } : null,
     concurrency: {
@@ -71,19 +87,6 @@ export const GET = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
     candidateVersion,
   })
 
-  // ── Read-only provider enrichment (fail-soft, time-bounded, no writes) ────────
-  const candidateCommit = job?.targetCommit || job?.approvedCommit
-  const enrichment = await enrichPublishReview({
-    now,
-    business: business ? {
-      id: business.id, repoName: business.repoName, repositoryOwner: business.repositoryOwner,
-      repositoryNameOnly: business.repositoryNameOnly, githubInstallationId: business.githubInstallationId,
-      productionProjectId: business.productionProjectId, deployProject: business.deployProject,
-    } : null,
-    baseCommit: ps?.currentBaselineCommit,
-    headCommit: candidateCommit,
-  })
-  const prod = enrichment.production
   // Verified Vercel production deployment when available; else the local reconciliation
   // baseline (id still unavailable → rollback stays "not ready", exactly as before).
   const currentProduction = prod
