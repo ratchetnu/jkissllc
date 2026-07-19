@@ -48,7 +48,14 @@ export async function evaluatePreviewReadiness(input: ReadinessInput): Promise<P
   const hasActiveJob = !!(await store.activeJobForBusiness(input.business.id))
   return evaluatePreflight({
     update: input.update, business: input.business, compat: input.compat, hasActiveJob,
-    flags: { automation: flag('OPERION_AUTOMATION_ENABLED', env), preview: flag('OPERION_PREVIEW_AUTOMATION_ENABLED', env), githubActions: flag('OPERION_GITHUB_ACTIONS_ENABLED', env) },
+    flags: {
+      automation: flag('OPERION_AUTOMATION_ENABLED', env),
+      preview: flag('OPERION_PREVIEW_AUTOMATION_ENABLED', env),
+      githubActions: flag('OPERION_GITHUB_ACTIONS_ENABLED', env),
+      // Preview deployments may audit/configure Operion, but they must never dispatch a
+      // workflow whose repository callback is bound to the Production control plane.
+      controlPlane: env.VERCEL_ENV !== 'preview',
+    },
     approvals: input.approvals,
   })
 }

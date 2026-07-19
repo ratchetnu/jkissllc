@@ -12,7 +12,7 @@ import type { AutomationStatus } from '../app/lib/platform/automation/types'
 import {
   evaluatePreflight, isRepoAllowed, isBranchAllowed, workBranchFor, commitDriftDetected, automaticRollbackEligible,
 } from '../app/lib/platform/automation/preflight'
-import { signCallback, verifyCallback, validateCallbackPayload } from '../app/lib/platform/automation/callback'
+import { signCallback, verifyCallback, validateCallbackPayload, callbackMatchesJob } from '../app/lib/platform/automation/callback'
 import { StubProvider, getAutomationProvider, type UpdateAutomationProvider } from '../app/lib/platform/automation/provider'
 import { automationIdempotencyKey } from '../app/lib/platform/automation/orchestrator'
 import type { PlatformUpdate, PlatformBusiness, UpdateCompatibility, ValidationChecklist } from '../app/lib/platform/updates/types'
@@ -22,7 +22,7 @@ const PASS: ValidationChecklist = { typecheck: 'passed', lint: 'passed', tests: 
 const ALL_STATUSES: AutomationStatus[] = ['draft', 'validating', 'blocked', 'queued', 'creating_branch', 'applying_update', 'testing', 'build_failed', 'preview_deploying', 'preview_ready', 'awaiting_owner_review', 'approved_for_production', 'merging', 'production_deploying', 'verifying', 'completed', 'failed', 'cancelled', 'rollback_required', 'rolling_back', 'rolled_back']
 
 function mkUpdate(p: Partial<PlatformUpdate> = {}): PlatformUpdate {
-  return { recordVersion: 1, key: 'UPD-1001', title: 'T', summary: 'S', type: 'design', scope: 'platform_core', severity: 'low', priority: 'normal', status: 'approved', breakingChange: false, migrationRequired: false, environmentChangeRequired: false, secretRequired: false, featureFlagRequired: false, manualPortRequired: true, rollbackSupported: true, validation: PASS, sourceCommit: 'abc1234', createdAt: T, updatedAt: T, ...p }
+  return { recordVersion: 1, key: 'UPD-1001', title: 'T', summary: 'S', type: 'design', scope: 'platform_core', severity: 'low', priority: 'normal', status: 'approved', breakingChange: false, migrationRequired: false, environmentChangeRequired: false, secretRequired: false, featureFlagRequired: false, manualPortRequired: false, rollbackSupported: true, validation: PASS, sourceCommit: 'abc1234', createdAt: T, updatedAt: T, ...p }
 }
 function mkBiz(p: Partial<PlatformBusiness> = {}): PlatformBusiness {
   return { recordVersion: 1, id: 'supercharged', name: 'SC', slug: 'sc', status: 'active', role: 'target', defaultBranch: 'main', releaseChannel: 'beta', updatePolicy: 'owner_approval', updatesPaused: false, manualApprovalRequired: true, autoDeployAllowed: false, healthStatus: 'healthy', configurationStatus: 'ready', githubInstallationId: '123', repositoryOwner: 'ratchetnu', repositoryNameOnly: 'supercharged', automationWorkflowFile: 'operion-update.yml', previewProjectId: 'prj_x', previewDeploymentProvider: 'vercel', createdAt: T, updatedAt: T, ...p }
@@ -60,7 +60,7 @@ test('transitions, terminality, steps', () => {
 })
 
 // ── Preflight ────────────────────────────────────────────────────────────────
-const flagsOn = { automation: true, preview: true, githubActions: true }
+const flagsOn = { automation: true, preview: true, githubActions: true, controlPlane: true }
 test('preflight passes when everything is green', () => {
   const r = evaluatePreflight({ update: mkUpdate(), business: mkBiz(), compat: mkCompat(), hasActiveJob: false, flags: flagsOn })
   assert.equal(r.ok, true, JSON.stringify(r.gates.filter(g => !g.ok)))
@@ -69,6 +69,9 @@ test('preflight blocks when automation off / not approved / no commit / unassess
   const base = { business: mkBiz(), compat: mkCompat(), hasActiveJob: false, flags: flagsOn }
   const fail = (id: string, x: Parameters<typeof evaluatePreflight>[0]) => { const r = evaluatePreflight(x); assert.equal(r.ok, false); assert.ok(r.gates.find(g => g.id === id && !g.ok), `expected failed gate ${id}`) }
   fail('automation_enabled', { ...base, update: mkUpdate(), flags: { ...flagsOn, automation: false } })
+  fail('preview_automation_enabled', { ...base, update: mkUpdate(), flags: { ...flagsOn, preview: false } })
+  fail('github_actions_enabled', { ...base, update: mkUpdate(), flags: { ...flagsOn, githubActions: false } })
+  fail('production_control_plane', { ...base, update: mkUpdate(), flags: { ...flagsOn, controlPlane: false } })
   fail('update_approved', { ...base, update: mkUpdate({ status: 'discovered' }) })
   fail('source_commit', { ...base, update: mkUpdate({ sourceCommit: undefined }) })
 
@@ -83,6 +86,8 @@ test('preflight blocks when automation off / not approved / no commit / unassess
   fail('compat_not_blocked', { ...base, update: mkUpdate(), compat: mkCompat({ status: 'incompatible' }) })
   fail('no_conflicting_job', { ...base, update: mkUpdate(), hasActiveJob: true })
   fail('target_configured', { ...base, update: mkUpdate(), business: mkBiz({ configurationStatus: 'not_configured' }) })
+  fail('deterministic_transfer', { ...base, update: mkUpdate({ manualPortRequired: true }) })
+  fail('deterministic_transfer', { ...base, update: mkUpdate(), compat: mkCompat({ codeReconciliationRequired: true }) })
   fail('migration_approved', { ...base, update: mkUpdate({ migrationRequired: true }) })
   fail('env_approved', { ...base, update: mkUpdate({ secretRequired: true }) })
 })
@@ -134,6 +139,17 @@ test('callback payload schema rejects malformed', () => {
   assert.equal(validateCallbackPayload({ jobId: 'j', status: 'preview_ready' }).ok, false)      // missing deliveryId
   assert.equal(validateCallbackPayload({ deliveryId: 'd', jobId: 'j', status: 'PROMOTE' }).ok, false) // bad status (no promote path!)
   assert.equal(validateCallbackPayload('nope').ok, false)
+})
+
+test('callback is bound to the exact active job branch', () => {
+  const job = {
+    id: 'AUTO-a', status: 'creating_branch', workBranch: 'operion/upd-1',
+  } as unknown as Parameters<typeof callbackMatchesJob>[1]
+  const payload = { deliveryId: 'd', jobId: 'AUTO-a', status: 'preview_ready', branch: 'operion/upd-1' } as const
+  assert.equal(callbackMatchesJob(payload, job), true)
+  assert.equal(callbackMatchesJob({ ...payload, branch: 'operion/upd-2' }, job), false)
+  assert.equal(callbackMatchesJob(payload, { ...job, status: 'failed' }), false)
+  assert.equal(callbackMatchesJob({ ...payload, branch: undefined }, job), false)
 })
 
 // ── Provider fails closed ────────────────────────────────────────────────────

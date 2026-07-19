@@ -49,7 +49,7 @@ export type WorkflowResult = {
 
 export type UpdateAutomationJob = {
   jobVersion: number
-  id: string                     // AUTO-{n}
+  id: string                     // AUTO-{uuid}; globally unique across Preview/Production
   deploymentRequestId?: string
   releaseTargetId?: string
   updateId: string               // PlatformUpdate.key

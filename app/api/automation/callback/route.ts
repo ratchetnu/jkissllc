@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isEnabled } from '../../../lib/platform/flags'
-import { verifyCallback, validateCallbackPayload } from '../../../lib/platform/automation/callback'
+import { verifyCallback, validateCallbackPayload, callbackMatchesJob } from '../../../lib/platform/automation/callback'
 import { getJob, saveJob, callbackSeen, markCallbackSeen } from '../../../lib/platform/automation/store'
 
 export const runtime = 'nodejs'
@@ -28,6 +28,10 @@ export async function POST(req: NextRequest) {
 
   const job = await getJob(p.jobId)
   if (!job) { await markCallbackSeen(p.deliveryId); return NextResponse.json({ error: 'unknown job' }, { status: 404 }) }
+  if (!callbackMatchesJob(p, job)) {
+    await markCallbackSeen(p.deliveryId)
+    return NextResponse.json({ error: 'callback does not match active job' }, { status: 409 })
+  }
 
   const now = Date.now()
   job.heartbeatAt = now; job.workflowRunId = p.workflowRunId ?? job.workflowRunId
