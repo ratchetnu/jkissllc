@@ -8,6 +8,7 @@ import { activeJobForBusiness, listJobs } from '../../../../../../lib/platform/a
 import { evaluatePromotionEligibility } from '../../../../../../lib/platform/release/promotion-eligibility'
 import { PROMOTION_ACTIVE } from '../../../../../../lib/platform/automation/promotion'
 import { isTestOnlyBusiness } from '../../../../../../lib/platform/release/promotion-guards'
+import { readCurrentProductionDeployment } from '../../../../../../lib/platform/release/production-deployment'
 import {
   evaluateApprovalGate, deriveApprovalState, releaseBindingFingerprint, approvalStateLabel,
   approvalPhrase, APPROVAL_TARGET, type ApprovalBinding, type ReleaseApproval,
@@ -37,6 +38,9 @@ async function assemble(id: string) {
   const verified = !!job && (job.status === 'awaiting_owner_review' || job.status === 'completed')
   const previewReady = verified && !!job?.previewDeploymentId
   const now = Date.now()
+  // Real current production deployment (read-only) — required so eligibility can clear the
+  // production-deployment / rollback-target / audit-context checks (else it is always false).
+  const prod = await readCurrentProductionDeployment(business)
 
   const eligibility = evaluatePromotionEligibility({
     now,
@@ -57,7 +61,7 @@ async function assemble(id: string) {
       previewUrl: job.previewUrl, productionDeploymentId: job.productionDeploymentId,
     } : null,
     previewDeployment: job?.previewDeploymentId ? { id: job.previewDeploymentId, readyState: verified ? 'READY' : 'BUILDING', commit: job.targetCommit } : null,
-    currentProduction: ps ? { deploymentId: undefined, version: ps.currentBaselineVersion, commit: ps.currentBaselineCommit } : null,
+    currentProduction: (ps || prod) ? { deploymentId: prod?.deploymentId, version: ps?.currentBaselineVersion, commit: prod?.commit ?? ps?.currentBaselineCommit } : null,
     candidateBranchHead: undefined,
     verification: job ? { passed: verified, at: job.updatedAt } : null,
     concurrency: {
