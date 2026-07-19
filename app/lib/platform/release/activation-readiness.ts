@@ -59,6 +59,19 @@ function stage(id: ActivationStageId, label: string, description: string, checks
   return { id, label, description, checks, state: hardBlocked ? 'blocked' : flagOff ? 'disabled' : 'ready' }
 }
 
+const PREVIEW_BUSINESS_CHECKS = [
+  'configuration_ready', 'repo_allowlisted', 'github_installation', 'workflow_configured', 'preview_project',
+] as const
+const PRODUCTION_BUSINESS_CHECKS = [
+  ...PREVIEW_BUSINESS_CHECKS,
+  'production_project', 'default_branch', 'owner_approval', 'production_allowed', 'current_production', 'rollback_target',
+] as const
+
+/** Named membership is deliberately fail-closed: adding/reordering display checks cannot redefine readiness. */
+function namedChecksPass(checks: ActivationCheck[], required: readonly string[]): boolean {
+  return required.every((id) => checks.find((candidate) => candidate.id === id)?.ok === true)
+}
+
 export function evaluateActivationReadiness(input: ActivationReadinessInput): ActivationReadiness {
   const environment = (input.environment ?? 'unknown').trim().toLowerCase() || 'unknown'
   const trustedEnvironment = environment === 'preview' || environment === 'production'
@@ -83,14 +96,14 @@ export function evaluateActivationReadiness(input: ActivationReadinessInput): Ac
       check('preview_project', 'Preview project configured', !!b.previewProjectId && !!b.previewDeploymentProvider, 'business', 'Preview deployment target is configured.', 'Preview project/provider is incomplete.'),
       check('production_project', 'Production project allowlisted', isVercelProjectAllowed(project), 'business', project ? `${project} is allowlisted.` : 'Production project is not configured.', 'Production project is missing or outside the allowlist.'),
       check('default_branch', 'Default branch allowlisted', !!b.defaultBranch && (!b.allowedTargetBranches?.length || b.allowedTargetBranches.includes(b.defaultBranch)), 'business', `Default branch ${b.defaultBranch} is allowed.`, 'Default branch is missing or outside the target allowlist.'),
-      check('owner_approval', 'Owner approval required', b.requireOwnerApproval !== false && b.manualApprovalRequired !== false, 'business', 'Owner approval is required.', 'Owner approval is not required by the business policy.'),
+      check('owner_approval', 'Owner approval required', b.requireOwnerApproval === true && b.manualApprovalRequired === true, 'business', 'Owner approval is explicitly required.', 'Both owner-approval policy fields must be explicitly enabled.'),
       check('production_allowed', 'Production promotion permitted', b.allowProductionPromotion === true, 'business', 'Business permits controlled production promotion.', 'Business does not permit production promotion.'),
       check('current_production', 'Current production deployment known', !!rollback?.currentDeploymentId, 'rollback', 'Current production deployment is known.', 'Current production deployment could not be verified.'),
       check('rollback_target', 'Prior rollback target known', !!rollback?.targetDeploymentId, 'rollback', 'A distinct prior production deployment is available.', 'No prior known-good production deployment is available.'),
       check('rollback_workflow', 'Automatic rollback workflow configured', !!b.rollbackWorkflowFile, 'rollback', 'Rollback workflow is configured.', 'Rollback workflow file is missing; controlled manual rollback can still be used.'),
     ]
-    const readyForPreview = checks.slice(0, 5).every((c) => c.ok)
-    const readyForProduction = checks.slice(0, 11).every((c) => c.ok)
+    const readyForPreview = namedChecksPass(checks, PREVIEW_BUSINESS_CHECKS)
+    const readyForProduction = namedChecksPass(checks, PRODUCTION_BUSINESS_CHECKS)
     return { id: b.id, name: b.name, readyForPreview, readyForProduction, checks }
   })
 

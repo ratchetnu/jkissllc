@@ -1,5 +1,6 @@
 // ── Operion automation — durable store (platform:autojob:* key family) ───────
 import { redis } from '../../redis'
+import { randomUUID } from 'node:crypto'
 import type { UpdateAutomationJob } from './types'
 import { AUTOMATION_ACTIVE } from './types'
 
@@ -12,7 +13,13 @@ const K_CB = 'platform:autocb:'          // callback delivery-id replay guard
 
 const parse = <T>(raw: string | null): T | null => { if (!raw) return null; try { return JSON.parse(raw) as T } catch { return null } }
 
-export async function nextJobId(): Promise<string> { return `AUTO-${1000 + (await redis.incr(K_CTR))}` }
+export async function nextJobId(): Promise<string> {
+  // Counters are environment-local, so Preview and Production can both create AUTO-1002.
+  // A globally unique id prevents a callback from one control plane ever resolving a job
+  // in another, even when both environments share the same callback signing secret.
+  await redis.incr(K_CTR) // retain the operational count without using it as identity
+  return `AUTO-${randomUUID()}`
+}
 export async function getJob(id: string): Promise<UpdateAutomationJob | null> { return parse(await redis.get(K_JOB + id)) }
 export async function saveJob(j: UpdateAutomationJob): Promise<void> {
   await redis.set(K_JOB + j.id, JSON.stringify(j))

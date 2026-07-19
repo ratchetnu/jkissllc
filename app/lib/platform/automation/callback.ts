@@ -5,6 +5,7 @@
 
 import crypto from 'node:crypto'
 import type { WorkflowResult } from './types'
+import type { UpdateAutomationJob } from './types'
 
 export function signCallback(rawBody: string, timestamp: string, secret: string): string {
   return crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex')
@@ -44,6 +45,14 @@ export type CallbackPayload = {
   result?: WorkflowResult
   errorCategory?: string
   errorSummary?: string
+}
+
+/** Bind a callback to the exact active job branch that the server derived at dispatch.
+ *  A valid shared HMAC is not enough: Preview and Production can share repository secrets,
+ *  and manual workflow dispatches can otherwise replay a signed result against another job. */
+export function callbackMatchesJob(payload: CallbackPayload, job: UpdateAutomationJob): boolean {
+  if (!payload.branch || !job.workBranch || payload.branch !== job.workBranch) return false
+  return ['creating_branch', 'applying_update', 'testing', 'preview_deploying', 'preview_ready'].includes(job.status)
 }
 
 const STATUSES = new Set(['tests_failed', 'build_failed', 'preview_ready', 'preview_failed', 'apply_failed', 'error'])

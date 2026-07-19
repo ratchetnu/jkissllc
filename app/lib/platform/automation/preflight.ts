@@ -14,11 +14,14 @@ export type PreflightInput = {
   business: PlatformBusiness
   compat?: UpdateCompatibility
   hasActiveJob: boolean
-  flags: { automation: boolean; preview: boolean; githubActions: boolean }
+  flags: { automation: boolean; preview: boolean; githubActions: boolean; controlPlane?: boolean }
   approvals?: { migration?: boolean; environment?: boolean }
 }
 
-const APPROVED_STATUSES = ['approved', 'ready_to_release', 'ready_for_review', 'included_in_release']
+// `partially_deployed` means the approved update has reached at least one business but
+// still has eligible targets remaining. It must remain previewable for those targets;
+// otherwise recording the source deployment permanently deadlocks cross-business rollout.
+const APPROVED_STATUSES = ['approved', 'ready_to_release', 'ready_for_review', 'included_in_release', 'partially_deployed']
 
 export function evaluatePreflight(x: PreflightInput): PreflightResult {
   const g: PreflightGate[] = []
@@ -26,6 +29,9 @@ export function evaluatePreflight(x: PreflightInput): PreflightResult {
 
   // Automation must be enabled + a target with automation config.
   add('automation_enabled', 'Automation enabled', x.flags.automation, true, 'OPERION_AUTOMATION_ENABLED is off')
+  add('preview_automation_enabled', 'Preview automation enabled', x.flags.preview, true, 'OPERION_PREVIEW_AUTOMATION_ENABLED is off')
+  add('github_actions_enabled', 'GitHub Actions execution enabled', x.flags.githubActions, true, 'OPERION_GITHUB_ACTIONS_ENABLED is off')
+  add('production_control_plane', 'Production control plane', x.flags.controlPlane !== false, true, 'workflow dispatch is disabled from Vercel Preview deployments')
   add('target_is_target', 'Selected business is a deploy target', x.business.role === 'target' || x.business.role === 'source_and_target', true, 'business is not a target')
   add('target_configured', 'Target automation configured', x.business.configurationStatus === 'ready'
     && !!businessRepoRef(x.business) && !!x.business.githubInstallationId && !!x.business.automationWorkflowFile,
@@ -41,6 +47,13 @@ export function evaluatePreflight(x: PreflightInput): PreflightResult {
   const c = x.compat
   add('compat_assessed', 'Compatibility assessed', !!c && c.status !== 'unknown' && c.status !== 'under_review', true, 'compatibility not assessed for this target')
   add('compat_not_blocked', 'Compatibility not incompatible/blocked', !c || (c.status !== 'incompatible' && c.status !== 'blocked'), true, c?.blockingIssues ?? 'compatibility is incompatible/blocked')
+  add(
+    'deterministic_transfer',
+    'No manual port or code reconciliation required',
+    !(x.update.manualPortRequired || c?.manualPortRequired || c?.codeReconciliationRequired),
+    true,
+    'this update requires a manual port or code reconciliation and cannot use deterministic commit transfer',
+  )
 
   // Branch allowlist (base = target default branch).
   const base = x.business.defaultBranch

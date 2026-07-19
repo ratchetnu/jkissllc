@@ -32,6 +32,25 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     steps:
+      # Defense in depth: even a manual dispatch may only target this allowlisted repo and
+      # an automation-owned branch. Never let user-supplied input reach `git push --force`
+      # with `main`, another protected branch, or an unrelated repository.
+      - name: Validate request
+        env:
+          ALLOWED_REPO: "ratchetnu/jkissllc"
+        run: |
+          if [ "${{ github.repository }}" != "$ALLOWED_REPO" ]; then
+            echo "::error::repository ${{ github.repository }} is not allowlisted ($ALLOWED_REPO)"; exit 1
+          fi
+          if [ -z "${{ inputs.deploymentRequestId }}" ]; then
+            echo "::error::missing deploymentRequestId"; exit 1
+          fi
+          case "${{ inputs.targetBranch }}" in
+            operion/*) : ;;
+            *) echo "::error::targetBranch must start with operion/ (got '${{ inputs.targetBranch }}')"; exit 1 ;;
+          esac
+          echo "request validated: repo=${{ github.repository }} branch=${{ inputs.targetBranch }}"
+
       - name: Checkout target
         uses: actions/checkout@v4
         with: { fetch-depth: 0 }
