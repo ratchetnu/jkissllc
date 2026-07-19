@@ -40,6 +40,11 @@ export type PlatformAuditAction =
   | 'approval.invalidated'
   | 'approval.revoked'
   | 'approval.consumed'
+  // Controlled Production publish (Increment 3B.4). Consumes an approval + promotes.
+  | 'publish.started'
+  | 'publish.completed'
+  | 'publish.failed'
+  | 'deployment.promoted'
   // Owner responses to AI shadow alerts. Every state change an owner makes to an alert is
   // attributed here — an alert that was silenced must be explainable months later.
   | 'shadow_alert.acknowledged'
