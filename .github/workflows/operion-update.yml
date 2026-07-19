@@ -25,43 +25,44 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: operion-update-${{ github.ref }}
+  group: operion-update-${{ inputs.targetBranch }}
   cancel-in-progress: false
 
 jobs:
   prepare:
     runs-on: ubuntu-latest
     steps:
-      # Defense in depth: even a manual dispatch may only target this allowlisted repo and
-      # an automation-owned branch. Never let user-supplied input reach `git push --force`
-      # with `main`, another protected branch, or an unrelated repository.
+      # This workflow is copied into each owner-approved target repository. Repository access
+      # is therefore enforced by that repository's GitHub App installation and Actions
+      # permissions; the workflow must not embed the source repository as a false allowlist.
+      # Bind dispatch inputs through env so workflow-expression expansion can never become
+      # shell source, then strictly constrain the only input used as a git ref.
       - name: Validate request
         env:
-          ALLOWED_REPO: "ratchetnu/jkissllc"
+          DEPLOYMENT_REQUEST_ID: ${{ inputs.deploymentRequestId }}
+          TARGET_BRANCH: ${{ inputs.targetBranch }}
         run: |
-          if [ "${{ github.repository }}" != "$ALLOWED_REPO" ]; then
-            echo "::error::repository ${{ github.repository }} is not allowlisted ($ALLOWED_REPO)"; exit 1
-          fi
-          if [ -z "${{ inputs.deploymentRequestId }}" ]; then
+          if [ -z "$DEPLOYMENT_REQUEST_ID" ]; then
             echo "::error::missing deploymentRequestId"; exit 1
           fi
-          case "${{ inputs.targetBranch }}" in
-            operion/*) : ;;
-            *) echo "::error::targetBranch must start with operion/ (got '${{ inputs.targetBranch }}')"; exit 1 ;;
-          esac
-          echo "request validated: repo=${{ github.repository }} branch=${{ inputs.targetBranch }}"
+          if [ "${#TARGET_BRANCH}" -gt 128 ] || ! printf '%s' "$TARGET_BRANCH" | grep -Eq '^operion/[a-z0-9][a-z0-9_-]*(/[a-z0-9][a-z0-9_-]*)*$'; then
+            echo "::error::targetBranch must be an operion/ path with lowercase alphanumeric, underscore, or hyphen segments"; exit 1
+          fi
+          echo "request validated for automation-owned branch"
 
       - name: Checkout target
         uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
       - name: Create work branch
+        env:
+          TARGET_BRANCH: ${{ inputs.targetBranch }}
         run: |
           # Author as the owner's GitHub account — Vercel's git-author check only builds
           # previews whose author is a connected team account (no bot identity qualifies).
           git config user.name "ratchetnu"
           git config user.email "272044755+ratchetnu@users.noreply.github.com"
-          git checkout -b "${{ inputs.targetBranch }}" || git checkout "${{ inputs.targetBranch }}"
+          git checkout -b "$TARGET_BRANCH" || git checkout "$TARGET_BRANCH"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -105,10 +106,14 @@ jobs:
       - name: Commit transferred files + push feature branch
         id: push
         if: success()
+        env:
+          DEPLOYMENT_REQUEST_ID: ${{ inputs.deploymentRequestId }}
+          TARGET_BRANCH: ${{ inputs.targetBranch }}
+          UPDATE_ID: ${{ inputs.updateId }}
         run: |
           git add -A -- ':!apply-result.json'   # keep the runner's result file out of the commit
-          git commit -m "chore(operion): apply update ${{ inputs.updateId }} (job ${{ inputs.deploymentRequestId }})" || echo "nothing to commit"
-          git push --force origin "${{ inputs.targetBranch }}"   # automation-owned branch; retries overwrite cleanly
+          git commit -m "chore(operion): apply update $UPDATE_ID (job $DEPLOYMENT_REQUEST_ID)" || echo "nothing to commit"
+          git push --force origin "$TARGET_BRANCH"   # automation-owned branch; retries overwrite cleanly
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Create or update pull request
@@ -116,16 +121,19 @@ jobs:
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
+          DEPLOYMENT_REQUEST_ID: ${{ inputs.deploymentRequestId }}
+          TARGET_BRANCH: ${{ inputs.targetBranch }}
+          UPDATE_ID: ${{ inputs.updateId }}
         run: |
-          EXISTING=$(gh pr list --head "${{ inputs.targetBranch }}" --json number,url --jq '.[0]' 2>/dev/null || echo "")
+          EXISTING=$(gh pr list --head "$TARGET_BRANCH" --json number,url --jq '.[0]' 2>/dev/null || echo "")
           if [ -n "$EXISTING" ] && [ "$EXISTING" != "null" ]; then
             NUM=$(echo "$EXISTING" | jq -r '.number'); URL=$(echo "$EXISTING" | jq -r '.url')
           else
-            gh pr create --base main --head "${{ inputs.targetBranch }}" \
-              --title "Operion: ${{ inputs.updateId }}" \
-              --body "Automated Operion commit-transfer preview for \`${{ inputs.updateId }}\` (job ${{ inputs.deploymentRequestId }}). Preview-only — do NOT merge until owner review in Operion." 2>/dev/null || true
-            NUM=$(gh pr view "${{ inputs.targetBranch }}" --json number --jq '.number' 2>/dev/null || echo "")
-            URL=$(gh pr view "${{ inputs.targetBranch }}" --json url --jq '.url' 2>/dev/null || echo "")
+            gh pr create --base main --head "$TARGET_BRANCH" \
+              --title "Operion: $UPDATE_ID" \
+              --body "Automated Operion commit-transfer preview for \`$UPDATE_ID\` (job $DEPLOYMENT_REQUEST_ID). Preview-only — do NOT merge until owner review in Operion." 2>/dev/null || true
+            NUM=$(gh pr view "$TARGET_BRANCH" --json number --jq '.number' 2>/dev/null || echo "")
+            URL=$(gh pr view "$TARGET_BRANCH" --json url --jq '.url' 2>/dev/null || echo "")
           fi
           echo "number=${NUM}" >> "$GITHUB_OUTPUT"; echo "url=${URL}" >> "$GITHUB_OUTPUT"
 
@@ -137,6 +145,16 @@ jobs:
         env:
           OPERION_CALLBACK_URL: ${{ secrets.OPERION_CALLBACK_URL }}
           OPERION_CALLBACK_SECRET: ${{ secrets.OPERION_CALLBACK_SECRET }}
+          APPLY_OUTCOME: ${{ steps.apply.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          COMMIT_SHA: ${{ steps.push.outputs.sha }}
+          DEPLOYMENT_REQUEST_ID: ${{ inputs.deploymentRequestId }}
+          JOB_STATUS: ${{ job.status }}
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_URL: ${{ steps.pr.outputs.url }}
+          TARGET_BRANCH: ${{ inputs.targetBranch }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
         run: |
           if [ -z "$OPERION_CALLBACK_URL" ] || [ -z "$OPERION_CALLBACK_SECRET" ]; then
             echo "OPERION_CALLBACK_URL / OPERION_CALLBACK_SECRET not set — skipping callback"; exit 0
@@ -146,27 +164,27 @@ jobs:
             APPLIED=$(jq -r '.applied // 0' apply-result.json); SKIPPED=$(jq -r '.skipped // 0' apply-result.json); FAILEDN=$(jq -r '.failed // 0' apply-result.json)
           fi
           STATUS="preview_ready"
-          if [ "${{ steps.apply.outcome }}" = "failure" ]; then STATUS="apply_failed"
-          elif [ "${{ steps.test.outcome }}" = "failure" ]; then STATUS="tests_failed"
-          elif [ "${{ steps.build.outcome }}" = "failure" ]; then STATUS="build_failed"
-          elif [ "${{ job.status }}" != "success" ]; then STATUS="preview_failed"; fi
-          TP=false; [ "${{ steps.test.outcome }}" = "success" ] && TP=true
-          BP=false; [ "${{ steps.build.outcome }}" = "success" ] && BP=true
-          LP=false; [ "${{ steps.lint.outcome }}" = "success" ] && LP=true
+          if [ "$APPLY_OUTCOME" = "failure" ]; then STATUS="apply_failed"
+          elif [ "$TEST_OUTCOME" = "failure" ]; then STATUS="tests_failed"
+          elif [ "$BUILD_OUTCOME" = "failure" ]; then STATUS="build_failed"
+          elif [ "$JOB_STATUS" != "success" ]; then STATUS="preview_failed"; fi
+          TP=false; [ "$TEST_OUTCOME" = "success" ] && TP=true
+          BP=false; [ "$BUILD_OUTCOME" = "success" ] && BP=true
+          LP=false; [ "$LINT_OUTCOME" = "success" ] && LP=true
           TS=$(date +%s000)
           BODY=$(jq -nc \
             --arg d "gh-${{ github.run_id }}" \
-            --arg j "${{ inputs.deploymentRequestId }}" \
+            --arg j "$DEPLOYMENT_REQUEST_ID" \
             --arg s "$STATUS" \
-            --arg br "${{ inputs.targetBranch }}" \
-            --arg c "${{ steps.push.outputs.sha }}" \
+            --arg br "$TARGET_BRANCH" \
+            --arg c "$COMMIT_SHA" \
             --arg run "${{ github.run_id }}" \
-            --argjson prn "${{ steps.pr.outputs.number || 'null' }}" \
-            --arg prurl "${{ steps.pr.outputs.url }}" \
+            --arg prn "$PR_NUMBER" \
+            --arg prurl "$PR_URL" \
             --argjson tp "$TP" --argjson bp "$BP" --argjson lp "$LP" \
             --argjson ap "$APPLIED" --argjson sk "$SKIPPED" --argjson fl "$FAILEDN" \
             '{deliveryId:$d, jobId:$j, status:$s, branch:$br, commit:$c, workflowRunId:$run,
-              pullRequestNumber:$prn, pullRequestUrl:$prurl,
+              pullRequestNumber:(if $prn == "" then null else ($prn | tonumber) end), pullRequestUrl:$prurl,
               result:{testsPassed:$tp, buildPassed:$bp, lintPassed:$lp, changedFiles:$ap, filesApplied:$ap, filesSkipped:$sk, filesFailed:$fl}}')
           SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$OPERION_CALLBACK_SECRET" | sed 's/^.*= *//')
           curl -sSL -X POST "$OPERION_CALLBACK_URL" \
