@@ -5,15 +5,16 @@
 > objective · scope · dependencies · data/code/security/UX implications · tests ·
 > acceptance · rollback · risks · complexity · what must NOT change yet.
 >
-> _(Updated 2026-07-14: platform is now branded **Operion** (`PLATFORM.name =
+> _(Updated 2026-07-19: platform is now branded **Operion** (`PLATFORM.name =
 > 'Operion'` in `app/lib/company.ts`; public `/operion`, `/opspilot`→301). Internal
 > identifiers — `opspilot:` Redis prefix, `app/lib/platform/` paths, `docs/opspilot-os/`,
 > `/api/opspilot/*` — are preserved as **legacy identifiers** for compatibility.
 > **Phase 0 and the tenant identity/context phase are now COMPLETE — shipped to
-> `main` + prod as "S1"** (see status banner). The next verified step is
-> **dark-launch validation**, then the S2 group below.)_
+> `main` + prod as "S1"** (see status banner). Tenant-safe boundaries and the
+> isolated dark-launch walkthrough subsequently completed; the next tenancy gate is the
+> migration/dual-write activation work below.)_
 
-## Status banner _(2026-07-14)_
+## Status banner _(2026-07-19)_
 
 - ✅ **Phase 0 — Stabilize & document: COMPLETE.** Security drift closed (M1/M2/L1
   fail-closed, H2 coverage test), CI is a **blocking** gate.
@@ -22,14 +23,16 @@
   crons + 3 webhooks**; `app/lib/redis.ts` `scopeKey()` fails **closed**;
   `TENANCY_ENABLED=false` → **live no-op / byte-identical**. Details:
   `16-first-sprint-plan.md` §Executed.
-- ⏭️ **Next (Stage 0):** **dark-launch validation** in the isolated Preview
-  (`OperionPreview` Redis + `operion-preview-blob`) — exercise workflows, inspect
-  `tenancy:dark-launch-mismatch` telemetry. Status: **DARK-LAUNCH READY, NOT YET
-  VERIFIED.**
-- 🔜 **S2 (was Phase 2):** Blob path scoping · `ai:*` prompt/telemetry scoping ·
-  name-derived key-collision fixes (`businesses.ts` bizKey→payroll,
-  `job-learning.ts`) · tenant data migration under `DARK_LAUNCH`→`DUAL_WRITE` ·
-  public-route host-based tenant resolution.
+- ✅ **Stage 0 dark-launch: COMPLETE.** The isolated Preview walkthrough recorded 95
+  successful requests, no dangerous tenant mismatch, and no fail-closed/cross-tenant
+  event. Tenant-safe Blob write paths and public/Stripe tenant resolution shipped.
+- ⏭️ **Next tenancy gate:** complete the stable-ID payroll value migration, validate
+  legacy compatibility under `TENANCY_DUAL_WRITE`, and prove read/write equality before
+  considering `TENANCY_ENABLED`.
+- ✅ **Release control through 3B.6: COMPLETE.** Owner approval, controlled publish,
+  production verification, release history, and controlled rollback are implemented.
+  3B.7 adds a read-only activation-readiness gate; production execution remains off until
+  that gate and a Preview canary are clean.
 
 Ordering follows the standard sequence, adjusted for evidence: **the four §1
 defects are already fixed**, so Phase 0 was lighter than the old roadmap assumed;

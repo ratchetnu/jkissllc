@@ -38,6 +38,9 @@ booleans only, never the underlying env value.
 | `OPERION_PRODUCTION_PROMOTION_ENABLED` | OFF | Allow owner-approved production promotion. |
 | `OPERION_AI_ADAPTATION_ENABLED` | OFF | Allow the AI-assisted source→target adaptation strategy. |
 | `OPERION_AUTOMATIC_ROLLBACK_ENABLED` | OFF | Allow automatic rollback where a verified path exists. |
+| `OPERION_SYNC_STATUS_ENABLED` | OFF | Read-only GitHub/Vercel reconciliation for registered products. |
+| `OPERION_SANDBOX_REPAIR_ENABLED` | OFF | Owner-only Preview diagnostics/repair for the disposable sandbox; never enable in Production. |
+| `OPERION_APPROVAL_GATE_ENABLED` | OFF | Single-use owner approval and typed confirmation for controlled publish/rollback. Records intent; does not execute by itself. |
 | `SHADOW_ANALYTICS_ENABLED` | OFF | Read-only AI-evaluation dashboards over persisted shadow jobs. Enables no shadow processing. |
 | `SHADOW_ALERTING_ENABLED` | OFF | Read-only alert evaluation over the same shadow jobs. Sends no customer anything. |
 
@@ -45,7 +48,9 @@ booleans only, never the underlying env value.
 > it narrows eligibility. (2) All `OPERION_*` automation flags are OFF and the control
 > plane ships inert; live GitHub/Vercel execution additionally requires the owner to
 > provision external setup (GitHub App, Vercel token, target workflow). This
-> documentation sprint changes none of that.
+> Activation Readiness tab evaluates those prerequisites without exposing secrets or
+> changing flags. A green readiness result is evidence that a staged flag change may be
+> considered; it is not permission to enable every stage at once.
 
 ## Production reality caveat
 

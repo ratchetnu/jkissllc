@@ -88,13 +88,13 @@ export function Tabs({ tabs, value, onChange }: { tabs: { id: string; label: str
     onChange(tabs[next].id)
   }
   return (
-    <div role="tablist" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--line)' }}>
+    <div role="tablist" style={{ display: 'flex', flexWrap: 'wrap', gap: 4, borderBottom: '1px solid var(--line)', width: '100%', minWidth: 0, maxWidth: '100%' }}>
       {tabs.map((t, i) => {
         const selected = t.id === value
         return (
           <button key={t.id} role="tab" aria-selected={selected} tabIndex={selected ? 0 : -1}
             onClick={() => onChange(t.id)} onKeyDown={(e) => onKey(e, i)}
-            style={{ padding: '10px 14px', background: 'transparent', border: 'none', cursor: 'pointer', color: selected ? INK : 'var(--muted)', fontWeight: selected ? 700 : 500, borderBottom: selected ? '2px solid var(--red)' : '2px solid transparent' }}>
+            style={{ padding: '10px 14px', background: 'transparent', border: 'none', cursor: 'pointer', color: selected ? INK : 'var(--muted)', fontWeight: selected ? 700 : 500, borderBottom: selected ? '2px solid var(--red)' : '2px solid transparent', flex: '0 1 auto', whiteSpace: 'normal' }}>
             {t.label}
           </button>
         )

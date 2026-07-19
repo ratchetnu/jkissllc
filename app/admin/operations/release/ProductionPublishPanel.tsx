@@ -132,7 +132,7 @@ export function ProductionPublishPanel({ businessId }: { businessId: string }) {
       )}
       {p.state === 'failed' && !busy && (
         <Alert tone="bad" title="Publish failed">
-          {p.failureReason ?? 'The production promotion failed.'} · Retry is not available in this phase · Rollback is not implemented yet.
+          {p.failureReason ?? 'The production promotion failed.'} · Retry is not available for this approval. If Production changed, use the controlled rollback from Release History.
         </Alert>
       )}
 
@@ -164,7 +164,7 @@ export function ProductionPublishPanel({ businessId }: { businessId: string }) {
           </div>
           <Alert tone="warn" title="Final confirmation">
             This action will <strong>promote the approved Preview deployment into Production</strong>. It consumes the approval
-            (single-use) and cannot be retried; rollback is not implemented yet.
+            (single-use) and cannot be retried. A separate typed-confirmation rollback is available from Release History after a completed publish.
           </Alert>
           <TypedConfirm requiredValue={status.requiredPhrase ?? ''} label="Type the exact phrase to publish" value={phrase} onChange={setPhrase} onMatchChange={setMatched} />
           {msg && msg.tone === 'bad' && <Alert tone="bad">{msg.text}</Alert>}

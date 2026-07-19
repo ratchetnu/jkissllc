@@ -10,6 +10,24 @@ the product is **Operion**. See `README.md` for the naming/source-of-truth note.
 
 ---
 
+## 2026-07-19 — Operion 3B.7 activation-readiness candidate
+
+Added one owner-only, read-only readiness projection to close the gap between shipped
+release controls and safe activation. It combines boolean provider configuration,
+resolved flags, per-business repository/project allowlists, workflow setup, owner policy,
+and live current/prior production deployment evidence. It never returns credential values,
+changes an environment variable, dispatches GitHub, or promotes/rolls back Vercel.
+
+- Release Center gains an **Activation Readiness** tab with Provider, Preview,
+  Controlled Production, and Advanced Automation stages.
+- “Configured but off” is distinct from “blocked”; Preview and Production receive
+  separate safe-to-enable decisions.
+- Test-only sandbox businesses are excluded; every active production business must pass.
+- Automatic rollback remains blocked until every active business has both a prior READY
+  deployment and an explicit rollback workflow.
+- Corrected stale Release Center wording that said no rollback control existed after 3B.6.
+- Production flags remain unchanged. Preview verification precedes any activation.
+
 ## 2026-07-15 — Enterprise Vision Estimation V2: multi-pass analysis engine (shadow, Claude)
 
 Built the full multi-pass junk-removal photo-estimation engine per the owner's 16-phase spec,
