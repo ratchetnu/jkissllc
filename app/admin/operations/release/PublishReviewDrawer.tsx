@@ -17,6 +17,7 @@ import {
   summaryMetrics, groupedWarnings, eligibilityPill, previewPill, rollbackPill, riskToTone, highRiskCount, splitFileList,
 } from './publish-review-view'
 import { ReleaseApprovalPanel } from './ReleaseApprovalPanel'
+import { ProductionPublishPanel } from './ProductionPublishPanel'
 
 const CHECK_TO_ITEM: Record<string, ChecklistItem['state']> = { pass: 'pass', warn: 'warn', fail: 'fail', skip: 'warn' }
 
@@ -326,6 +327,9 @@ export function PublishReviewDrawer({ businessId, businessName, open, onClose }:
         {/* Separate, explicit approval workflow (owner-only, its own GET/POST). The review
             above stays READ-ONLY; approval is never a side effect of loading/refreshing it. */}
         {state.kind === 'data' && <ReleaseApprovalPanel businessId={businessId} />}
+        {/* Controlled publish (3B.4) — consumes an active approval, promotes once. Renders its
+            own controls; only appears when the approval + flags make the release publishable. */}
+        {state.kind === 'data' && <ProductionPublishPanel businessId={businessId} />}
       </div>
     </Drawer>
   )

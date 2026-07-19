@@ -443,8 +443,9 @@ test('safety: route stays read-only after enrichment (no writes/exec/dispatch/pr
 
 test('safety: UI drawer has no approval / publish / execution controls', () => {
   const s = src('../app/admin/operations/release/PublishReviewDrawer.tsx')
-  // No execution handlers of any kind.
-  for (const bad of ['onApprove', 'onPublish', 'onPromote', 'onConfirm', 'onRollback', 'Retry production', 'method: \'POST\'', 'method: "POST"']) {
+  // No execution handler PROPS of any kind (match `on…=` so composed panel component
+  // names like <ProductionPublishPanel/> are not false positives).
+  for (const bad of ['onApprove=', 'onPublish=', 'onPromote=', 'onConfirm=', 'onRollback=', 'Retry production', 'method: \'POST\'', 'method: "POST"']) {
     assert.equal(s.includes(bad), false, `drawer must not contain "${bad}"`)
   }
   // The ONLY control is the read-only Refresh button (repeats the GET). No action-button labels.

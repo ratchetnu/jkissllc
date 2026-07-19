@@ -197,7 +197,9 @@ test('drawer is read-only: only a no-store GET, no writes/execution/secrets', ()
   assert.match(src, /cache: 'no-store'/)              // respects no-store
   assert.match(src, /AbortController/)                // aborts stale requests
   assert.equal(/method:\s*'(POST|PUT|PATCH|DELETE)'/.test(src), false, 'no mutating fetch')
-  for (const forbidden of ['/approve', '/update', 'preparePreview', 'approveProduction', 'dispatchWorkflow', 'onPublish']) {
+  // No inline execution in the drawer itself. `onPublish=` (handler prop) — not the composed
+  // <ProductionPublishPanel/> component name — is what would signal an inline write control.
+  for (const forbidden of ['/approve', '/update', 'preparePreview', 'approveProduction', 'dispatchWorkflow', 'onPublish=', 'onApprove=']) {
     assert.equal(src.includes(forbidden), false, `drawer must not reference ${forbidden}`)
   }
 })

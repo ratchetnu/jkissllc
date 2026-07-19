@@ -5,7 +5,6 @@ import { RefreshCw, GitCommitHorizontal, Server, CalendarClock, Flag, AlertTrian
 import OperationsShell from '../OperationsShell'
 import { osLabel, osMiniBtn } from '../ui'
 import { PublishReviewDrawer } from './PublishReviewDrawer'
-import { showReviewRelease } from './publish-review-view'
 import { sandboxHealth, SANDBOX_HEALTH_LABEL, SANDBOX_HEALTH_TONE } from '../../../lib/platform/sandbox/health'
 
 // ── Read-only Release Center ─────────────────────────────────────────────────
@@ -170,13 +169,17 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
     finally { setBusy(false) }
   }
   async function onPrimary() {
-    setNote(''); setOpen(true)
+    setNote('')
+    // Publish opens the existing review → approval → publish workflow (the drawer). It is
+    // NOT a second publish implementation and never publishes on click — the drawer keeps
+    // the read-only review, owner approval, and typed publish confirmation separate.
+    if (b.action === 'publish') { setReviewOpen(true); return }
+    setOpen(true)
     if (b.action === 'update') {
       if (!updatesEnabled) { setNote('Updates aren’t enabled here yet.'); return }
       await send({}); startPoll()
     } else if (b.action === 'view_progress') { startPoll() }
     else if (b.action === 'retry') { await send({ action: 'retry' }); startPoll() }
-    else if (b.action === 'publish') { setNote('Publishing to production is a separate step (coming next).') }
     else if (b.action === 'set_up') { setNote('The setup assistant is coming next.') }
     // 'check' / others simply open the details
   }
@@ -185,10 +188,11 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
   const liveActive = hasJob || !!prog
   return (
     <div style={{ borderRadius: 14, background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px' }}>
-        <div style={{ minWidth: 0, flex: 1 }}>
+      {/* Header wraps on narrow screens so the trailing controls never overflow horizontally. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', flexWrap: 'wrap' }}>
+        <div style={{ minWidth: 0, flex: '1 1 190px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 15, fontWeight: 700 }}>{b.name}</span>
+            <span style={{ fontSize: 15, fontWeight: 700, overflowWrap: 'anywhere' }}>{b.name}</span>
             <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>{b.edition}</span>
           </div>
           <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3 }}>
@@ -196,23 +200,21 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
             <span style={{ opacity: .5 }}> · Updated {timeAgo(b.lastUpdatedAt)}</span>
           </div>
         </div>
-        <Chip fg={t.fg} bg={t.bg}>{b.statusLabel}</Chip>
-        {/* Read-only review entry — deliberately quiet (never resembles a Production action). */}
-        {showReviewRelease(b.action) && (
-          <button onClick={() => setReviewOpen(true)} className="os-tap"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', color: 'var(--text)', background: 'transparent', border: '1px solid var(--line)' }}>
-            Review release
+        {/* Trailing controls stay grouped and wrap as one unit under the name on mobile. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginLeft: 'auto' }}>
+          <Chip fg={t.fg} bg={t.bg}>{b.statusLabel}</Chip>
+          {/* Single publish entry point: the primary action opens the review→approval→publish
+              workflow (the drawer). No duplicate "Review release" button. */}
+          <button onClick={onPrimary} disabled={busy} className="os-tap"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', cursor: busy ? 'default' : 'pointer', opacity: busy ? .7 : 1,
+              color: emphatic ? '#fff' : 'var(--text)', background: emphatic ? 'var(--red)' : 'transparent', border: emphatic ? '1px solid transparent' : '1px solid var(--line)' }}>
+            {busy ? 'Working…' : b.actionLabel}
           </button>
-        )}
-        <button onClick={onPrimary} disabled={busy} className="os-tap"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: busy ? 'default' : 'pointer', opacity: busy ? .7 : 1,
-            color: emphatic ? '#fff' : 'var(--text)', background: emphatic ? 'var(--red)' : 'transparent', border: emphatic ? '1px solid transparent' : '1px solid var(--line)' }}>
-          {busy ? 'Working…' : b.actionLabel}
-        </button>
-        <button onClick={() => setOpen(v => !v)} aria-label={open ? 'Hide details' : 'View details'} className="os-tap"
-          style={{ display: 'inline-flex', padding: 7, borderRadius: 999, color: 'var(--muted)', background: 'transparent', border: '1px solid var(--line)', cursor: 'pointer' }}>
-          <ChevronDown size={16} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .18s ease' }} />
-        </button>
+          <button onClick={() => setOpen(v => !v)} aria-label={open ? 'Hide details' : 'View details'} aria-expanded={open} className="os-tap"
+            style={{ display: 'inline-flex', padding: 7, borderRadius: 999, color: 'var(--muted)', background: 'transparent', border: '1px solid var(--line)', cursor: 'pointer' }}>
+            <ChevronDown size={16} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .18s ease' }} />
+          </button>
+        </div>
       </div>
 
       {open && (
@@ -250,7 +252,7 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
                 {prog.canRetry && <button onClick={async () => { setNote(''); await send({ action: 'retry' }); startPoll() }} disabled={busy} className="os-tap" style={{ fontSize: 12, fontWeight: 700, padding: '6px 11px', borderRadius: 9, color: 'var(--text)', background: 'transparent', border: '1px solid var(--line)', cursor: 'pointer' }}>Retry</button>}
               </div>
             )}
-            {prog?.previewReady && <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '6px 0 0' }}>Publishing to production is a separate, deliberate step (coming next).</p>}
+            {prog?.previewReady && <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '6px 0 0' }}>Publishing to production is a separate, deliberate step — use “Publish to Production” to review, approve, and publish.</p>}
           </div>
 
           <div style={{ display: 'grid', gap: 4 }}>
