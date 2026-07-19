@@ -104,8 +104,10 @@ export function ProductionPublishPanel({ businessId }: { businessId: string }) {
   const p = status.publish
   const inProgress = p.state === 'queued' || p.state === 'verifying'
   const showButton = status.publishEnabled && status.ready && (p.state === 'idle' || p.state === 'failed') && !busy
-  const badgeTone: Tone = p.state === 'ready' ? 'good' : p.state === 'failed' ? 'bad' : p.state === 'idle' ? 'neutral' : 'info'
-  const badgeLabel = busy ? UX_LABEL.publishing : UX_LABEL[p.state]
+  const badgeTone: Tone = p.state === 'ready' ? 'good' : p.state === 'failed' ? 'bad' : p.state === 'idle' ? (status.ready ? 'good' : 'neutral') : 'info'
+  // The idle badge must be truthful: "Ready to publish" only when actually publishable.
+  const idleLabel = status.ready ? 'Ready to publish' : 'Not ready'
+  const badgeLabel = busy ? UX_LABEL.publishing : p.state === 'idle' ? idleLabel : UX_LABEL[p.state]
   const modeBadge = <StatusBadge tone={status.mode === 'live' ? 'bad' : 'info'} dot={false}>{status.mode === 'live' ? 'LIVE' : 'Simulated'}</StatusBadge>
 
   return (
