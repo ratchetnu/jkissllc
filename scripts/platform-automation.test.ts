@@ -107,14 +107,34 @@ test('repo + branch allowlists reject anything unregistered', () => {
   assert.equal(workBranchFor('UPD-1001'), 'operion/upd-1001')
   assert.equal(workBranchFor('../../etc/passwd'), 'operion/------etc-passwd')  // sanitized: no slashes/dots, no path traversal
 })
-test('J KISS workflow refuses non-Operion force-push targets before checkout', () => {
+test('target workflow validates refs before checkout without hardcoding its host repository', () => {
   const workflow = readFileSync(new URL('../.github/workflows/operion-update.yml', import.meta.url), 'utf8')
   const guardAt = workflow.indexOf('- name: Validate request')
   const checkoutAt = workflow.indexOf('- name: Checkout target')
   assert.ok(guardAt >= 0 && guardAt < checkoutAt)
-  assert.match(workflow, /ALLOWED_REPO: "ratchetnu\/jkissllc"/)
-  assert.match(workflow, /case "\$\{\{ inputs\.targetBranch \}\}" in[\s\S]*operion\/\*/)
+  assert.doesNotMatch(workflow, /ALLOWED_REPO|ratchetnu\/jkissllc/)
+  assert.match(workflow, /TARGET_BRANCH: \$\{\{ inputs\.targetBranch \}\}/)
+  assert.match(workflow, /\^operion\/\[a-z0-9\]\[a-z0-9_-\]\*\(\/\[a-z0-9\]\[a-z0-9_-\]\*\)\*\$/)
   assert.match(workflow, /missing deploymentRequestId/)
+})
+test('target workflow never expands dispatch inputs directly inside shell source', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/operion-update.yml', import.meta.url), 'utf8')
+  const lines = workflow.split('\n')
+  const shellBodies: string[] = []
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = /^(\s*)run:\s*\|\s*$/.exec(lines[i])
+    if (!match) continue
+    const indent = match[1].length
+    const body: string[] = []
+    for (i += 1; i < lines.length; i += 1) {
+      const lineIndent = /^\s*/.exec(lines[i])?.[0].length ?? 0
+      if (lines[i].trim() && lineIndent <= indent) { i -= 1; break }
+      body.push(lines[i])
+    }
+    shellBodies.push(body.join('\n'))
+  }
+  assert.ok(shellBodies.length > 0)
+  for (const body of shellBodies) assert.doesNotMatch(body, /\$\{\{\s*inputs\./)
 })
 test('commit drift + automatic rollback eligibility', () => {
   assert.equal(commitDriftDetected('abc', 'abc'), false)
