@@ -133,11 +133,15 @@ export function PublishReviewContent({ review, warnings }: { review: PublishRevi
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
-      {/* ── TOP SUMMARY BAR (sticky within the drawer surface) ── */}
-      <div style={{ position: 'sticky', top: 0, zIndex: 3, background: 'var(--surface)', paddingBottom: 8, borderBottom: '1px solid var(--line)' }}>
+      {/* ── TOP SUMMARY BAR ── a real design-system Card (same background / border /
+          elevation / spacing as every sibling card). Sticky within the drawer's scroll
+          container; `var(--card)` is the OPAQUE form of the card surface (identical to the
+          siblings' color-mix over the drawer's own `var(--card)` panel) so scrolled content
+          never bleeds through. It uses ONLY dark-theme tokens (never the light surface token). */}
+      <Card style={{ position: 'sticky', top: 0, zIndex: 3, background: 'var(--card)' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 8, justifyContent: 'space-between' }}>
           <div style={{ display: 'grid', gap: 4, minWidth: 0 }}>
-            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, letterSpacing: '-.01em', overflowWrap: 'anywhere' }}>{v.business.name}</h2>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, letterSpacing: '-.01em', color: 'var(--text)', overflowWrap: 'anywhere' }}>{v.business.name}</h2>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               <Pill tone="info">Production</Pill>
               {v.business.testOnly && <Pill tone="warn">Test-only</Pill>}
@@ -153,7 +157,7 @@ export function PublishReviewContent({ review, warnings }: { review: PublishRevi
           <span>Current <strong style={{ color: 'var(--text)' }}>{orUnavailable(v.version.current)}</strong></span>
           <span>Verified <strong style={{ color: 'var(--text)' }}>{v.verification.verifiedAt ? verificationAgeLabel(v.verification.verificationAgeMs) : 'Unavailable'}</strong></span>
         </div>
-      </div>
+      </Card>
 
       {/* ── OVERALL BANNER (expanded) ── */}
       <RiskBanner level={banner.level} title={banner.title}>{banner.detail}</RiskBanner>

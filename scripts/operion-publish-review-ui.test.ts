@@ -128,6 +128,23 @@ test('content: fully-unavailable payload degrades gracefully (no throw, shows Un
   assert.ok(html.includes('Audit preview'))
 })
 
+test('theme: drawer uses only dark app tokens — no light --surface / #fff / white / Canvas', () => {
+  const src = readFileSync(new URL('../app/admin/operations/release/PublishReviewDrawer.tsx', import.meta.url), 'utf8')
+  // --surface / --surface-2/3 are the LIGHT content tokens (white); the app is dark and uses
+  // --card / --bg. This bar previously used --surface and rendered white in the dark drawer.
+  assert.equal(/var\(--surface(-\d)?\b/.test(src), false, 'must not use the light --surface token')
+  assert.equal(/#fff\b|#ffffff\b|Canvas\b/i.test(src), false, 'no hard-coded light fallback colors')
+  assert.equal(/background:\s*['"]white['"]/i.test(src), false, 'no literal white background')
+  // The sticky summary is an opaque card surface (matches sibling cards, covers scroll).
+  assert.match(src, /background: 'var\(--card\)'/)
+})
+
+test('theme: summary card renders on the dark card token, not the light surface token', () => {
+  const html = renderToStaticMarkup(h(PublishReviewContent, { review: mockReview(), warnings: [] }))
+  assert.match(html, /background:var\(--card\)/)      // opaque dark card surface present
+  assert.equal(/var\(--surface(-\d)?\)/.test(html), false, 'light surface token never reaches the DOM')
+})
+
 // ── Dashboard derivation helpers (pure) ──────────────────────────────────────
 test('summaryMetrics: six cards, values degrade to Unavailable, tones reflect state', () => {
   const m = summaryMetrics(mockReview(), ['w1'])
