@@ -37,3 +37,37 @@ export async function readCurrentProductionDeployment(
   if (!r.ok || !r.data) return null
   return { deploymentId: r.data.deploymentId, commit: r.data.commitSha, url: r.data.url, deployedAt: r.data.createdAt ?? r.data.readyAt }
 }
+
+export type RollbackTarget = {
+  /** The current live production deployment (rolled back FROM). */
+  currentDeploymentId?: string
+  /** The prior known-good production deployment to restore (rollback TARGET). */
+  targetDeploymentId?: string
+  targetCommit?: string
+  targetUrl?: string
+}
+
+/**
+ * Read-only: derive the rollback target for a business — the CURRENT production deployment and
+ * the PRIOR known-good one to restore. Returns empty fields when there is no project, Vercel is
+ * unconfigured, or fewer than two READY production deployments exist (nothing to roll back to).
+ */
+export async function readRollbackTarget(
+  business: { productionProjectId?: string; deployProject?: string } | null | undefined,
+  env: Record<string, string | undefined> = process.env,
+  deps: VercelProviderDeps = {},
+): Promise<RollbackTarget> {
+  const project = business?.productionProjectId || business?.deployProject
+  if (!project) return {}
+  const vercel = getPreviewProvider(env, deps)
+  if (!vercel.configured) return {}
+  const r = await vercel.readReadyProductionDeployments(project)
+  if (!r.ok) return {}
+  const [current, prior] = r.data
+  return {
+    currentDeploymentId: current?.deploymentId,
+    targetDeploymentId: prior?.deploymentId,
+    targetCommit: prior?.commitSha,
+    targetUrl: prior?.url,
+  }
+}
