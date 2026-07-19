@@ -9,6 +9,7 @@ import { readRollbackTarget } from '../../../../../../lib/platform/release/produ
 import { evaluateRollbackGate, rollbackPhrase, rollbackUxState, resolveRollbackMode } from '../../../../../../lib/platform/release/rollback'
 import { executeRollback, type RollbackPromoteFn } from '../../../../../../lib/platform/release/rollback-executor'
 import { getLatestRollbackFor, getRollbackByTarget } from '../../../../../../lib/platform/release/rollback-store'
+import { getLatestPublishFor } from '../../../../../../lib/platform/release/publish-store'
 import type { ReleaseRollback } from '../../../../../../lib/platform/release/release-history'
 
 export const runtime = 'nodejs'
@@ -93,7 +94,7 @@ export const POST = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
     // Idempotent repeat: if this target already drove a rollback, return that result.
     if (gate.code === 'CONCURRENT_ROLLBACK' && s.target.targetDeploymentId) {
       const prior = await getRollbackByTarget(id, s.target.targetDeploymentId)
-      if (prior) return NextResponse.json({ ok: true, idempotent: true, rollback: rollbackView(prior) }, { headers: noStore })
+      if (prior?.status === 'completed') return NextResponse.json({ ok: true, idempotent: true, rollback: rollbackView(prior) }, { headers: noStore })
     }
     const status = ['OWNER_REQUIRED', 'GATE_DISABLED', 'ROLLBACK_DISABLED', 'TEST_ONLY_BUSINESS'].includes(gate.code) ? 403 : 409
     return NextResponse.json({ ok: false, code: gate.code, message: gate.message }, { status, headers: noStore })
@@ -105,9 +106,16 @@ export const POST = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
     ? async (project, dep) => { const r = await vercel.promoteProduction(project, dep); return r.ok ? { ok: true } : { ok: false, error: r.error, category: r.category } }
     : async () => ({ ok: true })   // simulated — no Vercel call
 
+  const latestPublish = await getLatestPublishFor(id)
+  const reversedPublish = latestPublish?.status === 'completed' &&
+    (latestPublish.promotedDeploymentId ?? latestPublish.sourceDeploymentId) === gate.fromDeploymentId
+    ? latestPublish
+    : undefined
+
   const result = await executeRollback({
     now: s.now, actor: who.sub, business: { id: s.business!.id, slug: s.slug, project: s.project },
     targetDeploymentId: gate.targetDeploymentId, targetCommit: s.target.targetCommit, fromDeploymentId: gate.fromDeploymentId,
+    rolledBackPublishId: reversedPublish?.id,
     mode, promote,
   })
 

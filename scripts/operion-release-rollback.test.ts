@@ -94,6 +94,10 @@ function installFakeKv() {
     else if (c === 'GET') result = kv.has(a[1]) ? kv.get(a[1]) : null
     else if (c === 'SET') { if (a.includes('NX') && kv.has(a[1])) result = null; else { kv.set(a[1], a[2]); result = 'OK' } }
     else if (c === 'DEL') { kv.delete(a[1]); result = 1 }
+    else if (c === 'EVAL') {
+      const key = a[3]; const expected = a[4]
+      if (kv.get(key) === expected) { kv.delete(key); result = 1 } else result = 0
+    }
     else if (c === 'ZADD') { const arr = (z.get(a[1]) ?? []).filter((x) => x.m !== a[3]); arr.push({ s: Number(a[2]), m: a[3] }); z.set(a[1], arr); result = 1 }
     else if (c === 'ZREVRANGE') { const arr = (z.get(a[1]) ?? []).slice().sort((x, y) => y.s - x.s).map((x) => x.m); result = arr.slice(Number(a[2]), a[3] === '-1' ? undefined : Number(a[3]) + 1) }
     else if (c === 'ZADD' || c === 'PEXPIRE') result = 1
@@ -141,6 +145,30 @@ test('executor: promote failure → rollback.failed record + audit', async () =>
     assert.equal(r.ok, false)
     assert.equal(!r.ok && r.code, 'PROMOTE_FAILED')
     assert.equal(!r.ok && r.rollback?.status, 'failed')
+    const { getRollbackByTarget } = await import('../app/lib/platform/release/rollback-store')
+    assert.equal(await getRollbackByTarget('supercharged', 'dpl_prior'), null)
+  } finally { fake.restore() }
+})
+
+test('executor: failed restore can retry; only the successful retry becomes idempotent', async () => {
+  const fake = installFakeKv()
+  try {
+    const { executeRollback } = await import('../app/lib/platform/release/rollback-executor')
+    const calls: string[] = []
+    let attempt = 0
+    const promote = async (_project: string, deployment: string) => {
+      calls.push(deployment); attempt += 1
+      return attempt === 1 ? { ok: false as const, error: 'temporary provider failure' } : { ok: true as const }
+    }
+    const input = { actor: 'owner', business: { id: 'retry-biz', slug: 'retry-biz', project: 'retry-biz' }, targetDeploymentId: 'dpl_retry', mode: 'live' as const, promote }
+    const failed = await executeRollback({ ...input, now: 1 })
+    const retried = await executeRollback({ ...input, now: 2 })
+    const repeated = await executeRollback({ ...input, now: 3 })
+    assert.equal(failed.ok, false)
+    assert.equal(retried.ok && !retried.idempotent && retried.rollback.status, 'completed')
+    assert.equal(repeated.ok && repeated.idempotent && repeated.rollback.status, 'completed')
+    assert.equal(calls.length, 2)
+    assert.notEqual(!failed.ok && failed.rollback?.id, retried.ok && retried.rollback.id)
   } finally { fake.restore() }
 })
 
@@ -162,4 +190,5 @@ test('safety: rollback route is owner-gated, flag-gated, no-store, LIVE only in 
   assert.match(s, /no-store/)
   assert.match(s, /mode === 'live'\s*\n?\s*\?\s*async[\s\S]*promoteProduction/)
   assert.match(s, /simulated — no Vercel call/)
+  assert.match(s, /rolledBackPublishId: reversedPublish\?\.id/)
 })

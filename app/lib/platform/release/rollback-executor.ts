@@ -38,16 +38,18 @@ export type ExecuteRollbackResult =
   | { ok: false; code: 'IN_PROGRESS' | 'PROMOTE_FAILED'; message: string; rollback?: ReleaseRollback }
 
 export async function executeRollback(i: ExecuteRollbackInput): Promise<ExecuteRollbackResult> {
-  // Idempotency (pre-lock fast path): this exact target already drove a rollback → return it.
+  // A completed target is idempotent; an active target is concurrent; failed attempts are retryable.
   const prior = await getRollbackByTarget(i.business.id, i.targetDeploymentId)
-  if (prior) return { ok: true, rollback: prior, idempotent: true }
+  if (prior?.status === 'completed') return { ok: true, rollback: prior, idempotent: true }
+  if (prior?.status === 'rolling_back') return { ok: false, code: 'IN_PROGRESS', message: 'a rollback is already in progress for this business', rollback: prior }
 
   const got = await acquireRollbackLock(i.business.id, i.actor)
   if (!got) return { ok: false, code: 'IN_PROGRESS', message: 'a rollback is already in progress for this business' }
 
   try {
     const again = await getRollbackByTarget(i.business.id, i.targetDeploymentId)
-    if (again) return { ok: true, rollback: again, idempotent: true }
+    if (again?.status === 'completed') return { ok: true, rollback: again, idempotent: true }
+    if (again?.status === 'rolling_back') return { ok: false, code: 'IN_PROGRESS', message: 'a rollback is already in progress for this business', rollback: again }
 
     const rollback = await startRollback({
       now: i.now, businessId: i.business.id, businessSlug: i.business.slug,

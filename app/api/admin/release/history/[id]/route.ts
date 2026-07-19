@@ -3,7 +3,7 @@ import { withTenantRoute } from '../../../../../lib/platform/tenancy/with-tenant
 import { requirePlatformOwner } from '../../../_lib/session'
 import { getApproval } from '../../../../../lib/platform/release/approval-store'
 import { getPublish } from '../../../../../lib/platform/release/publish-store'
-import { getRollback, getRollbackByTarget } from '../../../../../lib/platform/release/rollback-store'
+import { getRollback, listRollbacks } from '../../../../../lib/platform/release/rollback-store'
 import { publishToHistoryEntry, rollbackToHistoryEntry, buildReleaseDetails } from '../../../../../lib/platform/release/release-history'
 import { listPlatformAuditForRef } from '../../../../../lib/platform/updates/audit'
 
@@ -23,7 +23,7 @@ export const GET = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
 
   const entry = id.startsWith('RBK-')
     ? await getRollback(id).then((r) => (r ? rollbackToHistoryEntry(r) : null))
-    : await getPublish(id).then(async (p) => (p ? publishToHistoryEntry(p, p.approvalId ? await getApproval(p.approvalId) : null, await rollbackReversing(p.businessId, p.promotedDeploymentId ?? p.sourceDeploymentId)) : null))
+    : await getPublish(id).then(async (p) => (p ? publishToHistoryEntry(p, p.approvalId ? await getApproval(p.approvalId) : null, await rollbackReversing(p.id)) : null))
 
   if (!entry) return NextResponse.json({ ok: false, error: 'release not found' }, { status: 404, headers: noStore })
 
@@ -33,8 +33,7 @@ export const GET = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
 })
 
 /** If a rollback restored a deployment for this business, note its id on the publish entry. */
-async function rollbackReversing(businessId: string, deploymentId?: string): Promise<string | undefined> {
-  if (!deploymentId) return undefined
-  const r = await getRollbackByTarget(businessId, deploymentId)
-  return r?.id
+async function rollbackReversing(publishId: string): Promise<string | undefined> {
+  const rollbacks = await listRollbacks(500)
+  return rollbacks.find((r) => r.status === 'completed' && r.rolledBackPublishId === publishId)?.id
 }
