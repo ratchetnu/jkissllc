@@ -16,6 +16,7 @@ import {
   overallReviewBanner, orUnavailable, verificationAgeLabel,
   summaryMetrics, groupedWarnings, eligibilityPill, previewPill, rollbackPill, riskToTone, highRiskCount, splitFileList,
 } from './publish-review-view'
+import { ReleaseApprovalPanel } from './ReleaseApprovalPanel'
 
 const CHECK_TO_ITEM: Record<string, ChecklistItem['state']> = { pass: 'pass', warn: 'warn', fail: 'fail', skip: 'warn' }
 
@@ -322,6 +323,9 @@ export function PublishReviewDrawer({ businessId, businessName, open, onClose }:
         {state.kind === 'unauthorized' && <div role="alert" style={{ color: 'var(--muted)', fontSize: 14 }}>Owner access is required to view the release review.</div>}
         {state.kind === 'error' && <div role="alert" style={{ color: 'var(--status-bad-fg)', fontSize: 14 }}>{state.message}</div>}
         {state.kind === 'data' && <PublishReviewContent review={state.review} warnings={state.warnings} />}
+        {/* Separate, explicit approval workflow (owner-only, its own GET/POST). The review
+            above stays READ-ONLY; approval is never a side effect of loading/refreshing it. */}
+        {state.kind === 'data' && <ReleaseApprovalPanel businessId={businessId} />}
       </div>
     </Drawer>
   )

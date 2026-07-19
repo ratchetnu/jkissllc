@@ -33,6 +33,13 @@ export type PlatformAuditAction =
   | 'reconcile.external_deployment_matched'
   | 'reconcile.ambiguous_match'
   | 'status.manual_correction'
+  // Owner pre-publish approval gate (Increment 3B.3). Records intent only — no publish.
+  | 'approval.created'
+  | 'approval.rejected'
+  | 'approval.expired'
+  | 'approval.invalidated'
+  | 'approval.revoked'
+  | 'approval.consumed'
   // Owner responses to AI shadow alerts. Every state change an owner makes to an alert is
   // attributed here — an alert that was silenced must be explainable months later.
   | 'shadow_alert.acknowledged'
