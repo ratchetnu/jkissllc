@@ -12,6 +12,7 @@ const REC = (id: string) => `platform:publish:rec:${id}`
 const LATEST = (businessId: string) => `platform:publish:latest:${businessId}`
 const BYAPPROVAL = (approvalId: string) => `platform:publish:byapproval:${approvalId}`
 const LOCK = (businessId: string) => `platform:publish:lock:${businessId}`
+const INDEX = 'platform:publish:index'   // sorted set: publishId scored by startedAt (release history)
 const CTR = 'platform:publish:counter'
 const RECORD_VERSION = 1
 const RECORD_TTL_MS = 30 * 24 * 60 * 60 * 1000 // keep publish history 30 days
@@ -69,6 +70,15 @@ export async function savePublish(p: ReleasePublish): Promise<void> {
   await redis.pexpire(REC(p.id), RECORD_TTL_MS)
   await redis.set(LATEST(p.businessId), p.id)
   await redis.pexpire(LATEST(p.businessId), RECORD_TTL_MS)
+  await redis.zadd(INDEX, p.startedAt, p.id)   // global release-history index (newest by startedAt)
+}
+
+/** All publish records, newest first — the release-history source. Bounded scan. */
+export async function listPublishes(limit = 200): Promise<ReleasePublish[]> {
+  const ids = await redis.zrevrange(INDEX, 0, Math.max(0, limit - 1))
+  if (!ids.length) return []
+  const recs = await Promise.all(ids.map(getPublish))
+  return recs.filter((r): r is ReleasePublish => r !== null)
 }
 
 export type NewPublish = {

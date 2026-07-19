@@ -4,7 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw, GitCommitHorizontal, Server, CalendarClock, Flag, AlertTriangle, CheckCircle2, XCircle, MinusCircle, Clock, Rocket, ShieldCheck, Building2, ChevronDown } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { osLabel, osMiniBtn } from '../ui'
+import { Tabs } from '../../../components/ui'
 import { PublishReviewDrawer } from './PublishReviewDrawer'
+import { ReleaseHistoryPanel } from './ReleaseHistoryPanel'
 import { sandboxHealth, SANDBOX_HEALTH_LABEL, SANDBOX_HEALTH_TONE } from '../../../lib/platform/sandbox/health'
 
 // ── Read-only Release Center ─────────────────────────────────────────────────
@@ -301,6 +303,7 @@ function Businesses() {
   const [updatesEnabled, setUpdatesEnabled] = useState(false)
   const [show, setShow] = useState(false)
   const [nonce, setNonce] = useState(0) // bump to re-fetch (e.g. after a sandbox repair)
+  const [tab, setTab] = useState('businesses')
   useEffect(() => {
     let live = true
     fetch('/api/admin/release/businesses', { credentials: 'same-origin' })
@@ -311,11 +314,18 @@ function Businesses() {
   }, [nonce])
   if (!show || !views) return null // owner-only: silently absent for non-owners
   return (
-    <Section title="Businesses" icon={Building2}>
-      {views.length === 0
-        ? <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>No businesses registered yet.</p>
-        : <div style={{ display: 'grid', gap: 10 }}>{views.map(b => <BusinessRow key={b.id} b={b} updatesEnabled={updatesEnabled} />)}</div>}
-      <SandboxAdvanced onRepaired={() => setNonce(n => n + 1)} />
+    <Section title="Release Center" icon={Building2}>
+      <div style={{ marginBottom: 12 }}>
+        <Tabs value={tab} onChange={setTab} tabs={[{ id: 'businesses', label: 'Businesses' }, { id: 'history', label: 'Release History' }]} />
+      </div>
+      {tab === 'businesses' ? (
+        <>
+          {views.length === 0
+            ? <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>No businesses registered yet.</p>
+            : <div style={{ display: 'grid', gap: 10 }}>{views.map(b => <BusinessRow key={b.id} b={b} updatesEnabled={updatesEnabled} />)}</div>}
+          <SandboxAdvanced onRepaired={() => setNonce(n => n + 1)} />
+        </>
+      ) : <ReleaseHistoryPanel />}
     </Section>
   )
 }

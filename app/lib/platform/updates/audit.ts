@@ -45,6 +45,10 @@ export type PlatformAuditAction =
   | 'publish.completed'
   | 'publish.failed'
   | 'deployment.promoted'
+  // Controlled owner rollback (Increment 3B.6). Restores the prior production deployment.
+  | 'rollback.started'
+  | 'rollback.completed'
+  | 'rollback.failed'
   // Owner responses to AI shadow alerts. Every state change an owner makes to an alert is
   // attributed here — an alert that was silenced must be explainable months later.
   | 'shadow_alert.acknowledged'
