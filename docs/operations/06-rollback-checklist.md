@@ -28,7 +28,9 @@ but the default under uncertainty is **roll back**.
 > distinct prior READY production deployment is available. It requires the release gate,
 > production-promotion flag, and the exact typed rollback phrase, and it records the result
 > in release history. Vercel CLI remains the break-glass fallback. Fully automatic rollback
-> is separate and remains behind `OPERION_AUTOMATIC_ROLLBACK_ENABLED` (doc 15).
+> is separate and remains behind `OPERION_AUTOMATIC_ROLLBACK_ENABLED` (doc 15). Both paths use
+> Operion's server-side Vercel provider; target repositories do not receive a second Production
+> token or an independently dispatchable rollback workflow.
 
 ## Config / flag rollback
 

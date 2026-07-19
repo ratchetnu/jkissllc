@@ -32,9 +32,10 @@ export function promotionDriftDetected(approvedCommit: string | undefined, headC
 
 /** May the reconciler auto-roll-back a failed production promotion? Flag-gated + bounded +
  *  requires a captured known-good production deployment to promote back. */
-export function canAutoRollback(input: { status: string; flagEnabled: boolean; rollbackTargetDeploymentId?: string; attemptCount?: number; maxAttempts?: number }): PromotionGateResult {
+export function canAutoRollback(input: { status: string; flagEnabled: boolean; eligible?: boolean; rollbackTargetDeploymentId?: string; attemptCount?: number; maxAttempts?: number }): PromotionGateResult {
   if (input.status !== 'rollback_required') return { ok: false, reason: `job is ${input.status}, not rollback_required` }
   if (!input.flagEnabled) return { ok: false, reason: 'automatic rollback disabled (OPERION_AUTOMATIC_ROLLBACK_ENABLED off)' }
+  if (input.eligible !== true) return { ok: false, reason: 'this job was not prepared with a verified automatic rollback path' }
   if (!input.rollbackTargetDeploymentId) return { ok: false, reason: 'no known-good production deployment to roll back to' }
   if ((input.attemptCount ?? 0) >= (input.maxAttempts ?? 2)) return { ok: false, reason: 'rollback attempts exhausted' }
   return { ok: true }

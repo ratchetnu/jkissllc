@@ -37,9 +37,10 @@ test('promotionStage walks Approved → Merging → Deploying → Verifying → 
 })
 
 test('canAutoRollback: flag-gated + needs a target + bounded', () => {
-  const base = { status: 'rollback_required', flagEnabled: true, rollbackTargetDeploymentId: 'dpl_good', attemptCount: 0 }
+  const base = { status: 'rollback_required', flagEnabled: true, eligible: true, rollbackTargetDeploymentId: 'dpl_good', attemptCount: 0 }
   assert.equal(canAutoRollback(base).ok, true)
   assert.equal(canAutoRollback({ ...base, flagEnabled: false }).ok, false)             // flag off = safe default
+  assert.equal(canAutoRollback({ ...base, eligible: false }).ok, false)                // job was not prepared with a verified path
   assert.equal(canAutoRollback({ ...base, rollbackTargetDeploymentId: undefined }).ok, false) // nothing to restore
   assert.equal(canAutoRollback({ ...base, attemptCount: 2 }).ok, false)                // exhausted
   assert.equal(canAutoRollback({ ...base, status: 'completed' }).ok, false)            // not failed

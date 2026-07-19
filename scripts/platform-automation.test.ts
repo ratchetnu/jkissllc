@@ -13,7 +13,7 @@ import type { AutomationStatus } from '../app/lib/platform/automation/types'
 import {
   evaluatePreflight, isRepoAllowed, isBranchAllowed, workBranchFor, commitDriftDetected, automaticRollbackEligible,
 } from '../app/lib/platform/automation/preflight'
-import { signCallback, verifyCallback, validateCallbackPayload, callbackMatchesJob } from '../app/lib/platform/automation/callback'
+import { signCallback, verifyCallback, validateCallbackPayload, callbackMatchesJob, previewFailureStatus } from '../app/lib/platform/automation/callback'
 import { StubProvider, getAutomationProvider, type UpdateAutomationProvider } from '../app/lib/platform/automation/provider'
 import { automationIdempotencyKey } from '../app/lib/platform/automation/orchestrator'
 import type { PlatformUpdate, PlatformBusiness, UpdateCompatibility, ValidationChecklist } from '../app/lib/platform/updates/types'
@@ -154,9 +154,22 @@ test('target workflow never expands dispatch inputs directly inside shell source
 test('commit drift + automatic rollback eligibility', () => {
   assert.equal(commitDriftDetected('abc', 'abc'), false)
   assert.equal(commitDriftDetected('abc', 'def'), true)
-  assert.equal(automaticRollbackEligible({ enabled: true, rollbackWorkflowFile: 'rb.yml', irreversibleMigration: false, previousVerifiedCommit: 'v1' }), true)
-  assert.equal(automaticRollbackEligible({ enabled: false, rollbackWorkflowFile: 'rb.yml', irreversibleMigration: false, previousVerifiedCommit: 'v1' }), false)
-  assert.equal(automaticRollbackEligible({ enabled: true, rollbackWorkflowFile: 'rb.yml', irreversibleMigration: true, previousVerifiedCommit: 'v1' }), false)  // irreversible migration
+  assert.equal(automaticRollbackEligible({ enabled: true, productionProjectId: 'prj_prod', irreversibleMigration: false, previousVerifiedCommit: 'v1' }), true)
+  assert.equal(automaticRollbackEligible({ enabled: false, productionProjectId: 'prj_prod', irreversibleMigration: false, previousVerifiedCommit: 'v1' }), false)
+  assert.equal(automaticRollbackEligible({ enabled: true, productionProjectId: 'prj_prod', irreversibleMigration: true, previousVerifiedCommit: 'v1' }), false)  // irreversible migration
+})
+
+test('Preview workflow failures never request a Production rollback', () => {
+  for (const status of ['tests_failed', 'preview_failed', 'apply_failed', 'error'] as const) assert.equal(previewFailureStatus(status), 'failed')
+  assert.equal(previewFailureStatus('build_failed'), 'build_failed')
+})
+
+test('automatic rollback retry budget is independent from Preview attempts', () => {
+  const source = readFileSync(new URL('../app/lib/platform/automation/orchestrator.ts', import.meta.url), 'utf8')
+  assert.match(source, /eligible: job\.automaticRollbackEligible/)
+  assert.match(source, /attemptCount: job\.rollbackAttemptCount/)
+  assert.match(source, /j\.rollbackAttemptCount = \(j\.rollbackAttemptCount \?\? 0\) \+ 1/)
+  assert.doesNotMatch(source, /j\.status = 'rolling_back'; j\.attemptCount =/)
 })
 
 // ── Signed callbacks ─────────────────────────────────────────────────────────

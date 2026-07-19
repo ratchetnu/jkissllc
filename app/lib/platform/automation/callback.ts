@@ -55,6 +55,11 @@ export function callbackMatchesJob(payload: CallbackPayload, job: UpdateAutomati
   return ['creating_branch', 'applying_update', 'testing', 'preview_deploying', 'preview_ready'].includes(job.status)
 }
 
+/** Preview callbacks cannot request a Production rollback because Production has not changed. */
+export function previewFailureStatus(status: CallbackPayload['status']): 'build_failed' | 'failed' {
+  return status === 'build_failed' ? 'build_failed' : 'failed'
+}
+
 const STATUSES = new Set(['tests_failed', 'build_failed', 'preview_ready', 'preview_failed', 'apply_failed', 'error'])
 const str = (v: unknown, max = 500) => (typeof v === 'string' ? v.slice(0, max) : undefined)
 

@@ -92,7 +92,7 @@ export async function preparePreview(input: {
     const strategy = effectiveStrategy(input.strategy ?? 'ai_adaptation', env)
     const autoRollback = automaticRollbackEligible({
       enabled: flag('OPERION_AUTOMATIC_ROLLBACK_ENABLED', env),
-      rollbackWorkflowFile: business.rollbackWorkflowFile,
+      productionProjectId: business.productionProjectId || business.deployProject,
       irreversibleMigration: !!update.migrationRequired && !update.rollbackSupported,
       previousVerifiedCommit: business.currentCommit,
     })
@@ -297,14 +297,14 @@ export async function advanceRollback(input: { jobId: string; env?: Record<strin
   const env = input.env ?? process.env
   const job = await store.getJob(input.jobId)
   if (!job) return { ok: false, reason: 'no_job' }
-  const gate = canAutoRollback({ status: job.status, flagEnabled: flag('OPERION_AUTOMATIC_ROLLBACK_ENABLED', env), rollbackTargetDeploymentId: job.rollbackTargetDeploymentId, attemptCount: job.attemptCount })
+  const gate = canAutoRollback({ status: job.status, flagEnabled: flag('OPERION_AUTOMATIC_ROLLBACK_ENABLED', env), eligible: job.automaticRollbackEligible, rollbackTargetDeploymentId: job.rollbackTargetDeploymentId, attemptCount: job.rollbackAttemptCount })
   if (!gate.ok) return { ok: false, reason: gate.reason }
   const business = await getBusiness(job.businessId)
   if (!business) return { ok: false, reason: 'business missing' }
   const projectId = business.productionProjectId || business.previewProjectId
   return store.withBusinessLock<ApproveResult>(job.businessId, async () => {
     const j = await store.getJob(input.jobId); if (!j || j.status !== 'rollback_required') return { ok: false, reason: 'job changed' }
-    j.status = 'rolling_back'; j.attemptCount = (j.attemptCount ?? 0) + 1; j.updatedAt = now(); await store.saveJob(j)
+    j.status = 'rolling_back'; j.rollbackAttemptCount = (j.rollbackAttemptCount ?? 0) + 1; j.updatedAt = now(); await store.saveJob(j)
     const vercel = getPreviewProvider(env)
     const res = projectId && j.rollbackTargetDeploymentId ? await vercel.promoteProduction(projectId, j.rollbackTargetDeploymentId) : { ok: false as const, error: 'no rollback target', category: 'config' }
     if (res.ok) { j.status = 'rolled_back'; j.rolledBackAt = now(); j.failureSummary = 'production restored to the previous verified deployment'; j.updatedAt = now(); await store.saveJob(j); return { ok: true, job: j } }

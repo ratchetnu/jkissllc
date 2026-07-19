@@ -1,6 +1,6 @@
 // Proves the two previously-dead OPERION flags now change behavior.
 //  • OPERION_AI_ADAPTATION_ENABLED   → effectiveStrategy() (strategy selection)
-//  • OPERION_AUTOMATIC_ROLLBACK_ENABLED → automaticRollbackEligible() (failure routing)
+//  • OPERION_AUTOMATIC_ROLLBACK_ENABLED → automaticRollbackEligible() (Production recovery)
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { effectiveStrategy } from '../app/lib/platform/automation/orchestrator'
@@ -18,13 +18,13 @@ test('OPERION_AI_ADAPTATION_ENABLED gates the ai_adaptation strategy', () => {
 })
 
 test('OPERION_AUTOMATIC_ROLLBACK_ENABLED gates automatic-rollback eligibility', () => {
-  const verifiedPath = { rollbackWorkflowFile: 'operion-rollback.yml', irreversibleMigration: false, previousVerifiedCommit: 'abc1234' }
-  // Flag off ⇒ never eligible (failures stay `failed`).
+  const verifiedPath = { productionProjectId: 'prj_production', irreversibleMigration: false, previousVerifiedCommit: 'abc1234' }
+  // Flag off ⇒ never eligible for automatic Production recovery.
   assert.equal(automaticRollbackEligible({ enabled: false, ...verifiedPath }), false)
-  // Flag on + a fully verified rollback path ⇒ eligible (failures route to rollback_required).
+  // Flag on + a fully verified rollback path ⇒ eligible after a Production verification failure.
   assert.equal(automaticRollbackEligible({ enabled: true, ...verifiedPath }), true)
-  // On but missing a rollback workflow / prior verified commit / reversibility ⇒ not eligible.
+  // On but missing a Production project / prior verified commit / reversibility ⇒ not eligible.
   assert.equal(automaticRollbackEligible({ enabled: true, irreversibleMigration: false, previousVerifiedCommit: 'abc' }), false)
-  assert.equal(automaticRollbackEligible({ enabled: true, rollbackWorkflowFile: 'r.yml', irreversibleMigration: false }), false)
-  assert.equal(automaticRollbackEligible({ enabled: true, rollbackWorkflowFile: 'r.yml', irreversibleMigration: true, previousVerifiedCommit: 'abc' }), false)
+  assert.equal(automaticRollbackEligible({ enabled: true, productionProjectId: 'prj_production', irreversibleMigration: false }), false)
+  assert.equal(automaticRollbackEligible({ enabled: true, productionProjectId: 'prj_production', irreversibleMigration: true, previousVerifiedCommit: 'abc' }), false)
 })

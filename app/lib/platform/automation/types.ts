@@ -87,6 +87,7 @@ export type UpdateAutomationJob = {
   // production promotion (Sprint 2)
   mergeCommit?: string
   rollbackTargetDeploymentId?: string   // the known-good production deployment captured before promoting
+  rollbackAttemptCount?: number         // rollback retries are bounded independently from Preview retries
   rolledBackAt?: number
   // failure / rollback
   failureCategory?: AutomationFailure

@@ -73,9 +73,16 @@ test('owner approval is fail-closed unless both policy fields are explicitly tru
   assert.equal(missingNewPolicy.businesses[0].checks.find((c) => c.id === 'owner_approval')?.ok, false)
 })
 
-test('automatic rollback remains blocked until every business has a rollback workflow', () => {
+test('automatic rollback uses the server-side executor and ignores legacy workflow metadata', () => {
   const result = evaluateActivationReadiness(input({ businesses: [business({ rollbackWorkflowFile: undefined })] }))
   assert.equal(result.safeToEnableProduction, true) // controlled typed rollback uses the deployment target
+  assert.equal(result.businesses[0].checks.find((c) => c.id === 'rollback_executor')?.ok, true)
+  assert.equal(result.stages.find((s) => s.id === 'advanced_automation')?.checks.find((c) => c.id === 'all_rollback_executors')?.ok, true)
+})
+
+test('automatic rollback remains blocked without a prior known-good deployment', () => {
+  const result = evaluateActivationReadiness(input({ rollbackTargets: { jkiss: { currentDeploymentId: 'dpl-current' } } }))
+  assert.equal(result.businesses[0].checks.find((c) => c.id === 'rollback_executor')?.ok, false)
   assert.equal(result.stages.find((s) => s.id === 'advanced_automation')?.state, 'blocked')
 })
 

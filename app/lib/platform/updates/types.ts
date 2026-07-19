@@ -67,7 +67,7 @@ export type PlatformBusiness = {
   allowedSourceBranches?: string[]             // allowlist
   allowedTargetBranches?: string[]             // allowlist (work branches are derived, prefix-checked)
   automationWorkflowFile?: string              // e.g. 'operion-update.yml' (server-configured, not user input)
-  rollbackWorkflowFile?: string
+  rollbackWorkflowFile?: string                 // legacy metadata; rollback executes server-side through the Vercel provider
   previewDeploymentProvider?: string           // 'vercel'
   previewProjectId?: string
   previewRepoId?: string                       // numeric GitHub repo id for Vercel git preview
