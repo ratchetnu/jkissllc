@@ -18,7 +18,10 @@ export type PreflightInput = {
   approvals?: { migration?: boolean; environment?: boolean }
 }
 
-const APPROVED_STATUSES = ['approved', 'ready_to_release', 'ready_for_review', 'included_in_release']
+// `partially_deployed` means the approved update has reached at least one business but
+// still has eligible targets remaining. It must remain previewable for those targets;
+// otherwise recording the source deployment permanently deadlocks cross-business rollout.
+const APPROVED_STATUSES = ['approved', 'ready_to_release', 'ready_for_review', 'included_in_release', 'partially_deployed']
 
 export function evaluatePreflight(x: PreflightInput): PreflightResult {
   const g: PreflightGate[] = []

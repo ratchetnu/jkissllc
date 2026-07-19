@@ -71,6 +71,14 @@ test('preflight blocks when automation off / not approved / no commit / unassess
   fail('automation_enabled', { ...base, update: mkUpdate(), flags: { ...flagsOn, automation: false } })
   fail('update_approved', { ...base, update: mkUpdate({ status: 'discovered' }) })
   fail('source_commit', { ...base, update: mkUpdate({ sourceCommit: undefined }) })
+
+  // An update already deployed to its source business remains eligible for its other
+  // assessed targets. This is the normal cross-business rollout state, not a rejection.
+  const partial = evaluatePreflight({
+    ...base,
+    update: mkUpdate({ status: 'partially_deployed' }),
+  })
+  assert.equal(partial.gates.find(g => g.id === 'update_approved')?.ok, true)
   fail('compat_assessed', { ...base, update: mkUpdate(), compat: mkCompat({ status: 'under_review' }) })
   fail('compat_not_blocked', { ...base, update: mkUpdate(), compat: mkCompat({ status: 'incompatible' }) })
   fail('no_conflicting_job', { ...base, update: mkUpdate(), hasActiveJob: true })
