@@ -99,7 +99,7 @@ export function RollbackPanel({ businessId }: { businessId: string }) {
         <Alert tone="good" title="Rolled back">Production was restored to the prior deployment{r.mode === 'simulated' ? ' (simulated — no real production change was made)' : ''}{r.targetDeploymentId ? <> (<code>{r.targetDeploymentId}</code>)</> : null}.</Alert>
       )}
       {r.state === 'failed' && !busy && (
-        <Alert tone="bad" title="Rollback failed">{r.failureReason ?? 'The production rollback failed.'} · Retry is not available in this phase.</Alert>
+        <Alert tone="bad" title="Rollback failed">{r.failureReason ?? 'The production rollback failed.'} · Verify the target, then retry with a new typed confirmation.</Alert>
       )}
       {!showButton && r.state === 'idle' && status.blocker && status.rollbackEnabled && (
         <div style={{ fontSize: 13, color: 'var(--muted)' }}>{status.blocker.message}</div>
@@ -122,7 +122,7 @@ export function RollbackPanel({ businessId }: { businessId: string }) {
             <Row k="Execution mode">{status.mode === 'live' ? 'LIVE (real rollback)' : 'Simulated (no real production change)'}</Row>
           </div>
           <Alert tone="warn" title="Final confirmation">
-            This action will <strong>restore the prior production deployment</strong> as the live production. It runs once and cannot be retried; this is a controlled rollback, not a forward publish.
+            This action will <strong>restore the prior production deployment</strong> as the live production. Successful restores are idempotent; a failed attempt may be retried with a new typed confirmation. This is a controlled rollback, not a forward publish.
           </Alert>
           <TypedConfirm requiredValue={status.requiredPhrase ?? ''} label="Type the exact phrase to roll back" value={phrase} onChange={setPhrase} onMatchChange={setMatched} />
           {msg && msg.tone === 'bad' && <Alert tone="bad">{msg.text}</Alert>}

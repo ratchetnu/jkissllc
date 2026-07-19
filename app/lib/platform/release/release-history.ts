@@ -108,7 +108,7 @@ export function buildReleaseHistory(input: {
 }): ReleaseHistoryEntry[] {
   const rollbacks = input.rollbacks ?? []
   const rollbackByPublishId = new Map<string, string>()
-  for (const r of rollbacks) if (r.rolledBackPublishId) rollbackByPublishId.set(r.rolledBackPublishId, r.id)
+  for (const r of rollbacks) if (r.status === 'completed' && r.rolledBackPublishId) rollbackByPublishId.set(r.rolledBackPublishId, r.id)
 
   const entries: ReleaseHistoryEntry[] = [
     ...input.publishes.map((p) => publishToHistoryEntry(p, p.approvalId ? input.approvalsById.get(p.approvalId) : null, rollbackByPublishId.get(p.id))),

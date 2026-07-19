@@ -38,6 +38,16 @@ export async function getRollbackByTarget(businessId: string, targetDeploymentId
   return id ? getRollback(id) : null
 }
 
+/** Release this attempt's target claim without deleting a newer retry's claim. */
+async function releaseTargetClaim(r: ReleaseRollback): Promise<void> {
+  const key = BYTARGET(`${r.businessId}:${r.targetDeploymentId}`)
+  await redis.eval(
+    "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+    [key],
+    [r.id],
+  )
+}
+
 export async function acquireRollbackLock(businessId: string, holder: string): Promise<boolean> {
   return redis.setNxPx(LOCK(businessId), holder, LOCK_TTL_MS)
 }
@@ -106,5 +116,8 @@ export async function failRollback(id: string, now: number, reason: string): Pro
   if (!r) return null
   const failed: ReleaseRollback = { ...r, status: 'failed', failureReason: reason.slice(0, 500), completedAt: now, updatedAt: now }
   await saveRollback(failed)
+  // The executor also ignores failed claims, so a transient cleanup error cannot hide the
+  // provider failure or prevent a later retry. Compare-and-delete remains the normal path.
+  await releaseTargetClaim(failed).catch(() => {})
   return failed
 }

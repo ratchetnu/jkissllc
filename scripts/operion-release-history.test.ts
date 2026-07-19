@@ -66,6 +66,15 @@ test('buildReleaseHistory merges publishes + rollbacks newest-first and links th
   assert.equal(h.find((e) => e.id === 'PUB-1002')?.rolledBackByRollbackId, undefined)
 })
 
+test('buildReleaseHistory never marks a publish reversed by a failed rollback', () => {
+  const h = buildReleaseHistory({
+    publishes: [pub()], approvalsById: new Map(),
+    rollbacks: [rbk({ status: 'failed', failureReason: 'provider failed' })],
+  })
+  assert.equal(h.find((e) => e.id === 'PUB-1001')?.rolledBackByRollbackId, undefined)
+  assert.equal(h.find((e) => e.id === 'RBK-1001')?.status, 'rollback_failed')
+})
+
 // ── Filters ───────────────────────────────────────────────────────────────────
 test('filterReleaseHistory: business / environment / status / kind / date', () => {
   const entries = buildReleaseHistory({
