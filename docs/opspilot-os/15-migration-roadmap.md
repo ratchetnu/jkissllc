@@ -29,14 +29,54 @@
 - ⏭️ **Next tenancy gate:** complete the stable-ID payroll value migration, validate
   legacy compatibility under `TENANCY_DUAL_WRITE`, and prove read/write equality before
   considering `TENANCY_ENABLED`.
-- ✅ **Release control through 3B.6: COMPLETE.** Owner approval, controlled publish,
-  production verification, release history, and controlled rollback are implemented.
-  3B.7 adds a read-only activation-readiness gate; production execution remains off until
-  that gate and a Preview canary are clean.
+- ✅ **Release control through 3B.8: COMPLETE (execution still OFF).** Owner approval,
+  controlled publish, production verification, release history, and controlled
+  (typed-confirm) rollback shipped in **3B.6**; the read-only **activation-readiness gate**
+  shipped in **3B.7**; **3B.8** added fail-closed canary readiness, GitHub-Actions workflow
+  hardening (dispatch input→env, whole-value branch-ref guard), callback-to-job binding +
+  UUID job ids, and a fail-closed automatic-rollback path. All `OPERION_*` production-execution
+  flags **remain OFF**; live promotion/rollback stay gated on a clean activation-readiness
+  result + Preview canary. Increment status and open follow-ups are in the table below.
 
 Ordering follows the standard sequence, adjusted for evidence: **the four §1
 defects are already fixed**, so Phase 0 was lighter than the old roadmap assumed;
 and because storage is Redis, "row-level security" = key-prefix isolation.
+
+### Operion Release Center — increment status & open follow-ups _(2026-07-19)_
+
+Shipped to `main` (all execution flags off; Preview-verified). Independent review is
+recorded on each PR; unresolved items are tracked in **issue #27**.
+
+| Increment | Scope | PRs | State |
+|---|---|---|---|
+| 3B.6 | Release History + Details + controlled owner rollback (typed confirm; failed rollbacks retryable) | #19, #21 | ✅ merged |
+| 3B.7 | Read-only activation-readiness gate (owner-only, fail-closed) | #20 | ✅ merged |
+| 3B.8 | Canary readiness + Actions workflow hardening + callback-to-job binding + fail-closed rollback path | #22–#26 | ✅ merged |
+| — | Production-project resolver (never Preview) + Release Center UX + owner-tab gating | #28 | 🔄 in review |
+
+**Open follow-ups — none block the flags-off posture; all are prerequisites to enabling execution:**
+
+_Activation-readiness correctness (readiness audit):_
+- **P2** — readiness `vercel` check gates on `VERCEL_PROJECT_ID`, which no consumer reads
+  (`activation-readiness/route.ts` vs `vercel-provider.ts` `configured = !!token`) → false "blocked".
+- **P2** — provider checks assert credential **presence**, not validity (green on an invalid
+  `VERCEL_TOKEN` / GitHub App key / callback secret).
+- **P2** — `current_production` / `rollback_target` derive from `createdAt` ordering → wrong
+  "current" after a rollback; also needs ≥2 READY deployments + N live Vercel calls per load.
+- **P3** — `OPERION_PRODUCTION_PROMOTION_ENABLED` arms both publish **and** live rollback;
+  readiness presents them as separate stages.
+
+_Automation hardening (issue #27):_
+- **P3** — verify `partially_deployed` in `APPROVED_STATUSES` is unreachable before owner
+  approval (`preflight.ts`); add a state-machine test.
+- **P3** — branch-ref guard `[[ =~ ]]` is bash-only; assert the Validate step stays
+  `shell: bash` (`operion-update.yml`).
+- **P3** — callback `pullRequestNumber | tonumber` throws on a non-numeric value; degrade to `null`.
+
+_Resolved — do not reopen:_ owner-approval fail-open (`=== true`), readiness magic-slice
+indices (named checks), Actions expression injection (input→env), multiline branch-ref grep
+bypass, Preview failures routing to a Production rollback, cross-environment callback replay,
+production-project Preview fallback (#28), owner-tab exposure to non-owner admins (#28).
 
 ---
 
