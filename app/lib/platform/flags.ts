@@ -105,6 +105,12 @@ export type FeatureFlag =
   // today's full listBookings scan.
   | 'OPERION_DUE_INDEX_DARK_LAUNCH'
   | 'OPERION_DUE_INDEX'
+  // Calibrated customer progress display (Option A) for the Book Now quote flow.
+  // Turns the single opaque analyze wait into a truthful six-stage progress view
+  // paced by measured p50 telemetry. Purely presentational + additive: OFF = the
+  // existing static "Analyzing your photos" view (byte-identical to today), no
+  // calibration/metric reads or writes. Changes NO backend behaviour and NO price.
+  | 'OPERION_PROGRESS_UX'
 
 export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   TENANCY_ENABLED: false,
@@ -178,6 +184,9 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   OPERION_EVENT_ENQUEUE: false,
   OPERION_DUE_INDEX_DARK_LAUNCH: false,
   OPERION_DUE_INDEX: false,
+  // Progress display — OFF everywhere by default. OFF = today's static analyzing
+  // view; ON = the calibrated six-stage progress UI. Presentational only.
+  OPERION_PROGRESS_UX: false,
 }
 
 export const ALL_FLAGS = Object.keys(FLAG_DEFAULTS) as FeatureFlag[]

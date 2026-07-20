@@ -11,6 +11,9 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import StepConfirm, { EMPTY_ATTEST, type AttestState, type DetectedItem } from './StepConfirm'
+import CalibratedProgress from './CalibratedProgress'
+import { DEFAULT_ANALYZE_P50_MS, type BackendOutcome } from '../lib/ai/progress-stages'
+import type { ProgressMetricPayload } from '../lib/ai/progress-metrics'
 import {
   seedDraftItems, buildConfirmationPayload,
   type DraftItem, type IsEverythingAnswer, type FollowUpValue, type CustomerFinalState,
@@ -192,14 +195,29 @@ export default function QuotePage() {
   // (the reference/default pack) and any load/parse failure fall back to the full
   // local catalog — i.e. today's experience is preserved unless a pack replaces it.
   const [intakeCfg, setIntakeCfg] = useState<{ packId: string; serviceTemplates: { id: string }[]; intakeQuestions: string[] } | null>(null)
+  // Presentational progress display (Option A), flag-gated (OPERION_PROGRESS_UX).
+  // OFF ⇒ the existing static AnalyzingView renders (unchanged behaviour).
+  const [progressUx, setProgressUx] = useState(false)
   useEffect(() => {
     let alive = true
     fetch('/api/intake/config', { credentials: 'same-origin' })
       .then(r => (r.ok ? r.json() : null))
-      .then(d => { if (alive && d?.config) setIntakeCfg(d.config) })
-      .catch(() => { /* fall back to the local catalog */ })
+      .then(d => { if (!alive || !d) return; if (d.config) setIntakeCfg(d.config); if (d.flags?.progressUx) setProgressUx(true) })
+      .catch(() => { /* fall back to the local catalog + static analyzing view */ })
     return () => { alive = false }
   }, [])
+  // Measured pace for the progress display. Fetched only when the flag is on; the
+  // safe default keeps the UI honest until (and if) real telemetry arrives.
+  const [analyzeP50Ms, setAnalyzeP50Ms] = useState(DEFAULT_ANALYZE_P50_MS)
+  useEffect(() => {
+    if (!progressUx) return
+    let alive = true
+    fetch('/api/quote/progress-calibration')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (alive && d && Number.isFinite(d.analyzeP50Ms)) setAnalyzeP50Ms(d.analyzeP50Ms) })
+      .catch(() => { /* keep the default pace */ })
+    return () => { alive = false }
+  }, [progressUx])
   const displayServices = useMemo(
     () => filterServicesByPack(SERVICES, intakeCfg?.serviceTemplates.map(t => t.id) ?? []),
     [intakeCfg],
@@ -227,6 +245,19 @@ export default function QuotePage() {
   const [analyzing, setAnalyzing] = useState(false)
   const [estimate, setEstimate] = useState<QuoteEstimate | null>(null)
   const analysisIdRef = useRef('')
+  // Option A progress lifecycle: the real API outcome (null while in flight) and a
+  // flag flipped once the progress view has finished its terminal animation, at
+  // which point the parent swaps to StepConfirm / ConfirmUnavailable.
+  const [progressOutcome, setProgressOutcome] = useState<BackendOutcome | null>(null)
+  const [progressDone, setProgressDone] = useState(false)
+  // The calibrated progress view owns the confirm step only when an analysis is
+  // genuinely running or has just resolved this session (never on a resumed record
+  // whose estimate is already present) and its terminal animation hasn't handed off.
+  const progressActive = progressUx && !progressDone && (analyzing || progressOutcome != null)
+  // Block the primary nav while photos upload/analyze, and while the progress view
+  // is still resolving on the confirm step.
+  const navBlocked = (stepKey === 'photos' && (anyUploading || analyzing))
+    || (stepKey === 'confirm' && progressActive)
 
   // Guided confirmation (job-based services). The confirmation draft is lifted here
   // so it survives step navigation and is sent to the durable server-side workflow.
@@ -398,6 +429,9 @@ export default function QuotePage() {
   async function runAnalysis(): Promise<void> {
     if (!svc || !svc.jobBased || uploadedUrls.length === 0) return
     setAnalyzing(true); setErr('')
+    // Reset the progress lifecycle for this run (re-analysis re-shows progress).
+    setProgressOutcome(null); setProgressDone(false)
+    let outcome: BackendOutcome = { kind: 'error' }
     try {
       const res = await fetch('/api/quote/analyze', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -409,15 +443,31 @@ export default function QuotePage() {
         analysisIdRef.current = j.estimate.analysisId
         setFollowUps(Array.isArray(j.followUps) ? j.followUps : [])
         setConfItems(seedDraftItems((j.estimate.items ?? []) as DetectedItem[]))
+        // Map the real decision → the progress terminal (never advances past this).
+        const decision = (j.estimate as QuoteEstimate).decision
+        outcome = decision === 'manual_review'
+          ? { kind: 'review' }
+          : { kind: 'success', decision: decision === 'instant_quote' ? 'instant_quote' : 'estimate_range' }
       }
     } catch { /* non-blocking — proceed without an instant estimate */ }
-    finally { setAnalyzing(false) }
+    finally {
+      setAnalyzing(false)
+      setProgressOutcome(outcome) // drives CalibratedProgress to its truthful terminal
+    }
   }
 
   // Fire-and-forget client funnel beacon (durable server-side counter). Never blocks.
   function recordClientEvent(event: string) {
     try {
       fetch('/api/quote/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event }), keepalive: true }).catch(() => {})
+    } catch { /* best-effort */ }
+  }
+
+  // Progress-UX instrumentation beacon (durable server-side aggregate). keepalive so
+  // it survives the terminal navigation / tab close; never blocks or throws.
+  function sendProgressMetric(p: ProgressMetricPayload) {
+    try {
+      fetch('/api/quote/progress-metric', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p), keepalive: true }).catch(() => {})
     } catch { /* best-effort */ }
   }
 
@@ -456,7 +506,13 @@ export default function QuotePage() {
     if (stepKey === 'job') loadEstimate()          // fetch as we leave the job-details step
     // Leaving the Photos step: analyze the uploaded set for an instant AI estimate.
     if (stepKey === 'photos' && svc?.jobBased && uploadedUrls.length > 0 && !estimate && !analyzing) {
-      await runAnalysis()
+      if (progressUx) {
+        // Don't await: advance to the confirm step immediately so the calibrated
+        // progress view is what the customer watches while the analysis runs.
+        void runAnalysis()
+      } else {
+        await runAnalysis()   // unchanged: button shows "Analyzing…" then advances
+      }
     }
     if (stepKey === 'confirm') recordClientEvent('confirmation_attested')
     setStep(s => Math.min(lastStep, s + 1))        // scroll handled by the [step] effect
@@ -642,7 +698,7 @@ export default function QuotePage() {
                 photoCount: uploadedUrls.length,
                 contactMethod,
               }}
-              onReset={() => { try { sessionStorage.removeItem('jkq_r'); window.history.replaceState(null, '', '/quote') } catch { /* noop */ } setSent(null); setFinalState(null); quoteIdemRef.current = ''; confIdemRef.current = ''; setEstimate(null); analysisIdRef.current = ''; setFollowUps([]); setConfItems([]); setConfAnswers({}); setIsEverything(''); setEverythingPictured(null); setAttest(EMPTY_ATTEST); setEstate({}); setStep(0); setSvcId(''); setPickupText(''); setDeliveryText(''); setSizeId(''); setHeavy(null); setStairs(null); setElevator(null); setPrefDate(''); setPhotos([]); setUpgrades([]); setName(''); setCompany(''); setPhone(''); setEmail(''); setPromo(''); setEst(null); setContactMethod('Text message'); setErr(''); setAnalyzing(false); setReserveOpen(false); setAvail(null); setBookDate(''); setBookWin(''); setBookMethod('stripe'); setBookProof(''); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
+              onReset={() => { try { sessionStorage.removeItem('jkq_r'); window.history.replaceState(null, '', '/quote') } catch { /* noop */ } setSent(null); setFinalState(null); quoteIdemRef.current = ''; confIdemRef.current = ''; setEstimate(null); analysisIdRef.current = ''; setFollowUps([]); setConfItems([]); setConfAnswers({}); setIsEverything(''); setEverythingPictured(null); setAttest(EMPTY_ATTEST); setEstate({}); setStep(0); setSvcId(''); setPickupText(''); setDeliveryText(''); setSizeId(''); setHeavy(null); setStairs(null); setElevator(null); setPrefDate(''); setPhotos([]); setUpgrades([]); setName(''); setCompany(''); setPhone(''); setEmail(''); setPromo(''); setEst(null); setContactMethod('Text message'); setErr(''); setAnalyzing(false); setProgressOutcome(null); setProgressDone(false); setReserveOpen(false); setAvail(null); setBookDate(''); setBookWin(''); setBookMethod('stripe'); setBookProof(''); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
           ) : (
             <>
               {/* Intro */}
@@ -688,7 +744,18 @@ export default function QuotePage() {
                         />
                       )}
                       {stepKey === 'confirm' && (
-                        estimate ? (
+                        // Option A: while an analysis is running/resolving and the
+                        // terminal animation hasn't finished, the calibrated progress
+                        // view owns the step. It settles ONLY on the real API outcome,
+                        // then hands off to StepConfirm / ConfirmUnavailable.
+                        progressActive ? (
+                          <CalibratedProgress
+                            analyzeP50Ms={analyzeP50Ms}
+                            settle={progressOutcome}
+                            onDone={() => setProgressDone(true)}
+                            onMetrics={sendProgressMetric}
+                          />
+                        ) : estimate ? (
                           <StepConfirm
                             estimate={{ items: estimate.items, confidence: estimate.confidence, reviewReasons: estimate.reviewReasons }}
                             followUps={followUps}
@@ -742,7 +809,7 @@ export default function QuotePage() {
                         </button>
                       )}
                       {step < lastStep ? (
-                        <button type="button" onClick={next} disabled={stepKey === 'photos' && (anyUploading || analyzing)} className="btn wiz-ease" style={{ flex: 1, justifyContent: 'center', padding: '15px 24px', fontSize: 15, opacity: stepKey === 'photos' && (anyUploading || analyzing) ? 0.6 : 1 }}>
+                        <button type="button" onClick={next} disabled={navBlocked} className="btn wiz-ease" style={{ flex: 1, justifyContent: 'center', padding: '15px 24px', fontSize: 15, opacity: navBlocked ? 0.6 : 1 }}>
                           {stepKey === 'photos' ? (
                             anyUploading ? <><Loader2 size={16} className="animate-spin" /> Uploading photos…</>
                             : analyzing ? <><Loader2 size={16} className="animate-spin" /> Analyzing your photos…</>
