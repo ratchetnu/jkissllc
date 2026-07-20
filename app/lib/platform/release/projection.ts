@@ -48,6 +48,26 @@ function jobPhase(status: string): JobPhase {
   }
 }
 
+/**
+ * Resolve the one automation phase that may influence the CURRENT release status.
+ *
+ * History is intentionally retained in the automation store, but an older failure must
+ * not remain the current state forever. The newest job is authoritative, and a successful
+ * reconciliation performed after a failed job supersedes that failure with live provider
+ * state. Cancelled/completed jobs remain available in History without acting like active
+ * failures on the Businesses dashboard.
+ */
+export function effectiveJobPhase(
+  job: Pick<UpdateAutomationJob, 'status' | 'updatedAt'> | undefined,
+  latestCheckedAt?: number,
+): JobPhase {
+  if (!job) return 'none'
+  const phase = jobPhase(job.status)
+  if (phase === 'none') return 'none'
+  if (phase === 'failed' && latestCheckedAt != null && latestCheckedAt >= job.updatedAt) return 'none'
+  return phase
+}
+
 function isInitialized(p: SyncProduct, biz: PlatformBusiness | undefined): boolean {
   if (p.status !== 'active') return false
   return !!(p.githubRepo || p.productionUrl || p.vercelProject || biz?.currentVersion)
@@ -102,12 +122,10 @@ export async function buildBusinessReleaseViews(): Promise<BusinessReleaseView[]
   catch { return [] }
 
   const bizById = new Map(businesses.map(b => [b.id, b]))
-  const activeJobById = new Map<string, UpdateAutomationJob>()
+  const newestJobById = new Map<string, UpdateAutomationJob>()
   for (const j of jobs) {
-    const phase = jobPhase(j.status)
-    if (phase === 'none') continue
-    const prev = activeJobById.get(j.businessId)
-    if (!prev || j.updatedAt > prev.updatedAt) activeJobById.set(j.businessId, j)
+    const prev = newestJobById.get(j.businessId)
+    if (!prev || j.updatedAt > prev.updatedAt) newestJobById.set(j.businessId, j)
   }
 
   const views: BusinessReleaseView[] = []
@@ -117,7 +135,9 @@ export async function buildBusinessReleaseViews(): Promise<BusinessReleaseView[]
     try { rec = await getLatest(p.id); history = await listHistory(p.id, 5) } catch { /* fail-soft */ }
 
     const biz = bizById.get(p.id)
-    const job = activeJobById.get(p.id)
+    const newestJob = newestJobById.get(p.id)
+    const currentPhase = effectiveJobPhase(newestJob, rec?.checkedAt)
+    const job = currentPhase === 'none' ? undefined : newestJob
     const ps = rec?.platformSync
     const dep = rec?.deployment
 
@@ -132,12 +152,12 @@ export async function buildBusinessReleaseViews(): Promise<BusinessReleaseView[]
     const signals: ReleaseSignals = {
       initialized: isInitialized(p, biz),
       installedVersion, latestVersion, health, updateAvailable,
-      job: job ? jobPhase(job.status) : 'none',
+      job: currentPhase,
       previewVerified: false,
-      verificationFailed: job ? jobPhase(job.status) === 'failed' : false,
+      verificationFailed: currentPhase === 'failed',
       blocking,
       driftReasons: attention,
-      lastUpdatedAt: biz?.lastDeploymentAt || dep?.deployedAt || rec?.checkedAt,
+      lastUpdatedAt: Math.max(biz?.lastDeploymentAt ?? 0, dep?.deployedAt ?? 0, rec?.checkedAt ?? 0) || undefined,
     }
     const rs = resolveReleaseState(signals)
 
