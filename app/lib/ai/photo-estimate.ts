@@ -1,9 +1,10 @@
 import { analyzeJunkPhotos } from './junk-analysis'
 import { monitorAnalysis, applyMonitor } from './analysis-monitor'
-import { reviewJunkAnalysis, reconcileWithCritic, criticEnabled, type CriticVerdict } from './junk-critic'
+import { reviewJunkAnalysis, reconcileWithCritic, criticEnabled, criticModeFor, type CriticVerdict } from './junk-critic'
 import { decideQuote } from '../pricing/quote-decision'
 import { getDisposalSettings } from '../disposal'
 import { getCalibration } from '../job-learning'
+import { isEnabled } from '../platform/flags'
 import { timeStage } from '../observability/pipeline-trace'
 import type { StoredAiEstimate } from './estimate-store'
 import { SERVICE_LABELS, type ServiceType } from '../bookings'
@@ -58,10 +59,13 @@ export async function buildPhotoEstimate(input: PhotoEstimateInput): Promise<Pho
     const [settings, calibration] = await Promise.all([getDisposalSettings(), getCalibration()])
     let decision = decideQuote({ analysis, settings, calibration, serviceType: input.serviceType, debris: input.debris, forceReview: monitor.forceReview })
 
-    // Second-opinion critic — only when about to auto-quote. Fail-soft.
+    // Second-opinion critic — only when about to auto-quote. Fail-soft. The reviewer
+    // inspects the structured numbers by default and spends a full second vision pass
+    // only on borderline-confidence reads (OPERION_CRITIC_JSON); OFF ⇒ vision always.
     let critic: CriticVerdict | null = null
     if (decision.decision === 'instant_quote' && criticEnabled()) {
-      critic = await reviewJunkAnalysis({ analysis, photoUrls: input.photoUrls, serviceLabel })
+      const mode = criticModeFor(analysis.confidence, isEnabled('OPERION_CRITIC_JSON'))
+      critic = await reviewJunkAnalysis({ analysis, photoUrls: input.photoUrls, serviceLabel, mode })
       if (critic) {
         analysis = reconcileWithCritic(analysis, critic)
         decision = decideQuote({ analysis, settings, calibration, serviceType: input.serviceType, debris: input.debris, forceReview: monitor.forceReview || critic.recommend === 'review' })
