@@ -10,6 +10,8 @@
 
 import type { ModelMessage } from 'ai'
 import { runAiTask } from './service'
+import { resolveAiPhotoUrls } from './photo-optimize'
+import { imageOptimizationEnabled } from './image-optimize-config'
 import type { JunkPhotoAnalysis } from './analysis-schema'
 
 export type CriticRecommend = 'accept' | 'range' | 'review'
@@ -37,7 +39,10 @@ export async function reviewJunkAnalysis(input: {
   photoUrls: string[]
   serviceLabel?: string
 }): Promise<CriticVerdict | null> {
-  const photos = input.photoUrls.filter(u => /^https?:\/\/\S+$/i.test(u)).slice(0, 8)
+  const allowed = input.photoUrls.filter(u => /^https?:\/\/\S+$/i.test(u)).slice(0, 8)
+  // Review the SAME (optimized) images the primary estimator saw when optimization
+  // is on; original URLs otherwise. Byte-identical to today when the flag is off.
+  const { urls: photos } = await resolveAiPhotoUrls(allowed, { enabled: imageOptimizationEnabled() })
   if (photos.length === 0) return null
 
   // Give the reviewer a compact summary of the estimate to critique (not the whole

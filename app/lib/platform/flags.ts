@@ -67,6 +67,18 @@ export type FeatureFlag =
   // (incl. Production) = the approval routes 404 and no approval can be created. The actual
   // publish execution stays gated by OPERION_PRODUCTION_PROMOTION_ENABLED in a later phase.
   | 'OPERION_APPROVAL_GATE_ENABLED'
+  // AI image optimization — produce a downscaled/compressed derivative of each
+  // uploaded photo and send THAT to the vision model, preserving the original for
+  // every booking. MASTER switch (OFF everywhere by default): OFF = no derivative is
+  // generated at upload and the model reads the original — byte-identical to today.
+  // Turning it on enables ONLY the low-risk set (EXIF orient, long-edge resize, JPEG
+  // quality, metadata strip). The higher-risk cleanups below each stay independently
+  // gated OFF until the shadow eval proves no quote-accuracy regression.
+  | 'IMAGE_OPTIMIZATION_ENABLED'
+  | 'IMAGE_OPT_AUTOCROP_ENABLED'   // trim uniform whitespace / borders
+  | 'IMAGE_OPT_NORMALIZE_ENABLED'  // adaptive brightness + contrast normalization
+  | 'IMAGE_OPT_SHARPEN_ENABLED'    // mild sharpen after downscale
+  | 'IMAGE_OPT_DENOISE_ENABLED'    // mild blur to suppress sensor noise
 
 export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   TENANCY_ENABLED: false,
@@ -123,6 +135,14 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   // Approval gate — OFF everywhere by default (incl. Production). Enabled in PREVIEW ONLY to
   // exercise the owner approval + typed-confirmation workflow. Records intent only; no publish.
   OPERION_APPROVAL_GATE_ENABLED: false,
+  // Image optimization — master OFF everywhere. OFF = no derivative generated, model
+  // reads the original (byte-identical to today). ON = low-risk set only. The four
+  // higher-risk cleanups stay OFF until the shadow eval clears each one.
+  IMAGE_OPTIMIZATION_ENABLED: false,
+  IMAGE_OPT_AUTOCROP_ENABLED: false,
+  IMAGE_OPT_NORMALIZE_ENABLED: false,
+  IMAGE_OPT_SHARPEN_ENABLED: false,
+  IMAGE_OPT_DENOISE_ENABLED: false,
 }
 
 export const ALL_FLAGS = Object.keys(FLAG_DEFAULTS) as FeatureFlag[]
