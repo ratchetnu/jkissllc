@@ -15,6 +15,7 @@ import { getAutomationProvider } from './provider'
 import { getPreviewProvider } from './vercel-provider'
 import { artifactsComplete, isAlreadyDeployed } from './deploy-view'
 import { getBusiness, getUpdate } from '../updates/store'
+import { productionProjectFor } from '../production-project'
 import * as store from './store'
 
 const flag = (f: Parameters<typeof isEnabled>[0], env?: Record<string, string | undefined>) => isEnabled(f, env)
@@ -92,7 +93,7 @@ export async function preparePreview(input: {
     const strategy = effectiveStrategy(input.strategy ?? 'ai_adaptation', env)
     const autoRollback = automaticRollbackEligible({
       enabled: flag('OPERION_AUTOMATIC_ROLLBACK_ENABLED', env),
-      productionProjectId: business.productionProjectId || business.deployProject,
+      productionProjectId: productionProjectFor(business),
       irreversibleMigration: !!update.migrationRequired && !update.rollbackSupported,
       previousVerifiedCommit: business.currentCommit,
     })
@@ -153,7 +154,7 @@ export async function approveProduction(input: {
     }
     // Capture the current production deployment as the known-good rollback target BEFORE we
     // change production, so automatic rollback (if enabled) can instantly restore it.
-    const projectId = input.business.productionProjectId || input.business.previewProjectId
+    const projectId = productionProjectFor(input.business)
     if (projectId && !j.rollbackTargetDeploymentId) {
       const cur = await getPreviewProvider(env).findProductionDeployment(projectId)
       if (cur.ok && cur.data && cur.data.ready) j.rollbackTargetDeploymentId = cur.data.deploymentId
@@ -179,7 +180,7 @@ export async function advancePromotion(input: { jobId: string; env?: Record<stri
   if (job.status !== 'production_deploying' && job.status !== 'verifying') return { ok: false, reason: `job is ${job.status}, not deploying` }
   const business = await getBusiness(job.businessId)
   if (!business) return { ok: false, reason: 'business missing' }
-  const projectId = business.productionProjectId || business.previewProjectId
+  const projectId = productionProjectFor(business)
   return store.withBusinessLock<ApproveResult>(job.businessId, async () => {
     const j = await store.getJob(input.jobId); if (!j) return { ok: false, reason: 'no_job' }
     if (j.status === 'production_deploying') {
@@ -301,7 +302,7 @@ export async function advanceRollback(input: { jobId: string; env?: Record<strin
   if (!gate.ok) return { ok: false, reason: gate.reason }
   const business = await getBusiness(job.businessId)
   if (!business) return { ok: false, reason: 'business missing' }
-  const projectId = business.productionProjectId || business.previewProjectId
+  const projectId = productionProjectFor(business)
   return store.withBusinessLock<ApproveResult>(job.businessId, async () => {
     const j = await store.getJob(input.jobId); if (!j || j.status !== 'rollback_required') return { ok: false, reason: 'job changed' }
     j.status = 'rolling_back'; j.rollbackAttemptCount = (j.rollbackAttemptCount ?? 0) + 1; j.updatedAt = now(); await store.saveJob(j)
