@@ -103,7 +103,7 @@ export const POST = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
   const mode = resolveRollbackMode(process.env)
   const vercel = getPreviewProvider(process.env)
   const promote: RollbackPromoteFn = mode === 'live'
-    ? async (project, dep) => { const r = await vercel.promoteProduction(project, dep); return r.ok ? { ok: true } : { ok: false, error: r.error, category: r.category } }
+    ? async (project, dep) => { const r = await vercel.rollbackProduction(project, dep); return r.ok ? { ok: true } : { ok: false, error: r.error, category: r.category } }
     : async () => ({ ok: true })   // simulated — no Vercel call
 
   const latestPublish = await getLatestPublishFor(id)

@@ -127,6 +127,24 @@ test('cancelPreviewDeployment PATCHes the cancel endpoint', async () => {
   assert.ok(m.calls[0].url.includes('/v12/deployments/dpl_1/cancel'))
 })
 
+test('rollbackProduction POSTs the dedicated rollback endpoint, never promote', async () => {
+  const m = mockFetch([['/v9/projects/proj%20super/rollback/dpl%2Fprior', () => ({ status: 200, body: {} })]])
+  const p = new VercelPreviewProvider(ENV, { fetch: m.fetch })
+  const r = await p.rollbackProduction('proj super', 'dpl/prior')
+  assert.equal(r.ok && r.data.rolledBack, true)
+  assert.equal(m.calls[0].init!.method, 'POST')
+  assert.equal(m.calls[0].url, 'https://api.vercel.com/v9/projects/proj%20super/rollback/dpl%2Fprior?teamId=team_x')
+  assert.equal(m.calls[0].url.includes('/promote/'), false)
+})
+
+test('rollbackProduction fails closed and categorizes missing targets', async () => {
+  const m = mockFetch([['/rollback/', () => ({ status: 404, body: {} })]])
+  const p = new VercelPreviewProvider(ENV, { fetch: m.fetch })
+  const missing = await p.rollbackProduction('proj', 'dpl_missing')
+  assert.equal(!missing.ok && missing.category, 'not_found')
+  assert.equal((await new VercelPreviewProvider({}, { fetch: m.fetch }).rollbackProduction('proj', 'dpl')).ok, false)
+})
+
 test('readDeploymentLogsReference returns inspector + events api (no log contents, no token)', async () => {
   const p = new VercelPreviewProvider(ENV, { fetch: mockFetch([]).fetch })
   const r = await p.readDeploymentLogsReference('dpl_1')
