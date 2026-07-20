@@ -12,7 +12,7 @@
     "lint": "eslint",
     "test:finance": "npx --yes tsx@4 --test scripts/finance.test.ts",
     "test:routes": "npx --yes tsx@4 --test scripts/verbal-confirm.test.ts",
-    "test:ai": "npx --yes tsx@4 --test scripts/ai-service.test.ts scripts/ai-phase2.test.ts scripts/ai-phase3.test.ts scripts/ai-audit.test.ts scripts/ai-telemetry.test.ts",
+    "test:ai": "npx --yes tsx@4 --test scripts/ai-service.test.ts scripts/ai-phase2.test.ts scripts/ai-phase3.test.ts scripts/ai-audit.test.ts scripts/ai-telemetry.test.ts scripts/pipeline-observability.test.ts",
     "test:ai:regression": "npx --yes tsx@4 --test scripts/ai-regression.test.ts",
     "eval:photo-estimator": "npx --yes tsx@4 scripts/eval-photo-estimator.mjs",
     "predeploy": "npx tsc --noEmit && npm run test:ai:regression",
@@ -43,6 +43,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
+    "playwright-core": "1.61.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

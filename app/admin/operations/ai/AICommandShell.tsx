@@ -13,7 +13,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
 export type AISection =
-  | 'overview' | 'queue' | 'performance' | 'learning' | 'models' | 'controls' | 'alerts' | 'settings'
+  | 'overview' | 'queue' | 'performance' | 'pipeline' | 'learning' | 'models' | 'controls' | 'alerts' | 'settings'
 
 type SectionDef = { id: AISection; label: string; href: string; hint: string }
 
@@ -24,6 +24,7 @@ export const AI_SECTIONS: SectionDef[] = [
   { id: 'overview',    label: 'Overview',      href: '/admin/operations/ai',              hint: 'Health, attention, next step' },
   { id: 'queue',       label: 'Evaluation Queue', href: '/admin/operations/ai/queue',       hint: 'Select, run, review' },
   { id: 'performance', label: 'Performance',   href: '/admin/operations/ai/performance',  hint: 'Accuracy, trends, leaderboards' },
+  { id: 'pipeline',    label: 'Pipeline',      href: '/admin/operations/ai/pipeline',     hint: 'Stage latency, throughput' },
   { id: 'learning',    label: 'Review & Learning', href: '/admin/operations/ai/learning', hint: 'Ground truth, categories, history' },
   { id: 'models',      label: 'Models & Versions', href: '/admin/operations/ai/models',   hint: 'Version registry (read-only)' },
   { id: 'controls',    label: 'Usage & Controls', href: '/admin/operations/ai/usage',     hint: 'Budget, kill switch, usage' },

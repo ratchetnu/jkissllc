@@ -6,6 +6,22 @@ import { getBookingByToken } from '../../../lib/bookings'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
 import { activeTenantIds } from '../../../lib/platform/tenancy/tenant-store'
 import { alert } from '../../../lib/alerts'
+import { runWithTrace, timeStage, markTraceOutcome, NOTIFY_FEATURE } from '../../../lib/observability/pipeline-trace'
+
+// Owner-notification with its own single-stage pipeline trace, so notification latency
+// lands in the observability dashboard (a no-op unless the flag is on). Kept separate
+// from the job trace, which has already flushed by the time the cron notifies.
+async function notifyTraced(token: string, status: 'completed' | 'manual_review' | 'failed'): Promise<void> {
+  const b = await getBookingByToken(token)
+  if (!b) return
+  await runWithTrace(
+    { requestId: `notify-${token}-${Date.now().toString(36)}`, feature: NOTIFY_FEATURE, bookingId: token },
+    async () => {
+      markTraceOutcome(status)
+      await timeStage('notification', () => notifyOwnerAiOutcome(b, status))
+    },
+  )
+}
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -42,8 +58,7 @@ export async function GET(req: NextRequest) {
       for (const r of summary.results) {
         if (r.status === 'completed' || r.status === 'manual_review' || r.status === 'failed') {
           try {
-            const b = await getBookingByToken(r.token)
-            if (b) await notifyOwnerAiOutcome(b, r.status)
+            await notifyTraced(r.token, r.status)
           } catch (e) { console.error('[cron/ai-jobs] notify', e) }
         }
         // Retry exhaustion / terminal AI failure → operational alert.
@@ -58,8 +73,7 @@ export async function GET(req: NextRequest) {
       for (const r of finalSummary.results) {
         if (r.status === 'completed' || r.status === 'manual_review' || r.status === 'failed') {
           try {
-            const b = await getBookingByToken(r.token)
-            if (b) await notifyOwnerAiOutcome(b, r.status)
+            await notifyTraced(r.token, r.status)
           } catch (e) { console.error('[cron/ai-jobs] final notify', e) }
         }
         if (r.status === 'failed') await alert({ type: 'final_analysis_failed', severity: 'ERROR', worker: 'runDueFinalAiJobs', booking: r.token.slice(0, 8), errorClass: 'retry_exhausted' })
