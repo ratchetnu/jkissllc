@@ -4,6 +4,7 @@ import { reviewJunkAnalysis, reconcileWithCritic, criticEnabled, type CriticVerd
 import { decideQuote } from '../pricing/quote-decision'
 import { getDisposalSettings } from '../disposal'
 import { getCalibration } from '../job-learning'
+import { timeStage } from '../observability/pipeline-trace'
 import type { StoredAiEstimate } from './estimate-store'
 import { SERVICE_LABELS, type ServiceType } from '../bookings'
 
@@ -39,28 +40,35 @@ export async function buildPhotoEstimate(input: PhotoEstimateInput): Promise<Pho
   const nowIso = new Date().toISOString()
   const serviceLabel = SERVICE_LABELS[input.serviceType] ?? input.serviceType
 
-  // 1) AI visual analysis (fail-soft — always returns an analysis object).
-  const analyzed = await analyzeJunkPhotos({
+  // 1) AI visual analysis (fail-soft — always returns an analysis object). Timed as the
+  // `ai` stage (its internal preprocessing + provider round-trip are recorded as nested
+  // sub-stages). Observability is a no-op when no pipeline trace is active.
+  const analyzed = await timeStage('ai', () => analyzeJunkPhotos({
     analysisId: input.analysisId, bookingId: input.bookingId, photoUrls: input.photoUrls, serviceLabel, nowIso,
-  })
+  }))
 
-  // 1b) Deterministic consistency monitor (always on, zero AI cost).
-  const monitor = monitorAnalysis(analyzed.analysis)
-  let analysis = applyMonitor(analyzed.analysis, monitor)
+  // 1b)+2)+3)+1c) The deterministic pricing phase: consistency monitor, disposal
+  // settings/calibration fetch, pricing decision, and an optional second-opinion critic
+  // (default off) — timed together as the `pricing` stage.
+  const { monitor, analysis, decision, critic } = await timeStage('pricing', async () => {
+    const monitor = monitorAnalysis(analyzed.analysis)
+    let analysis = applyMonitor(analyzed.analysis, monitor)
 
-  // 2)+3) Deterministic pricing + decision. A monitor 'block' forces manual review.
-  const [settings, calibration] = await Promise.all([getDisposalSettings(), getCalibration()])
-  let decision = decideQuote({ analysis, settings, calibration, serviceType: input.serviceType, debris: input.debris, forceReview: monitor.forceReview })
+    // Deterministic pricing + decision. A monitor 'block' forces manual review.
+    const [settings, calibration] = await Promise.all([getDisposalSettings(), getCalibration()])
+    let decision = decideQuote({ analysis, settings, calibration, serviceType: input.serviceType, debris: input.debris, forceReview: monitor.forceReview })
 
-  // 1c) Second-opinion critic — only when about to auto-quote. Fail-soft.
-  let critic: CriticVerdict | null = null
-  if (decision.decision === 'instant_quote' && criticEnabled()) {
-    critic = await reviewJunkAnalysis({ analysis, photoUrls: input.photoUrls, serviceLabel })
-    if (critic) {
-      analysis = reconcileWithCritic(analysis, critic)
-      decision = decideQuote({ analysis, settings, calibration, serviceType: input.serviceType, debris: input.debris, forceReview: monitor.forceReview || critic.recommend === 'review' })
+    // Second-opinion critic — only when about to auto-quote. Fail-soft.
+    let critic: CriticVerdict | null = null
+    if (decision.decision === 'instant_quote' && criticEnabled()) {
+      critic = await reviewJunkAnalysis({ analysis, photoUrls: input.photoUrls, serviceLabel })
+      if (critic) {
+        analysis = reconcileWithCritic(analysis, critic)
+        decision = decideQuote({ analysis, settings, calibration, serviceType: input.serviceType, debris: input.debris, forceReview: monitor.forceReview || critic.recommend === 'review' })
+      }
     }
-  }
+    return { monitor, analysis, decision, critic }
+  })
 
   const stored: StoredAiEstimate = {
     id: input.analysisId,

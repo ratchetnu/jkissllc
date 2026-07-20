@@ -67,6 +67,14 @@ export type FeatureFlag =
   // (incl. Production) = the approval routes 404 and no approval can be created. The actual
   // publish execution stays gated by OPERION_PRODUCTION_PROMOTION_ENABLED in a later phase.
   | 'OPERION_APPROVAL_GATE_ENABLED'
+  // Operion AI pipeline observability — per-stage latency tracing over the durable
+  // Book Now AI job (queue, image preprocessing, provider, AI, pricing, database,
+  // notification) plus the read-only latency dashboard. Purely additive + fail-soft:
+  // OFF = NO trace is established, nothing is written, and the job path is byte-
+  // identical to today; the dashboard shows an "enable the flag" empty state. Turning
+  // it on only starts recording stage timings for future performance tuning — it
+  // changes no customer behavior, sends nothing, and never gates the job.
+  | 'AI_PIPELINE_OBSERVABILITY_ENABLED'
 
 export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   TENANCY_ENABLED: false,
@@ -123,6 +131,10 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   // Approval gate — OFF everywhere by default (incl. Production). Enabled in PREVIEW ONLY to
   // exercise the owner approval + typed-confirmation workflow. Records intent only; no publish.
   OPERION_APPROVAL_GATE_ENABLED: false,
+  // AI pipeline observability — OFF everywhere by default. Enabled (Preview first) to
+  // start recording per-stage latency traces for the Book Now AI job. Inert when off:
+  // no trace, no writes, no behavior change.
+  AI_PIPELINE_OBSERVABILITY_ENABLED: false,
 }
 
 export const ALL_FLAGS = Object.keys(FLAG_DEFAULTS) as FeatureFlag[]

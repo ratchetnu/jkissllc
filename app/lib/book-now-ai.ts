@@ -14,6 +14,7 @@ import {
 // this authoritative path. (The old inline 2nd-vision-call shadow block — which caused
 // the double-analysis timeouts — is permanently removed.)
 import { maybeEnqueueShadowJob } from './estimation/shadow-worker'
+import { runWithTrace, markStage, markTraceOutcome } from './observability/pipeline-trace'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Durable, server-side Book Now AI processing — the RECOVERY path for the
@@ -167,6 +168,28 @@ async function processAiJobInner(token: string, opts: { initiatedBy?: string; te
   const b = await getBookingByToken(token)
   if (!b) return { ok: false, status: 'failed', reason: 'not_found' }
 
+  // ── Observability: one pipeline trace per attempt ──────────────────────────
+  // Id-correlated with the analysis/estimate id (`srv-<token>-<attempt>`) so a trace
+  // joins straight to the stored estimate + booking. `queuedAt` drives the queue-wait
+  // stage; the terminal ProcessResult stamps the trace's status. Wholly INERT unless
+  // AI_PIPELINE_OBSERVABILITY_ENABLED is on — no trace, no writes, identical behavior.
+  const attempt = (b.aiJob?.attempts ?? 0) + 1
+  const queuedAt = b.aiJob?.nextRetryAt ?? b.aiJob?.updatedAt
+  return runWithTrace(
+    {
+      requestId: `srv-${b.token}-${attempt}`, feature: 'book-now-ai',
+      bookingId: b.token, jobId: b.aiJob?.idempotencyKey, attempt, queuedAt,
+    },
+    async () => {
+      if (queuedAt != null) markStage('queue', now() - queuedAt)
+      const result = await runJobAttempt(b, opts)
+      markTraceOutcome(result.status, result.reason ?? result.errorCode ?? result.decision)
+      return result
+    },
+  )
+}
+
+async function runJobAttempt(b: Booking, opts: { initiatedBy?: string; tenantId?: string }): Promise<ProcessResult> {
   // Idempotency: a valid estimate already landed (e.g. the customer path succeeded
   // after enqueue) → mark complete, never double-price.
   if (hasValidEstimate(b)) {
