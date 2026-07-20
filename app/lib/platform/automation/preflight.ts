@@ -5,6 +5,7 @@
 
 import type { PlatformUpdate, PlatformBusiness, UpdateCompatibility } from '../updates/types'
 import { businessRepoRef } from './repo-identity'
+import { KNOWN_ROLES } from './target-policy'
 
 export type PreflightGate = { id: string; label: string; ok: boolean; blocking: boolean; reason?: string }
 export type PreflightResult = { ok: boolean; gates: PreflightGate[] }
@@ -33,6 +34,10 @@ export function evaluatePreflight(x: PreflightInput): PreflightResult {
   add('github_actions_enabled', 'GitHub Actions execution enabled', x.flags.githubActions, true, 'OPERION_GITHUB_ACTIONS_ENABLED is off')
   add('production_control_plane', 'Production control plane', x.flags.controlPlane !== false, true, 'workflow dispatch is disabled from Vercel Preview deployments')
   add('target_is_target', 'Selected business is a deploy target', x.business.role === 'target' || x.business.role === 'source_and_target', true, 'business is not a target')
+  // Managed-target boundary readiness: the target identity (role + id) must be resolved
+  // server-side BEFORE dispatch, so the downstream manifest build enforces the target-path
+  // policy. Fail closed if the role is unknown — a transfer must never dispatch without it.
+  add('target_context_resolved', 'Target identity resolved server-side', KNOWN_ROLES.includes(x.business.role) && !!x.business.id, true, 'target business role/identity is not resolved (cannot enforce the managed-target boundary)')
   add('target_configured', 'Target automation configured', x.business.configurationStatus === 'ready'
     && !!businessRepoRef(x.business) && !!x.business.githubInstallationId && !!x.business.automationWorkflowFile,
     true, 'target GitHub App install / repo / workflow not configured (status must be "ready")')

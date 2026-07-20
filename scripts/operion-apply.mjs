@@ -28,6 +28,20 @@ function isSafeRepoPath(p) {
   return p.split('/').every(s => s !== '' && s !== '.' && s !== '..' && /^[A-Za-z0-9._()\[\]-]+$/.test(s))
 }
 
+// ── Managed-target boundary (defence in depth) ───────────────────────────────
+// Mirrors app/lib/platform/automation/target-policy.ts. Keep the two in sync.
+const SUPPORTED_POLICY_VERSIONS = [1]
+const CONTROL_PLANE_PATH_PREFIXES = [
+  'app/admin/operations/release', 'app/api/admin/release',
+  'app/lib/platform/release', 'app/lib/platform/automation',
+  'app/api/automation', 'app/lib/platform/updates', 'app/lib/platform/sync',
+]
+const CONTROL_PLANE_SEGS = CONTROL_PLANE_PATH_PREFIXES.map(p => p.split('/').filter(Boolean))
+function isControlPlanePath(p) {
+  const segs = String(p).split('/').filter(Boolean)
+  return CONTROL_PLANE_SEGS.some(pre => segs.length >= pre.length && pre.every((s, i) => segs[i] === s))
+}
+
 const manifestUrl = OPERION_CALLBACK_URL.replace(/\/callback\/?$/, '/manifest')
 const body = JSON.stringify({ jobId: OPERION_JOB_ID })
 const ts = String(Date.now())
@@ -41,6 +55,16 @@ const res = await fetch(manifestUrl, {
 if (!res.ok) die(`manifest fetch failed (${res.status})`)
 const { manifest, contents } = await res.json()
 if (!manifest || !Array.isArray(manifest.entries)) die('manifest response malformed')
+
+// Managed-target boundary: a legacy manifest lacking policy/target identity must not drive
+// a cross-repository transfer, and a managed target must never receive control-plane paths.
+if (!SUPPORTED_POLICY_VERSIONS.includes(manifest.policyVersion)) die(`MANIFEST_POLICY_VERSION_UNSUPPORTED: ${manifest.policyVersion}`)
+const targetRole = manifest.target && manifest.target.role
+if (targetRole !== 'source' && targetRole !== 'target' && targetRole !== 'source_and_target') die('TARGET_CONTEXT_REQUIRED: manifest has no resolved target role')
+if (targetRole === 'target') {
+  const forbidden = manifest.entries.map(e => e.path).filter(isControlPlanePath)
+  if (forbidden.length) die(`CONTROL_PLANE_PATH_FORBIDDEN: ${forbidden.length} control-plane path(s) rejected for managed target`)
+}
 
 // Deterministic order: explicit order, add/modify before delete, then path.
 const rank = (a) => (a === 'delete' ? 1 : 0)

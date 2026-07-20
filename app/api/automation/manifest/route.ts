@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { isEnabled } from '../../../lib/platform/flags'
 import { verifyCallback } from '../../../lib/platform/automation/callback'
 import { getJob } from '../../../lib/platform/automation/store'
-import { getBusiness } from '../../../lib/platform/updates/store'
+import { getBusiness, getCompatMap } from '../../../lib/platform/updates/store'
 import { getAutomationProvider } from '../../../lib/platform/automation/provider'
 import { parseRepoName, businessRepoRef } from '../../../lib/platform/automation/repo-identity'
 import { buildCommitTransferManifest } from '../../../lib/platform/automation/manifest-builder'
+import { KNOWN_ROLES } from '../../../lib/platform/automation/target-policy'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -39,12 +40,30 @@ export async function POST(req: NextRequest) {
   // Target allowlist: the job's target must resolve to the configured business repo.
   if (!businessRepoRef(business)) return NextResponse.json({ error: 'target repository not configured' }, { status: 409 })
 
+  // Managed-target boundary context — resolved SERVER-SIDE from registered records only
+  // (never from the request body). Fail closed if the business role is not a known role.
+  if (!KNOWN_ROLES.includes(business.role)) {
+    return NextResponse.json({ error: 'target business role is not resolved', code: 'TARGET_CONTEXT_REQUIRED' }, { status: 409 })
+  }
+  const compat = (await getCompatMap(job.updateId))[business.id]
+
   const built = await buildCommitTransferManifest({
     provider: getAutomationProvider(),
     installationId: business.githubInstallationId,
     sourceRepo, sourceRepoName: job.sourceRepository!, sourceCommit: job.sourceCommit,
     updateKey: job.updateId,
+    target: {
+      businessId: business.id,
+      role: business.role,
+      edition: business.edition,
+      componentsToExclude: compat?.componentsToExclude,
+    },
   })
-  if (!built.ok) return NextResponse.json({ error: built.error }, { status: 422 })
+  if (!built.ok) {
+    // Structured, non-secret blocker for the Release Center. No paths/tokens leak beyond
+    // the repo-relative path already present in the (server-derived) manifest.
+    const status = built.code === 'TARGET_CONTEXT_REQUIRED' ? 409 : 422
+    return NextResponse.json({ error: built.error, code: built.code, violations: built.violations }, { status })
+  }
   return NextResponse.json({ jobId, ...built.data })
 }

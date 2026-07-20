@@ -5,6 +5,7 @@
 // duplicates, outside-repo, missing hashes). No I/O — fully testable.
 
 import crypto from 'node:crypto'
+import type { BusinessRole } from '../updates/types'
 
 export type ManifestAction = 'add' | 'modify' | 'delete'
 export type ManifestEntry = {
@@ -18,6 +19,13 @@ export type ApplyManifest = {
   sourceRepo: string
   sourceCommit?: string
   entries: ManifestEntry[]
+  // ── Managed-target boundary provenance (Stage 2A) ──────────────────────────
+  // Stamped by the manifest builder from SERVER-RESOLVED business records (never
+  // browser input). `policyVersion` + `target` let the CI runner and the apply
+  // executor independently re-enforce the target-path policy. A manifest lacking
+  // them must not be used for a new cross-repository transfer.
+  policyVersion?: number
+  target?: { businessId: string; role: BusinessRole; edition?: string }
 }
 
 export const MAX_MANIFEST_ENTRIES = 200

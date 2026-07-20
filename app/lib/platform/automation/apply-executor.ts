@@ -6,6 +6,7 @@
 // against an in-memory tree (no real disk, no network).
 
 import { type ApplyManifest, type ManifestEntry, isSafeRepoPath, sortEntries, sha256, validateManifest } from './manifest'
+import { evaluateTransfer, type TargetContext } from './target-policy'
 
 export interface FsAdapter {
   exists(path: string): boolean
@@ -28,7 +29,7 @@ export type ApplyResult = {
 /** Deterministically apply a manifest. Returns structured results; never throws on a bad
  *  entry — it records a failure so the workflow can abort cleanly and leave the branch
  *  recoverable (only touched files were written; the caller resets on ok=false). */
-export function applyManifest(manifest: ApplyManifest, contents: ContentMap, fs: FsAdapter): ApplyResult {
+export function applyManifest(manifest: ApplyManifest, contents: ContentMap, fs: FsAdapter, opts?: { target?: TargetContext }): ApplyResult {
   const applied: ApplyResult['applied'] = []
   const skipped: ApplyResult['skipped'] = []
   const failed: ApplyResult['failed'] = []
@@ -36,6 +37,19 @@ export function applyManifest(manifest: ApplyManifest, contents: ContentMap, fs:
   // Defence in depth: re-validate the whole manifest before touching anything.
   const v = validateManifest(manifest)
   if (!v.ok) return { ok: false, changed: false, applied, skipped, failed: v.errors.map(e => ({ path: '(manifest)', reason: e })) }
+
+  // Managed-target boundary (defence in depth). Enforce whenever a target context is
+  // available: an explicit server-resolved `opts.target` takes precedence over the
+  // manifest's own stamped `target` metadata (so a forged manifest role cannot relax the
+  // policy). A legacy manifest with neither keeps the prior path-safety-only behavior.
+  const target: TargetContext | undefined = opts?.target
+    ?? (manifest.target ? { businessId: manifest.target.businessId, role: manifest.target.role, edition: manifest.target.edition } : undefined)
+  if (target) {
+    const policy = evaluateTransfer(manifest.entries.map(e => e.path), target)
+    if (!policy.ok) {
+      return { ok: false, changed: false, applied, skipped, failed: policy.violations.map(x => ({ path: x.path, reason: x.code })) }
+    }
+  }
 
   for (const e of sortEntries(manifest.entries)) {
     if (!isSafeRepoPath(e.path)) { failed.push({ path: e.path, reason: 'unsafe path' }); continue }
