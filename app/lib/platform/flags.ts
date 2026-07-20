@@ -75,6 +75,18 @@ export type FeatureFlag =
   // it on only starts recording stage timings for future performance tuning — it
   // changes no customer behavior, sends nothing, and never gates the job.
   | 'AI_PIPELINE_OBSERVABILITY_ENABLED'
+  // AI image optimization — produce a downscaled/compressed derivative of each
+  // uploaded photo and send THAT to the vision model, preserving the original for
+  // every booking. MASTER switch (OFF everywhere by default): OFF = no derivative is
+  // generated at upload and the model reads the original — byte-identical to today.
+  // Turning it on enables ONLY the low-risk set (EXIF orient, long-edge resize, JPEG
+  // quality, metadata strip). The higher-risk cleanups below each stay independently
+  // gated OFF until the shadow eval proves no quote-accuracy regression.
+  | 'IMAGE_OPTIMIZATION_ENABLED'
+  | 'IMAGE_OPT_AUTOCROP_ENABLED'   // trim uniform whitespace / borders
+  | 'IMAGE_OPT_NORMALIZE_ENABLED'  // adaptive brightness + contrast normalization
+  | 'IMAGE_OPT_SHARPEN_ENABLED'    // mild sharpen after downscale
+  | 'IMAGE_OPT_DENOISE_ENABLED'    // mild blur to suppress sensor noise
   // ── OPERION AI latency (Phase 2) — all default OFF; each is additive + fail-soft,
   //    gated so OFF = byte-identical to today, and preserves quote accuracy. ──
   // Critic dedup: the second-opinion reviewer runs on the STRUCTURED analysis JSON by
@@ -153,6 +165,14 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   // start recording per-stage latency traces for the Book Now AI job. Inert when off:
   // no trace, no writes, no behavior change.
   AI_PIPELINE_OBSERVABILITY_ENABLED: false,
+  // Image optimization — master OFF everywhere. OFF = no derivative generated, model
+  // reads the original (byte-identical to today). ON = low-risk set only. The four
+  // higher-risk cleanups stay OFF until the shadow eval clears each one.
+  IMAGE_OPTIMIZATION_ENABLED: false,
+  IMAGE_OPT_AUTOCROP_ENABLED: false,
+  IMAGE_OPT_NORMALIZE_ENABLED: false,
+  IMAGE_OPT_SHARPEN_ENABLED: false,
+  IMAGE_OPT_DENOISE_ENABLED: false,
   // AI latency Phase 2 — all OFF by default (byte-identical to today).
   OPERION_CRITIC_JSON: false,
   OPERION_EVENT_ENQUEUE: false,

@@ -298,7 +298,7 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
   )
 }
 
-function Businesses() {
+function Businesses({ refreshNonce }: { refreshNonce: number }) {
   const [views, setViews] = useState<BizView[] | null>(null)
   const [updatesEnabled, setUpdatesEnabled] = useState(false)
   const [show, setShow] = useState(false)
@@ -310,7 +310,7 @@ function Businesses() {
       .then(j => { if (live && j?.businesses) { setViews(j.businesses); setUpdatesEnabled(!!j.updatesEnabled); setShow(true) } })
       .catch(() => {})
     return () => { live = false }
-  }, [nonce])
+  }, [nonce, refreshNonce])
   if (!show || !views) return null // owner-only: silently absent for non-owners
   return views.length === 0
     ? <Section title="Updates" icon={Rocket}><p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>No businesses have been added yet.</p></Section>
@@ -443,17 +443,43 @@ function ReleaseCenter() {
   const [state, setState] = useState<'loading' | 'ok' | 'error' | 'forbidden'>('loading')
   const [busy, setBusy] = useState(false)
   const [tab, setTab] = useState('updates')
+  const [refreshNonce, setRefreshNonce] = useState(0)
+  const [checkMessage, setCheckMessage] = useState('')
 
-  const load = useCallback(async () => {
-    setBusy(true)
+  const fetchSnapshot = useCallback(async () => {
     try {
       const res = await fetch('/api/admin/release', { credentials: 'same-origin' })
       if (res.status === 401 || res.status === 403) { setState('forbidden'); return }
       if (!res.ok) { setState('error'); return }
       setSnap(await res.json()); setState('ok')
     } catch { setState('error') }
-    finally { setBusy(false) }
   }, [])
+
+  const load = useCallback(async () => {
+    setBusy(true)
+    try { await fetchSnapshot() }
+    finally { setBusy(false) }
+  }, [fetchSnapshot])
+
+  const checkCurrentState = useCallback(async () => {
+    setBusy(true); setCheckMessage('')
+    try {
+      const res = await fetch('/api/admin/platform/sync/products/supercharged/reconcile', {
+        method: 'POST', credentials: 'same-origin',
+      })
+      const result = await res.json().catch(() => null)
+      if (!res.ok) {
+        setCheckMessage(result?.error || 'The current-state check could not run.')
+        return
+      }
+      await fetchSnapshot()
+      setRefreshNonce(n => n + 1)
+      setCheckMessage(result?.record?.failed
+        ? 'Supercharged was checked; a connection needs attention.'
+        : 'Supercharged current state checked successfully.')
+    } catch { setCheckMessage('The current-state check could not run.') }
+    finally { setBusy(false) }
+  }, [fetchSnapshot])
 
   useEffect(() => { load() }, [load])
 
@@ -470,11 +496,13 @@ function ReleaseCenter() {
           <h1 className="jkos-h" style={{ fontSize: 24, margin: 0 }}>Release Center</h1>
           <p style={{ fontSize: 13, color: 'var(--muted)', margin: '4px 0 0' }}>Test updates, review what changed, and safely publish when you’re ready.</p>
         </div>
-        <button onClick={load} disabled={busy} className="os-tap" aria-label="Refresh"
+        <button onClick={checkCurrentState} disabled={busy} className="os-tap" aria-label="Check Supercharged current state"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', background: 'var(--card)', border: '1px solid var(--line)', cursor: 'pointer' }}>
-          <RefreshCw size={14} style={{ animation: busy ? 'spin 1s linear infinite' : undefined }} /> Refresh
+          <RefreshCw size={14} style={{ animation: busy ? 'spin 1s linear infinite' : undefined }} /> {busy ? 'Checking…' : 'Check Supercharged'}
         </button>
       </div>
+
+      {checkMessage && <p role="status" style={{ fontSize: 12.5, color: 'var(--muted)', margin: '-8px 0 0' }}>{checkMessage}</p>}
 
       {state === 'loading' && (
         <div className="os-card" style={{ ...card, display: 'grid', placeItems: 'center', minHeight: 120 }}>
@@ -500,7 +528,7 @@ function ReleaseCenter() {
             <Tabs value={activeTab} onChange={setTab} tabs={tabs} />
           </div>
 
-          {activeTab === 'updates' && <Businesses />}
+          {activeTab === 'updates' && <Businesses refreshNonce={refreshNonce} />}
 
           {activeTab === 'readiness' && (
             <Section title="Ready Check" icon={ShieldCheck}>

@@ -15,12 +15,21 @@ import type {
   ReconciliationRecord, SyncProduct, SyncDashboardSummary, ProductStatusSnapshot, ProviderStatusView,
 } from './types'
 
+/** Optional production-safe scope for enabling reconciliation tenant-by-tenant. */
+export function syncProductAllowed(productId: string, env: Record<string, string | undefined> = process.env): boolean {
+  const configured = env.OPERION_SYNC_PRODUCT_IDS
+  if (!configured?.trim()) return true
+  const allowed = new Set(configured.split(',').map((id) => id.trim().toLowerCase()).filter(Boolean))
+  return allowed.has(productId.trim().toLowerCase())
+}
+
 // ── Reconcile ─────────────────────────────────────────────────────────────────
 export async function reconcileOne(
   productId: string,
   trigger: ReconciliationRecord['trigger'],
   opts: { now: number } & EngineDeps,
 ): Promise<ReconciliationRecord | null> {
+  if (!syncProductAllowed(productId, opts.env)) return null
   const product = await getProduct(productId)
   if (!product) return null
   const source = product.platformSourceId ? await getProduct(product.platformSourceId) : null
@@ -33,7 +42,7 @@ export async function reconcileAll(
   trigger: ReconciliationRecord['trigger'],
   opts: { now: number } & EngineDeps,
 ): Promise<{ reconciled: number; failed: number }> {
-  const products = (await listProducts()).filter((p) => p.status !== 'archived')
+  const products = (await listProducts()).filter((p) => p.status !== 'archived' && syncProductAllowed(p.id, opts.env))
   let reconciled = 0
   let failed = 0
   for (const p of products) {

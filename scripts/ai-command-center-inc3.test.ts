@@ -109,10 +109,10 @@ test('validateAiPrefs merges onto current — a partial patch preserves other fi
   assert.equal(v.prefs.showInformationalAlerts, false)
 })
 
-// ── section map: eight canonical sections + canonical hrefs ───────────────────
+// ── section map: nine canonical sections + canonical hrefs ────────────────────
 
-test('all eight sections present with canonical hrefs', () => {
-  assert.deepEqual(AI_SECTIONS.map((s) => s.id), ['overview', 'queue', 'performance', 'learning', 'models', 'controls', 'alerts', 'settings'])
+test('all nine sections present with canonical hrefs', () => {
+  assert.deepEqual(AI_SECTIONS.map((s) => s.id), ['overview', 'queue', 'performance', 'pipeline', 'learning', 'models', 'controls', 'alerts', 'settings'])
   const href = (id: string) => AI_SECTIONS.find((s) => s.id === id)!.href
   assert.equal(href('queue'), '/admin/operations/ai/queue')
   assert.equal(href('performance'), '/admin/operations/ai/performance')
