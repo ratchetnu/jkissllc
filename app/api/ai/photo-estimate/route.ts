@@ -4,7 +4,10 @@ import { isBlockedBot } from '../../../lib/botcheck'
 import { runAiTask } from '../../../lib/ai/service'
 import { ESTIMATE_SCHEMA } from '../../../lib/ai/schema'
 import { toModelReadableDataUrl } from '../../../lib/image-convert'
+import { optimizeDataUrlForModel } from '../../../lib/image-optimize'
+import { imageOptimizationEnabled, resolveImageOptimizeOptions } from '../../../lib/ai/image-optimize-config'
 
+export const runtime = 'nodejs' // jimp image optimization uses Node APIs (Buffer/zlib)
 export const maxDuration = 30
 
 // POST /api/ai/photo-estimate — customer uploads a photo of their junk/load and
@@ -27,6 +30,12 @@ export async function POST(req: NextRequest) {
     readable = await toModelReadableDataUrl(image)
   } catch {
     return NextResponse.json({ error: "We couldn't read that photo. Please re-take it or upload a JPG or PNG." }, { status: 400 })
+  }
+  // No Blob storage on this path, so optimize the data URL in place before sending —
+  // fewer image tokens + a smaller upload. Fail-soft: on no-gain/undecodable the
+  // original readable data URL is used unchanged. Byte-identical when the flag is off.
+  if (imageOptimizationEnabled()) {
+    try { readable = (await optimizeDataUrlForModel(readable, resolveImageOptimizeOptions())).dataUrl } catch { /* keep original */ }
   }
 
   // Validation happens INSIDE runAiTask now (ESTIMATE_SCHEMA) — a malformed model

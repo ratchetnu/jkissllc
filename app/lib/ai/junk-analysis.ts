@@ -17,6 +17,8 @@ import { runAiTask } from './service'
 import { updateAiCall } from './telemetry'
 import { timeStage, markStage } from '../observability/pipeline-trace'
 import { isAllowedPhotoUrl } from '../photo-url'
+import { resolveAiPhotoUrls } from './photo-optimize'
+import { imageOptimizationEnabled } from './image-optimize-config'
 import {
   normalizeAnalysis, reviewFallbackAnalysis,
   type JunkPhotoAnalysis, type NormalizeCtx,
@@ -51,7 +53,11 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
   // trace (no-op when none). Defense-in-depth: only ever hand our own Blob-hosted
   // images to the provider.
   const prep = await timeStage('image_preprocess', async () => {
-    const photos = input.photoUrls.filter(isAllowedPhotoUrl).slice(0, 8)
+    const allowed = input.photoUrls.filter(isAllowedPhotoUrl).slice(0, 8)
+    // When image optimization is on, swap each original for its stored optimized
+    // derivative (smaller = fewer image tokens + faster fetch). Off or missing → the
+    // original URL is used, so this is byte-identical to today when the flag is off.
+    const { urls: photos } = await resolveAiPhotoUrls(allowed, { enabled: imageOptimizationEnabled() })
     if (photos.length === 0) return { photos, messages: [] as ModelMessage[] }
     const content: Array<{ type: 'text'; text: string } | { type: 'image'; image: string }> = [
       {
