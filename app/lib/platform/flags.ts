@@ -67,6 +67,44 @@ export type FeatureFlag =
   // (incl. Production) = the approval routes 404 and no approval can be created. The actual
   // publish execution stays gated by OPERION_PRODUCTION_PROMOTION_ENABLED in a later phase.
   | 'OPERION_APPROVAL_GATE_ENABLED'
+  // Operion AI pipeline observability — per-stage latency tracing over the durable
+  // Book Now AI job (queue, image preprocessing, provider, AI, pricing, database,
+  // notification) plus the read-only latency dashboard. Purely additive + fail-soft:
+  // OFF = NO trace is established, nothing is written, and the job path is byte-
+  // identical to today; the dashboard shows an "enable the flag" empty state. Turning
+  // it on only starts recording stage timings for future performance tuning — it
+  // changes no customer behavior, sends nothing, and never gates the job.
+  | 'AI_PIPELINE_OBSERVABILITY_ENABLED'
+  // AI image optimization — produce a downscaled/compressed derivative of each
+  // uploaded photo and send THAT to the vision model, preserving the original for
+  // every booking. MASTER switch (OFF everywhere by default): OFF = no derivative is
+  // generated at upload and the model reads the original — byte-identical to today.
+  // Turning it on enables ONLY the low-risk set (EXIF orient, long-edge resize, JPEG
+  // quality, metadata strip). The higher-risk cleanups below each stay independently
+  // gated OFF until the shadow eval proves no quote-accuracy regression.
+  | 'IMAGE_OPTIMIZATION_ENABLED'
+  | 'IMAGE_OPT_AUTOCROP_ENABLED'   // trim uniform whitespace / borders
+  | 'IMAGE_OPT_NORMALIZE_ENABLED'  // adaptive brightness + contrast normalization
+  | 'IMAGE_OPT_SHARPEN_ENABLED'    // mild sharpen after downscale
+  | 'IMAGE_OPT_DENOISE_ENABLED'    // mild blur to suppress sensor noise
+  // ── OPERION AI latency (Phase 2) — all default OFF; each is additive + fail-soft,
+  //    gated so OFF = byte-identical to today, and preserves quote accuracy. ──
+  // Critic dedup: the second-opinion reviewer runs on the STRUCTURED analysis JSON by
+  // default (no second vision call / image re-download), spending a full vision pass
+  // only when the instant-quote read is borderline. OFF = today's vision critic on
+  // every instant quote.
+  | 'OPERION_CRITIC_JSON'
+  // Event-driven recovery: kick the durable AI worker immediately after enqueue
+  // (fire-and-forget, fail-soft) so a recovery job starts in seconds instead of
+  // waiting for the next cron tick. OFF = cron-only (unchanged). Cron always remains
+  // the safety net.
+  | 'OPERION_EVENT_ENQUEUE'
+  // Due-job index: the cron worker reads a ZSET of due jobs (scored by nextRetryAt)
+  // instead of scanning every booking. DARK_LAUNCH maintains + compares the index
+  // without reading from it (parity proof); INDEX flips the read source. Both OFF =
+  // today's full listBookings scan.
+  | 'OPERION_DUE_INDEX_DARK_LAUNCH'
+  | 'OPERION_DUE_INDEX'
   // Calibrated customer progress display (Option A) for the Book Now quote flow.
   // Turns the single opaque analyze wait into a truthful six-stage progress view
   // paced by measured p50 telemetry. Purely presentational + additive: OFF = the
@@ -129,6 +167,23 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   // Approval gate — OFF everywhere by default (incl. Production). Enabled in PREVIEW ONLY to
   // exercise the owner approval + typed-confirmation workflow. Records intent only; no publish.
   OPERION_APPROVAL_GATE_ENABLED: false,
+  // AI pipeline observability — OFF everywhere by default. Enabled (Preview first) to
+  // start recording per-stage latency traces for the Book Now AI job. Inert when off:
+  // no trace, no writes, no behavior change.
+  AI_PIPELINE_OBSERVABILITY_ENABLED: false,
+  // Image optimization — master OFF everywhere. OFF = no derivative generated, model
+  // reads the original (byte-identical to today). ON = low-risk set only. The four
+  // higher-risk cleanups stay OFF until the shadow eval clears each one.
+  IMAGE_OPTIMIZATION_ENABLED: false,
+  IMAGE_OPT_AUTOCROP_ENABLED: false,
+  IMAGE_OPT_NORMALIZE_ENABLED: false,
+  IMAGE_OPT_SHARPEN_ENABLED: false,
+  IMAGE_OPT_DENOISE_ENABLED: false,
+  // AI latency Phase 2 — all OFF by default (byte-identical to today).
+  OPERION_CRITIC_JSON: false,
+  OPERION_EVENT_ENQUEUE: false,
+  OPERION_DUE_INDEX_DARK_LAUNCH: false,
+  OPERION_DUE_INDEX: false,
   // Progress display — OFF everywhere by default. OFF = today's static analyzing
   // view; ON = the calibrated six-stage progress UI. Presentational only.
   OPERION_PROGRESS_UX: false,

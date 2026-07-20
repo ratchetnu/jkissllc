@@ -15,7 +15,10 @@
 import type { ModelMessage } from 'ai'
 import { runAiTask } from './service'
 import { updateAiCall } from './telemetry'
+import { timeStage, markStage } from '../observability/pipeline-trace'
 import { isAllowedPhotoUrl } from '../photo-url'
+import { resolveAiPhotoUrls } from './photo-optimize'
+import { imageOptimizationEnabled } from './image-optimize-config'
 import {
   normalizeAnalysis, reviewFallbackAnalysis,
   type JunkPhotoAnalysis, type NormalizeCtx,
@@ -45,8 +48,30 @@ export interface VisionAnalysisProvider {
 }
 
 export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<AnalyzeJunkPhotosResult> {
-  // Defense-in-depth: only ever hand our own Blob-hosted images to the provider.
-  const photos = input.photoUrls.filter(isAllowedPhotoUrl).slice(0, 8)
+  // ── Image preprocessing stage (observability): URL allow-list filtering + the
+  // multimodal message assembly the provider consumes. Timed onto the active pipeline
+  // trace (no-op when none). Defense-in-depth: only ever hand our own Blob-hosted
+  // images to the provider.
+  const prep = await timeStage('image_preprocess', async () => {
+    const allowed = input.photoUrls.filter(isAllowedPhotoUrl).slice(0, 8)
+    // When image optimization is on, swap each original for its stored optimized
+    // derivative (smaller = fewer image tokens + faster fetch). Off or missing → the
+    // original URL is used, so this is byte-identical to today when the flag is off.
+    const { urls: photos } = await resolveAiPhotoUrls(allowed, { enabled: imageOptimizationEnabled() })
+    if (photos.length === 0) return { photos, messages: [] as ModelMessage[] }
+    const content: Array<{ type: 'text'; text: string } | { type: 'image'; image: string }> = [
+      {
+        type: 'text',
+        text:
+          `Analyze this SET of ${photos.length} photo(s) as ONE job for a junk-removal estimate.` +
+          (input.serviceLabel ? ` The customer selected: ${input.serviceLabel}.` : '') +
+          ` Photos are ordered; some may show the same pile from different angles — do not double-count. Return ONLY the JSON object described in your instructions.`,
+      },
+      ...photos.map((url) => ({ type: 'image' as const, image: url })),
+    ]
+    return { photos, messages: [{ role: 'user', content }] as ModelMessage[] }
+  })
+  const photos = prep.photos
   const ctx: NormalizeCtx = {
     analysisId: input.analysisId, bookingId: input.bookingId, photoUrls: photos,
     modelProvider: 'vercel-ai-gateway', modelName: '', analyzedAt: input.nowIso,
@@ -56,17 +81,7 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
     return { analysis: reviewFallbackAnalysis(ctx, ['No photos were provided for analysis.']), ok: false, outcome: 'no_photos' }
   }
 
-  const content: Array<{ type: 'text'; text: string } | { type: 'image'; image: string }> = [
-    {
-      type: 'text',
-      text:
-        `Analyze this SET of ${photos.length} photo(s) as ONE job for a junk-removal estimate.` +
-        (input.serviceLabel ? ` The customer selected: ${input.serviceLabel}.` : '') +
-        ` Photos are ordered; some may show the same pile from different angles — do not double-count. Return ONLY the JSON object described in your instructions.`,
-    },
-    ...photos.map((url) => ({ type: 'image' as const, image: url })),
-  ]
-  const messages: ModelMessage[] = [{ role: 'user', content }]
+  const messages = prep.messages
 
   const res = await runAiTask({
     taskId: 'ops.junkAnalysis',
@@ -81,6 +96,11 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
     bookingId: input.bookingId,
     imageCount: photos.length,
   })
+
+  // Observability: the provider (AI Gateway) round-trip latency — the model call only,
+  // separate from our surrounding preprocessing/normalization work. Present on success;
+  // absent on some provider failures (markStage no-ops on undefined).
+  markStage('provider', (res as { latencyMs?: number }).latencyMs)
 
   if (!res.ok) {
     // Provider error / budget / invalid — preserve the booking as review-required.

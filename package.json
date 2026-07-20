@@ -12,9 +12,10 @@
     "lint": "eslint",
     "test:finance": "npx --yes tsx@4 --test scripts/finance.test.ts",
     "test:routes": "npx --yes tsx@4 --test scripts/verbal-confirm.test.ts",
-    "test:ai": "npx --yes tsx@4 --test scripts/ai-service.test.ts scripts/ai-phase2.test.ts scripts/ai-phase3.test.ts scripts/ai-audit.test.ts scripts/ai-telemetry.test.ts",
+    "test:ai": "npx --yes tsx@4 --test scripts/ai-service.test.ts scripts/ai-phase2.test.ts scripts/ai-phase3.test.ts scripts/ai-audit.test.ts scripts/ai-telemetry.test.ts scripts/pipeline-observability.test.ts scripts/ai-latency-phase2.test.ts",
     "test:ai:regression": "npx --yes tsx@4 --test scripts/ai-regression.test.ts",
     "eval:photo-estimator": "npx --yes tsx@4 scripts/eval-photo-estimator.mjs",
+    "eval:latency-phase2": "npx --yes tsx@4 scripts/ai-latency-phase2-bench.ts",
     "predeploy": "npx tsc --noEmit && npm run test:ai:regression",
     "test": "npx --yes tsx@4 --test scripts/*.test.ts",
     "audit:mobile": "node scripts/mobile-overflow-audit.mjs",
@@ -26,6 +27,7 @@
     "ai": "^7.0.4",
     "botid": "^1.5.11",
     "heic-convert": "^2.1.0",
+    "jimp": "^1.6.1",
     "lucide-react": "^1.17.0",
     "maplibre-gl": "^5.24.0",
     "next": "16.2.2",
@@ -42,6 +44,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
+    "playwright-core": "1.61.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

@@ -5,6 +5,8 @@ import { isBlockedBot } from '../../lib/botcheck'
 import { alert } from '../../lib/alerts'
 import { scopeBlobPath, sanitizeBlobSegment } from '../../lib/platform/tenancy/blob-keys'
 import { toModelReadableImage, UnreadableImageError } from '../../lib/image-convert'
+import { optimizeForModel, type OptimizeMetrics } from '../../lib/image-optimize'
+import { imageOptimizationEnabled, resolveImageOptimizeOptions } from '../../lib/ai/image-optimize-config'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -16,6 +18,35 @@ export const maxDuration = 30
 // id/ext can never smuggle a path segment or traversal.
 export function quotePhotoBlobPath(id: string, ext: string): string {
   return scopeBlobPath(`quote-photos/${sanitizeBlobSegment(`${id}.${ext}`)}`)
+}
+
+// The model derivative lives at the deterministic sibling key `<id>.ai.jpg` next to
+// the original `<id>.<ext>`, so the AI path can find it from the original URL alone
+// (see app/lib/ai/photo-optimize.ts). Same tenancy scoping as the original.
+export function aiDerivativeBlobPath(id: string): string {
+  return scopeBlobPath(`quote-photos/${sanitizeBlobSegment(`${id}.ai.jpg`)}`)
+}
+
+// Best-effort: generate + store the model derivative next to the original. Purely
+// additive and fail-soft — ANY failure returns null and the caller still serves the
+// original, so optimization can never break an upload. Returns the derivative URL +
+// the reduction metrics for measurement, or null when nothing was stored.
+async function storeAiDerivative(
+  id: string,
+  buffer: Buffer,
+  contentType: string,
+): Promise<{ aiUrl: string; metrics: OptimizeMetrics } | null> {
+  try {
+    const result = await optimizeForModel(buffer, contentType, resolveImageOptimizeOptions())
+    if (!result.metrics.applied) return null // undecodable / no real gain — model reads the original
+    const blob = await put(aiDerivativeBlobPath(id), result.buffer, {
+      access: 'public', contentType: 'image/jpeg', addRandomSuffix: false,
+    })
+    return { aiUrl: blob.url, metrics: result.metrics }
+  } catch (e) {
+    console.error('[upload] ai-derivative skipped', e)
+    return null
+  }
 }
 
 // POST /api/upload — public image upload for the booking/quote flow. Stores a
@@ -39,7 +70,26 @@ export async function POST(req: NextRequest) {
     const { buffer: buf, contentType, ext } = await toModelReadableImage(raw, m[1])
     // Write to the tenant-safe path using the CONVERTED ext/contentType (so a HEIC
     // stored as JPEG lands as .jpg). Path is byte-identical to legacy while tenancy off.
-    const blob = await put(quotePhotoBlobPath(crypto.randomUUID(), ext), buf, { access: 'public', contentType, addRandomSuffix: false })
+    const id = crypto.randomUUID()
+    const blob = await put(quotePhotoBlobPath(id, ext), buf, { access: 'public', contentType, addRandomSuffix: false })
+
+    // Optionally generate + store an optimized derivative NEXT TO the original (never
+    // replacing it). Additive + fail-soft: off, undecodable, or on any error we return
+    // only the original url and the AI path reads the original. When present, `aiUrl`
+    // is the smaller derivative the vision model reads and `optimization` reports the
+    // measured token/byte reduction. Backward compatible — `url` is unchanged.
+    if (imageOptimizationEnabled()) {
+      const derivative = await storeAiDerivative(id, buf, contentType)
+      if (derivative) {
+        const mx = derivative.metrics
+        console.log('[upload] ai-derivative', JSON.stringify({
+          bytesBefore: mx.originalBytes, bytesAfter: mx.optimizedBytes, byteReductionPct: mx.byteReductionPct,
+          estTokenReductionPct: mx.estTokenReductionPct, dims: `${mx.originalWidth}x${mx.originalHeight}→${mx.optimizedWidth}x${mx.optimizedHeight}`,
+          ops: mx.ops,
+        }))
+        return NextResponse.json({ ok: true, url: blob.url, aiUrl: derivative.aiUrl, optimization: mx })
+      }
+    }
     return NextResponse.json({ ok: true, url: blob.url })
   } catch (e) {
     if (e instanceof UnreadableImageError) {

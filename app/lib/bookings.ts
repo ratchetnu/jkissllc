@@ -1,4 +1,6 @@
 import { redis } from './redis'
+import { timeStage } from './observability/pipeline-trace'
+import { maintainDueIndex } from './ai-due-index'
 import { optimisticUpdate, type Mutate, type UpdateOutcome } from './booking-concurrency'
 import type { StoredAiEstimate } from './ai/estimate-store'
 import type { CustomerConfirmation } from './ai/confirmation-schema'
@@ -504,9 +506,18 @@ export const isTestBooking = (b: Pick<Booking, 'isTest'>): boolean => !!b.isTest
 export async function saveBooking(b: Booking): Promise<void> {
   b.updatedAt = Date.now()
   b.version = (b.version ?? 0) + 1   // advance the concurrency token on every write
-  await redis.set(`${KEY_PREFIX}${b.token}`, JSON.stringify(b))
-  await redis.set(`${KEY_NUM}${b.bookingNumber.toUpperCase()}`, b.token)
-  await redis.zadd(KEY_INDEX, b.updatedAt, b.token)
+  // Observability: attribute this write's latency to the active AI-pipeline trace's
+  // `database` stage (no-op when no trace is active — i.e. every non-AI-job caller and
+  // whenever the flag is off). See app/lib/observability/pipeline-trace.ts.
+  await timeStage('database', async () => {
+    await redis.set(`${KEY_PREFIX}${b.token}`, JSON.stringify(b))
+    await redis.set(`${KEY_NUM}${b.bookingNumber.toUpperCase()}`, b.token)
+    await redis.zadd(KEY_INDEX, b.updatedAt, b.token)
+    // Keep the durable-AI-job due-index in lockstep with this booking's aiJob state
+    // (Phase 2, flag-gated + fail-soft; a complete no-op when off). Centralized here
+    // — the single booking write path — so every job transition is captured once.
+    await maintainDueIndex(b)
+  })
 }
 
 // ── Protected write paths (per-booking concurrency control) ──────────────────

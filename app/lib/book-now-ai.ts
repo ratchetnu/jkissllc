@@ -14,6 +14,10 @@ import {
 // this authoritative path. (The old inline 2nd-vision-call shadow block — which caused
 // the double-analysis timeouts — is permanently removed.)
 import { maybeEnqueueShadowJob } from './estimation/shadow-worker'
+import { runWithTrace, markStage, markTraceOutcome } from './observability/pipeline-trace'
+import {
+  dueIndexMaintained, dueIndexReadEnabled, dueTokensFromIndex, compareDue, rebuildDueIndex,
+} from './ai-due-index'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Durable, server-side Book Now AI processing — the RECOVERY path for the
@@ -167,6 +171,28 @@ async function processAiJobInner(token: string, opts: { initiatedBy?: string; te
   const b = await getBookingByToken(token)
   if (!b) return { ok: false, status: 'failed', reason: 'not_found' }
 
+  // ── Observability: one pipeline trace per attempt ──────────────────────────
+  // Id-correlated with the analysis/estimate id (`srv-<token>-<attempt>`) so a trace
+  // joins straight to the stored estimate + booking. `queuedAt` drives the queue-wait
+  // stage; the terminal ProcessResult stamps the trace's status. Wholly INERT unless
+  // AI_PIPELINE_OBSERVABILITY_ENABLED is on — no trace, no writes, identical behavior.
+  const attempt = (b.aiJob?.attempts ?? 0) + 1
+  const queuedAt = b.aiJob?.nextRetryAt ?? b.aiJob?.updatedAt
+  return runWithTrace(
+    {
+      requestId: `srv-${b.token}-${attempt}`, feature: 'book-now-ai',
+      bookingId: b.token, jobId: b.aiJob?.idempotencyKey, attempt, queuedAt,
+    },
+    async () => {
+      if (queuedAt != null) markStage('queue', now() - queuedAt)
+      const result = await runJobAttempt(b, opts)
+      markTraceOutcome(result.status, result.reason ?? result.errorCode ?? result.decision)
+      return result
+    },
+  )
+}
+
+async function runJobAttempt(b: Booking, opts: { initiatedBy?: string; tenantId?: string }): Promise<ProcessResult> {
   // Idempotency: a valid estimate already landed (e.g. the customer path succeeded
   // after enqueue) → mark complete, never double-price.
   if (hasValidEstimate(b)) {
@@ -411,8 +437,30 @@ export function isDue(b: Booking, at = now()): boolean {
 
 /** Cron entry point: process all due jobs (bounded). Returns a summary per booking. */
 export async function runDueAiJobs(limit = 10): Promise<{ processed: number; results: { token: string; status: AiJobStatus }[] }> {
-  const all = await listBookings(500)
-  const due = all.filter(b => isDue(b)).slice(0, limit)
+  // ── Due-job selection (Phase 2 due-index, flag-gated) ──────────────────────
+  // OFF / dark-launch: the authoritative O(n) scan (listBookings + isDue) picks the
+  // work; dark-launch additionally reads the index and logs a parity check. Fully ON
+  // (OPERION_DUE_INDEX): the read source flips to the index — NO full scan — and each
+  // candidate is re-verified via isDue as defense-in-depth. Byte-identical when off.
+  let due: Booking[]
+  if (dueIndexReadEnabled()) {
+    const idxTokens = await dueTokensFromIndex(now(), limit)
+    const loaded = await Promise.all(idxTokens.map(t => getBookingByToken(t)))
+    due = loaded.filter((b): b is Booking => !!b && isDue(b)).slice(0, limit)
+  } else {
+    const all = await listBookings(500)
+    const allDue = all.filter(b => isDue(b))
+    due = allDue.slice(0, limit)
+    if (dueIndexMaintained()) {
+      // Dark-launch: prove the index === the scan WITHOUT changing what runs.
+      try {
+        const idxTokens = await dueTokensFromIndex(now(), 500)
+        const parity = compareDue(allDue.map(b => b.token), idxTokens)
+        if (parity.match) console.log(`[book-now-ai] due-index parity OK (${parity.scan} due)`)
+        else console.warn(`[book-now-ai] due-index parity MISMATCH scan=${parity.scan} index=${parity.index} missingFromIndex=${JSON.stringify(parity.missingFromIndex.slice(0, 5))} extraInIndex=${parity.extraInIndex.length}`)
+      } catch (e) { console.error('[book-now-ai] due-index parity', e) }
+    }
+  }
   const results: { token: string; status: AiJobStatus }[] = []
   const runStart = now()
   const deadlineMs = aiJobDeadlineMs()
@@ -463,6 +511,15 @@ export async function runDueAiJobs(limit = 10): Promise<{ processed: number; res
   }
   if (breaker) await saveBreaker(tenantId, breaker)
   return { processed: results.length, results }
+}
+
+/** Backfill the due-job index from the current bookings — run once before flipping
+ *  OPERION_DUE_INDEX so no pre-existing queued/retrying job is missed. Additive +
+ *  idempotent; safe to re-run. Returns how many entries were written/removed. */
+export async function backfillDueIndex(): Promise<{ added: number; removed: number; scanned: number }> {
+  const all = await listBookings(500)
+  const r = await rebuildDueIndex(all)
+  return { ...r, scanned: all.length }
 }
 
 /** Dry-run backfill report: eligible records that WOULD be enqueued, no writes. */
