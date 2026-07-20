@@ -310,14 +310,42 @@ export class VercelPreviewProvider {
     return { ok: true, data: { promoted: true } }
   }
 
+  // ── Resolve a project display name to its immutable prj_… id (read-only) ──────
+  // Vercel's rollback endpoint accepts ONLY the immutable project id in the path; a
+  // configured display name (e.g. "supercharged") 404s. This mirrors the Vercel CLI,
+  // which resolves the project first and then rolls back with project.id. If the caller
+  // already holds a prj_… id we trust it directly; otherwise we look it up via the
+  // read-only project endpoint and REQUIRE a valid prj_… id back — we NEVER fall back to
+  // the unverified name. Fails closed and preserves team scope + auth/permission handling.
+  private static readonly PROJECT_ID = /^prj_[A-Za-z0-9]+$/
+  async resolveProjectId(project: string, teamId?: string): Promise<ProviderResult<{ projectId: string }>> {
+    if (!this.configured) return { ok: false, error: 'VERCEL_TOKEN not configured', category: 'not_configured' }
+    if (!project) return { ok: false, error: 'project required', category: 'config' }
+    if (VercelPreviewProvider.PROJECT_ID.test(project)) return { ok: true, data: { projectId: project } }
+    let res
+    try { res = await this.fetch(`${API}/v9/projects/${encodeURIComponent(project)}${this.team(teamId)}`, { headers: this.headers() }) }
+    catch { return { ok: false, error: 'Vercel API unreachable', category: 'network' } }
+    if (res.status === 401 || res.status === 403) return { ok: false, error: 'Vercel auth/permission denied', category: 'permission' }
+    if (res.status === 404) return { ok: false, error: 'project not found', category: 'not_found' }
+    if (!res.ok) return { ok: false, error: `project lookup failed (${res.status})`, category: 'api' }
+    const b = (await res.json().catch(() => null)) as { id?: string } | null
+    if (!b || !b.id || !VercelPreviewProvider.PROJECT_ID.test(b.id)) return { ok: false, error: 'project resolution returned no immutable id', category: 'not_found' }
+    return { ok: true, data: { projectId: b.id } }
+  }
+
   // ── Roll production back to a previously active deployment ─────────────────
   // Vercel treats staged promotion and instant rollback as distinct operations.
   // A prior production deployment must use the rollback API; the promote API returns 404.
+  // The rollback path REQUIRES the immutable project id, so we resolve first (fail closed)
+  // and never issue the rollback with an unverified project name.
   async rollbackProduction(project: string, deploymentId: string, teamId?: string): Promise<ProviderResult<{ rolledBack: boolean }>> {
     if (!this.configured) return { ok: false, error: 'VERCEL_TOKEN not configured', category: 'not_configured' }
     if (!project || !deploymentId) return { ok: false, error: 'project + deploymentId required', category: 'config' }
+    const resolved = await this.resolveProjectId(project, teamId)
+    if (!resolved.ok) return { ok: false, error: resolved.error, category: resolved.category }
+    const projectId = resolved.data.projectId
     let res
-    try { res = await this.fetch(`${API}/v9/projects/${encodeURIComponent(project)}/rollback/${encodeURIComponent(deploymentId)}${this.team(teamId)}`, { method: 'POST', headers: this.headers() }) }
+    try { res = await this.fetch(`${API}/v9/projects/${encodeURIComponent(projectId)}/rollback/${encodeURIComponent(deploymentId)}${this.team(teamId)}`, { method: 'POST', headers: this.headers() }) }
     catch { return { ok: false, error: 'Vercel API unreachable', category: 'network' } }
     if (res.status === 401 || res.status === 403) return { ok: false, error: 'Vercel auth/permission denied', category: 'permission' }
     if (res.status === 404) return { ok: false, error: 'rollback project or deployment not found', category: 'not_found' }
@@ -372,6 +400,7 @@ export class StubPreviewProvider {
   readProductionForReview() { return this.fail<{ deploymentId: string; url?: string; inspectorUrl?: string; state: PreviewState; ready: boolean; commitSha?: string; branch?: string; gitConnected: boolean; createdAt?: number; readyAt?: number; target: string } | null>() }
   readReadyProductionDeployments() { return this.fail<Array<{ deploymentId: string; url?: string; commitSha?: string; createdAt?: number }>>() }
   promoteProduction() { return this.fail<{ promoted: boolean }>() }
+  resolveProjectId() { return this.fail<{ projectId: string }>() }
   rollbackProduction() { return this.fail<{ rolledBack: boolean }>() }
   readPreviewDeployment() { return this.fail<PreviewDeployment>() }
   waitForPreviewReady() { return this.fail<PreviewDeployment>() }

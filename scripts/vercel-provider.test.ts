@@ -127,22 +127,112 @@ test('cancelPreviewDeployment PATCHes the cancel endpoint', async () => {
   assert.ok(m.calls[0].url.includes('/v12/deployments/dpl_1/cancel'))
 })
 
-test('rollbackProduction POSTs the dedicated rollback endpoint, never promote', async () => {
-  const m = mockFetch([['/v9/projects/proj%20super/rollback/dpl%2Fprior', () => ({ status: 200, body: {} })]])
+test('rollbackProduction: a prj_… id goes straight to rollback (no project lookup)', async () => {
+  const m = mockFetch([['/rollback/', () => ({ status: 200, body: {} })]])
   const p = new VercelPreviewProvider(ENV, { fetch: m.fetch })
-  const r = await p.rollbackProduction('proj super', 'dpl/prior')
+  const r = await p.rollbackProduction('prj_direct123', 'dpl/prior')
   assert.equal(r.ok && r.data.rolledBack, true)
+  assert.equal(m.calls.length, 1)                       // no resolution round-trip
   assert.equal(m.calls[0].init!.method, 'POST')
-  assert.equal(m.calls[0].url, 'https://api.vercel.com/v9/projects/proj%20super/rollback/dpl%2Fprior?teamId=team_x')
-  assert.equal(m.calls[0].url.includes('/promote/'), false)
+  assert.equal(m.calls[0].url, 'https://api.vercel.com/v9/projects/prj_direct123/rollback/dpl%2Fprior?teamId=team_x')
 })
 
-test('rollbackProduction fails closed and categorizes missing targets', async () => {
-  const m = mockFetch([['/rollback/', () => ({ status: 404, body: {} })]])
+test('rollbackProduction: a display name is resolved first, then the immutable id is used (team-scoped on both)', async () => {
+  const m = mockFetch([
+    ['/rollback/', () => ({ status: 200, body: {} })],
+    ['/v9/projects/supercharged', () => ({ status: 200, body: { id: 'prj_resolved9', name: 'supercharged' } })],
+  ])
   const p = new VercelPreviewProvider(ENV, { fetch: m.fetch })
-  const missing = await p.rollbackProduction('proj', 'dpl_missing')
-  assert.equal(!missing.ok && missing.category, 'not_found')
-  assert.equal((await new VercelPreviewProvider({}, { fetch: m.fetch }).rollbackProduction('proj', 'dpl')).ok, false)
+  const r = await p.rollbackProduction('supercharged', 'dpl_prior')
+  assert.equal(r.ok && r.data.rolledBack, true)
+  assert.equal(m.calls.length, 2)
+  // 1) resolution — GET the read-only project endpoint, team-scoped, never the rollback path
+  assert.equal(m.calls[0].init?.method, undefined)
+  assert.equal(m.calls[0].url, 'https://api.vercel.com/v9/projects/supercharged?teamId=team_x')
+  assert.equal(m.calls[0].url.includes('/rollback/'), false)
+  // 2) rollback — POST with the RESOLVED immutable id, team-scoped, never the name
+  assert.equal(m.calls[1].init!.method, 'POST')
+  assert.equal(m.calls[1].url, 'https://api.vercel.com/v9/projects/prj_resolved9/rollback/dpl_prior?teamId=team_x')
+  assert.equal(m.calls[1].url.includes('/projects/supercharged/'), false)
+})
+
+test('rollbackProduction: fails closed with NO rollback request when resolution yields no immutable id', async () => {
+  for (const body of [{}, { id: 'not-a-prj' }, { id: '' }]) {
+    const m = mockFetch([
+      ['/rollback/', () => ({ status: 200, body: {} })],
+      ['/v9/projects/supercharged', () => ({ status: 200, body })],
+    ])
+    const p = new VercelPreviewProvider(ENV, { fetch: m.fetch })
+    const r = await p.rollbackProduction('supercharged', 'dpl_x')
+    assert.equal(!r.ok && r.category, 'not_found')
+    assert.equal(m.calls.length, 1)                                  // only the lookup ran
+    assert.equal(m.calls.some(c => c.url.includes('/rollback/')), false)  // NEVER rolled back with the name
+  }
+})
+
+test('rollbackProduction: resolution 401/403 stays a permission failure and blocks the rollback', async () => {
+  for (const status of [401, 403]) {
+    const m = mockFetch([
+      ['/rollback/', () => ({ status: 200, body: {} })],
+      ['/v9/projects/supercharged', () => ({ status, body: {} })],
+    ])
+    const p = new VercelPreviewProvider(ENV, { fetch: m.fetch })
+    const r = await p.rollbackProduction('supercharged', 'dpl_x')
+    assert.equal(!r.ok && r.category, 'permission')
+    assert.equal(m.calls.length, 1)
+  }
+})
+
+test('rollbackProduction: resolution 404 is categorized safely (not_found), no rollback', async () => {
+  const m = mockFetch([
+    ['/rollback/', () => ({ status: 200, body: {} })],
+    ['/v9/projects/supercharged', () => ({ status: 404, body: {} })],
+  ])
+  const p = new VercelPreviewProvider(ENV, { fetch: m.fetch })
+  const r = await p.rollbackProduction('supercharged', 'dpl_x')
+  assert.equal(!r.ok && r.category, 'not_found')
+  assert.equal(m.calls.length, 1)
+})
+
+test('rollbackProduction: after a good resolve, rollback 401/403→permission and 404→not_found', async () => {
+  const resolve: Route = ['/v9/projects/supercharged', () => ({ status: 200, body: { id: 'prj_ok' } })]
+  for (const [status, category] of [[401, 'permission'], [403, 'permission'], [404, 'not_found']] as const) {
+    const m = mockFetch([['/rollback/', () => ({ status, body: {} })], resolve])
+    const p = new VercelPreviewProvider(ENV, { fetch: m.fetch })
+    const r = await p.rollbackProduction('supercharged', 'dpl_x')
+    assert.equal(!r.ok && r.category, category)
+    assert.equal(m.calls.length, 2)                                   // resolved, then attempted rollback
+    assert.equal(m.calls[1].url.includes('/projects/prj_ok/rollback/'), true)
+  }
+})
+
+test('rollbackProduction: fails closed with zero calls when no token is configured', async () => {
+  const m = mockFetch([['/rollback/', () => ({ status: 200, body: {} })]])
+  const r = await new VercelPreviewProvider({}, { fetch: m.fetch }).rollbackProduction('supercharged', 'dpl_x')
+  assert.equal(r.ok, false)
+  assert.equal(!r.ok && r.category, 'not_configured')
+  assert.equal(m.calls.length, 0)
+})
+
+test('resolveProjectId: prj_ passthrough vs read-only lookup; requires a valid immutable id', async () => {
+  const direct = mockFetch([])
+  const pd = await new VercelPreviewProvider(ENV, { fetch: direct.fetch }).resolveProjectId('prj_abc')
+  assert.equal(pd.ok && pd.data.projectId, 'prj_abc')
+  assert.equal(direct.calls.length, 0)
+  const look = mockFetch([['/v9/projects/supercharged', () => ({ status: 200, body: { id: 'prj_xyz' } })]])
+  const pl = await new VercelPreviewProvider(ENV, { fetch: look.fetch }).resolveProjectId('supercharged')
+  assert.equal(pl.ok && pl.data.projectId, 'prj_xyz')
+  assert.equal(look.calls[0].url, 'https://api.vercel.com/v9/projects/supercharged?teamId=team_x')
+})
+
+test('publish is unchanged: promoteProduction still POSTs /promote with the given project, no resolution, no rollback', async () => {
+  const m = mockFetch([['/promote/', () => ({ status: 200, body: {} })]])
+  const p = new VercelPreviewProvider(ENV, { fetch: m.fetch })
+  const r = await p.promoteProduction('some name', 'dpl_p')
+  assert.equal(r.ok && r.data.promoted, true)
+  assert.equal(m.calls.length, 1)
+  assert.equal(m.calls[0].url, 'https://api.vercel.com/v10/projects/some%20name/promote/dpl_p?teamId=team_x')
+  assert.equal(m.calls[0].url.includes('/rollback/'), false)
 })
 
 test('readDeploymentLogsReference returns inspector + events api (no log contents, no token)', async () => {
