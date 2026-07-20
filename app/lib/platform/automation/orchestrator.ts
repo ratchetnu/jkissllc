@@ -292,7 +292,7 @@ export async function finalizePreview(input: { jobId: string; env?: Record<strin
   }, { onBusy: () => ({ ok: false, reason: 'target_locked' }), token: `${job.businessId}:${now()}` })
 }
 
-/** Automatic rollback: promote the captured known-good production deployment back. Flag-gated
+/** Automatic rollback: restore the captured known-good production deployment. Flag-gated
  *  + bounded; reconciler-driven so it self-heals a failed promotion. Never merges anything. */
 export async function advanceRollback(input: { jobId: string; env?: Record<string, string | undefined> }): Promise<ApproveResult> {
   const env = input.env ?? process.env
@@ -307,7 +307,7 @@ export async function advanceRollback(input: { jobId: string; env?: Record<strin
     const j = await store.getJob(input.jobId); if (!j || j.status !== 'rollback_required') return { ok: false, reason: 'job changed' }
     j.status = 'rolling_back'; j.rollbackAttemptCount = (j.rollbackAttemptCount ?? 0) + 1; j.updatedAt = now(); await store.saveJob(j)
     const vercel = getPreviewProvider(env)
-    const res = projectId && j.rollbackTargetDeploymentId ? await vercel.promoteProduction(projectId, j.rollbackTargetDeploymentId) : { ok: false as const, error: 'no rollback target', category: 'config' }
+    const res = projectId && j.rollbackTargetDeploymentId ? await vercel.rollbackProduction(projectId, j.rollbackTargetDeploymentId) : { ok: false as const, error: 'no rollback target', category: 'config' }
     if (res.ok) { j.status = 'rolled_back'; j.rolledBackAt = now(); j.failureSummary = 'production restored to the previous verified deployment'; j.updatedAt = now(); await store.saveJob(j); return { ok: true, job: j } }
     j.status = 'rollback_required'; j.failureSummary = `automatic rollback failed: ${res.error}`; j.updatedAt = now(); await store.saveJob(j)
     return { ok: false, job: j, reason: res.error }
