@@ -5,7 +5,7 @@
 // duplicates, outside-repo, missing hashes). No I/O — fully testable.
 
 import crypto from 'node:crypto'
-import type { BusinessRole } from '../updates/types'
+import type { ManifestTargetMeta } from './target-policy'
 
 export type ManifestAction = 'add' | 'modify' | 'delete'
 export type ManifestEntry = {
@@ -25,7 +25,7 @@ export type ApplyManifest = {
   // executor independently re-enforce the target-path policy. A manifest lacking
   // them must not be used for a new cross-repository transfer.
   policyVersion?: number
-  target?: { businessId: string; role: BusinessRole; edition?: string }
+  target?: ManifestTargetMeta
 }
 
 export const MAX_MANIFEST_ENTRIES = 200

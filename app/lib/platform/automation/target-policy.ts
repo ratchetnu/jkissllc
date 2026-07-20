@@ -80,9 +80,6 @@ export function classifyComponent(path: string): ComponentClass {
 }
 
 export const KNOWN_ROLES: readonly BusinessRole[] = ['source', 'target', 'source_and_target']
-export function isControlPlaneRole(role?: BusinessRole): boolean {
-  return role === 'source' || role === 'source_and_target'
-}
 export function isManagedTargetRole(role?: BusinessRole): boolean {
   return role === 'target'
 }
