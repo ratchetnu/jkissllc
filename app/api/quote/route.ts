@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { after as afterResponse } from 'next/server'
 import { withTenantRoute } from '../../lib/platform/tenancy/with-tenant-route'
+import { withBackgroundTenant } from '../../lib/platform/tenancy/request-context'
+import { currentTenantId } from '../../lib/platform/tenancy/context'
+import { processAiJob } from '../../lib/book-now-ai'
+import { isEnabled } from '../../lib/platform/flags'
 import { rateLimit } from '../../lib/rate-limit'
 import { isValidEmail } from '../../lib/validators'
 import { isBlockedBot } from '../../lib/botcheck'
@@ -254,6 +259,24 @@ export const POST = withTenantRoute(async (request: NextRequest) => {
         analysisId: typeof analysisId === 'string' ? analysisId : undefined,
       })
       if (persisted) request_out = { number: persisted.bookingNumber, token: persisted.token }
+
+      // ── Event-driven recovery (OPERION_EVENT_ENQUEUE) ──────────────────────
+      // When persist enqueued a durable AI job (photos present, no inline estimate
+      // landed), kick the worker the moment the response is sent — so the recovery
+      // job starts in seconds instead of waiting up to a full cron interval. Runs
+      // post-response via `after`, in an explicit background tenant context, and is
+      // fully fail-soft + idempotent (per-booking write-lock + valid-estimate guard):
+      // the cron worker remains the safety net if this is cut short or never runs.
+      // OFF ⇒ cron-only, byte-identical to today.
+      if (persisted && persisted.aiJob?.status === 'queued' && isEnabled('OPERION_EVENT_ENQUEUE')) {
+        const token = persisted.token
+        const tid = (() => { try { return currentTenantId() } catch { return undefined } })()
+        afterResponse(async () => {
+          try {
+            await withBackgroundTenant('webhook', () => processAiJob(token, { initiatedBy: 'event', tenantId: tid }), tid)
+          } catch (e) { console.error('[quote] event-driven ai worker', e) }
+        })
+      }
 
       // ── Guided confirmation: run the SECOND (final) governed analysis on the
       // SERVER (never the browser). Idempotent + durable — if this inline attempt

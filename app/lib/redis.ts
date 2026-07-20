@@ -103,6 +103,12 @@ export const redis = {
   async zrange(key: string, start: number, stop: number): Promise<string[]> {
     return ((await call(['ZRANGE', scopeKey(key), start, stop])) ?? []) as string[]
   },
+  // Members with score in [min, max] (inclusive), score-ordered, bounded by LIMIT.
+  // min/max accept Redis range syntax ('-inf', '+inf', '(5', '5'). Used by the AI
+  // due-job index to fetch only the jobs that are due right now.
+  async zrangebyscore(key: string, min: string, max: string, offset = 0, count = 100): Promise<string[]> {
+    return ((await call(['ZRANGEBYSCORE', scopeKey(key), min, max, 'LIMIT', offset, count])) ?? []) as string[]
+  },
   // Hash + HyperLogLog commands (used by the analytics surface, now on-chokepoint).
   async hincrby(key: string, field: string, by: number): Promise<number> {
     return (await call(['HINCRBY', scopeKey(key), field, by])) as number
