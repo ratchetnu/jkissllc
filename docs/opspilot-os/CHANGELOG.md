@@ -27,6 +27,10 @@ changes an environment variable, dispatches GitHub, or promotes/rolls back Verce
   deployment and an explicit rollback workflow.
 - Corrected stale Release Center wording that said no rollback control existed after 3B.6.
 - Production flags remain unchanged. Preview verification precedes any activation.
+- **Authoritative Preview audit:** provider access, Preview automation, controlled
+  Production, both active businesses, and both rollback executors passed. Advanced
+  automation remains disabled pending the Supercharged canary. Evidence:
+  [`audits/2026-07-19-operion-activation-readiness.md`](audits/2026-07-19-operion-activation-readiness.md).
 
 ## 2026-07-15 — Enterprise Vision Estimation V2: multi-pass analysis engine (shadow, Claude)
 
