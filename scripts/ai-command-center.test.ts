@@ -28,9 +28,9 @@ test('nav: the Command Center is owner-only, hidden from every non-owner', () =>
   }
 })
 
-test('section map: the eight spec sections, unique ids, overview first, all under /ai', () => {
-  assert.deepEqual(AI_SECTIONS.map((s) => s.id), ['overview', 'queue', 'performance', 'learning', 'models', 'controls', 'alerts', 'settings'])
-  assert.equal(new Set(AI_SECTIONS.map((s) => s.id)).size, 8)
+test('section map: the nine spec sections, unique ids, overview first, all under /ai', () => {
+  assert.deepEqual(AI_SECTIONS.map((s) => s.id), ['overview', 'queue', 'performance', 'pipeline', 'learning', 'models', 'controls', 'alerts', 'settings'])
+  assert.equal(new Set(AI_SECTIONS.map((s) => s.id)).size, 9)
   for (const s of AI_SECTIONS) assert.ok(s.href.startsWith('/admin/operations/ai'), `${s.id} href is under the Command Center`)
 })
 
