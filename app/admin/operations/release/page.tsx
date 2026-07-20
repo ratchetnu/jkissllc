@@ -32,7 +32,7 @@ type BuildInfo = {
 type Snapshot = {
   generatedAt: number; build: BuildInfo; current: ReleaseEntry | null; history: ReleaseEntry[]
   flags: FlagView[]; flagSummary: { total: number; enabled: number; disabled: number; overridden: number }
-  migration: { state: string; headline: string; detail: string }; knownIssues: string[]
+  migration: { state: string; headline: string; detail: string }; knownIssues: string[]; ownerAccess: boolean
 }
 
 const CATEGORY_ORDER = ['Release Automation', 'AI & Vision', 'Book Now / Intake', 'Tenancy', 'Shadow Analytics', 'Platform']
@@ -457,6 +457,11 @@ function ReleaseCenter() {
 
   useEffect(() => { load() }, [load])
 
+  const activeTab = snap?.ownerAccess ? tab : 'system'
+  const tabs = snap?.ownerAccess
+    ? [{ id: 'updates', label: 'Updates' }, { id: 'readiness', label: 'Ready Check' }, { id: 'history', label: 'History' }, { id: 'system', label: 'System Details' }]
+    : [{ id: 'system', label: 'System Details' }]
+
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       {/* Header */}
@@ -492,29 +497,24 @@ function ReleaseCenter() {
       {state === 'ok' && snap && (
         <>
           <div className="os-card" style={{ padding: '2px 14px 0' }}>
-            <Tabs value={tab} onChange={setTab} tabs={[
-              { id: 'updates', label: 'Updates' },
-              { id: 'readiness', label: 'Ready Check' },
-              { id: 'history', label: 'History' },
-              { id: 'system', label: 'System Details' },
-            ]} />
+            <Tabs value={activeTab} onChange={setTab} tabs={tabs} />
           </div>
 
-          {tab === 'updates' && <Businesses />}
+          {activeTab === 'updates' && <Businesses />}
 
-          {tab === 'readiness' && (
+          {activeTab === 'readiness' && (
             <Section title="Ready Check" icon={ShieldCheck}>
               <ActivationReadinessPanel />
             </Section>
           )}
 
-          {tab === 'history' && (
+          {activeTab === 'history' && (
             <Section title="History" icon={Clock}>
               <ReleaseHistoryPanel />
             </Section>
           )}
 
-          {tab === 'system' && <div style={{ display: 'grid', gap: 16 }}>
+          {activeTab === 'system' && <div style={{ display: 'grid', gap: 16 }}>
           {/* Technical information is intentionally off the default path. */}
           <Section title="Current build" icon={Server}>
             {!snap.build.available && (

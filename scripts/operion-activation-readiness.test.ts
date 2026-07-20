@@ -121,10 +121,14 @@ test('Release Center exposes readiness and no longer claims rollback is unavaila
 
 test('Release Center defaults to a compact plain-language workspace', () => {
   const page = fs.readFileSync(path.join(ROOT, 'app/admin/operations/release/page.tsx'), 'utf8')
+  const route = fs.readFileSync(path.join(ROOT, 'app/api/admin/release/route.ts'), 'utf8')
   const readiness = fs.readFileSync(path.join(ROOT, 'app/admin/operations/release/ActivationReadinessPanel.tsx'), 'utf8')
   assert.match(page, /useState\('updates'\)/)
   for (const label of ['Updates', 'Ready Check', 'History', 'System Details']) assert.match(page, new RegExp(label))
-  assert.match(page, /tab === 'system'/)
+  assert.match(page, /activeTab === 'system'/)
+  assert.match(page, /snap\?\.ownerAccess \? tab : 'system'/)
+  assert.match(page, /: \[\{ id: 'system', label: 'System Details' \}\]/)
+  assert.match(route, /ownerAccess: isPlatformOwner\(who\)/)
   assert.match(page, /View feature controls/)
   assert.match(page, /Test updates, review what changed, and safely publish/)
   assert.match(readiness, /Nothing changes from this screen/)

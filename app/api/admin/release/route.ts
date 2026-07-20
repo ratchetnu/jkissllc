@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
-import { requireAdmin } from '../_lib/session'
+import { isPlatformOwner, requireAdmin } from '../_lib/session'
 import { getReleaseSnapshot } from '../../../lib/release/manifest'
 
 export const runtime = 'nodejs'
@@ -14,5 +14,5 @@ export const dynamic = 'force-dynamic'
 export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireAdmin(req)
   if (who instanceof NextResponse) return who
-  return NextResponse.json(getReleaseSnapshot())
+  return NextResponse.json({ ...getReleaseSnapshot(), ownerAccess: isPlatformOwner(who) })
 })
