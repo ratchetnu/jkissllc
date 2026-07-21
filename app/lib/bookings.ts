@@ -1,6 +1,7 @@
 import { redis } from './redis'
 import { timeStage } from './observability/pipeline-trace'
 import { optimisticUpdate, type Mutate, type UpdateOutcome } from './booking-concurrency'
+import type { JobAssignee } from './job-assignment'
 import type { StoredAiEstimate } from './ai/estimate-store'
 import type { CustomerConfirmation } from './ai/confirmation-schema'
 import type { FinalAnalysisResult } from './ai/confirmed-analysis'
@@ -334,8 +335,40 @@ export type Booking = {
   // Internal (never exposed to the customer)
   internalNotes?: string
   communications?: CommunicationLog[]   // outbound texts/emails sent from the admin
+  // ── Crew (legacy free-text mirror) ──
+  // These two strings were the ENTIRE operational assignment model for a booking.
+  // They are still written and still shown to the customer, but they are no longer
+  // the source of truth: when `assignees` is present they are DERIVED from it by
+  // lib/job-assignment.deriveLegacyCrewNames(), so every existing reader (the
+  // customer confirmation page, admin lists, exports, reminder templates) renders
+  // exactly what it rendered before. Bookings with no `assignees` keep whatever was
+  // typed here, unchanged, forever.
   assignedTo?: string          // lead crew/rep assigned to the job (shown to customer)
   assignedHelper?: string      // helper / second rep (shown to customer)
+
+  // ── Crew (source of truth for staff-linked assignment) ──
+  // Real roster links, mirroring RouteRecord.assignees: each crew member carries
+  // their own pay snapshot, their own job-link token, their own confirmation state,
+  // and their own timeclock. This is what lets the crew portal, pay statements,
+  // claims, and the unified schedule's equipment/crew conflict detection finally
+  // see the customer revenue line. Gated by BOOKING_ASSIGNMENT_ENABLED; absent on
+  // every pre-existing booking, which reads as "unassigned via the new model".
+  assignees?: JobAssignee[]
+
+  // What the job rolls with. `equipmentId` links the Equipment roster when a
+  // specific asset was picked; `vehicle` is the display snapshot, and is also how
+  // "Crew's own equipment" is represented. Same convention as RouteRecord.
+  equipmentId?: string
+  vehicle?: string
+
+  // ── Completion proof (marked on-site by the crew, or by an admin) ──
+  // Note: `completedAt` here is operational proof-of-work. It is INDEPENDENT of the
+  // 'completed' BookingStatus, which is the owner's billing/lifecycle decision —
+  // recording arrival photos must never silently close out a job's money.
+  jobCompletedAt?: number
+  jobCompletedBy?: 'crew' | 'admin'
+  completionNote?: string
+  completionPhotos?: string[]  // Vercel Blob URLs
   disposalEstimateCents?: number // estimated dump/disposal cost (from the quote)
   disposalActualCents?: number   // actual disposal cost entered after the job
   aiEstimate?: StoredAiEstimate  // INITIAL AI photo analysis + deterministic pricing + decision (internal)

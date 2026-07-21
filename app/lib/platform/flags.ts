@@ -87,6 +87,15 @@ export type FeatureFlag =
   | 'IMAGE_OPT_NORMALIZE_ENABLED'  // adaptive brightness + contrast normalization
   | 'IMAGE_OPT_SHARPEN_ENABLED'    // mild sharpen after downscale
   | 'IMAGE_OPT_DENOISE_ENABLED'    // mild blur to suppress sensor noise
+  // Booking job assignment (Operion V1, Sprint 1) — staff-linked crew + equipment
+  // linkage + completion proof on customer Bookings, so the Book Now revenue line
+  // joins the operational spine the Routes lane already has (crew portal, timeclock,
+  // pay, claims, equipment conflict detection). PURELY ADDITIVE: OFF = the new
+  // fields are never written or read, the legacy free-text assignedTo/assignedHelper
+  // stay exactly as typed, and every customer-facing surface is byte-identical to
+  // today. Turning it on only lets the OWNER assign real crew from the roster — it
+  // sends nothing, prices nothing, and changes no customer behavior.
+  | 'BOOKING_ASSIGNMENT_ENABLED'
 
 export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   TENANCY_ENABLED: false,
@@ -155,6 +164,9 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   IMAGE_OPT_NORMALIZE_ENABLED: false,
   IMAGE_OPT_SHARPEN_ENABLED: false,
   IMAGE_OPT_DENOISE_ENABLED: false,
+  // Staff-linked crew + equipment on customer Bookings. OFF = the new fields are
+  // never written or read and the booking path is byte-identical to today.
+  BOOKING_ASSIGNMENT_ENABLED: false,
 }
 
 export const ALL_FLAGS = Object.keys(FLAG_DEFAULTS) as FeatureFlag[]
