@@ -1,0 +1,85 @@
+{
+  "id": "SEC-001",
+  "title": "Dependency vulnerability remediation (Sprint 4)",
+  "description": "Downstream-native security maintenance: targeted, semver-safe dependency updates. 8 audit findings → 2 (all 3 HIGH cleared). No `npm audit fix --force`, no major upgrades, no unrelated churn.",
+  "product": {
+    "upstream": "operion",
+    "downstream": "supercharged"
+  },
+  "source": {
+    "upstreamRepo": "ratchetnu/jkissllc",
+    "downstreamRepo": "ratchetnu/supercharged",
+    "sourceBranch": "chore/dependency-security",
+    "sourceCommit": "68f2d3c",
+    "sourcePR": 12
+  },
+  "category": "security",
+  "classification": "direct-port",
+  "status": "verified",
+  "downstreamPR": 12,
+  "dependencies": [],
+  "riskLevel": "low",
+  "surface": {
+    "sharedFiles": [
+      "package.json",
+      "package-lock.json"
+    ]
+  },
+  "rollout": {
+    "featureFlagsOffByDefault": true,
+    "previewValidationRequired": true,
+    "requiresMigration": false,
+    "requiresEnvConfig": false
+  },
+  "verification": {
+    "typescript": true,
+    "eslint": true,
+    "unit": true,
+    "regression": true,
+    "previewBuild": true,
+    "featureOffVerified": true,
+    "rollbackVerified": true,
+    "ranAt": "2026-07-21T15:30:00Z",
+    "summary": "Resolved: HIGH next 16.2.2→16.2.10 (+ clears a postcss moderate); HIGH brace-expansion, js-yaml; MOD resend 6.10→6.18, svix, uuid; LOW @babel/core. Residual: 2 MODERATE (next + postcss) only fixed by a MAJOR next upgrade — NOT forced (documented). tsc 0, eslint clean, full 469/469, test:ai 124/124, regression 2/2, next build ✓; PR #12 Preview + regression green. PR OPEN — not merged (Preview-only per owner)."
+  },
+  "approval": {
+    "approver": "ratchetnu (Sprint 4 — Preview-only)",
+    "approvedAt": "2026-07-21T15:30:00Z",
+    "knownDifferences": [
+      "Downstream-native maintenance (not an upstream port).",
+      "2 residual moderate advisories deferred to a dedicated Next major-upgrade PR."
+    ]
+  },
+  "rollbackSteps": [
+    "Rollback: git revert 68f2d3c (or restore the prior package-lock.json). No runtime/behavior change beyond the patched libraries."
+  ],
+  "exclusions": [
+    "Major Next.js upgrade (would resolve the 2 residual moderates) — deferred; requires codemods + full regression."
+  ],
+  "compatibilityNotes": [
+    "next 16.2.10 is a patch within 16.2.x (Vercel/Node compatible).",
+    "Lockfile churn limited to the selected packages."
+  ],
+  "history": [
+    {
+      "at": "2026-07-21T15:00:00Z",
+      "to": "discovered",
+      "actor": "sprint4",
+      "note": "npm audit surfaced 8 vulns (3 high) on SC main ef618c6."
+    },
+    {
+      "at": "2026-07-21T15:20:00Z",
+      "from": "discovered",
+      "to": "implemented",
+      "actor": "sprint4",
+      "note": "Targeted semver-safe updates on chore/dependency-security (68f2d3c)."
+    },
+    {
+      "at": "2026-07-21T15:30:00Z",
+      "from": "implemented",
+      "to": "verified",
+      "actor": "sprint4",
+      "note": "Full verification + Preview green. PR #12 OPEN, NOT merged (owner keeps Preview-only)."
+    }
+  ]
+}
