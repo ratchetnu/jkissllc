@@ -1,0 +1,45 @@
+{
+  "id": "OBS-002",
+  "title": "Observability Fast-Fail (provider sub-stage on fast-fail)",
+  "description": "When the AI provider exits via a fast-fail path (e.g. provider_unavailable) emit the provider sub-stage with status=failed + failureReason + retryable + duration, so pipeline traces stay structurally complete even when the gateway cannot execute. Purely observational; no retry/pricing/worker behavior change.",
+  "product": { "upstream": "operion", "downstream": "supercharged" },
+  "source": { "upstreamRepo": "ratchetnu/jkissllc", "downstreamRepo": "ratchetnu/supercharged", "sourceBranch": "feat/obs-provider-failstage", "sourceCommit": "b5eb037", "sourcePR": 38 },
+  "category": "observability",
+  "classification": "adaptation-required",
+  "status": "verified",
+  "syncBranch": "sync/supercharged/OBS-002",
+  "riskLevel": "low",
+  "dependencies": ["OBS-001"],
+  "verification": {
+    "typescript": true,
+    "eslint": true,
+    "unit": true,
+    "regression": true,
+    "previewBuild": true,
+    "featureOffVerified": true,
+    "rollbackVerified": true,
+    "ranAt": "2026-07-21T00:00:00Z",
+    "summary": "tsc 0 non-jimp errors; eslint clean; test:ai 90/90 (observability 20/20 incl 4 new OBS-002); ai-regression 2/2; next build ✓ compiled successfully (132 pages). Live Preview gateway run deferred (Preview AI Gateway creds unavailable)."
+  },
+  "approval": { "knownDifferences": ["Downstream junk-analysis had no provider markStage wiring (OBS-001 port gap); OBS-002 adds the observability import + fail-branch marking only (fast-fail scope). Success-path provider marking remains a separate OBS-001 completeness follow-up."] },
+  "surface": {
+    "sharedUtilities": ["app/lib/observability/pipeline-trace.ts", "app/lib/ai/service.ts", "app/lib/ai/junk-analysis.ts"],
+    "tests": ["scripts/pipeline-observability.test.ts"]
+  },
+  "rollout": { "featureFlagsOffByDefault": true, "previewValidationRequired": true },
+  "rollbackSteps": ["Revert the downstream sync PR. markStageFailure no-ops when no pipeline trace is active (AI_PIPELINE_OBSERVABILITY_ENABLED off) — inert by default.", "No migration, no env, no flag change."],
+  "exclusions": [],
+  "compatibilityNotes": [
+    "Depends on OBS-001 (observability layer) — present downstream.",
+    "ADAPTATION: supercharged's junk-analysis.ts has no observability import and does not mark the provider stage; the port adds the import + the fail-branch markStageFailure call (fast-fail scope only).",
+    "Backward compatible: StageStat gains OPTIONAL status/failureReason/retryable; failure result gains OPTIONAL latencyMs/retryable; legacy trace records unaffected.",
+    "No new feature flag; inert unless AI_PIPELINE_OBSERVABILITY_ENABLED is on (a trace must be active)."
+  ],
+  "history": [
+    { "at": "2026-07-21T00:00:00Z", "to": "discovered", "actor": "pipeline", "note": "Registered for the Supercharged parity effort (source: operion PR #38 / b5eb037)." },
+    { "at": "2026-07-21T00:10:00Z", "from": "discovered", "to": "planned", "actor": "pipeline", "note": "Discovery + gates (10/10) + plan generated; OBS-001 dependency verified present downstream; no duplicate." },
+    { "at": "2026-07-21T00:20:00Z", "from": "planned", "to": "adapting", "actor": "pipeline", "note": "sync/supercharged/OBS-002 cut from a62767f; adapted 3 code files + ported 4 tests (fast-fail scope)." },
+    { "at": "2026-07-21T00:30:00Z", "from": "adapting", "to": "implemented", "actor": "pipeline", "note": "Adaptation complete — exactly the 4 OBS-002 files, no unrelated changes." },
+    { "at": "2026-07-21T00:40:00Z", "from": "implemented", "to": "verified", "actor": "pipeline", "note": "tsc + eslint + test:ai 90/90 + regression 2/2 + Preview build all pass. Awaiting approval before merge." }
+  ]
+}
