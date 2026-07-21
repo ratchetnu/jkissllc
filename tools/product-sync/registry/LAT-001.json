@@ -2,22 +2,91 @@
   "id": "LAT-001",
   "title": "AI Latency Phase 2",
   "description": "Critic dedup (JSON critic + confidence gate), event-driven durable-worker recovery (next/server after()), and a due-job index (dark-launch + parity + flip).",
-  "product": { "upstream": "operion", "downstream": "supercharged" },
-  "source": { "upstreamRepo": "ratchetnu/jkissllc", "downstreamRepo": "ratchetnu/supercharged", "sourceBranch": "feat/ai-latency-phase2", "sourceCommit": "2cdeb7f", "sourcePR": 36 },
+  "product": {
+    "upstream": "operion",
+    "downstream": "supercharged"
+  },
+  "source": {
+    "upstreamRepo": "ratchetnu/jkissllc",
+    "downstreamRepo": "ratchetnu/supercharged",
+    "sourceBranch": "feat/ai-latency-phase2",
+    "sourceCommit": "2cdeb7f",
+    "sourcePR": 36
+  },
   "category": "performance",
   "classification": "adaptation-required",
-  "status": "discovered",
+  "status": "merged",
   "riskLevel": "high",
-  "dependencies": ["OBS-001"],
+  "dependencies": [
+    "OBS-001"
+  ],
   "surface": {
-    "featureFlags": ["OPERION_CRITIC_JSON", "OPERION_EVENT_ENQUEUE", "OPERION_DUE_INDEX", "OPERION_DUE_INDEX_DARK_LAUNCH"],
-    "sharedUtilities": ["app/lib/ai/junk-critic.ts", "app/lib/ai/photo-estimate.ts", "app/lib/book-now-ai.ts", "app/lib/bookings.ts", "app/lib/ai-due-index.ts", "app/lib/redis.ts"],
-    "apis": ["app/api/quote/route.ts"],
-    "tests": ["scripts/ai-latency-phase2.test.ts"]
+    "featureFlags": [
+      "OPERION_CRITIC_JSON",
+      "OPERION_EVENT_ENQUEUE",
+      "OPERION_DUE_INDEX",
+      "OPERION_DUE_INDEX_DARK_LAUNCH"
+    ],
+    "sharedUtilities": [
+      "app/lib/ai/junk-critic.ts",
+      "app/lib/ai/photo-estimate.ts",
+      "app/lib/book-now-ai.ts",
+      "app/lib/bookings.ts",
+      "app/lib/ai-due-index.ts",
+      "app/lib/redis.ts"
+    ],
+    "apis": [
+      "app/api/quote/route.ts"
+    ],
+    "tests": [
+      "scripts/ai-latency-phase2.test.ts"
+    ]
   },
-  "rollout": { "featureFlagsOffByDefault": true, "previewValidationRequired": true },
-  "rollbackSteps": ["Set OPERION_CRITIC_JSON / OPERION_EVENT_ENQUEUE / OPERION_DUE_INDEX* = OFF.", "For the index: dark-launch parity must be clean before any downstream flip; backfillDueIndex() first.", "Revert the sync PR."],
+  "rollout": {
+    "featureFlagsOffByDefault": true,
+    "previewValidationRequired": true
+  },
+  "rollbackSteps": [
+    "Rollback: git revert -m 1 a8e0584ff0ef390a4baf6cda8ebdd4bed6885aac (the PR #8 merge). All four latency flags (OPERION_CRITIC_JSON / OPERION_EVENT_ENQUEUE / OPERION_DUE_INDEX{,_DARK_LAUNCH}) default OFF ⇒ additive + inert.",
+    "Set OPERION_CRITIC_JSON / OPERION_EVENT_ENQUEUE / OPERION_DUE_INDEX* = OFF.",
+    "For the index: dark-launch parity must be clean before any downstream flip; backfillDueIndex() first.",
+    "Revert the sync PR."
+  ],
   "exclusions": [],
-  "compatibilityNotes": ["Measured via OBS-001 observability layer — port OBS-001 first (dependency).", "Redis due-index uses a ZSET; verify downstream Upstash wiring."],
-  "history": [{ "at": "2026-07-20T00:00:00Z", "to": "discovered", "actor": "initial-migration", "note": "Registered from completed upstream work (PR #36)." }]
+  "compatibilityNotes": [
+    "Measured via OBS-001 observability layer — port OBS-001 first (dependency).",
+    "Redis due-index uses a ZSET; verify downstream Upstash wiring."
+  ],
+  "history": [
+    {
+      "at": "2026-07-20T00:00:00Z",
+      "to": "discovered",
+      "actor": "initial-migration",
+      "note": "Registered from completed upstream work (PR #36)."
+    },
+    {
+      "at": "2026-07-21T07:06:48Z",
+      "from": "discovered",
+      "to": "merged",
+      "actor": "reconciliation",
+      "note": "Landed in the Supercharged parity release PR #8 (eaab4b3 latency Phase 2 backend); bundle re-verified green (tsc/462 tests/117 ai/regression/build, flags OFF) and merged as a8e0584ff0ef390a4baf6cda8ebdd4bed6885aac. Discovery→merged recorded as a bundled reconciliation transition (the parity foundation was validated and merged as one unit)."
+    }
+  ],
+  "downstreamPR": 8,
+  "verification": {
+    "typescript": true,
+    "eslint": true,
+    "unit": true,
+    "regression": true,
+    "previewBuild": true,
+    "featureOffVerified": true,
+    "rollbackVerified": true,
+    "ranAt": "2026-07-21T07:00:00Z",
+    "summary": "PR #8 bundle re-verified against head da5fdc8: tsc 0 errors; eslint changed-files 0 errors (2 pre-existing warnings); full suite 462/462; test:ai 117/117; ai-regression 2/2; next build ✓ compiled successfully; all new flags default OFF (flag-off = byte-identical). GitHub Vercel + regression green on merge commit a8e0584."
+  },
+  "approval": {
+    "approver": "ratchetnu (reconciliation directive, 2026-07-21)",
+    "approvedAt": "2026-07-21T07:06:48Z",
+    "knownDifferences": []
+  }
 }

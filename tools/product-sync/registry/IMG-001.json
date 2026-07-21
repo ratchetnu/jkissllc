@@ -2,21 +2,87 @@
   "id": "IMG-001",
   "title": "AI Image Optimization",
   "description": "Model-optimized photo derivatives (jimp) before the vision call; originals preserved; upload-side .ai.jpg sibling + A/B accuracy guardrail.",
-  "product": { "upstream": "operion", "downstream": "supercharged" },
-  "source": { "upstreamRepo": "ratchetnu/jkissllc", "downstreamRepo": "ratchetnu/supercharged", "sourceBranch": "feat/ai-image-optimization", "sourceCommit": "2847b96", "sourcePR": 35 },
+  "product": {
+    "upstream": "operion",
+    "downstream": "supercharged"
+  },
+  "source": {
+    "upstreamRepo": "ratchetnu/jkissllc",
+    "downstreamRepo": "ratchetnu/supercharged",
+    "sourceBranch": "feat/ai-image-optimization",
+    "sourceCommit": "2847b96",
+    "sourcePR": 35
+  },
   "category": "performance",
   "classification": "adaptation-required",
-  "status": "discovered",
+  "status": "merged",
   "riskLevel": "medium",
   "surface": {
-    "featureFlags": ["IMAGE_OPTIMIZATION_ENABLED", "IMAGE_OPT_AUTOCROP_ENABLED", "IMAGE_OPT_NORMALIZE_ENABLED", "IMAGE_OPT_SHARPEN_ENABLED", "IMAGE_OPT_DENOISE_ENABLED"],
-    "sharedUtilities": ["app/lib/image-optimize.ts", "app/lib/ai/photo-optimize.ts", "app/lib/ai/image-optimize-config.ts", "app/api/upload/route.ts"],
-    "sharedFiles": ["package.json"],
-    "tests": ["scripts/image-optimize.test.ts"]
+    "featureFlags": [
+      "IMAGE_OPTIMIZATION_ENABLED",
+      "IMAGE_OPT_AUTOCROP_ENABLED",
+      "IMAGE_OPT_NORMALIZE_ENABLED",
+      "IMAGE_OPT_SHARPEN_ENABLED",
+      "IMAGE_OPT_DENOISE_ENABLED"
+    ],
+    "sharedUtilities": [
+      "app/lib/image-optimize.ts",
+      "app/lib/ai/photo-optimize.ts",
+      "app/lib/ai/image-optimize-config.ts",
+      "app/api/upload/route.ts"
+    ],
+    "sharedFiles": [
+      "package.json"
+    ],
+    "tests": [
+      "scripts/image-optimize.test.ts"
+    ]
   },
-  "rollout": { "featureFlagsOffByDefault": true, "previewValidationRequired": true, "requiresEnvConfig": false },
-  "rollbackSteps": ["Set IMAGE_OPTIMIZATION_ENABLED=OFF (model reads the original).", "Revert the sync PR; remove jimp if unused."],
+  "rollout": {
+    "featureFlagsOffByDefault": true,
+    "previewValidationRequired": true,
+    "requiresEnvConfig": false
+  },
+  "rollbackSteps": [
+    "Rollback: git revert -m 1 a8e0584ff0ef390a4baf6cda8ebdd4bed6885aac (the PR #8 merge). IMAGE_OPTIMIZATION_ENABLED is OFF ⇒ the original photo is sent unchanged (byte-identical); remove jimp only if otherwise unused.",
+    "Set IMAGE_OPTIMIZATION_ENABLED=OFF (model reads the original).",
+    "Revert the sync PR; remove jimp if unused."
+  ],
   "exclusions": [],
-  "compatibilityNotes": ["Adds a jimp dependency — reconcile the downstream lockfile.", "Derivative is additive; originals untouched."],
-  "history": [{ "at": "2026-07-20T00:00:00Z", "to": "discovered", "actor": "initial-migration", "note": "Registered from completed upstream work (PR #35)." }]
+  "compatibilityNotes": [
+    "Adds a jimp dependency — reconcile the downstream lockfile.",
+    "Derivative is additive; originals untouched."
+  ],
+  "history": [
+    {
+      "at": "2026-07-20T00:00:00Z",
+      "to": "discovered",
+      "actor": "initial-migration",
+      "note": "Registered from completed upstream work (PR #35)."
+    },
+    {
+      "at": "2026-07-21T07:06:48Z",
+      "from": "discovered",
+      "to": "merged",
+      "actor": "reconciliation",
+      "note": "Landed in the Supercharged parity release PR #8 (a62767f image-opt backend); bundle re-verified green (tsc/462 tests/117 ai/regression/build, flags OFF) and merged as a8e0584ff0ef390a4baf6cda8ebdd4bed6885aac. Discovery→merged recorded as a bundled reconciliation transition (the parity foundation was validated and merged as one unit)."
+    }
+  ],
+  "downstreamPR": 8,
+  "verification": {
+    "typescript": true,
+    "eslint": true,
+    "unit": true,
+    "regression": true,
+    "previewBuild": true,
+    "featureOffVerified": true,
+    "rollbackVerified": true,
+    "ranAt": "2026-07-21T07:00:00Z",
+    "summary": "PR #8 bundle re-verified against head da5fdc8: tsc 0 errors; eslint changed-files 0 errors (2 pre-existing warnings); full suite 462/462; test:ai 117/117; ai-regression 2/2; next build ✓ compiled successfully; all new flags default OFF (flag-off = byte-identical). GitHub Vercel + regression green on merge commit a8e0584."
+  },
+  "approval": {
+    "approver": "ratchetnu (reconciliation directive, 2026-07-21)",
+    "approvedAt": "2026-07-21T07:06:48Z",
+    "knownDifferences": []
+  }
 }

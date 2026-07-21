@@ -2,20 +2,72 @@
   "id": "WRK-001",
   "title": "Graceful worker deadline",
   "description": "Per-job graceful deadline (AI_JOB_DEADLINE_MS) in the durable AI worker: a job that outruns its time budget is routed to manual_review BEFORE the function is hard-killed, so it never strands in 'processing'.",
-  "product": { "upstream": "operion", "downstream": "supercharged" },
-  "source": { "upstreamRepo": "ratchetnu/jkissllc", "downstreamRepo": "ratchetnu/supercharged" },
+  "product": {
+    "upstream": "operion",
+    "downstream": "supercharged"
+  },
+  "source": {
+    "upstreamRepo": "ratchetnu/jkissllc",
+    "downstreamRepo": "ratchetnu/supercharged"
+  },
   "category": "fix",
   "classification": "direct-port",
-  "status": "discovered",
+  "status": "merged",
   "riskLevel": "low",
   "surface": {
-    "environmentVariables": ["AI_JOB_DEADLINE_MS"],
-    "sharedUtilities": ["app/lib/book-now-ai.ts"],
-    "tests": ["scripts/book-now-ai.test.ts"]
+    "environmentVariables": [
+      "AI_JOB_DEADLINE_MS"
+    ],
+    "sharedUtilities": [
+      "app/lib/book-now-ai.ts"
+    ],
+    "tests": [
+      "scripts/book-now-ai.test.ts"
+    ]
   },
-  "rollout": { "featureFlagsOffByDefault": true, "previewValidationRequired": false, "requiresEnvConfig": false },
-  "rollbackSteps": ["Revert the sync commit; the deadline defaults are safe (env-overridable)."],
+  "rollout": {
+    "featureFlagsOffByDefault": true,
+    "previewValidationRequired": false,
+    "requiresEnvConfig": false
+  },
+  "rollbackSteps": [
+    "Rollback: git revert -m 1 a8e0584ff0ef390a4baf6cda8ebdd4bed6885aac (the PR #8 merge). Worker deadline defaults are env-overridable and safe; behavior degrades gracefully.",
+    "Revert the sync commit; the deadline defaults are safe (env-overridable)."
+  ],
   "exclusions": [],
-  "compatibilityNotes": ["Pure backend worker logic — no branding. Direct port; verify the downstream cron maxDuration is >= the deadline."],
-  "history": [{ "at": "2026-07-20T00:00:00Z", "to": "discovered", "actor": "initial-migration", "note": "Registered from completed upstream worker hardening." }]
+  "compatibilityNotes": [
+    "Pure backend worker logic — no branding. Direct port; verify the downstream cron maxDuration is >= the deadline."
+  ],
+  "history": [
+    {
+      "at": "2026-07-20T00:00:00Z",
+      "to": "discovered",
+      "actor": "initial-migration",
+      "note": "Registered from completed upstream worker hardening."
+    },
+    {
+      "at": "2026-07-21T07:06:48Z",
+      "from": "discovered",
+      "to": "merged",
+      "actor": "reconciliation",
+      "note": "Landed in the Supercharged parity release PR #8 (8098d35 graceful worker deadline + run budget); bundle re-verified green (tsc/462 tests/117 ai/regression/build, flags OFF) and merged as a8e0584ff0ef390a4baf6cda8ebdd4bed6885aac. Discovery→merged recorded as a bundled reconciliation transition (the parity foundation was validated and merged as one unit)."
+    }
+  ],
+  "downstreamPR": 8,
+  "verification": {
+    "typescript": true,
+    "eslint": true,
+    "unit": true,
+    "regression": true,
+    "previewBuild": true,
+    "featureOffVerified": true,
+    "rollbackVerified": true,
+    "ranAt": "2026-07-21T07:00:00Z",
+    "summary": "PR #8 bundle re-verified against head da5fdc8: tsc 0 errors; eslint changed-files 0 errors (2 pre-existing warnings); full suite 462/462; test:ai 117/117; ai-regression 2/2; next build ✓ compiled successfully; all new flags default OFF (flag-off = byte-identical). GitHub Vercel + regression green on merge commit a8e0584."
+  },
+  "approval": {
+    "approver": "ratchetnu (reconciliation directive, 2026-07-21)",
+    "approvedAt": "2026-07-21T07:06:48Z",
+    "knownDifferences": []
+  }
 }
