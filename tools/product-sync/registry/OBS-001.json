@@ -1,0 +1,89 @@
+{
+  "id": "OBS-001",
+  "title": "AI Pipeline Observability",
+  "description": "Per-stage latency tracing (ALS) over the durable Book Now AI job (queue/image_preprocess/provider/ai/pricing/database/notification) + read-only internal dashboard. Includes the fast-fail provider-stage fix.",
+  "product": {
+    "upstream": "operion",
+    "downstream": "supercharged"
+  },
+  "source": {
+    "upstreamRepo": "ratchetnu/jkissllc",
+    "downstreamRepo": "ratchetnu/supercharged",
+    "sourceBranch": "feat/ai-pipeline-observability",
+    "sourceCommit": "be313f7",
+    "sourcePR": 8
+  },
+  "category": "observability",
+  "classification": "adaptation-required",
+  "status": "merged",
+  "riskLevel": "medium",
+  "surface": {
+    "featureFlags": [
+      "AI_PIPELINE_OBSERVABILITY_ENABLED"
+    ],
+    "sharedUtilities": [
+      "app/lib/observability/pipeline-trace.ts",
+      "app/lib/observability/pipeline-metrics.ts",
+      "app/lib/observability/pipeline-read.ts",
+      "app/lib/ai/junk-analysis.ts",
+      "app/lib/ai/service.ts",
+      "app/lib/bookings.ts",
+      "app/lib/book-now-ai.ts"
+    ],
+    "apis": [
+      "app/api/admin/ai/pipeline/route.ts"
+    ],
+    "ui": [
+      "app/admin/operations/ai/pipeline/page.tsx"
+    ],
+    "tests": [
+      "scripts/pipeline-observability.test.ts"
+    ]
+  },
+  "rollout": {
+    "featureFlagsOffByDefault": true,
+    "previewValidationRequired": true
+  },
+  "rollbackSteps": [
+    "Rollback: git revert -m 1 a8e0584ff0ef390a4baf6cda8ebdd4bed6885aac (the PR #8 merge). Observability is inert unless AI_PIPELINE_OBSERVABILITY_ENABLED is on.",
+    "Set AI_PIPELINE_OBSERVABILITY_ENABLED=OFF (instant).",
+    "Revert the downstream sync PR."
+  ],
+  "exclusions": [],
+  "compatibilityNotes": [
+    "Backend-agnostic; only the admin dashboard page carries branding.",
+    "No customer-facing behavior; inert when flag off."
+  ],
+  "history": [
+    {
+      "at": "2026-07-20T00:00:00Z",
+      "to": "discovered",
+      "actor": "initial-migration",
+      "note": "Registered from completed upstream work (merged to operion main)."
+    },
+    {
+      "at": "2026-07-21T07:06:48Z",
+      "from": "discovered",
+      "to": "merged",
+      "actor": "reconciliation",
+      "note": "Landed in the Supercharged parity release PR #8 (41ef702 infra + 5233fda instrumentation); bundle re-verified green (tsc/462 tests/117 ai/regression/build, flags OFF) and merged as a8e0584ff0ef390a4baf6cda8ebdd4bed6885aac. Discovery→merged recorded as a bundled reconciliation transition (the parity foundation was validated and merged as one unit)."
+    }
+  ],
+  "downstreamPR": 8,
+  "verification": {
+    "typescript": true,
+    "eslint": true,
+    "unit": true,
+    "regression": true,
+    "previewBuild": true,
+    "featureOffVerified": true,
+    "rollbackVerified": true,
+    "ranAt": "2026-07-21T07:00:00Z",
+    "summary": "PR #8 bundle re-verified against head da5fdc8: tsc 0 errors; eslint changed-files 0 errors (2 pre-existing warnings); full suite 462/462; test:ai 117/117; ai-regression 2/2; next build ✓ compiled successfully; all new flags default OFF (flag-off = byte-identical). GitHub Vercel + regression green on merge commit a8e0584."
+  },
+  "approval": {
+    "approver": "ratchetnu (reconciliation directive, 2026-07-21)",
+    "approvedAt": "2026-07-21T07:06:48Z",
+    "knownDifferences": []
+  }
+}

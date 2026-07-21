@@ -19,7 +19,15 @@
     "predeploy": "npx tsc --noEmit && npm run test:ai:regression",
     "test": "npx --yes tsx@4 --test scripts/*.test.ts",
     "audit:mobile": "node scripts/mobile-overflow-audit.mjs",
-    "operion:sandbox:verify": "node scripts/operion-sandbox-verify.mjs"
+    "operion:sandbox:verify": "node scripts/operion-sandbox-verify.mjs",
+    "test:sync": "npx --yes tsx@4 --test scripts/product-sync.test.ts",
+    "sync:discover": "npx --yes tsx@4 tools/product-sync/engine/discovery.ts",
+    "sync:gates": "npx --yes tsx@4 tools/product-sync/engine/gates.ts",
+    "sync:plan": "npx --yes tsx@4 tools/product-sync/engine/cli.ts plan",
+    "sync:verify": "npx --yes tsx@4 tools/product-sync/engine/cli.ts verify",
+    "sync:approve": "npx --yes tsx@4 tools/product-sync/engine/cli.ts approve",
+    "sync:drift": "npx --yes tsx@4 tools/product-sync/engine/cli.ts drift",
+    "sync:dashboard": "npx --yes tsx@4 tools/product-sync/engine/dashboard.ts"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",

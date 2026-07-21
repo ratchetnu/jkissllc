@@ -1,0 +1,64 @@
+{
+  "id": "BN-001",
+  "title": "Book Now parity work",
+  "description": "Durable Book Now AI pipeline parity: single shared pricing path (buildPhotoEstimate) across the inline customer estimate and the durable recovery worker, unified queue/stage model, and KPI/stage consistency.",
+  "product": {
+    "upstream": "operion",
+    "downstream": "supercharged"
+  },
+  "source": {
+    "upstreamRepo": "ratchetnu/jkissllc",
+    "downstreamRepo": "ratchetnu/supercharged",
+    "sourceBranch": "feat/unified-operations-book-now"
+  },
+  "category": "feature",
+  "classification": "adaptation-required",
+  "status": "discovered",
+  "riskLevel": "high",
+  "surface": {
+    "sharedUtilities": [
+      "app/lib/ai/photo-estimate.ts",
+      "app/lib/book-now-ai.ts",
+      "app/lib/book-now-queue.ts",
+      "app/lib/booking-requests.ts"
+    ],
+    "apis": [
+      "app/api/quote/analyze/route.ts",
+      "app/api/quote/route.ts",
+      "app/api/cron/ai-jobs/route.ts"
+    ],
+    "ui": [
+      "app/quote/page.tsx"
+    ],
+    "tests": [
+      "scripts/book-now-ai.test.ts",
+      "scripts/book-now-queue.test.ts"
+    ]
+  },
+  "rollout": {
+    "featureFlagsOffByDefault": true,
+    "previewValidationRequired": true
+  },
+  "rollbackSteps": [
+    "Revert the sync PR; the shared pricing path is additive but touches the worker — verify the downstream cron wiring after revert."
+  ],
+  "exclusions": [],
+  "compatibilityNotes": [
+    "Customer wizard is branding-coupled.",
+    "Depends on downstream having the same disposal/pricing engine + Redis booking store."
+  ],
+  "history": [
+    {
+      "at": "2026-07-20T00:00:00Z",
+      "to": "discovered",
+      "actor": "initial-migration",
+      "note": "Registered from completed upstream Book Now work."
+    },
+    {
+      "at": "2026-07-21T07:20:00Z",
+      "to": "discovered",
+      "actor": "reconciliation",
+      "note": "Clarification: BN-001 (customer Book Now UNIFIED PIPELINE / single shared pricing path) was NOT part of PR #8. PR #8 shipped the ADMIN booking-detail workspace (see BKD-001) + worker deadline/run-budget (WRK-001/002) only. BN-001 remains discovered — re-run discovery to classify (may be partially-present downstream)."
+    }
+  ]
+}
