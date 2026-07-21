@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  Trace, runWithTrace, timeStage, markStage, markTraceOutcome, activeTrace,
+  Trace, runWithTrace, timeStage, markStage, markStageFailure, markTraceOutcome, activeTrace,
   PIPELINE_STAGES, PIPELINE_SUBSTAGES, isSubStage, NOTIFY_FEATURE,
   type PipelineTraceRecord,
 } from '../app/lib/observability/pipeline-trace'
@@ -65,6 +65,58 @@ test('Trace accumulates stage totals, counts, and worst occurrence', () => {
   assert.equal(rec.durationMs, 400)   // completedAt 1400 − startedAt 1000
   assert.equal(rec.id, 'r1')
   assert.equal(rec.bookingId, 'bk')
+})
+
+// ── Provider fast-fail sub-stage (structural completeness on a provider failure) ──
+
+test('Trace.add records a failed stage with status/reason/retryable + duration', () => {
+  const tr = new Trace({ requestId: 'rf1', feature: 'book-now-ai' }, 'default', () => 0)
+  tr.add('provider', 715, { status: 'failed', failureReason: 'provider_unavailable', retryable: true })
+  const st = tr.toRecord().stages.provider!
+  assert.equal(st.totalMs, 715)
+  assert.equal(st.count, 1)
+  assert.equal(st.status, 'failed')
+  assert.equal(st.failureReason, 'provider_unavailable')
+  assert.equal(st.retryable, true)
+})
+
+test('markStageFailure emits the provider stage even on an instant (0ms) fast-fail', async () => {
+  let captured: PipelineTraceRecord | null = null
+  const store = memStore()
+  await runWithTrace(
+    { requestId: 'rf2', feature: 'book-now-ai', bookingId: 'bk2' },
+    async () => { markStageFailure('provider', undefined, 'network', true) },
+    { store, env: { AI_PIPELINE_OBSERVABILITY_ENABLED: 'true' } },
+  )
+  captured = await getTrace('rf2', store)
+  const st = captured!.stages.provider!
+  assert.equal(st.status, 'failed')
+  assert.equal(st.failureReason, 'network')
+  assert.equal(st.retryable, true)
+  assert.equal(st.totalMs, 0)     // instant fail → 0ms, but the stage IS present
+  assert.equal(st.count, 1)
+})
+
+test('markStageFailure is a no-op with no active trace (flag off / non-worker path)', () => {
+  assert.doesNotThrow(() => markStageFailure('provider', 100, 'auth', false))
+})
+
+test('schema compat: a legacy stage record (no failure fields) aggregates unchanged', () => {
+  // Old records lack status/failureReason/retryable — the read layer must ignore them.
+  const legacy: PipelineTraceRecord = {
+    id: 'leg1', at: 0, tenantId: 'default', feature: 'book-now-ai',
+    startedAt: 0, completedAt: 100, durationMs: 100,
+    stages: { provider: { totalMs: 50, count: 1, maxMs: 50 } }, // no failure fields
+  }
+  const failed: PipelineTraceRecord = {
+    id: 'fail1', at: 0, tenantId: 'default', feature: 'book-now-ai',
+    startedAt: 0, completedAt: 10, durationMs: 10,
+    stages: { provider: { totalMs: 0, count: 1, maxMs: 0, status: 'failed', failureReason: 'provider_unavailable', retryable: true } },
+  }
+  const agg = aggregatePipeline([legacy, failed])
+  const provider = agg.stages.find(s => s.stage === 'provider')!
+  assert.equal(provider.occurrences, 2)  // both provider occurrences fold in regardless of failure fields
+  assert.ok(provider.count >= 1)
 })
 
 test('Trace.time records the wrapped work wall-clock and returns its value', async () => {

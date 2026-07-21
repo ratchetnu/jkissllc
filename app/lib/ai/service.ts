@@ -59,7 +59,9 @@ export type AiTaskDeps = {
 
 export type AiTaskResult<T> =
   | { ok: true; data: T; text: string; callId: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number }; latencyMs: number; model: string; promptVersion: number; qualityScore: number }
-  | { ok: false; error: string; status: number; callId: string; outcome: AiCallOutcome; errorClass: string }
+  // latencyMs/retryable are populated ONLY on the provider-execution failure path
+  // (surfaced for observability's provider fail-stage); other failures omit them.
+  | { ok: false; error: string; status: number; callId: string; outcome: AiCallOutcome; errorClass: string; latencyMs?: number; retryable?: boolean }
 
 // Coarse failure classification for observability dashboards.
 function classifyError(msg: string): string {
@@ -149,7 +151,9 @@ export async function runAiTask<T = Record<string, unknown>>(input: AiTaskInput,
     await write({ ...versioned, ok: false, outcome: 'provider_error', error: gen.error, errorClass: lastClass, providerErrorCode: gen.errorKind ?? lastClass, latencyMs, model, attempts, retried, ...timing })
     // errorClass is the ONLY thing that distinguishes a retryable blip from a permanent
     // billing/auth rejection. Callers need it to decide whether a retry can ever succeed.
-    return { ok: false, error: gen.error, status: 503, callId, outcome: 'provider_error', errorClass: lastClass }
+    // latencyMs/retryable are surfaced (already recorded to telemetry above) purely so
+    // observability can annotate the provider stage on a fast-fail — no retry-policy change.
+    return { ok: false, error: gen.error, status: 503, callId, outcome: 'provider_error', errorClass: lastClass, latencyMs, retryable: isTransient(lastClass) }
   }
 
   // 6) Cost reconciliation: provider-reported cost when available, else estimate. The
