@@ -12,8 +12,8 @@
     "sourceBranch": "feat/unified-operations-book-now"
   },
   "category": "feature",
-  "classification": "adaptation-required",
-  "status": "discovered",
+  "classification": "already-present",
+  "status": "rejected",
   "riskLevel": "high",
   "surface": {
     "sharedUtilities": [
@@ -59,6 +59,13 @@
       "to": "discovered",
       "actor": "reconciliation",
       "note": "Clarification: BN-001 (customer Book Now UNIFIED PIPELINE / single shared pricing path) was NOT part of PR #8. PR #8 shipped the ADMIN booking-detail workspace (see BKD-001) + worker deadline/run-budget (WRK-001/002) only. BN-001 remains discovered — re-run discovery to classify (may be partially-present downstream)."
+    },
+    {
+      "at": "2026-07-21T14:45:00Z",
+      "from": "discovered",
+      "to": "rejected",
+      "actor": "sprint3",
+      "note": "Reclassified ALREADY-PRESENT (no port needed). Verified downstream: buildPhotoEstimate (the BN-001 single shared pricing path) is defined in app/lib/ai/photo-estimate.ts and called by BOTH the inline customer estimate (app/api/quote/analyze/route.ts) AND the durable worker (app/lib/book-now-ai.ts) — structurally matching operion. Content is branded-divergent (changed-file drift), not missing."
     }
   ]
 }
