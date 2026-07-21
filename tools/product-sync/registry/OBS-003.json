@@ -1,0 +1,92 @@
+{
+  "id": "OBS-003",
+  "title": "Observability Dashboard (per-stage pipeline latency UI)",
+  "description": "Read-only per-stage AI pipeline latency dashboard UI: a GET feed (/api/admin/ai/pipeline) plus a \"Pipeline latency (per-stage)\" section inside the existing AI Command Center Observability tab. UI ONLY over the existing pipeline-read backend (OBS-001/OBS-002) — no new aggregation, no AI calls, mutates nothing.",
+  "product": {
+    "upstream": "operion",
+    "downstream": "supercharged"
+  },
+  "source": {
+    "upstreamRepo": "ratchetnu/jkissllc",
+    "downstreamRepo": "ratchetnu/supercharged",
+    "sourceBranch": "feat/observability-dashboard-ui",
+    "sourcePR": 9
+  },
+  "category": "ui",
+  "classification": "adaptation-required",
+  "status": "merged",
+  "downstreamPR": 9,
+  "dependencies": [
+    "OBS-001",
+    "OBS-002"
+  ],
+  "riskLevel": "low",
+  "surface": {
+    "featureFlags": [
+      "AI_PIPELINE_OBSERVABILITY_ENABLED"
+    ],
+    "apis": [
+      "app/api/admin/ai/pipeline/route.ts"
+    ],
+    "ui": [
+      "app/admin/operations/ai/page.tsx"
+    ],
+    "sharedUtilities": [
+      "app/lib/observability/pipeline-read.ts"
+    ]
+  },
+  "rollout": {
+    "featureFlagsOffByDefault": true,
+    "previewValidationRequired": true,
+    "requiresMigration": false,
+    "requiresEnvConfig": false
+  },
+  "verification": {
+    "typescript": true,
+    "eslint": true,
+    "unit": true,
+    "regression": true,
+    "previewBuild": true,
+    "featureOffVerified": true,
+    "rollbackVerified": true,
+    "ranAt": "2026-07-21T14:40:00Z",
+    "summary": "PR #9 re-verified at head 9520982 + on final main: tsc 0 (after clearing a stale .next cross-branch artifact); eslint clean; test:ai 121/121 (incl. observability); ai-regression 2/2; next build ✓ (/api/admin/ai/pipeline dynamic); Vercel + regression + Preview green; post-merge deploy READY. Live successful-provider validation still DEFERRED (Preview AI Gateway entitlement unresolved)."
+  },
+  "approval": {
+    "approver": "ratchetnu (Sprint 3 merge approval, 2026-07-21)",
+    "approvedAt": "2026-07-21T14:41:19Z",
+    "knownDifferences": [
+      "Built Supercharged-native against SC's existing Observability tab + Section/Stat/scrollX kit rather than porting operion's AICommandShell — reuses the SC backend, adds no duplicate API."
+    ]
+  },
+  "rollbackSteps": [
+    "Rollback: git revert -m 1 b6ad8fe (PR #9 merge). Read-only dashboard; AI_PIPELINE_OBSERVABILITY_ENABLED off ⇒ renders an \"off\" state, zero runtime exposure.",
+    "No migration, no env, no flag change."
+  ],
+  "exclusions": [],
+  "compatibilityNotes": [
+    "UI over existing pipeline-read; no new backend. Flag AI_PIPELINE_OBSERVABILITY_ENABLED OFF by default."
+  ],
+  "history": [
+    {
+      "at": "2026-07-21T05:00:00Z",
+      "to": "discovered",
+      "actor": "sprint2",
+      "note": "Observability dashboard UI identified as the deferred OBS surface downstream."
+    },
+    {
+      "at": "2026-07-21T06:00:00Z",
+      "from": "discovered",
+      "to": "verified",
+      "actor": "sprint2",
+      "note": "Implemented + verified on branch feat/observability-dashboard-ui (PR #9); Preview green."
+    },
+    {
+      "at": "2026-07-21T14:41:19Z",
+      "from": "verified",
+      "to": "merged",
+      "actor": "sprint3",
+      "note": "PR #9 merged to Supercharged main as b6ad8fe (head 9520982); post-merge deploy READY; flag OFF."
+    }
+  ]
+}
