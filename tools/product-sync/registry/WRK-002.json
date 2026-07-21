@@ -1,0 +1,20 @@
+{
+  "id": "WRK-002",
+  "title": "Run budget (cron wall-clock ceiling)",
+  "description": "runDueAiJobs never STARTS a job that can't finish its full per-job deadline before the function's wall-clock ceiling (FUNCTION_BUDGET_MS), so a late job is never hard-killed mid-run and left stuck.",
+  "product": { "upstream": "operion", "downstream": "supercharged" },
+  "source": { "upstreamRepo": "ratchetnu/jkissllc", "downstreamRepo": "ratchetnu/supercharged" },
+  "category": "fix",
+  "classification": "direct-port",
+  "status": "discovered",
+  "riskLevel": "low",
+  "surface": {
+    "sharedUtilities": ["app/lib/book-now-ai.ts"],
+    "tests": ["scripts/book-now-ai.test.ts"]
+  },
+  "rollout": { "featureFlagsOffByDefault": true, "previewValidationRequired": false },
+  "rollbackSteps": ["Revert the sync commit; behavior degrades gracefully (late jobs deferred to the next tick)."],
+  "exclusions": [],
+  "compatibilityNotes": ["Pure backend scheduling guard — no branding. Direct port; align FUNCTION_BUDGET_MS with the downstream cron maxDuration."],
+  "history": [{ "at": "2026-07-20T00:00:00Z", "to": "discovered", "actor": "initial-migration", "note": "Registered from completed upstream worker hardening." }]
+}

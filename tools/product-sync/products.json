@@ -1,0 +1,41 @@
+{
+  "$comment": "Product-agnostic sync topology. Repo PATHS are local checkouts the read-only engine reads; they are never written. NOTE: downstream products are BRANDED COPIES with UNRELATED git histories (not forks), so discovery is CONTENT-based (path + hash), never `git log upstream..downstream`. `rename` maps upstream dirs to downstream dirs where they diverge (identity by default).",
+  "schemaVersion": 1,
+  "products": {
+    "operion": {
+      "id": "operion",
+      "role": "upstream",
+      "repo": "ratchetnu/jkissllc",
+      "path": "/Users/nunubabymuzik/jkissllc",
+      "defaultBranch": "main"
+    },
+    "supercharged": {
+      "id": "supercharged",
+      "role": "downstream",
+      "repo": "ratchetnu/supercharged",
+      "path": "/Users/nunubabymuzik/supercharged",
+      "defaultBranch": "main",
+      "rename": {}
+    },
+    "claimguard": {
+      "id": "claimguard",
+      "role": "downstream",
+      "repo": "ratchetnu/claimguard",
+      "path": "/Users/nunubabymuzik/claimguard",
+      "defaultBranch": "production",
+      "rename": {}
+    }
+  },
+  "relationships": [
+    { "upstream": "operion", "downstream": "supercharged", "historyRelationship": "unrelated", "compareMode": "content" },
+    { "upstream": "operion", "downstream": "claimguard", "historyRelationship": "unrelated", "compareMode": "content" }
+  ],
+  "compare": {
+    "$comment": "Directories the discovery engine diffs, and paths it never counts as drift.",
+    "includeDirs": ["app", "scripts", "docs", "public"],
+    "trackedRootFiles": ["package.json", "vercel.json", "next.config.ts", "tsconfig.json"],
+    "ignore": ["node_modules", ".next", ".git", ".vercel", ".claude", "tools/product-sync", "*.tsbuildinfo", "*.log", ".DS_Store"],
+    "flagsFile": "app/lib/platform/flags.ts",
+    "brandingHints": ["public/images", "public/logo", "COMPANY", "brand", "theme", "app/globals.css"]
+  }
+}

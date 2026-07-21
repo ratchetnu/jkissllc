@@ -1,0 +1,20 @@
+{
+  "id": "REL-001",
+  "title": "Release Center (Operion release orchestration)",
+  "description": "Owner release orchestration: Publish Review, approval gate, publish execution, history + rollback. Upstream-only control plane for operating the Operion platform itself.",
+  "product": { "upstream": "operion", "downstream": "supercharged" },
+  "source": { "upstreamRepo": "ratchetnu/jkissllc", "downstreamRepo": "ratchetnu/supercharged", "sourceBranch": "feat/operion-release-system" },
+  "category": "feature",
+  "classification": "excluded",
+  "status": "rejected",
+  "riskLevel": "low",
+  "surface": {
+    "featureFlags": ["OPERION_APPROVAL_GATE_ENABLED", "OPERION_PRODUCTION_PROMOTION_ENABLED", "OPERION_AUTOMATION_ENABLED"],
+    "routes": ["/admin/operations/release"]
+  },
+  "rollout": { "featureFlagsOffByDefault": true, "previewValidationRequired": false },
+  "rollbackSteps": ["N/A — never ported."],
+  "exclusions": ["Entire Release Center subsystem: it orchestrates releases OF the Operion platform and has no meaning in a downstream product."],
+  "compatibilityNotes": ["EXCLUDED BY POLICY. This is the canonical exclusion example. Downstream products are release TARGETS, not release operators."],
+  "history": [{ "at": "2026-07-20T00:00:00Z", "to": "rejected", "actor": "initial-migration", "note": "Registered as a permanent exclusion (upstream-only subsystem)." }]
+}

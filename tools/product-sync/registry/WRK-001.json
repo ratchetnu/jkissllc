@@ -1,0 +1,21 @@
+{
+  "id": "WRK-001",
+  "title": "Graceful worker deadline",
+  "description": "Per-job graceful deadline (AI_JOB_DEADLINE_MS) in the durable AI worker: a job that outruns its time budget is routed to manual_review BEFORE the function is hard-killed, so it never strands in 'processing'.",
+  "product": { "upstream": "operion", "downstream": "supercharged" },
+  "source": { "upstreamRepo": "ratchetnu/jkissllc", "downstreamRepo": "ratchetnu/supercharged" },
+  "category": "fix",
+  "classification": "direct-port",
+  "status": "discovered",
+  "riskLevel": "low",
+  "surface": {
+    "environmentVariables": ["AI_JOB_DEADLINE_MS"],
+    "sharedUtilities": ["app/lib/book-now-ai.ts"],
+    "tests": ["scripts/book-now-ai.test.ts"]
+  },
+  "rollout": { "featureFlagsOffByDefault": true, "previewValidationRequired": false, "requiresEnvConfig": false },
+  "rollbackSteps": ["Revert the sync commit; the deadline defaults are safe (env-overridable)."],
+  "exclusions": [],
+  "compatibilityNotes": ["Pure backend worker logic — no branding. Direct port; verify the downstream cron maxDuration is >= the deadline."],
+  "history": [{ "at": "2026-07-20T00:00:00Z", "to": "discovered", "actor": "initial-migration", "note": "Registered from completed upstream worker hardening." }]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "LAT-001",
+  "title": "AI Latency Phase 2",
+  "description": "Critic dedup (JSON critic + confidence gate), event-driven durable-worker recovery (next/server after()), and a due-job index (dark-launch + parity + flip).",
+  "product": { "upstream": "operion", "downstream": "supercharged" },
+  "source": { "upstreamRepo": "ratchetnu/jkissllc", "downstreamRepo": "ratchetnu/supercharged", "sourceBranch": "feat/ai-latency-phase2", "sourceCommit": "2cdeb7f", "sourcePR": 36 },
+  "category": "performance",
+  "classification": "adaptation-required",
+  "status": "discovered",
+  "riskLevel": "high",
+  "dependencies": ["OBS-001"],
+  "surface": {
+    "featureFlags": ["OPERION_CRITIC_JSON", "OPERION_EVENT_ENQUEUE", "OPERION_DUE_INDEX", "OPERION_DUE_INDEX_DARK_LAUNCH"],
+    "sharedUtilities": ["app/lib/ai/junk-critic.ts", "app/lib/ai/photo-estimate.ts", "app/lib/book-now-ai.ts", "app/lib/bookings.ts", "app/lib/ai-due-index.ts", "app/lib/redis.ts"],
+    "apis": ["app/api/quote/route.ts"],
+    "tests": ["scripts/ai-latency-phase2.test.ts"]
+  },
+  "rollout": { "featureFlagsOffByDefault": true, "previewValidationRequired": true },
+  "rollbackSteps": ["Set OPERION_CRITIC_JSON / OPERION_EVENT_ENQUEUE / OPERION_DUE_INDEX* = OFF.", "For the index: dark-launch parity must be clean before any downstream flip; backfillDueIndex() first.", "Revert the sync PR."],
+  "exclusions": [],
+  "compatibilityNotes": ["Measured via OBS-001 observability layer — port OBS-001 first (dependency).", "Redis due-index uses a ZSET; verify downstream Upstash wiring."],
+  "history": [{ "at": "2026-07-20T00:00:00Z", "to": "discovered", "actor": "initial-migration", "note": "Registered from completed upstream work (PR #36)." }]
+}

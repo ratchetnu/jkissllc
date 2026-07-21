@@ -1,0 +1,23 @@
+{
+  "id": "UX-001",
+  "title": "Progress UX (calibrated customer progress)",
+  "description": "Six-stage calibrated customer progress display on /quote (client-timed, telemetry-paced) with a ProgressDriver seam for future server-streamed progress.",
+  "product": { "upstream": "operion", "downstream": "supercharged" },
+  "source": { "upstreamRepo": "ratchetnu/jkissllc", "downstreamRepo": "ratchetnu/supercharged", "sourceBranch": "feat/progress-ux-option-a", "sourceCommit": "d8a2b33", "sourcePR": 34 },
+  "category": "ui",
+  "classification": "adaptation-required",
+  "status": "discovered",
+  "riskLevel": "medium",
+  "surface": {
+    "featureFlags": ["OPERION_PROGRESS_UX"],
+    "sharedUtilities": ["app/lib/ai/progress-stages.ts", "app/lib/ai/progress-calibration.ts", "app/lib/ai/progress-metrics.ts"],
+    "apis": ["app/api/quote/progress-calibration/route.ts", "app/api/quote/progress-metric/route.ts", "app/api/intake/config/route.ts"],
+    "ui": ["app/quote/CalibratedProgress.tsx", "app/quote/page.tsx"],
+    "tests": ["scripts/progress-ux.test.ts"]
+  },
+  "rollout": { "featureFlagsOffByDefault": true, "previewValidationRequired": true },
+  "rollbackSteps": ["Set OPERION_PROGRESS_UX=OFF (reverts to the static analyzing view).", "Revert the sync PR."],
+  "exclusions": [],
+  "compatibilityNotes": ["Customer-facing UI — downstream branding (copy, colors, brand red) MUST be preserved during adaptation.", "Pure state machine is reusable; only CalibratedProgress.tsx + page.tsx wiring are branding-coupled."],
+  "history": [{ "at": "2026-07-20T00:00:00Z", "to": "discovered", "actor": "initial-migration", "note": "Registered from completed upstream work (PR #34)." }]
+}

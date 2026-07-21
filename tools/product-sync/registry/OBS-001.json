@@ -1,0 +1,23 @@
+{
+  "id": "OBS-001",
+  "title": "AI Pipeline Observability",
+  "description": "Per-stage latency tracing (ALS) over the durable Book Now AI job (queue/image_preprocess/provider/ai/pricing/database/notification) + read-only internal dashboard. Includes the fast-fail provider-stage fix.",
+  "product": { "upstream": "operion", "downstream": "supercharged" },
+  "source": { "upstreamRepo": "ratchetnu/jkissllc", "downstreamRepo": "ratchetnu/supercharged", "sourceBranch": "feat/ai-pipeline-observability", "sourceCommit": "be313f7", "sourcePR": "merged-to-main" },
+  "category": "observability",
+  "classification": "adaptation-required",
+  "status": "discovered",
+  "riskLevel": "medium",
+  "surface": {
+    "featureFlags": ["AI_PIPELINE_OBSERVABILITY_ENABLED"],
+    "sharedUtilities": ["app/lib/observability/pipeline-trace.ts", "app/lib/observability/pipeline-metrics.ts", "app/lib/observability/pipeline-read.ts", "app/lib/ai/junk-analysis.ts", "app/lib/ai/service.ts", "app/lib/bookings.ts", "app/lib/book-now-ai.ts"],
+    "apis": ["app/api/admin/ai/pipeline/route.ts"],
+    "ui": ["app/admin/operations/ai/pipeline/page.tsx"],
+    "tests": ["scripts/pipeline-observability.test.ts"]
+  },
+  "rollout": { "featureFlagsOffByDefault": true, "previewValidationRequired": true },
+  "rollbackSteps": ["Set AI_PIPELINE_OBSERVABILITY_ENABLED=OFF (instant).", "Revert the downstream sync PR."],
+  "exclusions": [],
+  "compatibilityNotes": ["Backend-agnostic; only the admin dashboard page carries branding.", "No customer-facing behavior; inert when flag off."],
+  "history": [{ "at": "2026-07-20T00:00:00Z", "to": "discovered", "actor": "initial-migration", "note": "Registered from completed upstream work (merged to operion main)." }]
+}
