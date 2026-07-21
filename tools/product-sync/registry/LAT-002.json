@@ -1,0 +1,74 @@
+{
+  "id": "LAT-002",
+  "title": "AI Latency Phase 2 activation wiring (planned — awaiting Preview validation)",
+  "description": "Wire the already-merged LAT-001 backends to their call sites. CURRENT REALITY (SC main ef618c6): OPERION_CRITIC_JSON = 0 call-sites; OPERION_EVENT_ENQUEUE = 0 call-sites; the entire app/lib/ai-due-index.ts module has 0 external callers → all three are fully INERT. Wiring touches critical AI-critic + durable-worker paths, so it is PLANNED (map-only) and must be Preview-validated. See docs/LAT-002-latency-activation-wiring-map.md.",
+  "product": {
+    "upstream": "operion",
+    "downstream": "supercharged"
+  },
+  "source": {
+    "upstreamRepo": "ratchetnu/jkissllc",
+    "downstreamRepo": "ratchetnu/supercharged",
+    "sourceBranch": "feat/latency-activation-wiring",
+    "sourcePR": "not-created"
+  },
+  "category": "performance",
+  "classification": "partially-present",
+  "status": "planned",
+  "dependencies": [
+    "LAT-001",
+    "OBS-001"
+  ],
+  "riskLevel": "high",
+  "surface": {
+    "featureFlags": [
+      "OPERION_CRITIC_JSON",
+      "OPERION_EVENT_ENQUEUE",
+      "OPERION_DUE_INDEX",
+      "OPERION_DUE_INDEX_DARK_LAUNCH"
+    ],
+    "sharedUtilities": [
+      "app/lib/ai/junk-critic.ts",
+      "app/lib/book-now-ai.ts",
+      "app/lib/book-now-queue.ts",
+      "app/lib/ai-due-index.ts"
+    ],
+    "tests": [
+      "scripts/ai-latency-phase2.test.ts (extend)"
+    ]
+  },
+  "rollout": {
+    "featureFlagsOffByDefault": true,
+    "previewValidationRequired": true,
+    "requiresMigration": false,
+    "requiresEnvConfig": false
+  },
+  "rollbackSteps": [
+    "Per flag: set OPERION_CRITIC_JSON / OPERION_EVENT_ENQUEUE / OPERION_DUE_INDEX* = OFF (instant, inert). Revert the (future) wiring PR."
+  ],
+  "exclusions": [
+    "Due-index must NOT be promoted to the live read source without separate approval + passing dark-launch parity + backfill."
+  ],
+  "compatibilityNotes": [
+    "Each flag OFF must preserve current behavior EXACTLY (parity tests required).",
+    "CRITIC_JSON: no duplicate provider call on confident jobs; borderline can still request the extra review.",
+    "EVENT_ENQUEUE: idempotent, no double execution, cron/manual recovery retained as safety net.",
+    "DUE_INDEX: dark-launch parity only; do not switch the live source this sprint.",
+    "Requires functional Preview AI Gateway to validate — currently blocked (see PREVIEW-AI-VALIDATION-CHECKLIST.md)."
+  ],
+  "history": [
+    {
+      "at": "2026-07-21T15:45:00Z",
+      "to": "discovered",
+      "actor": "sprint4",
+      "note": "Verified against current main: all 3 latency flags inert (0 wired call-sites)."
+    },
+    {
+      "at": "2026-07-21T15:50:00Z",
+      "from": "discovered",
+      "to": "planned",
+      "actor": "sprint4",
+      "note": "PLANNED — wiring map produced (docs/LAT-002-latency-activation-wiring-map.md); implementation deferred pending Preview AI validation (critical-path risk)."
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "id": "IMG-002",
+  "title": "Image Evaluation admin experience (BLOCKED — missing evaluation data source)",
+  "description": "Read-only admin Image Evaluation API + UI over the IMG-001 A/B accuracy harness. BLOCKED: the harness (compareOptimizationOutcome / aggregateOptEval in app/lib/estimation/image-opt-eval.ts) is PURE LOGIC that is never invoked and persists nothing — there is no eval data source to read. Building a UI now would be an empty shell; populating it needs an eval-recording lifecycle that must NOT be added this sprint (no persistence / no image-flow change). See docs/IMG-002-image-eval-data-lifecycle.md.",
+  "product": {
+    "upstream": "operion",
+    "downstream": "supercharged"
+  },
+  "source": {
+    "upstreamRepo": "ratchetnu/jkissllc",
+    "downstreamRepo": "ratchetnu/supercharged",
+    "sourceBranch": "feat/image-evaluation-ui",
+    "sourcePR": "not-created"
+  },
+  "category": "ui",
+  "classification": "partially-present",
+  "status": "blocked",
+  "dependencies": [
+    "IMG-001"
+  ],
+  "riskLevel": "medium",
+  "surface": {
+    "featureFlags": [
+      "IMAGE_EVAL_ADMIN_ENABLED (proposed, default OFF)"
+    ],
+    "sharedUtilities": [
+      "app/lib/estimation/image-opt-eval.ts (exists, unwired)"
+    ],
+    "apis": [
+      "app/api/admin/ai/image-eval/route.ts (future)"
+    ],
+    "ui": [
+      "app/admin/operations/ai/image-eval/page.tsx (future, separate route — avoids the shared AI page)"
+    ],
+    "tests": [
+      "scripts/image-eval-api.test.ts (future)"
+    ]
+  },
+  "rollout": {
+    "featureFlagsOffByDefault": true,
+    "previewValidationRequired": true,
+    "requiresMigration": false,
+    "requiresEnvConfig": false
+  },
+  "rollbackSteps": [
+    "N/A — nothing implemented. Future increments are each flag-gated + revertible."
+  ],
+  "exclusions": [
+    "Eval-recording hook, persistence, and UI were deliberately NOT built this sprint (owner: defer; no persistence / no image-flow change)."
+  ],
+  "compatibilityNotes": [
+    "BLOCKED BY BACKEND DATA SOURCE — not failed.",
+    "Unblock requires increment 1 (eval recording) + increment 2 (persistence/read model) from docs/IMG-002-image-eval-data-lifecycle.md.",
+    "UI must be a SEPARATE admin route, not a tab in app/admin/operations/ai/page.tsx (shared file)."
+  ],
+  "history": [
+    {
+      "at": "2026-07-21T15:35:00Z",
+      "to": "discovered",
+      "actor": "sprint4",
+      "note": "Phase 3 audit: eval harness present but never invoked/persisted — no data source."
+    },
+    {
+      "at": "2026-07-21T15:40:00Z",
+      "from": "discovered",
+      "to": "blocked",
+      "actor": "sprint4",
+      "note": "BLOCKED BY MISSING EVALUATION DATA SOURCE. Owner deferred; lifecycle documented in docs/IMG-002-image-eval-data-lifecycle.md. No code written."
+    }
+  ]
+}
