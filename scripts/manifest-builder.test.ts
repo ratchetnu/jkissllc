@@ -7,11 +7,12 @@ import type { UpdateAutomationProvider } from '../app/lib/platform/automation/pr
 
 const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64')
 // A provider stub that only implements the two read methods the builder uses.
-function mockProvider(files: { filename: string; status: string }[], blobs: Record<string, string>): UpdateAutomationProvider {
+function mockProvider(files: { filename: string; status: string }[], blobs: Record<string, string>, reads: string[] = []): UpdateAutomationProvider {
   const p: Partial<UpdateAutomationProvider> = {
     name: 'mock',
     readCommitFiles: async () => ({ ok: true, data: { files } }),
     readFileContent: async (_i, _r, path) => {
+      reads.push(path)
       if (!(path in blobs)) return { ok: false, error: 'not found', category: 'not_found' }
       const contentBase64 = b64(blobs[path])
       return { ok: true, data: { contentBase64, sha256: sha256(Buffer.from(blobs[path], 'utf8')) } }
@@ -59,4 +60,70 @@ test('fails when the update has no source commit', async () => {
   const provider = mockProvider([], {})
   const r = await buildCommitTransferManifest({ provider, installationId: '1', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: '', updateKey: 'UPD-1' })
   assert.equal(r.ok, false)
+})
+
+test('excludes target-specific paths before reading source content', async () => {
+  const reads: string[] = []
+  const provider = mockProvider(
+    [
+      { filename: 'app/quote/page.tsx', status: 'modified' },
+      { filename: 'app/lib/telemetry.ts', status: 'modified' },
+      { filename: 'app/lib/safe.ts', status: 'modified' },
+    ],
+    {
+      'app/quote/page.tsx': 'source branding',
+      'app/lib/telemetry.ts': 'older telemetry',
+      'app/lib/safe.ts': 'safe change',
+    },
+    reads,
+  )
+  const r = await buildCommitTransferManifest({
+    provider,
+    installationId: '1',
+    sourceRepo: REPO,
+    sourceRepoName: 'ratchetnu/jkissllc',
+    sourceCommit: 'abc',
+    updateKey: 'UPD-1004',
+    componentsToExclude: [' app/quote/page.tsx ', 'app/lib/telemetry.ts'],
+  })
+  assert.equal(r.ok, true)
+  if (!r.ok) return
+  assert.deepEqual(r.data.manifest.entries.map((entry) => entry.path), ['app/lib/safe.ts'])
+  assert.deepEqual(Object.keys(r.data.contents), ['app/lib/safe.ts'])
+  assert.deepEqual(reads, ['app/lib/safe.ts'])
+  assert.deepEqual(r.data.excludedPaths, ['app/lib/telemetry.ts', 'app/quote/page.tsx'])
+})
+
+test('excludes deletions as well as added or modified files', async () => {
+  const provider = mockProvider([{ filename: 'app/target-only.ts', status: 'removed' }, { filename: 'app/safe.ts', status: 'added' }], { 'app/safe.ts': 'safe' })
+  const r = await buildCommitTransferManifest({
+    provider,
+    installationId: '1',
+    sourceRepo: REPO,
+    sourceRepoName: 'ratchetnu/jkissllc',
+    sourceCommit: 'abc',
+    updateKey: 'UPD-1',
+    componentsToExclude: ['app/target-only.ts'],
+  })
+  assert.equal(r.ok, true)
+  if (!r.ok) return
+  assert.deepEqual(r.data.manifest.entries.map((entry) => entry.path), ['app/safe.ts'])
+  assert.deepEqual(r.data.excludedPaths, ['app/target-only.ts'])
+})
+
+test('fails closed on unsafe or unmatched excluded component values', async () => {
+  const provider = mockProvider([{ filename: 'app/safe.ts', status: 'added' }], { 'app/safe.ts': 'safe' })
+  for (const excluded of ['../app/safe.ts', '/app/safe.ts', 'app/*', 'jkiss-logo']) {
+    const r = await buildCommitTransferManifest({
+      provider,
+      installationId: '1',
+      sourceRepo: REPO,
+      sourceRepoName: 'ratchetnu/jkissllc',
+      sourceCommit: 'abc',
+      updateKey: 'UPD-1',
+      componentsToExclude: [excluded],
+    })
+    assert.equal(r.ok, false, excluded)
+    assert.match((r as { error: string }).error, /invalid excluded component path|not present in source commit/)
+  }
 })
