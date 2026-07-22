@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
-import { issueSignedToken } from '@vercel/blob'
+import { issueSignedToken, parseStoreIdFromDelegationToken } from '@vercel/blob'
 import { handleUploadPresigned, type HandleUploadPresignedBody } from '@vercel/blob/client'
+import { getVercelOidcToken } from '@vercel/oidc'
 import { requireCrew } from '../_lib/crew'
 import { isEnabled } from '../../../lib/platform/flags'
 
@@ -27,15 +28,29 @@ export const POST = withTenantRoute(async (req: NextRequest): Promise<NextRespon
       request: req,
       getSignedToken: async (pathname) => {
         if ((await requireCrew(req)) instanceof NextResponse) throw new Error('unauthorized')
+        // Never let the SDK fall back to a different store's legacy token. Preview
+        // and Production are intentionally isolated; the signed token must name
+        // the store explicitly connected to this deployment.
+        const storeId = process.env.BLOB_STORE_ID?.trim()
+        if (!storeId) throw new Error('blob_store_not_configured')
+        const oidcToken = await getVercelOidcToken()
+        if (!oidcToken) throw new Error('blob_store_not_configured')
         const allowedContentTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']
         const maximumSizeInBytes = 15 * 1024 * 1024
+        const signedToken = await issueSignedToken({
+          oidcToken,
+          storeId,
+          pathname,
+          operations: ['put'],
+          allowedContentTypes,
+          maximumSizeInBytes,
+        })
+        const expectedStoreId = storeId.replace(/^store_/, '')
+        if (parseStoreIdFromDelegationToken(signedToken.delegationToken) !== expectedStoreId) {
+          throw new Error('blob_store_mismatch')
+        }
         return {
-          token: await issueSignedToken({
-            pathname,
-            operations: ['put'],
-            allowedContentTypes,
-            maximumSizeInBytes,
-          }),
+          token: signedToken,
           urlOptions: {
             allowedContentTypes,
             maximumSizeInBytes, // 15 MB — a phone photo, not a video
