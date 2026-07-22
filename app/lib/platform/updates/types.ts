@@ -181,7 +181,10 @@ export type UpdateCompatibility = {
   dataModelChangesRequired?: boolean
   requiredModules?: string[]
   missingModules?: string[]
+  /** Human-readable component names used by deployment guidance. Not machine-enforced paths. */
   componentsToExclude?: string[]
+  /** Exact repository-relative paths omitted from deterministic commit transfers. */
+  pathsToExclude?: string[]
   blockingIssues?: string
   assessedBy?: string
   overrideReason?: string

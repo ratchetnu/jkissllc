@@ -7,6 +7,7 @@ import {
   parseVersion, compareVersions, isPending, isTerminal, canTransitionUpdate,
   ageDays, agingBucket, computeUpdateKpis, deploymentGatesPass, canMarkVerified,
   updateReleaseEligible, compatRollup, businessesBehind, computeAttention,
+  resolvePathsToExclude,
 } from '../app/lib/platform/updates/policy'
 import { buildDeploymentPrompt } from '../app/lib/platform/updates/prompt'
 import { isPlatformOwner } from '../app/api/admin/_lib/session'
@@ -15,6 +16,13 @@ import type { PlatformUpdate, PlatformBusiness, DeploymentRecord, UpdateCompatib
 const T = 1_700_000_000_000
 const DAY = 86_400_000
 const PASS: ValidationChecklist = { typecheck: 'passed', lint: 'passed', tests: 'passed', build: 'passed', securityReview: 'not_applicable', accessibilityReview: 'not_applicable', e2e: 'not_applicable', smokeTest: 'passed', ownerVerification: 'passed' }
+
+test('machine exclusion PATCH semantics preserve on omission and clear only with explicit []', () => {
+  const existing = ['app/quote/page.tsx']
+  assert.deepEqual(resolvePathsToExclude(existing, undefined), existing)
+  assert.deepEqual(resolvePathsToExclude(existing, []), [])
+  assert.deepEqual(resolvePathsToExclude(existing, ['app/lib/telemetry.ts']), ['app/lib/telemetry.ts'])
+})
 
 function mkUpdate(p: Partial<PlatformUpdate> = {}): PlatformUpdate {
   return {

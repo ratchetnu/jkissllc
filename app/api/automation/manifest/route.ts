@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { isEnabled } from '../../../lib/platform/flags'
 import { verifyCallback } from '../../../lib/platform/automation/callback'
 import { getJob } from '../../../lib/platform/automation/store'
-import { getBusiness } from '../../../lib/platform/updates/store'
+import { getBusiness, getCompatMap } from '../../../lib/platform/updates/store'
 import { getAutomationProvider } from '../../../lib/platform/automation/provider'
 import { parseRepoName, businessRepoRef } from '../../../lib/platform/automation/repo-identity'
 import { buildCommitTransferManifest } from '../../../lib/platform/automation/manifest-builder'
@@ -39,11 +39,16 @@ export async function POST(req: NextRequest) {
   // Target allowlist: the job's target must resolve to the configured business repo.
   if (!businessRepoRef(business)) return NextResponse.json({ error: 'target repository not configured' }, { status: 409 })
 
+  // Target-specific exclusions are part of the approved compatibility assessment.
+  // They must constrain the machine manifest, not merely appear in a human-facing prompt.
+  const compatibility = (await getCompatMap(job.updateId))[job.businessId]
+
   const built = await buildCommitTransferManifest({
     provider: getAutomationProvider(),
     installationId: business.githubInstallationId,
     sourceRepo, sourceRepoName: job.sourceRepository!, sourceCommit: job.sourceCommit,
     updateKey: job.updateId,
+    compatibility,
   })
   if (!built.ok) return NextResponse.json({ error: built.error }, { status: 422 })
   return NextResponse.json({ jobId, ...built.data })
