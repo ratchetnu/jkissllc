@@ -51,6 +51,48 @@ test('a non-literal dynamic import is reported, never silently ignored', () => {
   assert.equal(extractSpecifiers(`await import('./ok')`).unresolvable.length, 0)
 })
 
+test('comments and prose cannot become dependency edges or dynamic-import refusals', () => {
+  const src = [
+    `// never runs on import (only when executed directly)`,
+    `// import './line-comment'`,
+    `/* import thing from './block-comment' */`,
+    `/* await import(blockExpression) */`,
+    `const prose = "resolved on import (see below)"`,
+    `const quoted = 'require(\"./quoted\")'`,
+    `const escaped = "text \\\" import('./escaped') \\\" text"`,
+    `const pattern = /import\\(notCode\\)/g`,
+    `const classPattern = /[)]import(fake)/`,
+  ].join('\n')
+  const result = extractSpecifiers(src)
+  assert.deepEqual(result, { specifiers: [], unresolvable: [] })
+})
+
+test('template prose is ignored but executable interpolation is analyzed', () => {
+  const src = [
+    'const prose = `',
+    "import fake from './template-prose'",
+    'await import(templateProse)',
+    '`',
+    "const real = `value: ${await import('./inside-expression')}`",
+    'const blocked = `value: ${await import(chosenAtRuntime)}`',
+  ].join('\n')
+  const result = extractSpecifiers(src)
+  assert.deepEqual(result.specifiers, [{ spec: './inside-expression', kind: 'dynamic' }])
+  assert.equal(result.unresolvable.length, 1)
+  assert.equal(result.unresolvable[0].expression, 'chosenAtRuntime')
+})
+
+test('comments adjacent to genuine imports do not hide executable dependencies', () => {
+  const src = [
+    `/* import './fake-before' */ import real from './real'`,
+    `const dynamic = await import('./dynamic') // import(commentOnly)`,
+    `const required = require('./required') /* require('./fake-after') */`,
+  ].join('\n')
+  const result = extractSpecifiers(src)
+  assert.deepEqual(result.unresolvable, [])
+  assert.deepEqual(result.specifiers.map((s) => s.spec).sort(), ['./dynamic', './real', './required'])
+})
+
 // ── Resolution ───────────────────────────────────────────────────────────────
 
 test('normalizePath collapses . and .. and refuses to climb out of the repo', () => {

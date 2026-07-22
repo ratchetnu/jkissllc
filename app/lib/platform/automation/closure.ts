@@ -101,8 +101,9 @@ export type ClosureResult =
 // ── Specifier extraction ─────────────────────────────────────────────────────
 // Deliberately regex-based rather than a TypeScript program: the builder runs in a
 // serverless request, must not depend on the compiler API, and only needs the module
-// graph — not types. Comments and strings can in principle produce a false edge; a
-// false edge can only ever cause a REFUSAL (fail-closed), never a silent pass.
+// graph — not types. A small lexical mask below prevents regex matches from starting
+// inside comments, strings, template text, or regular-expression literals. This
+// keeps prose from becoming a false edge while preserving real code in `${...}`.
 
 const PATTERNS: { re: RegExp; kind: EdgeKind }[] = [
   // import type { T } from './x'   /   import type X from './x'
@@ -122,13 +123,134 @@ const PATTERNS: { re: RegExp; kind: EdgeKind }[] = [
 /** A dynamic import whose argument is not a plain string literal. */
 const DYNAMIC_NON_LITERAL = /\bimport\s*\(\s*(?!['"]\s*[^'"]*['"]\s*\))([^)]{0,80})\)/g
 
+/** Characters at which a regex literal may begin rather than a division operator. */
+const REGEX_PREFIX = new Set(['(', '[', '{', '=', ':', ',', ';', '!', '?', '&', '|', '+', '-', '*', '%', '^', '~', '<', '>'])
+const REGEX_PREFIX_WORDS = new Set(['return', 'throw', 'case', 'delete', 'void', 'typeof', 'new', 'in', 'of', 'yield', 'await', 'else', 'do'])
+
+/**
+ * Mark positions that are executable code. The mask is intentionally lexical, not
+ * syntactic: extraction still owns import grammar, while this pass only prevents a
+ * match from beginning inside non-code text. Template interpolation is code and is
+ * scanned recursively; template prose is not.
+ */
+function lexicalView(source: string): { code: string; mask: Uint8Array } {
+  const mask = new Uint8Array(source.length)
+  const view = [...source]
+  type Context = { kind: 'code'; templateExpression: boolean; braces: number } | { kind: 'template' }
+  const stack: Context[] = [{ kind: 'code', templateExpression: false, braces: 0 }]
+  let i = 0
+  let previousToken = ''
+
+  const hide = (start: number, end: number): void => {
+    for (let j = start; j < end; j++) if (view[j] !== '\n' && view[j] !== '\r') view[j] = ' '
+  }
+
+  const rememberToken = (end: number): void => {
+    let j = end - 1
+    while (j >= 0 && /\s/.test(source[j])) j--
+    if (j < 0) { previousToken = ''; return }
+    if (/[A-Za-z0-9_$]/.test(source[j])) {
+      let start = j
+      while (start > 0 && /[A-Za-z0-9_$]/.test(source[start - 1])) start--
+      previousToken = source.slice(start, j + 1)
+    } else previousToken = source[j]
+  }
+
+  const skipQuoted = (quote: "'" | '"'): void => {
+    i++
+    while (i < source.length) {
+      if (source[i] === '\\') { i += 2; continue }
+      if (source[i] === quote) { i++; return }
+      i++
+    }
+  }
+
+  const regexCanStart = (): boolean => !previousToken || REGEX_PREFIX.has(previousToken) || REGEX_PREFIX_WORDS.has(previousToken)
+
+  while (i < source.length) {
+    const context = stack[stack.length - 1]
+
+    if (context.kind === 'template') {
+      if (source[i] === '\\') { hide(i, Math.min(source.length, i + 2)); i += 2; continue }
+      if (source[i] === '`') { hide(i, i + 1); i++; stack.pop(); previousToken = 'value'; continue }
+      if (source[i] === '$' && source[i + 1] === '{') {
+        mask[i] = 1; mask[i + 1] = 1
+        i += 2
+        stack.push({ kind: 'code', templateExpression: true, braces: 0 })
+        previousToken = '{'
+        continue
+      }
+      hide(i, i + 1)
+      i++
+      continue
+    }
+
+    const ch = source[i]
+    const next = source[i + 1]
+    if (context.templateExpression && ch === '}' && context.braces === 0) {
+      mask[i] = 1
+      i++
+      stack.pop()
+      previousToken = 'value'
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      const start = i
+      i += 2
+      while (i < source.length && source[i] !== '\n') i++
+      hide(start, i)
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      const start = i
+      i += 2
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i++
+      i = Math.min(source.length, i + 2)
+      hide(start, i)
+      continue
+    }
+    if (ch === "'" || ch === '"') { skipQuoted(ch); previousToken = 'value'; continue }
+    if (ch === '`') { hide(i, i + 1); i++; stack.push({ kind: 'template' }); previousToken = 'value'; continue }
+    if (ch === '/' && regexCanStart()) {
+      const start = i
+      i++
+      let inClass = false
+      while (i < source.length) {
+        if (source[i] === '\\') { i += 2; continue }
+        if (source[i] === '[') inClass = true
+        else if (source[i] === ']') inClass = false
+        else if (source[i] === '/' && !inClass) { i++; break }
+        i++
+      }
+      while (i < source.length && /[A-Za-z]/.test(source[i])) i++
+      hide(start, i)
+      previousToken = 'value'
+      continue
+    }
+
+    mask[i] = 1
+    if (context.templateExpression && ch === '{') context.braces++
+    else if (context.templateExpression && ch === '}' && context.braces > 0) context.braces--
+    i++
+    if (!/\s/.test(ch)) rememberToken(i)
+  }
+  return { code: view.join(''), mask }
+}
+
+function matchStartsInCode(mask: Uint8Array, match: RegExpExecArray): boolean {
+  const keywordOffset = match[0].search(/\b(?:import|export|require)\b/)
+  return keywordOffset >= 0 && mask[match.index + keywordOffset] === 1
+}
+
 export function extractSpecifiers(source: string): { specifiers: Specifier[]; unresolvable: UnresolvableExpression[] } {
+  const { code, mask } = lexicalView(source)
   const seen = new Set<string>()
   const specifiers: Specifier[] = []
   for (const { re, kind } of PATTERNS) {
     re.lastIndex = 0
     let m: RegExpExecArray | null
-    while ((m = re.exec(source))) {
+    while ((m = re.exec(code))) {
+      if (!matchStartsInCode(mask, m)) continue
       const key = `${kind}:${m[1]}`
       if (seen.has(key)) continue
       seen.add(key)
@@ -138,7 +260,8 @@ export function extractSpecifiers(source: string): { specifiers: Specifier[]; un
   const unresolvable: UnresolvableExpression[] = []
   DYNAMIC_NON_LITERAL.lastIndex = 0
   let d: RegExpExecArray | null
-  while ((d = DYNAMIC_NON_LITERAL.exec(source))) {
+  while ((d = DYNAMIC_NON_LITERAL.exec(code))) {
+    if (!matchStartsInCode(mask, d)) continue
     const expression = d[1].trim()
     // `import(` in a type position (`import('x').T`) and bare `import()` noise are
     // not module edges; an empty capture is not an expression.
