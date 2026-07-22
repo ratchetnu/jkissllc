@@ -142,6 +142,10 @@ test('customerView never leaks the sealed proof path, audit trail, or notificati
     replacementUpload: { token: 'secret', paymentId: 'p1', at: 1 },
     idempotencyKey: 'idem-123',
     internalNotes: 'owner only',
+    assignees: [{
+      staffId: 'crew-secret', name: 'Crew Secret', phone: '555-555-1212', token: 'crew-job-token',
+      payCents: 17500, confirmIp: '203.0.113.10', clockInLat: 32.7, clockInLng: -97.3,
+    }],
   })
   const cv = customerView(b) as Record<string, unknown>
   assert.equal('events' in cv, false)
@@ -149,6 +153,7 @@ test('customerView never leaks the sealed proof path, audit trail, or notificati
   assert.equal('replacementUpload' in cv, false)
   assert.equal('idempotencyKey' in cv, false)
   assert.equal('internalNotes' in cv, false)
+  assert.equal('assignees' in cv, false, 'crew pay, contact, credentials, IP, and GPS stay private')
   // The customer can see THAT a proof exists, never the sealed path.
   const p = (cv.payments as Array<Record<string, unknown>>)[0]
   assert.equal(p.hasProof, true)

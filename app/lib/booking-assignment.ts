@@ -71,7 +71,7 @@ const enabled = (): boolean => isEnabled('BOOKING_ASSIGNMENT_ENABLED')
 export async function assignCrewToBooking(
   token: string,
   staffId: string,
-  opts: { role?: string; manualPayCents?: number | null; actor?: string } = {},
+  opts: { role?: string; manualPayCents?: number | null; actor: string },
 ): Promise<AssignmentResult> {
   if (!enabled()) return { ok: false, error: 'disabled' }
 
@@ -96,7 +96,7 @@ export async function assignCrewToBooking(
     )
     applyPaySnapshot(a, resolved, fmtCents)
     b.assignees = [...(b.assignees ?? []), a]
-    pushBookingEvent(b, { actor: opts.actor || 'system', action: 'assignment.crew_added', result: staff.id, meta: { staffId: staff.id, role: a.role, payCents: a.payCents, paySource: a.paySource } })
+    pushBookingEvent(b, { actor: opts.actor, action: 'assignment.crew_added', result: staff.id, meta: { staffId: staff.id, role: a.role, payCents: a.payCents, paySource: a.paySource } })
     return null
   })
 }
@@ -108,7 +108,7 @@ export async function assignCrewToBooking(
 export async function unassignCrewFromBooking(
   token: string,
   staffId: string,
-  opts: { actor?: string } = {},
+  opts: { actor: string },
 ): Promise<AssignmentResult> {
   if (!enabled()) return { ok: false, error: 'disabled' }
 
@@ -122,7 +122,7 @@ export async function unassignCrewFromBooking(
     // name on the customer's confirmation page.
     const removed = before.find(a => a.staffId === staffId)!
     b.assignees = before.filter(a => a.staffId !== staffId)
-    pushBookingEvent(b, { actor: opts.actor || 'system', action: 'assignment.crew_removed', result: staffId, meta: { staffId, name: removed.name } })
+    pushBookingEvent(b, { actor: opts.actor, action: 'assignment.crew_removed', result: staffId, meta: { staffId, name: removed.name } })
     return null
   })
 }
@@ -134,7 +134,7 @@ export async function setBookingCrewPay(
   token: string,
   staffId: string,
   cents: number | null,
-  opts: { actor?: string } = {},
+  opts: { actor: string },
 ): Promise<AssignmentResult> {
   if (!enabled()) return { ok: false, error: 'disabled' }
   if (cents !== null && (!Number.isFinite(cents) || cents < 0)) return { ok: false, error: 'invalid' }
@@ -143,12 +143,13 @@ export async function setBookingCrewPay(
     const a = (b.assignees ?? []).find(x => x.staffId === staffId)
     if (!a) return { abort: 'not_assigned' as const }
     const before = a.payCents
+    const beforeSource = a.paySource
     const alreadyClear = cents === null
       && a.payCents === undefined && a.pay === undefined && a.paySource === undefined
     if (alreadyClear || (cents !== null && before === cents && a.paySource === 'manual')) return null
     if (cents === null) clearJobPay(a)
     else applyPaySnapshot(a, { cents, source: 'manual' }, fmtCents)
-    pushBookingEvent(b, { actor: opts.actor || 'system', action: 'assignment.pay_changed', result: staffId, meta: { staffId, fromCents: before, toCents: cents } })
+    pushBookingEvent(b, { actor: opts.actor, action: 'assignment.pay_changed', result: staffId, meta: { staffId, fromCents: before, toCents: cents, fromSource: beforeSource, toSource: a.paySource } })
     return null
   })
 }
@@ -160,7 +161,7 @@ export async function setBookingCrewPay(
 export async function setBookingEquipment(
   token: string,
   input: { equipmentId?: string | null; vehicleLabel?: string | null },
-  opts: { actor?: string } = {},
+  opts: { actor: string },
 ): Promise<AssignmentResult> {
   if (!enabled()) return { ok: false, error: 'disabled' }
 
@@ -185,7 +186,7 @@ export async function setBookingEquipment(
       b.vehicle = undefined
     }
     if (before.equipmentId !== b.equipmentId || before.vehicle !== b.vehicle) {
-      pushBookingEvent(b, { actor: opts.actor || 'system', action: 'assignment.equipment_changed', result: b.equipmentId || b.vehicle || 'cleared', meta: { from: before, to: { equipmentId: b.equipmentId, vehicle: b.vehicle } } })
+      pushBookingEvent(b, { actor: opts.actor, action: 'assignment.equipment_changed', result: b.equipmentId || b.vehicle || 'cleared', meta: { from: before, to: { equipmentId: b.equipmentId, vehicle: b.vehicle } } })
     }
     return null
   })
@@ -205,7 +206,7 @@ const photoPolicy = (): CompletionPhotoPolicy => ({ storeId: process.env.BLOB_ST
 // `requirePermission(routes:manage)`; a crew member must prove they are on the job.
 export type CompletionActor =
   | { by: 'crew'; staffId: string }
-  | { by: 'admin'; actor?: string }
+  | { by: 'admin'; actor: string }
 
 // On-site proof from the crew or the admin. Deliberately does NOT touch
 // BookingStatus: recording arrival photos must never silently close out a job's
@@ -243,7 +244,7 @@ export async function recordBookingCompletion(
     if (note) b.completionNote = note
     b.jobCompletedAt = at
     b.jobCompletedBy = input.by
-    pushBookingEvent(b, { actor: input.by === 'crew' ? `crew:${input.staffId}` : (input.actor || 'admin'), action: 'assignment.completion_recorded', result: input.by, meta: { photoCount: photos.length, hasNote: !!note } })
+    pushBookingEvent(b, { actor: input.by === 'crew' ? `crew:${input.staffId}` : input.actor, action: 'assignment.completion_recorded', result: input.by, meta: { photoCount: photos.length, hasNote: !!note } })
     return null
   })
 }
