@@ -15,7 +15,7 @@ export function renderStatementEmail(s: PayStatement): string {
   const lines = s.lines.map(l => `
     <tr>
       <td style="padding:8px 0;border-top:1px solid #eee;font-size:13px;color:#333">${day(l.routeDate)}</td>
-      <td style="padding:8px 0;border-top:1px solid #eee;font-size:13px;color:#333">${escapeHtml(l.businessName)} · ${escapeHtml(l.routeNumber)}</td>
+      <td style="padding:8px 0;border-top:1px solid #eee;font-size:13px;color:#333">${escapeHtml(l.businessName)} · ${l.source === 'booking' ? 'Booking ' : ''}${escapeHtml(l.routeNumber)}${l.workedMinutes !== undefined ? ` · ${Math.floor(l.workedMinutes / 60)}h ${l.workedMinutes % 60}m` : ''}</td>
       <td style="padding:8px 0;border-top:1px solid #eee;font-size:13px;color:#333;text-align:right">${money(l.amountCents)}</td>
     </tr>`).join('')
 
@@ -38,7 +38,7 @@ export function renderStatementEmail(s: PayStatement): string {
     </table>
     <table style="width:100%;border-collapse:collapse;border-top:2px solid #111;margin-top:6px">
       <tbody>
-        <tr><td colspan="2" style="padding:8px 0;font-size:13px;color:#333">Gross (${s.routeCount} route${s.routeCount === 1 ? '' : 's'})</td><td style="padding:8px 0;font-size:13px;color:#333;text-align:right">${money(s.grossCents)}</td></tr>
+        <tr><td colspan="2" style="padding:8px 0;font-size:13px;color:#333">Gross (${s.routeCount} completed job${s.routeCount === 1 ? '' : 's'})</td><td style="padding:8px 0;font-size:13px;color:#333;text-align:right">${money(s.grossCents)}</td></tr>
         ${deductions}
         <tr><td colspan="2" style="padding:10px 0;font-size:15px;font-weight:700;border-top:1px solid #eee">Net pay</td><td style="padding:10px 0;font-size:15px;font-weight:700;border-top:1px solid #eee;text-align:right">${money(s.netCents)}</td></tr>
       </tbody>

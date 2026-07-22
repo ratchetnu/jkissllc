@@ -3,17 +3,18 @@
 import { useCallback, useEffect, useState } from 'react'
 import AdminGate from '../../AdminGate'
 
-type PayLineRoute = { routeNumber: string; routeDate: string; businessName: string; amountCents: number | null; payRateRaw?: string; hasProof: boolean; completedBy?: string }
+type PayLineRoute = { source?: 'route' | 'booking'; routeNumber: string; routeDate: string; businessName: string; amountCents: number | null; payRateRaw?: string; hasProof: boolean; completedBy?: string; workedMinutes?: number }
 type PayDeductionLine = { claimId: string; claimNumber: string; businessName: string; routeNumber?: string; reason: string; amountCents: number; date: string }
 type ContractorPay = {
   staffId: string; name: string; routes: PayLineRoute[]; count: number; grossCents: number; unpricedCount: number
   deductions: PayDeductionLine[]; deductionCents: number; appliedCents: number; netCents: number; shortfallCents: number
 }
-type PaySummary = { start: string; end: string; contractors: ContractorPay[]; grandGrossCents: number; grandDeductionCents: number; grandNetCents: number; routeCount: number; unpricedCount: number }
+type PaySummary = { start: string; end: string; contractors: ContractorPay[]; grandGrossCents: number; grandDeductionCents: number; grandNetCents: number; routeCount: number; deliveryRouteCount?: number; bookingCount?: number; unpricedCount: number }
 
 const money = (cents: number) => (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 const fmtDate = (iso: string) => { const d = new Date(`${iso}T12:00:00Z`); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) }
 const fmtLong = (iso: string) => { const d = new Date(`${iso}T12:00:00Z`); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) }
+const fmtWorked = (minutes: number) => `${Math.floor(minutes / 60)}h ${minutes % 60}m`
 
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 function mondayOf(d: Date) { const x = new Date(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); x.setHours(0, 0, 0, 0); return x }
@@ -53,7 +54,7 @@ function Pay() {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-3xl font-black text-white" style={{ letterSpacing: '-0.03em' }}>Contractor Pay</h1>
-          <p className="text-sm" style={{ color: 'var(--muted)' }}>Completed routes by contractor for the selected pay period.</p>
+          <p className="text-sm" style={{ color: 'var(--muted)' }}>Completed delivery routes and customer bookings by contractor.</p>
         </div>
         <a href="/admin/routes" className="no-print" style={{ ...preset, textDecoration: 'none' }}>← Dispatch</a>
       </div>
@@ -82,7 +83,7 @@ function Pay() {
         <div>
           <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Pay period</div>
           <div style={{ fontSize: 16, fontWeight: 800, color: '#fff', marginTop: 2 }}>{fmtLong(start)} – {fmtLong(end)}</div>
-          {data && <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 3 }}>{data.routeCount} completed route{data.routeCount === 1 ? '' : 's'} · {data.contractors.length} contractor{data.contractors.length === 1 ? '' : 's'}</div>}
+          {data && <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 3 }}>{data.routeCount} completed job{data.routeCount === 1 ? '' : 's'} · {data.contractors.length} contractor{data.contractors.length === 1 ? '' : 's'}</div>}
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>Net owed</div>
@@ -97,13 +98,13 @@ function Pay() {
 
       {data && data.unpricedCount > 0 && (
         <div className="mb-6 text-sm" style={{ padding: '10px 14px', borderRadius: 10, background: 'rgba(245,158,11,.1)', border: '1px solid rgba(245,158,11,.3)', color: '#fcd34d' }}>
-          {data.unpricedCount} completed route{data.unpricedCount === 1 ? ' has' : 's have'} no readable pay rate and {data.unpricedCount === 1 ? "isn't" : "aren't"} included in the total. Add a rate on the route to count it.
+          {data.unpricedCount} completed job{data.unpricedCount === 1 ? ' has' : 's have'} no readable pay rate and {data.unpricedCount === 1 ? "isn't" : "aren't"} included in the total. Add a crew pay rate to count it.
         </div>
       )}
 
       {loading ? <p style={{ color: 'var(--muted)' }}>Loading…</p>
         : error ? <p style={{ color: '#f87171' }}>{error}</p>
-        : !data || data.contractors.length === 0 ? <p style={{ color: 'var(--muted)' }}>No completed routes in this period.</p>
+        : !data || data.contractors.length === 0 ? <p style={{ color: 'var(--muted)' }}>No completed jobs in this period.</p>
         : (
         <div className="flex flex-col gap-4">
           {data.contractors.map(c => (
@@ -111,7 +112,7 @@ function Pay() {
               <div className="flex items-center justify-between gap-3 flex-wrap" style={{ paddingBottom: 12, borderBottom: '1px solid var(--line)' }}>
                 <div>
                   <div style={{ fontSize: 17, fontWeight: 800, color: '#fff' }}>{c.name}</div>
-                  <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{c.count} route{c.count === 1 ? '' : 's'}{c.unpricedCount > 0 ? ` · ${c.unpricedCount} unpriced` : ''}</div>
+                  <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{c.count} job{c.count === 1 ? '' : 's'}{c.unpricedCount > 0 ? ` · ${c.unpricedCount} unpriced` : ''}</div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: 22, fontWeight: 900, color: '#86efac' }}>{money(c.netCents)}</div>
@@ -120,10 +121,11 @@ function Pay() {
               </div>
               <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {c.routes.map(r => (
-                  <div key={r.routeNumber} className="flex items-center gap-3" style={{ fontSize: 13, padding: '6px 0' }}>
+                  <div key={`${r.source ?? 'route'}:${r.routeNumber}`} className="flex items-center gap-3" style={{ fontSize: 13, padding: '6px 0' }}>
                     <span style={{ minWidth: 52, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>{fmtDate(r.routeDate)}</span>
-                    <span style={{ minWidth: 74, fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--muted)' }}>{r.routeNumber}</span>
+                    <span style={{ minWidth: 74, fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--muted)' }}>{r.source === 'booking' ? 'Booking ' : ''}{r.routeNumber}</span>
                     <span style={{ flex: 1, color: '#e5e7eb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.businessName}</span>
+                    {r.workedMinutes !== undefined && <span title="Clocked time" style={{ fontSize: 11, color: 'var(--muted)' }}>{fmtWorked(r.workedMinutes)}</span>}
                     {r.hasProof && <span title="Proof attached" style={{ fontSize: 11, color: '#86efac' }}>✓ proof</span>}
                     <span style={{ minWidth: 74, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: r.amountCents == null ? '#fcd34d' : '#e5e7eb' }}>
                       {r.amountCents == null ? (r.payRateRaw ? r.payRateRaw : 'unpriced') : money(r.amountCents)}
@@ -165,7 +167,7 @@ function Pay() {
         </div>
       )}
 
-      <p className="mt-8 text-xs" style={{ color: 'var(--muted)' }}>Independent-contractor payout statement. Amounts are read from each route&apos;s pay rate; verify before paying. Claim deductions are taken from the posted claim ledger — see the claim for its full history.</p>
+      <p className="mt-8 text-xs" style={{ color: 'var(--muted)' }}>Independent-contractor payout statement. Amounts are read from each job&apos;s crew pay snapshot; verify before paying. Claim deductions are taken from the posted claim ledger — see the claim for its full history.</p>
     </div>
   )
 }

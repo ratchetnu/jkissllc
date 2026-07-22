@@ -137,7 +137,7 @@ function MyPay() {
               <FileText size={17} style={{ color: 'var(--muted)', flexShrink: 0 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <p style={{ fontWeight: 600, fontSize: 14 }}>{st.statementNumber}</p>
-                <p style={{ color: 'var(--muted)', fontSize: 12.5 }}>{fmtDay(st.periodStart)} – {fmtDay(st.periodEnd)} · {st.routeCount} route{st.routeCount === 1 ? '' : 's'}</p>
+                <p style={{ color: 'var(--muted)', fontSize: 12.5 }}>{fmtDay(st.periodStart)} – {fmtDay(st.periodEnd)} · {st.routeCount} completed job{st.routeCount === 1 ? '' : 's'}</p>
               </div>
               <span style={{ fontWeight: 700, fontSize: 15 }}>{money(st.netCents)}</span>
             </Link>
