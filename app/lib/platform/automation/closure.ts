@@ -132,8 +132,11 @@ const REGEX_PREFIX_WORDS = new Set(['return', 'throw', 'case', 'delete', 'void',
  * syntactic: extraction still owns import grammar, while this pass only prevents a
  * match from beginning inside non-code text. Template interpolation is code and is
  * scanned recursively; template prose is not.
+ *
+ * Exported so the exported-symbol gate (`exports.ts`) masks text the same way this
+ * module does. One lexer, one set of edge cases — a second copy would drift.
  */
-function lexicalView(source: string): { code: string; mask: Uint8Array } {
+export function lexicalView(source: string): { code: string; mask: Uint8Array } {
   const mask = new Uint8Array(source.length)
   const view = [...source]
   type Context = { kind: 'code'; templateExpression: boolean; braces: number } | { kind: 'template' }
@@ -237,7 +240,8 @@ function lexicalView(source: string): { code: string; mask: Uint8Array } {
   return { code: view.join(''), mask }
 }
 
-function matchStartsInCode(mask: Uint8Array, match: RegExpExecArray): boolean {
+/** True when a regex match begins on real code rather than inside masked text. */
+export function matchStartsInCode(mask: Uint8Array, match: RegExpExecArray): boolean {
   const keywordOffset = match[0].search(/\b(?:import|export|require)\b/)
   return keywordOffset >= 0 && mask[match.index + keywordOffset] === 1
 }
