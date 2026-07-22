@@ -234,3 +234,34 @@ test('flag off removes cross-lane conflicts created only by booking assignments'
     assert.ok(!types.includes('missing_crew'))
   })
 })
+
+// Routes are NOT part of the booking-assignment model, so the flag must not move
+// route detection in either direction. Suppressing a booking's hidden crew is the
+// whole job; a short-handed route stays quiet and an empty route stays flagged, and
+// both answers have to be identical with the flag on and off.
+test('route missing-crew detection is identical with the flag on and off', async () => {
+  const base = {
+    reportTime: '8:00 AM', businessName: 'Business', reportAddress: 'Address',
+    vehicle: 'Truck One', routeDate: '2026-07-20', status: 'assigned',
+    requiresHelper: true, events: [], audit: [], createdAt: 1, updatedAt: 1,
+  }
+  const shortHanded = {
+    ...base, token: 's'.repeat(16), routeNumber: 'JK-R-SHORT',
+    assignees: [{ staffId: 'crew-1', name: 'Crew One', role: 'driver', token: 't1' }],
+  } as unknown as RouteRecord
+  const unstaffed = {
+    ...base, token: 'u'.repeat(16), routeNumber: 'JK-R-EMPTY', assignees: [],
+  } as unknown as RouteRecord
+
+  const missingCrewFor = (r: RouteRecord) =>
+    detectConflicts(mergeSchedule({ routes: [r] })).filter(c => c.type === 'missing_crew')
+
+  for (const flag of ['true', 'false'] as const) {
+    await withFlag(flag, () => {
+      assert.equal(missingCrewFor(shortHanded).length, 0,
+        `short-handed route must not be flagged (flag=${flag})`)
+      assert.equal(missingCrewFor(unstaffed).length, 1,
+        `genuinely unstaffed route must still be flagged (flag=${flag})`)
+    })
+  }
+})

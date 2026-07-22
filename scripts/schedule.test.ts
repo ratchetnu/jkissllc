@@ -280,6 +280,67 @@ test('accepted-but-unscheduled and missing-crew are reported', () => {
   assert.ok(conflicts.some(c => c.type === 'missing_crew'))
 })
 
+// ── regression: missing_crew must stay "nobody is on it" for routes ──────────
+// The assignment-rollback work broadened this conflict from `crew.length === 0` to
+// `!crewComplete`, so that a booking whose roster crew is HIDDEN by the flag would
+// not look unstaffed. But `crewComplete` is also false for a ROUTE that has crew and
+// is merely short a helper, so every short-handed route began emitting
+// "…with no crew assigned" — a brand-new warning, and a false one. These pin the two
+// lanes to their own tests, so a rollback in one cannot blind detection in the other.
+
+test('a short-handed route with a driver assigned is NOT reported as missing crew', () => {
+  const item = routeToScheduleItem(route({
+    status: 'assigned', routeDate: '2026-07-20', requiresHelper: true, vehicle: 'Truck 1',
+    assignees: [assignee({ staffId: 's1', name: 'Alex', role: 'driver' })],
+  }))
+  // The exact precondition that regressed: crew IS present, completeness is not.
+  assert.equal(item.crew.length, 1)
+  assert.equal(item.crewComplete, false)
+  assert.ok(!detectConflicts([item]).some(c => c.type === 'missing_crew'),
+    'a short-handed route has crew — "no crew assigned" does not describe it')
+})
+
+test('a scheduled route with nobody assigned IS still reported as missing crew', () => {
+  const item = routeToScheduleItem(route({
+    status: 'assigned', routeDate: '2026-07-20', requiresHelper: true, vehicle: 'Truck 1',
+    assignees: [],
+  }))
+  assert.equal(item.crew.length, 0)
+  const found = detectConflicts([item]).filter(c => c.type === 'missing_crew')
+  assert.equal(found.length, 1)
+  assert.match(found[0].message, /no crew assigned/)
+})
+
+test('booking and route missing-crew detection are independent in one merged schedule', () => {
+  const day = '2026-07-20'
+  const conflicts = detectConflicts(mergeSchedule({
+    // Confirmed booking with nobody on it at all -> must still be flagged.
+    bookings: [booking({ status: 'confirmed', selectedDate: day })],
+    // Short-handed route -> must NOT be flagged.
+    routes: [route({
+      status: 'assigned', routeDate: day, requiresHelper: true, vehicle: 'Truck 1',
+      assignees: [assignee({ staffId: 's1', name: 'Alex', role: 'driver' })],
+    })],
+  }))
+  const missing = conflicts.filter(c => c.type === 'missing_crew')
+  assert.equal(missing.length, 1, 'exactly the booking is flagged, not the route')
+  // `id` is `${kind}:${sourceRecordId}` — the flagged item is the booking, not the route.
+  assert.ok(missing[0].itemIds[0].startsWith('booking:'))
+})
+
+test('vehicle/equipment conflicts are untouched by the missing-crew fix', () => {
+  const day = '2026-07-20'
+  const shortHanded = (o: Partial<RouteRecord> = {}) => routeToScheduleItem(route({
+    status: 'assigned', routeDate: day, requiresHelper: true,
+    assignees: [assignee({ staffId: 's1', name: 'Alex', role: 'driver' })],
+    ...o,
+  }))
+  // A route with no vehicle and no equipment still reports missing_vehicle...
+  assert.ok(detectConflicts([shortHanded()]).some(c => c.type === 'missing_vehicle'))
+  // ...and one that has a vehicle does not.
+  assert.ok(!detectConflicts([shortHanded({ vehicle: 'Truck 1' })]).some(c => c.type === 'missing_vehicle'))
+})
+
 test('a hard-dated booking still in a pending status is flagged unlinked', () => {
   const conflicts = detectConflicts([bookingToScheduleItem(booking({ status: 'quote_received', selectedDate: '2026-07-20' }))])
   assert.ok(conflicts.some(c => c.type === 'unlinked_schedule'))

@@ -167,8 +167,19 @@ export function detectConflicts(items: ScheduleItem[]): Conflict[] {
   for (const it of items) {
     if (it.cancelled || it.completed) continue
 
-    // Committed work with no crew assigned.
-    if (it.lane === 'confirmed' && it.scheduled && !it.crewComplete) {
+    // Committed work with no crew assigned. `crewComplete` is a STRICTER signal that
+    // also folds in "crew is present but short-handed" — a state this conflict's
+    // message ("no crew assigned") does not describe, and which routes already
+    // surface through their own per-item attention flags. A route always projects
+    // its full crew list, so "nobody is on it" is exactly `crew.length === 0`.
+    //
+    // A booking cannot use that test: with BOOKING_ASSIGNMENT_ENABLED off, a
+    // roster-staffed booking deliberately projects an EMPTY crew list while still
+    // being staffed, so only `crewComplete` distinguishes "hidden but staffed" from
+    // "genuinely nobody assigned". Keeping the two lanes on separate tests is what
+    // makes an assignment rollback inert without blinding route detection.
+    const noCrew = it.kind === 'route' ? it.crew.length === 0 : !it.crewComplete
+    if (it.lane === 'confirmed' && it.scheduled && noCrew) {
       out.push({
         type: 'missing_crew', severity: 'warning', day: it.date, resource: it.number,
         message: `${it.number} (${it.title}) is confirmed for ${it.date} with no crew assigned.`,
