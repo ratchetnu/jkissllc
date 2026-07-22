@@ -277,6 +277,10 @@ function Section({ title, hint, children, open = false }: { title: string; hint?
 }
 
 // Plain-English "what to do next" for each blocking gate (falls back to the gate reason).
+// Plain language for a paused update. Technical detail stays in the gate `reason`
+// and the audit record; the owner is told what happened and what to do next.
+const PAUSED = 'This update is paused because the test site is missing files it needs. Nothing changed. Review the required updates and try again.'
+
 const GATE_NEXT: Record<string, string> = {
   automation_enabled: 'Turn on the three Preview flags (OPERION_AUTOMATION_ENABLED, OPERION_GITHUB_ACTIONS_ENABLED, OPERION_PREVIEW_AUTOMATION_ENABLED) in Vercel, then redeploy.',
   target_is_target: 'This business isn’t a deploy target — pick a target business.',
@@ -290,6 +294,8 @@ const GATE_NEXT: Record<string, string> = {
   branch_allowlisted: 'The base branch isn’t allowlisted for this target.',
   target_health: 'Target health is down — set it back to healthy once verified.',
   no_conflicting_job: 'Another automation job is active for this target — finish or cancel it first.',
+  required_updates: 'This update needs an earlier update installed on the test site first. Send that one, verify it, then come back.',
+  transfer_ready: 'This update is missing files the test site needs. Nothing was changed. Review the required updates and try again.',
   migration_approved: 'This update needs explicit migration approval.',
   env_approved: 'This update changes env/flags — it needs explicit env approval.',
 }
@@ -350,9 +356,16 @@ function AutomationPanel({ updateKey, businesses, requiresEnv = false, requiresM
     setBusy(true); setErr('')
     try {
       const j = await pf('/api/admin/platform/automation', { method: 'POST', body: JSON.stringify({ updateKey, businessId: target, approvals }) })
-      setGates(j.preflight?.gates ?? null); setJob(j.job ?? null); setReady(!!j.ok)
+      setGates(j.preflight?.gates ?? null); setReady(!!j.ok)
+      // Only adopt a job when the server actually created one. A blocked preflight
+      // returns 200 with no `job`, and starting the poller on `null` would make a
+      // refusal look like something in flight.
+      if (j.job) setJob(j.job)
       if (j.alreadyDeployed) { setAlreadyDeployed(true); setErr('') }
-      else if (!j.ok) setErr(j.error ?? 'Preview not prepared — see readiness below.')
+      else if (!j.ok) {
+        const blocked = (j.preflight?.gates ?? []).find((g: Gate) => !g.ok && g.blocking)
+        setErr(blocked ? (GATE_NEXT[blocked.id] ?? j.error ?? PAUSED) : (j.error ?? PAUSED))
+      }
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') } finally { setBusy(false) }
   }
   const act = async (action: string, confirmMsg?: string) => {

@@ -16,6 +16,19 @@ export type PreflightInput = {
   hasActiveJob: boolean
   flags: { automation: boolean; preview: boolean; githubActions: boolean; controlPlane?: boolean }
   approvals?: { migration?: boolean; environment?: boolean }
+  /**
+   * Required updates (issue #48 Phase B). Resolved by the orchestrator, which reads
+   * compatibility + deployments, and passed in so this function stays pure. Absent =
+   * not yet evaluated, which is treated as satisfied ONLY for updates that declare no
+   * dependencies — the orchestrator always supplies it when there are any.
+   */
+  requiredUpdates?: { ok: boolean; missing: string[]; detail?: string }
+  /**
+   * Exact commit-transfer readiness (issue #48 Phase A, hoisted to preflight). The
+   * orchestrator builds the real manifest and reports the verdict; a failure here
+   * means the transfer would not compile on the target.
+   */
+  transferReady?: { ok: boolean; reason?: string }
 }
 
 // `partially_deployed` means the approved update has reached at least one business but
@@ -62,6 +75,32 @@ export function evaluatePreflight(x: PreflightInput): PreflightResult {
   // Health not down; no conflicting job.
   add('target_health', 'Target health not down', x.business.healthStatus !== 'down', true, 'target health is down')
   add('no_conflicting_job', 'No conflicting automation job', !x.hasActiveJob, true, 'another automation job is active for this target')
+
+  // Required updates must already be installed AND verified on THIS target. An update
+  // that declares none is unaffected — `dependencies` is absent on every record that
+  // predates this gate, so those evaluate as satisfied and behave exactly as before.
+  const req = x.requiredUpdates
+  add(
+    'required_updates',
+    'Required updates installed',
+    !req || req.ok,
+    true,
+    req && !req.ok
+      ? `this update needs ${req.missing.join(', ')} on this business first${req.detail ? ` — ${req.detail}` : ''}`
+      : 'a required update is not installed on this business',
+  )
+
+  // The exact files this transfer would send must resolve on the target. This is the
+  // Phase A closure check run BEFORE a job exists, so an incomplete update never
+  // reaches branch creation or workflow dispatch.
+  const transfer = x.transferReady
+  add(
+    'transfer_ready',
+    'Transfer is complete for this target',
+    !transfer || transfer.ok,
+    true,
+    transfer?.reason ?? 'the transfer is missing files this business needs',
+  )
 
   // Owner-gated approvals for risky changes.
   add('migration_approved', 'Migration approved (if any)', !x.update.migrationRequired || x.approvals?.migration === true, true, 'migration requires explicit owner approval')

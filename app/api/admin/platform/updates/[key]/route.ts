@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePlatformOwner, getPrincipal } from '../../../_lib/session'
 import {
-  getUpdate, saveUpdate, getBusiness, getCompatMap, listCompat, saveCompat,
+  getUpdate, saveUpdate, getBusiness, getCompatMap, listCompat, saveCompat, listUpdates,
   listDeploymentsForUpdate, getDeployment, saveDeployment, nextDeploymentId,
 } from '../../../../../lib/platform/updates/store'
-import { canTransitionUpdate, canMarkVerified, resolvePathsToExclude } from '../../../../../lib/platform/updates/policy'
+import { canTransitionUpdate, canMarkVerified, resolvePathsToExclude, resolveDependencies, validateDependencies, describeDependencyProblems } from '../../../../../lib/platform/updates/policy'
 import { buildDeploymentPrompt } from '../../../../../lib/platform/updates/prompt'
 import { PLATFORM_UPDATE_VERSION, type UpdateStatus, type CheckStatus, type CompatStatus, type DeploymentRecord, type DeploymentStatus } from '../../../../../lib/platform/updates/types'
 import { isSafeRepoPath } from '../../../../../lib/platform/automation/manifest'
@@ -47,6 +47,20 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
       const BOOL: (keyof typeof update)[] = ['breakingChange', 'migrationRequired', 'environmentChangeRequired', 'secretRequired', 'featureFlagRequired', 'manualPortRequired', 'rollbackSupported']
       for (const k of BOOL) if (typeof f[k] === 'boolean') (update as Record<string, unknown>)[k] = f[k]
       for (const k of ['type', 'scope', 'severity', 'priority'] as const) if (typeof f[k] === 'string') (update as Record<string, unknown>)[k] = f[k]
+      // Required updates. Omitted preserves the stored list; an explicit [] clears it.
+      // Validated against the live registry so an unknown key, a self-reference or a
+      // loop is refused before anything is written.
+      if ('dependencies' in f) {
+        const known = await listUpdates(500)
+        const v = validateDependencies({
+          key,
+          submitted: f.dependencies,
+          knownKeys: new Set(known.map((u) => u.key)),
+          dependenciesOf: (k) => (k === key ? undefined : known.find((u) => u.key === k)?.dependencies),
+        })
+        if (!v.ok) return NextResponse.json({ error: describeDependencyProblems(v.problems) }, { status: 400 })
+        update.dependencies = resolveDependencies(update.dependencies, v.dependencies)
+      }
       break
     }
     case 'set-validation': {
