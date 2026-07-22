@@ -1,8 +1,8 @@
 // ── Operion automation — durable store (platform:autojob:* key family) ───────
 import { redis } from '../../redis'
 import { randomUUID } from 'node:crypto'
-import type { UpdateAutomationJob } from './types'
-import { AUTOMATION_ACTIVE } from './types'
+import type { UpdateAutomationJob, TransferEvidence } from './types'
+import { AUTOMATION_ACTIVE, EVIDENCE_TTL_MS } from './types'
 
 const K_JOB = 'platform:autojob:'
 const K_IDX = 'platform:autojob:index'
@@ -10,6 +10,7 @@ const K_CTR = 'platform:autojob:counter'
 const K_IDEM = 'platform:autoidem:'      // idempotencyKey -> jobId
 const K_LOCK = 'platform:autolock:'      // per-business orchestration lock
 const K_CB = 'platform:autocb:'          // callback delivery-id replay guard
+const K_EV = 'platform:autoev:'          // transfer evidence, off the bulk job read path
 
 const parse = <T>(raw: string | null): T | null => { if (!raw) return null; try { return JSON.parse(raw) as T } catch { return null } }
 
@@ -49,6 +50,19 @@ export async function withBusinessLock<T>(businessId: string, fn: () => Promise<
   const acquired = await redis.setNxPx(K_LOCK + businessId, opts.token, opts.ttlMs ?? 60_000)
   if (!acquired) return opts.onBusy()
   try { return await fn() } finally { try { await redis.eval(RELEASE, [K_LOCK + businessId], [opts.token]) } catch { /* TTL */ } }
+}
+
+// Transfer evidence (§4 #7). Deliberately a SEPARATE key family: `listJobs` loads whole
+// job records 500 at a time on the preflight path, so this must never ride along on the
+// job. TTL-bounded — evidence is for incident review, and the job record outlives it.
+// Retention expiry and "never recorded" are indistinguishable to a reader, which is
+// correct: both mean there is nothing to show.
+export async function saveTransferEvidence(e: TransferEvidence): Promise<void> {
+  await redis.set(K_EV + e.jobId, JSON.stringify(e))
+  await redis.pexpire(K_EV + e.jobId, EVIDENCE_TTL_MS)
+}
+export async function getTransferEvidence(jobId: string): Promise<TransferEvidence | null> {
+  return parse<TransferEvidence>(await redis.get(K_EV + jobId))
 }
 
 // Callback replay guard: a delivery id may be processed at most once (TTL-bounded).
