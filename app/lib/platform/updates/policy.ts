@@ -131,6 +131,11 @@ export function compatRollup(compats: UpdateCompatibility[]): { compatible: numb
   return { compatible, withChanges, blocked, unknown, notApplicable }
 }
 
+/** PATCH semantics for machine-enforced exclusions: omitted preserves; [] explicitly clears. */
+export function resolvePathsToExclude(existing: string[] | undefined, submitted: string[] | undefined): string[] | undefined {
+  return submitted === undefined ? existing : submitted
+}
+
 // ── Businesses behind (target businesses not on the source's version) ────────
 export function businessesBehind(businesses: PlatformBusiness[], sourceVersion: string | undefined): PlatformBusiness[] {
   if (!sourceVersion) return []
