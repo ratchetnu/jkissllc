@@ -6,6 +6,37 @@
 
 ---
 
+## ✅ PR #54 MERGED — `main` = **`1614239`** (2026-07-22 18:50Z)
+
+Blob upload readiness (P1-A + P1-B) plus the malformed-body fix. Owner-approved, merge only.
+
+| Item | Value |
+|---|---|
+| **PR** | **#54** — `fix(booking): explicit Blob misconfiguration + exact-store completion photos (P1-A/P1-B)` |
+| **Head → merge SHA** | `cbc1e92` → **`1614239`** |
+| **Merged** | 18:50:59Z · **Scope** 6 files, +291/−16 |
+| **Production deployment** | **`dpl_BnLZtuEX169htUT83eA3q43uGxq1`** ● **Ready**, 18:51:02Z |
+| **Rollback target** | `dpl_FZAtMj92NY9cCMqhvQHavRj6JRMM` (pre-#54) |
+
+```bash
+vercel rollback dpl_FZAtMj92NY9cCMqhvQHavRj6JRMM --yes   # undo #54
+git revert -m 1 1614239                                   # durable
+```
+
+**Inertness proven, not assumed:** `POST /api/portal/upload` on Production returns **404** — the `BOOKING_ASSIGNMENT_ENABLED` gate fires before any Blob logic. The feature is unreachable in Production.
+
+**Verified after deploy:** `/` 200 · `/api/health` 200 · `/admin/operations/schedule` 200 · platform updates **401** · manifest **405** · prod env **42 vars, unchanged** · `BLOB_STORE_ID` **absent (not written)** · `BOOKING_ASSIGNMENT_ENABLED` **absent** · `flags.ts`/`vercel.json`/`.env`/workflows **untouched across the entire sprint** (`ee577c2..1614239`) · UPD-1004 last run still `05:26:27Z` · **no Supercharged workflow since 18:00Z** · no transfer dispatched.
+
+**Runtime-validated on Preview before merge:** unauthenticated → 401 with safe copy; malformed JSON and empty body → 400 safe shape (were 500); flag proven ON in Preview; no SDK/parser internals in any response. Negative controls run for both fixes.
+
+**Still open — tracked, not forgotten:**
+- A byte upload through the crew presigned path has **never** been exercised. Pre-existing transport; gated behind activation readiness (issue #46). Needs a **fresh Preview-only credential**.
+- **Completion-photo lifecycle** — append-only, no removal path; 3 confirmed dead references on Preview booking `b5d04027…`. See `completion-photo-lifecycle-hardening.md`. **Approval-gated, no code.**
+
+**PR #55** (`codex/operion-symbol-verification-gate`, head `47d3d6e`) — **HELD** at owner instruction until the #54 sequence completes.
+
+---
+
 ## ✅ FREEZE LIFTED — corrected `main` = **`4430931`** (2026-07-22 16:42Z)
 
 **The #47 route-lane regression is fixed, merged, deployed and verified. `c791d4e` is superseded — do not build on it.**
