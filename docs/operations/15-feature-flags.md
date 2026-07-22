@@ -52,6 +52,19 @@ booleans only, never the underlying env value.
 > changing flags. A green readiness result is evidence that a staged flag change may be
 > considered; it is not permission to enable every stage at once.
 
+> **Phase P0 rehearsal (2026-07-22) — what it did and did not authorize.** A read-only
+> rehearsal exercised the whole transfer decision path — manifest construction, every
+> gate (compatibility, exclusions, rename, dependency closure, exported-symbol, drift),
+> evidence generation and the evidence record shape — in an isolated, credential-free
+> sandbox with the network blocked. It **validated the safety properties**: the gates
+> refused every malformed transfer, an incompatible update was refused with zero
+> repository reads, the evidence record carries no file bytes / hashes / secrets and
+> truncates loudly, and preflight blocks a Preview-origin dispatch. **The rehearsal
+> changed no flag, dispatched nothing, and wrote nothing.** It is *not* an approval to run
+> a transfer. **Executing the first Preview canary still requires explicit owner approval
+> and a staged flag change** — the rehearsal only shows the machinery is safe to approve,
+> not that approval has been given.
+
 ## Production reality caveat
 
 `vercel env pull` shows `""` for every `OPERION_*` flag in production — that is

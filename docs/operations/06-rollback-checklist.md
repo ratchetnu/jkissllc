@@ -32,6 +32,35 @@ but the default under uncertainty is **roll back**.
 > Operion's server-side Vercel provider; target repositories do not receive a second Production
 > token or an independently dispatchable rollback workflow.
 
+## Preview transfer canary — cleanup, not rollback
+
+A **Preview transfer canary** (an Operion commit-transfer to a target business's Preview
+environment) has **nothing to roll back**, and that is by design, not a gap:
+
+- The target workflow **never merges its PR and never promotes the target's Production**.
+  A canary produces only an `operion/<update-key>` work branch, an open PR against the
+  target's `main`, and a Vercel **Preview** deployment. Target Production is untouched, so
+  there is no prior production state to restore.
+- Rollback in Operion is **Production-only by construction.** `advanceRollback` fires
+  solely from the `rollback_required` status, which is reachable only from a **production**
+  promotion failure (`advancePromotion`). A Preview failure yields `preview_failed` /
+  `apply_failed` / `tests_failed` — none of which can request a rollback. As the code puts
+  it: *"Preview callbacks cannot request a Production rollback because Production has not
+  changed."*
+
+**When a canary fails or is abandoned, the correct action is cleanup, not rollback.**
+Operion has no automated artifact cleanup path, so reclaim the three artifacts by hand:
+
+1. Close the target PR (titled `Operion: UPD-####`; its body already says
+   "Preview-only — do NOT merge").
+2. Delete the `operion/<update-key>` branch on the target repository (it is
+   automation-owned and force-pushed, so nothing human is lost).
+3. The Vercel Preview deployment for that branch expires on its own; delete it early only
+   if you want to reclaim it immediately.
+
+`OPERION_AUTOMATIC_ROLLBACK_ENABLED` is **irrelevant to a Preview canary** and should stay
+OFF — it only adds a Production-mutating path that a Preview-only exercise never reaches.
+
 ## Config / flag rollback
 
 - If the incident was caused by **flipping a flag on**, turn it **off** (dashboard) —
