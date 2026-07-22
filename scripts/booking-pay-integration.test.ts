@@ -37,7 +37,7 @@ globalThis.fetch = (async (_url: string, init: { body: string }) => {
 }) as unknown as typeof fetch
 
 import { computePay } from '../app/lib/route-pay'
-import { saveBooking, type Booking } from '../app/lib/bookings'
+import { effectiveServiceDate, saveBooking, type Booking } from '../app/lib/bookings'
 import { saveRoute, generateToken, type RouteRecord } from '../app/lib/routes'
 import { saveStaff } from '../app/lib/staff'
 
@@ -47,6 +47,19 @@ const baseBooking = (overrides: Partial<Booking> = {}): Booking => ({
   depositAmountCents: 0, amountPaidCents: 0, availableDates: [], availableWindows: [],
   selectedDate: '2026-07-08', status: 'completed', payments: [], source: 'online',
   createdAt: 1, updatedAt: 1, ...overrides,
+})
+
+test('effectiveServiceDate preserves the return visit after a continued job closes', () => {
+  assert.equal(effectiveServiceDate(baseBooking({ selectedDate: '2026-06-30' })), '2026-06-30')
+  assert.equal(effectiveServiceDate(baseBooking({ selectedDate: undefined, availableDates: ['2026-07-08'] })), '2026-07-08')
+  for (const status of ['continued', 'completed', 'partially_completed'] as const) {
+    assert.equal(effectiveServiceDate(baseBooking({
+      status, selectedDate: '2026-06-30', continuation: { continuedAt: 1, returnDate: '2026-07-09' },
+    })), '2026-07-09')
+  }
+  assert.equal(effectiveServiceDate(baseBooking({
+    status: 'cancelled', selectedDate: '2026-06-30', continuation: { continuedAt: 1, returnDate: '2026-07-09' },
+  })), '2026-06-30')
 })
 
 async function seed() {
