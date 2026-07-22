@@ -114,7 +114,11 @@ test('tree listing and per-path checks never disagree on a sample', { skip: !HAS
 // ── The harness end to end ───────────────────────────────────────────────────
 
 test('rehearsal never attempts a write: mutating provider methods throw', () => {
-  const p = makeLocalGitProvider({ sourceRepoPath: JK, targetRepoPath: HAS_SC ? SC : JK, targetRef: REV })
+  // Build against the repo the test itself runs in, at HEAD — always present and a
+  // valid ref in any checkout (the hardcoded ~/jkissllc path does not exist on CI).
+  // So this write-safety assertion runs even on a clone-only CI without the sibling.
+  const here = process.cwd()
+  const p = makeLocalGitProvider({ sourceRepoPath: here, targetRepoPath: here, targetRef: 'HEAD' })
   for (const op of ['createBranch', 'dispatchWorkflow', 'createPullRequest', 'mergePullRequest', 'promoteProduction', 'createPreviewDeployment'] as const) {
     assert.throws(() => (p[op] as () => never)(), /read-only/, `${op} must throw`)
   }
