@@ -6,6 +6,64 @@
 
 ---
 
+## ✅ MERGE RECORD — Sprint 1 authorized sequence COMPLETE (2026-07-22 16:19Z)
+
+`origin/main`: `ee577c2` → **`c791d4e`**. Two merges, owner-authorized, executed one at a time.
+
+| # | PR | Merge commit | Merged | Production deployment | Status |
+|---|---|---|---|---|---|
+| 1 | **#52** dependency preflight | **`b015564`** | 16:15:01Z | `dpl_FfyYpLokVu1qNynihWtvgSFviM5a` | ● Ready |
+| 2 | **#47** rollback inertness | **`c791d4e`** | 16:19:03Z | `dpl_DTjcqRv266kP41oAoGPWC39gYzPY` | ● Ready, aliased to jkissllc.com |
+
+**Pre-merge rollback target (production before the sequence):** `dpl_DFTgafHN2JemUBQmktwqzHHkMMxW`
+
+### Exact rollback commands
+
+```bash
+# Fastest: repoint the production alias. No rebuild, no code change.
+vercel rollback dpl_DFTgafHN2JemUBQmktwqzHHkMMxW --yes    # undo BOTH merges
+vercel rollback dpl_FfyYpLokVu1qNynihWtvgSFviM5a --yes    # undo #47 only, keep #52
+
+# Durable: revert the merge commits (redeploys automatically; reverse order)
+git revert -m 1 c791d4e    # revert #47
+git revert -m 1 b015564    # revert #52
+```
+
+### Verified after the sequence
+
+- Full suite **1854/1854** on #52; **1856/1856** + `tsc` clean on the #47 **merge result** (tested against the new `main`, not the branch in isolation)
+- Total delta `ee577c2..c791d4e` = **exactly 12 files**, `+880/−22` — the 8 from #52 plus the 4 from #47, nothing else
+- **`app/lib/platform/flags.ts` is not in the diff** — no flag default can have changed
+- No `vercel.json` / `.env` / workflow file touched
+- Production: `/` → **200** · `/api/admin/platform/updates` → **401** · `/api/automation/manifest` → **405**
+- `BLOB_STORE_ID` still **absent** in Production (0 occurrences) — not set, per instruction
+- `BOOKING_ASSIGNMENT_ENABLED` still **absent** in Production — defaults `false`
+- **UPD-1004 not retried**: last `Operion Update` run was `2026-07-22T05:26:27Z` (failure), ~11h *before* the sequence; **zero** Supercharged workflow runs after 16:00Z; no `operion/upd-1004` branch exists; no new Supercharged PR
+- Stashes untouched: 2 in J KISS, 1 in Supercharged
+- **No worktree pruned. No branch deleted.**
+
+### PRs closed as superseded
+
+| PR | Disposition |
+|---|---|
+| **#33** | Closed. Evidence preserved: full 42KB patch + file-by-file comparison at `docs/operations/superseded/`. ⚠️ **Only partially superseded** — see follow-up below. |
+| **#29** | Closed, superseded by `OPERION_CURRENT_STATE.md`. |
+
+**Open follow-up from #33:** `app/lib/platform/automation/target-policy.ts` + its test were never merged and nothing on `main` replaces them. `pathsToExclude` (#49) is per-update owner *configuration* that **fails open** when a path is omitted; the target policy is a categorical role-derived boundary that **fails closed**. Re-raise as a fresh additive PR carrying only those two files plus one call site.
+
+**Remaining open PRs: #38, #43** — both deliberately not merged.
+
+### ⚠️ Concurrent sessions are LIVE — rebase your base
+
+Two worktrees appeared during the sequence that the coordinator did not create:
+
+- `/Users/nunubabymuzik/jkissllc-booking-prod` @ `c791d4e` [`codex/sprint1-booking-prod-readiness`] — **Session 2 has started** and correctly adopted the ownership map's branch name.
+- `/private/tmp/claude-501/…/a800b6d9-…/scratchpad/verify-main` @ `c791d4e` (detached) — a different session verifying the merged main.
+
+**Base correction for S2 and S3:** §3 originally told you to stack on the PR heads `fa4b028` / `1e80da5`. Those PRs are now **merged**. Branch directly off `origin/main` = **`c791d4e`** instead. Session 2 already did this correctly.
+
+---
+
 ## 0. Ground truth (verified 2026-07-22, post-fetch)
 
 | Fact | Handoff said | **Verified reality** |
