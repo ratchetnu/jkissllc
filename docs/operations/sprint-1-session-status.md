@@ -6,6 +6,98 @@
 
 ---
 
+## 🔴 FREEZE — `main` `c791d4e` IS BLOCKED FOR NEW FEATURE WORK (2026-07-22)
+
+**A regression from merged PR #47 is confirmed on the pre-existing route lane. It is NOT flag-suppressed.**
+
+### Status by session — effective immediately
+
+| Session | Status | Permitted |
+|---|---|---|
+| **S1** | ✅ **AUTHORIZED — hotfix only** | Prepare **one narrow isolated hotfix PR** against `app/lib/schedule/conflicts.ts` + its tests. Nothing else. No worktree pruning, no branch deletion, no stash, no unrelated edits. |
+| **S2** | ⛔ **READ-ONLY — PAUSED** | No source writes. No branch commits. Wait for the corrected `main` SHA to be published in this section. |
+| **S3** | ⛔ **READ-ONLY — PAUSED** | No source writes. No Supercharged writes. No transfer dispatch. Wait for the corrected `main` SHA. |
+
+**Do not rebase onto `c791d4e`.** A corrected SHA will be published here. Sessions are released only by the coordinator, in this file.
+
+### The regression — coordinator-verified independently
+
+`app/lib/schedule/conflicts.ts:171`, changed by #47:
+
+```diff
+- if (it.lane === 'confirmed' && it.scheduled && it.crew.length === 0) {
++ if (it.lane === 'confirmed' && it.scheduled && !it.crewComplete) {
+```
+
+`detectConflicts` runs over the **unified** item list — bookings *and* routes. In `unified.ts`:
+
+- `routeToScheduleItem:272` → `lane = r.status === 'draft' ? 'pending' : 'confirmed'` — every non-draft route is `'confirmed'`
+- `routeToScheduleItem:310` → `crewComplete = (r.assignees?.length ?? 0) > 0 && !gap.incomplete`
+
+So a **scheduled non-draft route with one assigned driver and an incomplete crew gap** has `crew.length === 1` but `crewComplete === false`:
+
+| | pre-#47 (`crew.length === 0`) | post-#47 (`!crewComplete`) |
+|---|---|---|
+| Route, 1 driver, gap incomplete | `false` → no conflict | **`true` → emits `missing_crew`** ❌ |
+
+The emitted message is also factually false: *"…is confirmed for {date} with no crew assigned."* — about a route that **has** a driver.
+
+**Why the flag does not suppress it:** #47 added `BOOKING_ASSIGNMENT_ENABLED` gating **only inside `bookingToScheduleItem`**. `routeToScheduleItem` was not touched and has no flag path. The route lane therefore changed behavior with the flag OFF ⇒ **the merge was not fully inert.** Severity is `warning` (not `error`), and the surface is admin-facing, but it is spurious noise on a live lane and it can mask genuine warnings.
+
+**Test gap:** the full suite passed 1856/1856 through this change. No test covers a partially-crewed route against `missing_crew`. The hotfix must add one.
+
+### Required hotfix shape (coordinator's independent analysis — S1 may propose better)
+
+A single condition restores routes exactly while **preserving #47's valid booking-side fix**:
+
+```ts
+if (it.lane === 'confirmed' && it.scheduled && it.crew.length === 0 && !it.crewComplete) {
+```
+
+| Case | `crew` | `crewComplete` | pre-#47 | post-#47 | with fix |
+|---|---|---|---|---|---|
+| Route, 1 driver, gap incomplete | 1 | false | none | **missing_crew** ❌ | none ✅ restored |
+| Route, 0 assignees | 0 | false | missing_crew | missing_crew | missing_crew ✅ |
+| Route, full crew | 2 | true | none | none | none ✅ |
+| Booking flag-OFF, roster hidden, legacy `assignedTo` set | 0 | true | missing_crew (false positive #47 fixed) | none | **none ✅ #47's fix preserved** |
+| Booking, genuinely uncrewed | 0 | false | missing_crew | missing_crew | missing_crew ✅ |
+
+For routes the added clause is provably a no-op (`crew.length === 0` ⇒ `assignees === 0` ⇒ `crewComplete === false`), so **route behavior becomes byte-identical to pre-#47**. Only the booking lane keeps #47's improvement.
+
+**Reverting all of #47 is NOT authorized** unless this narrow fix cannot preserve the booking-side changes. On the above analysis it can.
+
+### Merge criteria for the hotfix — all must hold
+
+route behavior restored · booking flag-off behavior still correct · full suite · `tsc` · ESLint · AI regression · `npm run build` · Preview green · all flags OFF · no env var changed.
+
+---
+
+## 🔴 Blocking activation defects — Blob readiness (S2 read-only audit, coordinator-recorded)
+
+Both are **blocking for booking-assignment Production activation**. Neither is being fixed yet.
+
+| # | Defect | Location | Consequence |
+|---|---|---|---|
+| **BLOB-1** | Crew upload route **fails closed** when `BLOB_STORE_ID` is absent | `app/api/portal/upload/route.ts:34-37` — throws `blob_store_not_configured` | Every crew completion upload → HTTP 400 → generic "Upload failed" in the field, the moment the flag is turned on |
+| **BLOB-2** | Photo validation **degrades to a host-suffix floor** when `BLOB_STORE_ID` is absent | `app/lib/job-assignment.ts:313-316`; `scripts/job-assignment.test.ts:310` asserts a Preview-store URL passes | A **Production** record can reference **Preview-hosted** bytes |
+
+Store IDs verified live: Production `jkiss-invoice-photos` = `store_WK8DoJzb2Q1lu5sv`; Preview `operion-preview-blob` = `store_Ulabe9q3GBD8ZYQh`.
+
+**Standing restrictions:** ⛔ Production `BLOB_STORE_ID` write **NOT approved** — owner decision pending. ⛔ Booking-claims implementation **NOT authorized** (answers S2's B-3: it stays Sprint 3 scope, do **not** start). ⛔ `BOOKING_ASSIGNMENT_ENABLED` stays **OFF** throughout.
+
+### Agreed sequence
+
+1. Merge + verify the narrow #47 route-conflict hotfix ← **in progress**
+2. Publish the corrected `main` SHA here
+3. Update the ownership map
+4. Assign BLOB-1 + BLOB-2 as **one narrow isolated increment** — only if file ownership is disjoint (coordinator verifies before assigning)
+5. Validate that increment in **Preview**
+6. Run the full booking-assignment **Preview E2E**
+7. **STOP for owner approval** before setting Production `BLOB_STORE_ID`
+8. `BOOKING_ASSIGNMENT_ENABLED` OFF throughout
+
+---
+
 ## ✅ MERGE RECORD — Sprint 1 authorized sequence COMPLETE (2026-07-22 16:19Z)
 
 `origin/main`: `ee577c2` → **`c791d4e`**. Two merges, owner-authorized, executed one at a time.
