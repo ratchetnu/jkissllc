@@ -1,0 +1,69 @@
+{
+  "id": "WRK-002",
+  "title": "Run budget (cron wall-clock ceiling)",
+  "description": "runDueAiJobs never STARTS a job that can't finish its full per-job deadline before the function's wall-clock ceiling (FUNCTION_BUDGET_MS), so a late job is never hard-killed mid-run and left stuck.",
+  "product": {
+    "upstream": "operion",
+    "downstream": "supercharged"
+  },
+  "source": {
+    "upstreamRepo": "ratchetnu/jkissllc",
+    "downstreamRepo": "ratchetnu/supercharged"
+  },
+  "category": "fix",
+  "classification": "direct-port",
+  "status": "merged",
+  "riskLevel": "low",
+  "surface": {
+    "sharedUtilities": [
+      "app/lib/book-now-ai.ts"
+    ],
+    "tests": [
+      "scripts/book-now-ai.test.ts"
+    ]
+  },
+  "rollout": {
+    "featureFlagsOffByDefault": true,
+    "previewValidationRequired": false
+  },
+  "rollbackSteps": [
+    "Rollback: git revert -m 1 a8e0584ff0ef390a4baf6cda8ebdd4bed6885aac (the PR #8 merge). Run-budget guard degrades gracefully (late jobs deferred to the next tick).",
+    "Revert the sync commit; behavior degrades gracefully (late jobs deferred to the next tick)."
+  ],
+  "exclusions": [],
+  "compatibilityNotes": [
+    "Pure backend scheduling guard — no branding. Direct port; align FUNCTION_BUDGET_MS with the downstream cron maxDuration."
+  ],
+  "history": [
+    {
+      "at": "2026-07-20T00:00:00Z",
+      "to": "discovered",
+      "actor": "initial-migration",
+      "note": "Registered from completed upstream worker hardening."
+    },
+    {
+      "at": "2026-07-21T07:06:48Z",
+      "from": "discovered",
+      "to": "merged",
+      "actor": "reconciliation",
+      "note": "Landed in the Supercharged parity release PR #8 (8098d35 graceful worker deadline + run budget); bundle re-verified green (tsc/462 tests/117 ai/regression/build, flags OFF) and merged as a8e0584ff0ef390a4baf6cda8ebdd4bed6885aac. Discovery→merged recorded as a bundled reconciliation transition (the parity foundation was validated and merged as one unit)."
+    }
+  ],
+  "downstreamPR": 8,
+  "verification": {
+    "typescript": true,
+    "eslint": true,
+    "unit": true,
+    "regression": true,
+    "previewBuild": true,
+    "featureOffVerified": true,
+    "rollbackVerified": true,
+    "ranAt": "2026-07-21T07:00:00Z",
+    "summary": "PR #8 bundle re-verified against head da5fdc8: tsc 0 errors; eslint changed-files 0 errors (2 pre-existing warnings); full suite 462/462; test:ai 117/117; ai-regression 2/2; next build ✓ compiled successfully; all new flags default OFF (flag-off = byte-identical). GitHub Vercel + regression green on merge commit a8e0584."
+  },
+  "approval": {
+    "approver": "ratchetnu (reconciliation directive, 2026-07-21)",
+    "approvedAt": "2026-07-21T07:06:48Z",
+    "knownDifferences": []
+  }
+}

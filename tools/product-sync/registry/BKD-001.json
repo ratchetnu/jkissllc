@@ -1,0 +1,72 @@
+{
+  "id": "BKD-001",
+  "title": "Admin booking-detail workspace parity",
+  "description": "Admin bookings booking-detail workspace parity (Operion, adapted): the expanded per-booking admin workspace view. Presentational/admin-only; branding-adapted to Supercharged.",
+  "product": {
+    "upstream": "operion",
+    "downstream": "supercharged"
+  },
+  "source": {
+    "upstreamRepo": "ratchetnu/jkissllc",
+    "downstreamRepo": "ratchetnu/supercharged",
+    "sourceBranch": "feat/unified-operations-book-now",
+    "sourcePR": 8
+  },
+  "category": "ui",
+  "classification": "adaptation-required",
+  "status": "merged",
+  "downstreamPR": 8,
+  "dependencies": [],
+  "riskLevel": "low",
+  "surface": {
+    "ui": [
+      "app/admin/bookings/page.tsx"
+    ]
+  },
+  "rollout": {
+    "featureFlagsOffByDefault": true,
+    "previewValidationRequired": true,
+    "requiresMigration": false,
+    "requiresEnvConfig": false
+  },
+  "verification": {
+    "typescript": true,
+    "eslint": true,
+    "unit": true,
+    "regression": true,
+    "previewBuild": true,
+    "featureOffVerified": true,
+    "rollbackVerified": true,
+    "ranAt": "2026-07-21T07:00:00Z",
+    "summary": "PR #8 bundle re-verified against head da5fdc8: tsc 0 errors; eslint changed-files 0 errors (2 pre-existing warnings); full suite 462/462; test:ai 117/117; ai-regression 2/2; next build ✓ compiled successfully; all new flags default OFF (flag-off = byte-identical). GitHub Vercel + regression green on merge commit a8e0584."
+  },
+  "approval": {
+    "approver": "ratchetnu (reconciliation directive, 2026-07-21)",
+    "approvedAt": "2026-07-21T07:06:48Z",
+    "knownDifferences": [
+      "Admin UI adapted to Supercharged branding; a companion react-hooks/static-components lint fix (156939a, Row hoisted out of render) shipped in the same PR."
+    ]
+  },
+  "rollbackSteps": [
+    "Rollback: git revert -m 1 a8e0584ff0ef390a4baf6cda8ebdd4bed6885aac (the PR #8 merge). Admin-only presentational change; no data/flag/env impact."
+  ],
+  "exclusions": [],
+  "compatibilityNotes": [
+    "Admin-only workspace; no customer-facing behavior. Adapted from Operion; branding preserved."
+  ],
+  "history": [
+    {
+      "at": "2026-07-21T07:20:00Z",
+      "to": "discovered",
+      "actor": "reconciliation",
+      "note": "Registered retroactively: this admin booking-detail workspace parity commit (e9175a3) shipped in PR #8 without a manifest — recorded here to close the unregistered-parity-commit drift. Distinct from BN-001 (the customer Book Now unified pipeline), which was NOT part of PR #8."
+    },
+    {
+      "at": "2026-07-21T07:06:48Z",
+      "from": "discovered",
+      "to": "merged",
+      "actor": "reconciliation",
+      "note": "Landed in PR #8 (commit e9175a3), merged as a8e0584ff0ef390a4baf6cda8ebdd4bed6885aac."
+    }
+  ]
+}

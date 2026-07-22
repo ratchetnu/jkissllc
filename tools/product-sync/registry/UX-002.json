@@ -1,0 +1,95 @@
+{
+  "id": "UX-002",
+  "title": "Customer Progress UX (calibrated progress wired into the quote flow)",
+  "description": "Wires the six-stage calibrated customer progress display into the Book Now quote flow: a Supercharged-branded CalibratedProgress component over the EXISTING progress-stages driver + progress-calibration/progress-metric routes, plus a public intake/config endpoint exposing the flag to the client. No backend rewrite. Completion follows the real API outcome (success/review/error); reduced-motion supported.",
+  "product": {
+    "upstream": "operion",
+    "downstream": "supercharged"
+  },
+  "source": {
+    "upstreamRepo": "ratchetnu/jkissllc",
+    "downstreamRepo": "ratchetnu/supercharged",
+    "sourceBranch": "feat/customer-progress-ux",
+    "sourcePR": 10
+  },
+  "category": "ui",
+  "classification": "adaptation-required",
+  "status": "merged",
+  "downstreamPR": 10,
+  "dependencies": [
+    "UX-001"
+  ],
+  "riskLevel": "medium",
+  "surface": {
+    "featureFlags": [
+      "OPERION_PROGRESS_UX"
+    ],
+    "apis": [
+      "app/api/intake/config/route.ts",
+      "app/api/quote/progress-calibration/route.ts",
+      "app/api/quote/progress-metric/route.ts"
+    ],
+    "ui": [
+      "app/quote/CalibratedProgress.tsx",
+      "app/quote/page.tsx"
+    ],
+    "sharedUtilities": [
+      "app/lib/ai/progress-stages.ts",
+      "app/lib/ai/progress-metrics.ts"
+    ]
+  },
+  "rollout": {
+    "featureFlagsOffByDefault": true,
+    "previewValidationRequired": true,
+    "requiresMigration": false,
+    "requiresEnvConfig": false
+  },
+  "verification": {
+    "typescript": true,
+    "eslint": true,
+    "unit": true,
+    "regression": true,
+    "previewBuild": true,
+    "featureOffVerified": true,
+    "rollbackVerified": true,
+    "ranAt": "2026-07-21T14:42:00Z",
+    "summary": "PR #10 verified at head dda4ea1 (retargeted onto post-#9 main; isolated diff = exactly 3 files: intake/config, CalibratedProgress, quote/page): tsc 0; eslint clean; progress-ux stage-mapping + flag tests pass; test:ai 121/121; full 466/466; ai-regression 2/2; next build ✓ (/api/intake/config dynamic); Vercel + regression + Preview green. Flag OFF ⇒ static AnalyzingView path byte-identical."
+  },
+  "approval": {
+    "approver": "ratchetnu (Sprint 3 merge approval, 2026-07-21)",
+    "approvedAt": "2026-07-21T14:43:27Z",
+    "knownDifferences": [
+      "CalibratedProgress rebranded to Supercharged (var(--red)) from the operion reference; created a new intake/config endpoint (absent in SC) to expose flags.progressUx to the client. Component owns no progress logic — thin shell over createTimedDriver."
+    ]
+  },
+  "rollbackSteps": [
+    "Rollback: git revert -m 1 59155d4 (PR #10 merge). OPERION_PROGRESS_UX off ⇒ progressActive is always false ⇒ the static \"Analyzing…\" flow is byte-identical.",
+    "No migration, no env, no flag change."
+  ],
+  "exclusions": [],
+  "compatibilityNotes": [
+    "Customer-facing UI — Supercharged branding preserved. Reuses the progress-stages backend; no rewrite. Flag OPERION_PROGRESS_UX OFF by default."
+  ],
+  "history": [
+    {
+      "at": "2026-07-21T05:00:00Z",
+      "to": "discovered",
+      "actor": "sprint2",
+      "note": "Progress UX customer wiring identified as the deferred UX-001 surface downstream (backend + endpoints already present; component + wiring missing)."
+    },
+    {
+      "at": "2026-07-21T12:00:00Z",
+      "from": "discovered",
+      "to": "verified",
+      "actor": "sprint3",
+      "note": "Implemented + verified on feat/customer-progress-ux (PR #10), stacked on PR #9; Preview green."
+    },
+    {
+      "at": "2026-07-21T14:43:27Z",
+      "from": "verified",
+      "to": "merged",
+      "actor": "sprint3",
+      "note": "Retargeted onto post-#9 main (isolated 3-file diff) and merged to Supercharged main as 59155d4 (head dda4ea1); flag OFF."
+    }
+  ]
+}

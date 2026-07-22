@@ -1,0 +1,71 @@
+{
+  "id": "TDM-001",
+  "title": "Production Test Data Management (owner sandbox records)",
+  "description": "Owner-controlled sandbox/test records in production data: create + clearly mark + purge disposable test bookings so an owner can exercise flows against prod without polluting real analytics.",
+  "product": {
+    "upstream": "operion",
+    "downstream": "supercharged"
+  },
+  "source": {
+    "upstreamRepo": "ratchetnu/jkissllc",
+    "downstreamRepo": "ratchetnu/supercharged",
+    "sourcePR": 8
+  },
+  "category": "feature",
+  "classification": "adaptation-required",
+  "status": "merged",
+  "downstreamPR": 8,
+  "dependencies": [],
+  "riskLevel": "medium",
+  "surface": {
+    "tests": [
+      "scripts/test-data.test.ts"
+    ]
+  },
+  "rollout": {
+    "featureFlagsOffByDefault": true,
+    "previewValidationRequired": true,
+    "requiresMigration": false,
+    "requiresEnvConfig": false
+  },
+  "verification": {
+    "typescript": true,
+    "eslint": true,
+    "unit": true,
+    "regression": true,
+    "previewBuild": true,
+    "featureOffVerified": true,
+    "rollbackVerified": true,
+    "ranAt": "2026-07-21T07:00:00Z",
+    "summary": "PR #8 bundle re-verified against head da5fdc8: tsc 0 errors; eslint changed-files 0 errors (2 pre-existing warnings); full suite 462/462; test:ai 117/117; ai-regression 2/2; next build ✓ compiled successfully; all new flags default OFF (flag-off = byte-identical). GitHub Vercel + regression green on merge commit a8e0584."
+  },
+  "approval": {
+    "approver": "ratchetnu (reconciliation directive, 2026-07-21)",
+    "approvedAt": "2026-07-21T07:06:48Z",
+    "knownDifferences": [
+      "Owner-gated; test records are explicitly flagged and excluded from customer analytics."
+    ]
+  },
+  "rollbackSteps": [
+    "Rollback: git revert -m 1 a8e0584ff0ef390a4baf6cda8ebdd4bed6885aac (the PR #8 merge). Additive owner tooling; purge any created test records."
+  ],
+  "exclusions": [],
+  "compatibilityNotes": [
+    "Owner-only sandbox records; guarded so test data never enters real KPIs."
+  ],
+  "history": [
+    {
+      "at": "2026-07-21T07:20:00Z",
+      "to": "discovered",
+      "actor": "reconciliation",
+      "note": "Registered retroactively: the Production Test Data Management commit (add75ad) shipped in PR #8 without a manifest — recorded here to close the unregistered-parity-commit drift."
+    },
+    {
+      "at": "2026-07-21T07:06:48Z",
+      "from": "discovered",
+      "to": "merged",
+      "actor": "reconciliation",
+      "note": "Landed in PR #8 (commit add75ad), merged as a8e0584ff0ef390a4baf6cda8ebdd4bed6885aac."
+    }
+  ]
+}

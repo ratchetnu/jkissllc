@@ -1,5 +1,6 @@
 import { redis } from './redis'
 import { timeStage } from './observability/pipeline-trace'
+import { maintainDueIndex } from './ai-due-index'
 import { optimisticUpdate, type Mutate, type UpdateOutcome } from './booking-concurrency'
 import type { JobAssignee } from './job-assignment'
 import type { StoredAiEstimate } from './ai/estimate-store'
@@ -545,6 +546,10 @@ export async function saveBooking(b: Booking): Promise<void> {
     await redis.set(`${KEY_PREFIX}${b.token}`, JSON.stringify(b))
     await redis.set(`${KEY_NUM}${b.bookingNumber.toUpperCase()}`, b.token)
     await redis.zadd(KEY_INDEX, b.updatedAt, b.token)
+    // Keep the durable-AI-job due-index in lockstep with this booking's aiJob state
+    // (Phase 2, flag-gated + fail-soft; a complete no-op when off). Centralized here
+    // — the single booking write path — so every job transition is captured once.
+    await maintainDueIndex(b)
   })
 }
 

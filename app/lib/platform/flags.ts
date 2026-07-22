@@ -96,6 +96,30 @@ export type FeatureFlag =
   // today. Turning it on only lets the OWNER assign real crew from the roster — it
   // sends nothing, prices nothing, and changes no customer behavior.
   | 'BOOKING_ASSIGNMENT_ENABLED'
+  // ── OPERION AI latency (Phase 2) — all default OFF; each is additive + fail-soft,
+  //    gated so OFF = byte-identical to today, and preserves quote accuracy. ──
+  // Critic dedup: the second-opinion reviewer runs on the STRUCTURED analysis JSON by
+  // default (no second vision call / image re-download), spending a full vision pass
+  // only when the instant-quote read is borderline. OFF = today's vision critic on
+  // every instant quote.
+  | 'OPERION_CRITIC_JSON'
+  // Event-driven recovery: kick the durable AI worker immediately after enqueue
+  // (fire-and-forget, fail-soft) so a recovery job starts in seconds instead of
+  // waiting for the next cron tick. OFF = cron-only (unchanged). Cron always remains
+  // the safety net.
+  | 'OPERION_EVENT_ENQUEUE'
+  // Due-job index: the cron worker reads a ZSET of due jobs (scored by nextRetryAt)
+  // instead of scanning every booking. DARK_LAUNCH maintains + compares the index
+  // without reading from it (parity proof); INDEX flips the read source. Both OFF =
+  // today's full listBookings scan.
+  | 'OPERION_DUE_INDEX_DARK_LAUNCH'
+  | 'OPERION_DUE_INDEX'
+  // Calibrated customer progress display (Option A) for the Book Now quote flow.
+  // Turns the single opaque analyze wait into a truthful six-stage progress view
+  // paced by measured p50 telemetry. Purely presentational + additive: OFF = the
+  // existing static "Analyzing your photos" view (byte-identical to today), no
+  // calibration/metric reads or writes. Changes NO backend behaviour and NO price.
+  | 'OPERION_PROGRESS_UX'
 
 export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   TENANCY_ENABLED: false,
@@ -167,6 +191,14 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   // Staff-linked crew + equipment on customer Bookings. OFF = the new fields are
   // never written or read and the booking path is byte-identical to today.
   BOOKING_ASSIGNMENT_ENABLED: false,
+  // AI latency Phase 2 — all OFF by default (byte-identical to today).
+  OPERION_CRITIC_JSON: false,
+  OPERION_EVENT_ENQUEUE: false,
+  OPERION_DUE_INDEX_DARK_LAUNCH: false,
+  OPERION_DUE_INDEX: false,
+  // Progress display — OFF everywhere by default. OFF = today's static analyzing
+  // view; ON = the calibrated six-stage progress UI. Presentational only.
+  OPERION_PROGRESS_UX: false,
 }
 
 export const ALL_FLAGS = Object.keys(FLAG_DEFAULTS) as FeatureFlag[]

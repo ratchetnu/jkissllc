@@ -1,0 +1,88 @@
+{
+  "id": "UX-001",
+  "title": "Progress UX (calibrated customer progress)",
+  "description": "Six-stage calibrated customer progress display on /quote (client-timed, telemetry-paced) with a ProgressDriver seam for future server-streamed progress.",
+  "product": {
+    "upstream": "operion",
+    "downstream": "supercharged"
+  },
+  "source": {
+    "upstreamRepo": "ratchetnu/jkissllc",
+    "downstreamRepo": "ratchetnu/supercharged",
+    "sourceBranch": "feat/progress-ux-option-a",
+    "sourceCommit": "d8a2b33",
+    "sourcePR": 34
+  },
+  "category": "ui",
+  "classification": "adaptation-required",
+  "status": "merged",
+  "riskLevel": "medium",
+  "surface": {
+    "featureFlags": [
+      "OPERION_PROGRESS_UX"
+    ],
+    "sharedUtilities": [
+      "app/lib/ai/progress-stages.ts",
+      "app/lib/ai/progress-calibration.ts",
+      "app/lib/ai/progress-metrics.ts"
+    ],
+    "apis": [
+      "app/api/quote/progress-calibration/route.ts",
+      "app/api/quote/progress-metric/route.ts",
+      "app/api/intake/config/route.ts"
+    ],
+    "ui": [
+      "app/quote/CalibratedProgress.tsx",
+      "app/quote/page.tsx"
+    ],
+    "tests": [
+      "scripts/progress-ux.test.ts"
+    ]
+  },
+  "rollout": {
+    "featureFlagsOffByDefault": true,
+    "previewValidationRequired": true
+  },
+  "rollbackSteps": [
+    "Rollback: git revert -m 1 a8e0584ff0ef390a4baf6cda8ebdd4bed6885aac (the PR #8 merge). OPERION_PROGRESS_UX is OFF ⇒ the static \"Analyzing…\" view is served (customer-facing behavior unchanged).",
+    "Set OPERION_PROGRESS_UX=OFF (reverts to the static analyzing view).",
+    "Revert the sync PR."
+  ],
+  "exclusions": [],
+  "compatibilityNotes": [
+    "Customer-facing UI — downstream branding (copy, colors, brand red) MUST be preserved during adaptation.",
+    "Pure state machine is reusable; only CalibratedProgress.tsx + page.tsx wiring are branding-coupled."
+  ],
+  "history": [
+    {
+      "at": "2026-07-20T00:00:00Z",
+      "to": "discovered",
+      "actor": "initial-migration",
+      "note": "Registered from completed upstream work (PR #34)."
+    },
+    {
+      "at": "2026-07-21T07:06:48Z",
+      "from": "discovered",
+      "to": "merged",
+      "actor": "reconciliation",
+      "note": "Landed in the Supercharged parity release PR #8 (da5fdc8 progress-ux backend); bundle re-verified green (tsc/462 tests/117 ai/regression/build, flags OFF) and merged as a8e0584ff0ef390a4baf6cda8ebdd4bed6885aac. Discovery→merged recorded as a bundled reconciliation transition (the parity foundation was validated and merged as one unit)."
+    }
+  ],
+  "downstreamPR": 8,
+  "verification": {
+    "typescript": true,
+    "eslint": true,
+    "unit": true,
+    "regression": true,
+    "previewBuild": true,
+    "featureOffVerified": true,
+    "rollbackVerified": true,
+    "ranAt": "2026-07-21T07:00:00Z",
+    "summary": "PR #8 bundle re-verified against head da5fdc8: tsc 0 errors; eslint changed-files 0 errors (2 pre-existing warnings); full suite 462/462; test:ai 117/117; ai-regression 2/2; next build ✓ compiled successfully; all new flags default OFF (flag-off = byte-identical). GitHub Vercel + regression green on merge commit a8e0584."
+  },
+  "approval": {
+    "approver": "ratchetnu (reconciliation directive, 2026-07-21)",
+    "approvedAt": "2026-07-21T07:06:48Z",
+    "knownDifferences": []
+  }
+}
