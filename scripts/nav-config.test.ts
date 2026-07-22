@@ -59,9 +59,10 @@ test('Book Now is never a plain nav pill — excluded from centre, mega-menu, an
 test('desktop mega-menu categories are ordered + non-empty, with the reference grouping', () => {
   const vis = visibleNav(NAV_ITEMS, ownerCtx)
   const groups = menuGroups(vis)
-  assert.deepEqual(groups.map(g => g.key), ['comms', 'business', 'finance', 'release', 'platform'])
+  assert.deepEqual(groups.map(g => g.key), ['team', 'comms', 'business', 'finance', 'release', 'platform'])
   assert.ok(groups.every(g => g.items.length > 0), 'no empty groups')
   const byKey = (k: string) => groups.find(g => g.key === k)!.items.map(i => i.href)
+  assert.deepEqual(byKey('team'), ['/admin/operations/users'], 'Team & Access is in the More menu, not buried in Settings')
   assert.ok(byKey('comms').includes('/admin/operations/communications'))
   assert.ok(byKey('comms').includes('/admin/operations/ai'), 'AI Command Center under Communication')
   assert.deepEqual(byKey('business'), ['/admin/operations/businesses', '/admin/operations/equipment', '/admin/operations/claims'])
@@ -70,12 +71,34 @@ test('desktop mega-menu categories are ordered + non-empty, with the reference g
   assert.deepEqual(byKey('platform'), ['/admin/operations/platform', '/admin/operations/sync'])
 })
 
-test('mobile More sheet leads with Team (Crew), then the categories', () => {
+test('mobile More sheet leads with ONE Team section holding Crew and Team & Access', () => {
   const vis = visibleNav(NAV_ITEMS, ownerCtx)
   const groups = mobileMoreGroups(vis)
   assert.equal(groups[0].key, 'team')
-  assert.deepEqual(groups[0].items.map(i => i.href), ['/admin/operations/employees'])
+  // The bottom-bar overflow (Crew) merges INTO the Team group. Two sections both
+  // headed "Team" would be the obvious bug in doing this the easy way.
+  assert.deepEqual(groups[0].items.map(i => i.href), ['/admin/operations/employees', '/admin/operations/users'])
+  assert.equal(groups.filter(g => g.label === 'Team').length, 1, 'exactly one Team heading')
   assert.deepEqual(groups.slice(1).map(g => g.key), ['comms', 'business', 'finance', 'release', 'platform'])
+})
+
+// The reported defect: adding a crew login required Settings -> Team & Access, because
+// /admin/operations/users appeared in no nav surface at all.
+test('THE FIX: Team & Access is reachable from More on desktop AND mobile', () => {
+  const vis = visibleNav(NAV_ITEMS, ownerCtx)
+  const USERS = '/admin/operations/users'
+  assert.ok(menuGroups(vis).flatMap(g => g.items).some(n => n.href === USERS), 'desktop More menu')
+  assert.ok(mobileMoreGroups(vis).flatMap(g => g.items).some(n => n.href === USERS), 'mobile More sheet')
+  // It sits beside Crew, and is admin-only to match `users:manage` server-side.
+  const item = NAV_ITEMS.find(n => n.href === USERS)!
+  assert.equal(item.group, 'team')
+  assert.equal(item.adminOnly, true)
+})
+
+test('a manager never sees Team & Access — nav matches users:manage enforcement', () => {
+  const mgr = visibleNav(NAV_ITEMS, { role: 'manager', isOwner: false })
+  const all = [...menuGroups(mgr), ...mobileMoreGroups(mgr)].flatMap(g => g.items.map(i => i.href))
+  assert.ok(!all.includes('/admin/operations/users'))
 })
 
 test('nothing is lost — every visible destination is reachable on desktop AND on mobile', () => {
