@@ -25,7 +25,7 @@
 // actions, exactly as they are on the Routes side.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { generateToken, updateBooking, type Booking } from './bookings'
+import { generateToken, pushBookingEvent, updateBooking, type Booking } from './bookings'
 import type { UpdateOutcome } from './booking-concurrency'
 import { applyPunch, type ClockAction, type Gps, type PunchResult } from './crew-timeclock'
 import { fmtCents, resolveCrewPay } from './finance'
@@ -96,6 +96,7 @@ export async function assignCrewToBooking(
     )
     applyPaySnapshot(a, resolved, fmtCents)
     b.assignees = [...(b.assignees ?? []), a]
+    pushBookingEvent(b, { actor: opts.actor || 'system', action: 'assignment.crew_added', result: staff.id, meta: { staffId: staff.id, role: a.role, payCents: a.payCents, paySource: a.paySource } })
     return null
   })
 }
@@ -107,6 +108,7 @@ export async function assignCrewToBooking(
 export async function unassignCrewFromBooking(
   token: string,
   staffId: string,
+  opts: { actor?: string } = {},
 ): Promise<AssignmentResult> {
   if (!enabled()) return { ok: false, error: 'disabled' }
 
@@ -118,7 +120,9 @@ export async function unassignCrewFromBooking(
     // CLEAR) the customer-facing names. Dropping the field here would make an
     // emptied booking look like one that was never assigned, stranding a derived
     // name on the customer's confirmation page.
+    const removed = before.find(a => a.staffId === staffId)!
     b.assignees = before.filter(a => a.staffId !== staffId)
+    pushBookingEvent(b, { actor: opts.actor || 'system', action: 'assignment.crew_removed', result: staffId, meta: { staffId, name: removed.name } })
     return null
   })
 }
@@ -130,6 +134,7 @@ export async function setBookingCrewPay(
   token: string,
   staffId: string,
   cents: number | null,
+  opts: { actor?: string } = {},
 ): Promise<AssignmentResult> {
   if (!enabled()) return { ok: false, error: 'disabled' }
   if (cents !== null && (!Number.isFinite(cents) || cents < 0)) return { ok: false, error: 'invalid' }
@@ -137,8 +142,13 @@ export async function setBookingCrewPay(
   return persist(token, (b) => {
     const a = (b.assignees ?? []).find(x => x.staffId === staffId)
     if (!a) return { abort: 'not_assigned' as const }
+    const before = a.payCents
+    const alreadyClear = cents === null
+      && a.payCents === undefined && a.pay === undefined && a.paySource === undefined
+    if (alreadyClear || (cents !== null && before === cents && a.paySource === 'manual')) return null
     if (cents === null) clearJobPay(a)
     else applyPaySnapshot(a, { cents, source: 'manual' }, fmtCents)
+    pushBookingEvent(b, { actor: opts.actor || 'system', action: 'assignment.pay_changed', result: staffId, meta: { staffId, fromCents: before, toCents: cents } })
     return null
   })
 }
@@ -150,6 +160,7 @@ export async function setBookingCrewPay(
 export async function setBookingEquipment(
   token: string,
   input: { equipmentId?: string | null; vehicleLabel?: string | null },
+  opts: { actor?: string } = {},
 ): Promise<AssignmentResult> {
   if (!enabled()) return { ok: false, error: 'disabled' }
 
@@ -161,6 +172,7 @@ export async function setBookingEquipment(
   }
 
   return persist(token, (b) => {
+    const before = { equipmentId: b.equipmentId, vehicle: b.vehicle }
     if (input.equipmentId) {
       b.equipmentId = input.equipmentId
       b.vehicle = snapshot
@@ -171,6 +183,9 @@ export async function setBookingEquipment(
     } else {
       b.equipmentId = undefined
       b.vehicle = undefined
+    }
+    if (before.equipmentId !== b.equipmentId || before.vehicle !== b.vehicle) {
+      pushBookingEvent(b, { actor: opts.actor || 'system', action: 'assignment.equipment_changed', result: b.equipmentId || b.vehicle || 'cleared', meta: { from: before, to: { equipmentId: b.equipmentId, vehicle: b.vehicle } } })
     }
     return null
   })
@@ -190,7 +205,7 @@ const photoPolicy = (): CompletionPhotoPolicy => ({ storeId: process.env.BLOB_ST
 // `requirePermission(routes:manage)`; a crew member must prove they are on the job.
 export type CompletionActor =
   | { by: 'crew'; staffId: string }
-  | { by: 'admin' }
+  | { by: 'admin'; actor?: string }
 
 // On-site proof from the crew or the admin. Deliberately does NOT touch
 // BookingStatus: recording arrival photos must never silently close out a job's
@@ -228,6 +243,7 @@ export async function recordBookingCompletion(
     if (note) b.completionNote = note
     b.jobCompletedAt = at
     b.jobCompletedBy = input.by
+    pushBookingEvent(b, { actor: input.by === 'crew' ? `crew:${input.staffId}` : (input.actor || 'admin'), action: 'assignment.completion_recorded', result: input.by, meta: { photoCount: photos.length, hasNote: !!note } })
     return null
   })
 }
@@ -257,6 +273,7 @@ export async function acceptBookingAssignment(
     a.confirmIp = ctx.ip
     a.declinedAt = undefined                  // accepting supersedes an earlier decline
     a.declineReason = undefined
+    pushBookingEvent(b, { actor: `crew:${staffId}`, action: 'assignment.accepted', result: staffId, meta: { staffId } })
     return null
   })
 }
@@ -278,6 +295,7 @@ export async function declineBookingAssignment(
     if (a.declinedAt) return null             // idempotent
     a.declinedAt = Date.now()
     a.declineReason = reason?.trim().slice(0, 500) || undefined
+    pushBookingEvent(b, { actor: `crew:${staffId}`, action: 'assignment.declined', result: staffId, meta: { staffId, reason: a.declineReason } })
     return null
   })
 }
@@ -303,6 +321,9 @@ export async function punchBookingClock(
     const a = (b.assignees ?? []).find(x => x.staffId === staffId)
     if (!a) return { abort: 'not_assigned' as const }
     punch = applyPunch(a, action, gps, Date.now())
+    if (punch.ok && !punch.already) {
+      pushBookingEvent(b, { actor: `crew:${staffId}`, action: `assignment.${action}`, result: staffId, meta: { staffId, locationDenied: punch.denied } })
+    }
     return null
   })
 

@@ -156,6 +156,11 @@ export type BookingEventAction =
   | 'ai.final_queued' | 'ai.final_analyzed' | 'ai.final_failed' | 'ai.final_manual_review'
   | 'ai.owner_approved' | 'ai.quote_simulated'
   | 'status.changed'
+  | 'assignment.crew_added' | 'assignment.crew_removed'
+  | 'assignment.pay_changed' | 'assignment.equipment_changed'
+  | 'assignment.accepted' | 'assignment.declined'
+  | 'assignment.clock_in' | 'assignment.clock_out'
+  | 'assignment.completion_recorded'
   | 'test.marked' | 'test.unmarked'
 
 export type BookingEvent = {
