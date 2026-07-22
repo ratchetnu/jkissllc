@@ -26,6 +26,12 @@ export interface UpdateAutomationProvider {
   readCommitFiles(installationId: string, repo: RepoRef, sha: string): Promise<ProviderResult<{ files: { filename: string; status: string }[] }>>
   /** Raw file content at a ref (base64) — the approved bytes a manifest transfers. */
   readFileContent(installationId: string, repo: RepoRef, path: string, ref: string): Promise<ProviderResult<{ contentBase64: string; sha256: string }>>
+  /**
+   * Every blob path in a repo at a commit — ONE call, used by the dependency-closure
+   * gate to prove a module exists on the target without fetching any content. A
+   * truncated tree fails closed: a partial listing cannot prove absence.
+   */
+  readTree(installationId: string, repo: RepoRef, sha: string): Promise<ProviderResult<{ paths: string[] }>>
   createBranch(installationId: string, repo: RepoRef, fromBranch: string, newBranch: string): Promise<ProviderResult<{ branch: string; commit: string }>>
   dispatchWorkflow(installationId: string, repo: RepoRef, workflowFile: string, ref: string, inputs: Record<string, string>): Promise<ProviderResult<{ dispatched: boolean }>>
   readWorkflowRun(installationId: string, repo: RepoRef, runId: string): Promise<ProviderResult<{ status: string; conclusion?: string; url?: string }>>
@@ -55,6 +61,7 @@ export class StubProvider implements UpdateAutomationProvider {
   readCommit() { return fail<{ sha: string; message: string; parentSha?: string; parentCount?: number }>() }
   readCommitFiles() { return fail<{ files: { filename: string; status: string }[] }>() }
   readFileContent() { return fail<{ contentBase64: string; sha256: string }>() }
+  readTree() { return fail<{ paths: string[] }>() }
   createBranch() { return fail<{ branch: string; commit: string }>() }
   dispatchWorkflow() { return fail<{ dispatched: boolean }>() }
   readWorkflowRun() { return fail<{ status: string; conclusion?: string; url?: string }>() }

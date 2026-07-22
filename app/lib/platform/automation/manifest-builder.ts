@@ -6,6 +6,7 @@
 // from the commit's own file list — never from scanning a repo.
 
 import { isSafeRepoPath, manifestFromCommitFiles, validateManifest, type ApplyManifest } from './manifest'
+import { analyzeClosure, describeClosureProblems, isCodePath, type ClosureProblem } from './closure'
 import type { UpdateAutomationProvider, RepoRef } from './provider'
 import type { UpdateCompatibility } from '../updates/types'
 
@@ -15,6 +16,8 @@ export type BuiltManifest = {
   excludedPaths: string[]
   driftCheckedPaths: string[]
   targetBaseCommit: string
+  /** Manifest code files whose local imports were verified against the target. */
+  closureCheckedPaths: string[]
 }
 export type BuildResult = { ok: true; data: BuiltManifest } | { ok: false; error: string }
 
@@ -67,6 +70,41 @@ export async function buildCommitTransferManifest(input: {
     return { ok: false, error: `excluded repository path not present in source commit: ${unmatchedExclusions.sort().join(', ')}` }
   }
 
+  // ── Dependency closure (issue #48 P1-1) ─────────────────────────────────────
+  // Runs AFTER compatibility, refs, exclusions and the rename guard, and BEFORE any
+  // drift comparison or target read — so an update that cannot possibly compile on
+  // the target costs one tree call and never touches the target repository.
+  //
+  // It needs the source text of the manifest's own code files to see their imports.
+  // Those reads are CACHED and reused by the transfer loop below, so a closure-clean
+  // build makes exactly the same number of content reads it made before this gate
+  // existed, and a closure-blocked build makes zero target-side reads.
+  const kept = commitEntries.filter((e) => !excluded.has(e.path))
+  const targetTree = await provider.readTree(installationId, targetRepo, targetBase.data.commit)
+  if (!targetTree.ok) return { ok: false, error: `read target tree: ${targetTree.error}` }
+
+  const sourceCache = new Map<string, { contentBase64: string; sha256: string }>()
+  for (const e of kept) {
+    // A delete removes a file; it cannot introduce an import, so it needs no source.
+    if (e.action === 'delete' || !isCodePath(e.path)) continue
+    const fc = await provider.readFileContent(installationId, sourceRepo, e.path, sourceCommit)
+    if (!fc.ok) return { ok: false, error: `read ${e.path}: ${fc.error}` }
+    sourceCache.set(e.path, fc.data)
+  }
+
+  const closure = analyzeClosure({
+    manifestPaths: kept.filter((e) => e.action !== 'delete').map((e) => e.path),
+    excludedPaths: [...excluded],
+    targetPaths: targetTree.data.paths,
+    sourceOf: (path) => {
+      const hit = sourceCache.get(path)
+      return hit ? Buffer.from(hit.contentBase64, 'base64').toString('utf8') : undefined
+    },
+  })
+  if (!closure.ok) {
+    return { ok: false, error: `dependency closure failed — ${describeClosureProblems(closure.problems as ClosureProblem[])}` }
+  }
+
   const contents: Record<string, { contentBase64: string; sha256: string }> = {}
   const entries: ApplyManifest['entries'] = []
   const excludedPaths: string[] = []
@@ -93,7 +131,9 @@ export async function buildCommitTransferManifest(input: {
       continue
     }
 
-    const fc = await provider.readFileContent(installationId, sourceRepo, e.path, sourceCommit)
+    // Reuse the bytes the closure pass already fetched — no file is read twice.
+    const cached = sourceCache.get(e.path)
+    const fc = cached ? { ok: true as const, data: cached } : await provider.readFileContent(installationId, sourceRepo, e.path, sourceCommit)
     if (!fc.ok) return { ok: false, error: `read ${e.path}: ${fc.error}` }
     if (e.action === 'add') {
       if (targetHash && targetHash !== fc.data.sha256) return { ok: false, error: `target drift detected for ${e.path}` }
@@ -114,5 +154,6 @@ export async function buildCommitTransferManifest(input: {
     excludedPaths: excludedPaths.sort(),
     driftCheckedPaths: driftCheckedPaths.sort(),
     targetBaseCommit: targetBase.data.commit,
+    closureCheckedPaths: closure.scannedPaths,
   } }
 }
