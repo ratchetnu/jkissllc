@@ -142,6 +142,7 @@ type Prog = { step: number; stepLabel: string; message: string; running: boolean
 function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolean }) {
   const [open, setOpen] = useState(false)
   const [prog, setProg] = useState<Prog | null>(null)
+  const [failureReason, setFailureReason] = useState<string | null>(null)
   const [hasJob, setHasJob] = useState(b.status === 'updating')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
@@ -157,6 +158,7 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
       if (!r.ok) return
       const j = await r.json()
       setHasJob(!!j.hasJob)
+      setFailureReason(typeof j.failureReason === 'string' ? j.failureReason : null)
       if (j.progress) { setProg(j.progress); if (!j.progress.running) stop() }
     } catch { /* fail-soft */ }
   }, [b.id])
@@ -164,6 +166,9 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
   useEffect(() => () => stop(), [])
   // Resume progress after a page refresh mid-update — the state comes from the real job.
   useEffect(() => { if (open && b.status === 'updating') startPoll() }, [open, b.status, startPoll])
+  // Hydrate once when the drawer opens so a prior failure's reason (Technical details) is
+  // visible without needing to press Update/Retry first. Read-only; no interval is started.
+  useEffect(() => { if (open && b.status !== 'updating') poll() }, [open, b.status, poll])
 
   async function send(body: object) {
     setBusy(true)
@@ -286,6 +291,12 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
           <details>
             <summary style={{ ...osLabel, cursor: 'pointer', listStyle: 'none' }}>Technical details</summary>
             <div style={{ display: 'grid', gap: 4, marginTop: 8 }}>
+              {failureReason && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, color: 'var(--muted)' }}>
+                  <span>Last failure</span>
+                  <span style={{ color: '#fca5a5', textAlign: 'right', overflowWrap: 'anywhere', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{failureReason}</span>
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, color: 'var(--muted)' }}><span>Edition</span><span style={{ color: 'var(--text)' }}>{b.edition}</span></div>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, color: 'var(--muted)' }}><span>Connection</span><span style={{ color: 'var(--text)' }}>{b.detail.connection}</span></div>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, color: 'var(--muted)' }}><span>Last checked</span><span style={{ color: 'var(--text)' }}>{timeAgo(b.detail.lastCheckedAt)}</span></div>

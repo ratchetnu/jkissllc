@@ -37,10 +37,17 @@ export const GET = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
   const updatesEnabled = isEnabled('OPERION_AUTOMATION_ENABLED')
   const job = await newestJobFor(id)
   if (!job) return NextResponse.json({ ok: true, hasJob: false, updatesEnabled, progress: mapJobToProgress(null, { hasJob: false }) })
+  // The calm `progress` deliberately never carries the raw failure reason. But the owner
+  // needs SOME way to see the real blocker without opening a CI log — so the actual
+  // failureSummary rides alongside, owner-only, for the "Technical details" disclosure.
+  // Only surfaced when the job is in a failed/attention state; a healthy job carries none.
+  const FAILED = new Set(['failed', 'build_failed', 'blocked', 'rollback_required'])
+  const failureReason = FAILED.has(job.status) ? (job.failureSummary ?? null) : null
   return NextResponse.json({
     ok: true, hasJob: true, updatesEnabled,
     progress: mapJobToProgress(job.status, { failureSummary: job.failureSummary, hasJob: true }),
     previewUrl: job.previewUrl ?? null,
+    failureReason,
   })
 })
 
