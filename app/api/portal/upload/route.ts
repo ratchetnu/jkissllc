@@ -44,8 +44,12 @@ export const POST = withTenantRoute(async (req: NextRequest): Promise<NextRespon
     return NextResponse.json({ error: 'not_found' }, { status: 404 })
   }
 
-  const body = (await req.json()) as HandleUploadPresignedBody
   try {
+    // Parsed INSIDE the boundary: a malformed body is a client error like any
+    // other, and must collapse to the same safe 400 shape. Parsing it outside
+    // meant a truncated upload POST — a phone losing signal mid-request is the
+    // ordinary way this happens — escaped as an unhandled 500.
+    const body = (await req.json()) as HandleUploadPresignedBody
     const result = await handleUploadPresigned({
       body,
       request: req,
