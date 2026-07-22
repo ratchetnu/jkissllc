@@ -282,8 +282,11 @@ export type JobCompletion = {
 //     `https://<storeId>.public.blob.vercel-storage.com/<pathname>`, so the
 //     first host label IS the store id (minus the `store_` prefix).
 //
-// When no store id is configured the suffix rule still applies — that is the
-// fail-closed floor, never an open door.
+// When no store id is configured the suffix rule alone is NOT sufficient for the
+// booking lane: it admits any Vercel Blob host, so a Production record could cite
+// bytes living in the Preview store. `requireStore` closes that. The suffix floor
+// remains the behaviour for the legacy admin path, which has always run without a
+// configured store id and must keep working exactly as it does today.
 const MAX_PHOTO_URL_LEN = 1000
 const BLOB_HOST_SUFFIX = '.blob.vercel-storage.com'
 
@@ -291,6 +294,13 @@ export type CompletionPhotoPolicy = {
   max?: number
   /** Blob store id this deployment is bound to, with or without `store_`. */
   storeId?: string
+  /**
+   * Refuse every URL when no `storeId` is configured, instead of falling back to
+   * the host-suffix floor. Set by the booking lane so a deployment that does not
+   * know its own store cannot persist a cross-store reference. Absent/false keeps
+   * the historical floor for callers that never had a store id.
+   */
+  requireStore?: boolean
 }
 
 // Normalize a store id to the host label form used in a Blob URL. Hostnames are
@@ -311,9 +321,28 @@ export function isCompletionPhotoUrl(raw: unknown, policy: CompletionPhotoPolicy
   if (!host.endsWith(BLOB_HOST_SUFFIX)) return false
 
   const want = policy.storeId ? storeHostLabel(policy.storeId) : ''
-  if (!want) return true
+  // No store configured: refuse outright when the caller demands store pinning,
+  // otherwise fall back to the historical host-suffix floor.
+  if (!want) return !policy.requireStore
   // `<storeId>.public.blob.vercel-storage.com` → the first label is the store.
   return host.split('.')[0] === want
+}
+
+// ── Upload readiness ─────────────────────────────────────────────────────────
+// Whether THIS deployment can mint a completion-photo upload token at all. Pure
+// and exported so the answer is unit-testable and so the API route has one place
+// to ask, rather than re-deriving the rule inline.
+//
+// The store id is a configuration identifier, not a credential — but it is still
+// never returned to a client. Callers get the verdict; only the server sees the id.
+export type CompletionUploadReadiness =
+  | { ready: true; storeId: string }
+  | { ready: false; reason: 'blob_store_not_configured' }
+
+export function completionUploadReadiness(rawStoreId: string | undefined): CompletionUploadReadiness {
+  const storeId = rawStoreId?.trim()
+  if (!storeId) return { ready: false, reason: 'blob_store_not_configured' }
+  return { ready: true, storeId }
 }
 
 // Validate + dedupe + cap an INCOMING list. Anything that is not a well-formed

@@ -119,8 +119,14 @@ function JobDetail({ id }: { id: string }) {
       }
       await act({ action: 'complete', photos: urls, note: note || undefined }, 'photos')
       setNote('')
-    } catch {
-      setErr('Upload failed — check your signal and try again.')
+    } catch (e) {
+      // "Check your signal" is wrong — and wastes the crew member's time — when the
+      // deployment simply cannot mint an upload token. The broker returns a stable
+      // code for that case; surface it as something only the office can fix.
+      const cause = e instanceof Error ? e.message : String(e ?? '')
+      setErr(/blob_store_(not_configured|mismatch)/.test(cause)
+        ? 'Photo uploads aren’t set up yet. Tell the office — retrying won’t help.'
+        : 'Upload failed — check your signal and try again.')
       setBusy('')
     }
     if (fileRef.current) fileRef.current.value = ''
