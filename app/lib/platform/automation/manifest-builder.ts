@@ -55,6 +55,10 @@ export async function buildCommitTransferManifest(input: {
 
   const cf = await provider.readCommitFiles(installationId, sourceRepo, sourceCommit)
   if (!cf.ok) return { ok: false, error: `read commit files: ${cf.error}` }
+  const renamed = cf.data.files.filter((file) => file.status === 'renamed').map((file) => file.filename).sort()
+  if (renamed.length) {
+    return { ok: false, error: `renamed files require a separate reviewed update: ${renamed.join(', ')}` }
+  }
 
   const commitEntries = manifestFromCommitFiles(cf.data.files)
   const commitPaths = new Set(commitEntries.map((entry) => entry.path))

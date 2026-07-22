@@ -249,3 +249,19 @@ test('three-way drift gate fails closed when baseline or target reads fail unexp
   assert.equal(targetFailure.ok, false)
   assert.match((targetFailure as { error: string }).error, /read target base branch/)
 })
+
+test('renamed files fail closed with an actionable split-update message', async () => {
+  const provider = mockProvider([{ filename: 'app/new-name.ts', status: 'renamed' }], { 'app/new-name.ts': 'new' })
+  const r = await buildCommitTransferManifest({
+    provider,
+    installationId: '1',
+    sourceRepo: REPO,
+    sourceRepoName: 'ratchetnu/jkissllc',
+    sourceCommit: 'source-new',
+    ...TARGET_INPUT,
+    updateKey: 'UPD-RENAME',
+    compatibility: COMPAT,
+  })
+  assert.equal(r.ok, false)
+  assert.match((r as { error: string }).error, /renamed files require a separate reviewed update: app\/new-name\.ts/)
+})
