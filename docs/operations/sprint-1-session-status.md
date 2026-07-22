@@ -6,6 +6,45 @@
 
 ---
 
+## 🔧 WORK ORDER — PR #56 revision (coordinator → Session 3)
+
+**PR #56 reviewed. Verdict: approve-pending-one-change.** Everything else in it stands — do not rework it.
+
+### What was accepted (do not touch)
+
+`evidence.ts` as a pure module instead of a `provider.ts` test seam — **endorsed**, keep it · separate `platform:autoev:` key family off the bulk read path · 250/2000 caps with explicit truncation accounting · 90-day TTL · fail-soft write · `updatedAt` untouched · marker under the business lock · refusal capture · unchanged runner response.
+
+Verified by coordinator: **1929/1929**, tsc 0, ESLint 0, build 0, AI regression 2/2, all remote checks green. Mutation checks: silencing truncation breaks 2 tests, leaking content hashes breaks 1 — the safety properties are genuinely enforced.
+
+### The single required change: `skippedModules`
+
+The evidence record reports which target modules **were** symbol-verified but not which were **skipped**. `analyzeSymbols` returns `skippedModules` (an unreadable target module is skipped by design and by test, never refused) and `manifest-builder.ts:196` **discards it** — it propagates only `symbols.checkedModules`. An evidence record whose own coverage has a silent gap defeats the increment.
+
+**Do:**
+
+1. **`manifest-builder.ts`** — surface the skipped list on `BuiltManifest` alongside `symbolCheckedPaths`. It is already computed; this is plumbing, not new logic. Suggested name `symbolSkippedModules` for symmetry with `symbolCheckedPaths` — your call, but be consistent.
+2. **`types.ts`** — add the field to `TransferEvidence` and add its key to `EvidenceTruncation`. Shape: `{ module: string; reason: string }[]`. **Keep the reason** — "why was this skipped" is the operationally useful half, and reasons come from a small closed set in code, never from user input. Bound it like the other lists.
+3. **`types.ts`** — fix the comment: it says *"closure's own module cap is 200"*; `DEFAULT_MAX_TARGET_MODULES` is **150**.
+4. **Tests** — prove the skipped list is captured, bounded, and truncation-accounted, in the same behavioural style as the existing 17.
+
+### ⚠️ One subtlety — handle it consciously
+
+`app/api/automation/manifest/route.ts` returns `{ jobId, ...built.data }`, so **any new `BuiltManifest` field is sent to the CI runner.** PR #56's own comment claims *"Response shape is unchanged — the runner sees exactly what it saw before."* Adding a field makes that claim false unless you address it.
+
+Two acceptable resolutions — pick one and say which in the PR body:
+- **(a)** Accept the response growing. #55 already added `symbolCheckedPaths` to `BuiltManifest`, so the precedent exists and `operion-apply.mjs` tolerates unknown fields. Update the stale comment.
+- **(b)** Keep the wire response byte-identical by omitting the field from what is spread to the runner.
+
+Either way, **add a test asserting the runner-facing response shape is what you intended.** Do not leave it implicit.
+
+### Scope limits — strict
+
+⛔ No unrelated logic · ⛔ **no change to any transfer verdict or gate behaviour** (`analyzeSymbols` decides exactly what it decides today; you are only plumbing its existing output) · ⛔ no flag, env, or config change · ⛔ no Production action · ⛔ **do not merge** — open the revision, then hand PR status back to the coordinator for final review.
+
+**Re-run full verification:** focused evidence + platform regression set · `npm test` · `npx tsc --noEmit` · focused ESLint · `npm run build` · `npm run test:ai:regression`.
+
+---
+
 ## 🔷 ROLE RESET + HARDENING INCREMENT 2 — AUDIT FIRST (2026-07-22 19:1xZ)
 
 ### Roles, re-established
