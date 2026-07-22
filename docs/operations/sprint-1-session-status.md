@@ -6,19 +6,81 @@
 
 ---
 
-## 🔴 FREEZE — `main` `c791d4e` IS BLOCKED FOR NEW FEATURE WORK (2026-07-22)
+## ✅ FREEZE LIFTED — corrected `main` = **`4430931`** (2026-07-22 16:42Z)
 
-**A regression from merged PR #47 is confirmed on the pre-existing route lane. It is NOT flag-suppressed.**
+**The #47 route-lane regression is fixed, merged, deployed and verified. `c791d4e` is superseded — do not build on it.**
 
-### Status by session — effective immediately
+### 🟢 SESSIONS 2 AND 3 ARE RELEASED
 
-| Session | Status | Permitted |
+| Session | Status | Instruction |
 |---|---|---|
-| **S1** | ✅ **AUTHORIZED — hotfix only** | Prepare **one narrow isolated hotfix PR** against `app/lib/schedule/conflicts.ts` + its tests. Nothing else. No worktree pruning, no branch deletion, no stash, no unrelated edits. |
-| **S2** | ⛔ **READ-ONLY — PAUSED** | No source writes. No branch commits. Wait for the corrected `main` SHA to be published in this section. |
-| **S3** | ⛔ **READ-ONLY — PAUSED** | No source writes. No Supercharged writes. No transfer dispatch. Wait for the corrected `main` SHA. |
+| **S1** | ✅ hotfix delivered (PR #53) | Return to standby. Still **no** worktree pruning, branch deletion, or stash work. |
+| **S2** | 🟢 **RELEASED** | Rebase onto **`4430931`**. `c791d4e` is an ancestor, so the rebase is a fast-forward. Resume within your owned paths only. |
+| **S3** | 🟢 **RELEASED** | Rebase onto **`4430931`**. Proceed to the two hardening increments below — **not** to registration or dispatch. |
 
-**Do not rebase onto `c791d4e`.** A corrected SHA will be published here. Sessions are released only by the coordinator, in this file.
+**Still prohibited for everyone:** enabling any flag · setting Production `BLOB_STORE_ID` · registering or dispatching transfers · Preview E2E · pruning worktrees · applying or dropping stashes.
+
+### Hotfix record — PR #53
+
+| Item | Value |
+|---|---|
+| **PR** | **#53** — `fix(schedule): keep missing_crew route detection on "nobody is on it"` |
+| **Branch** | `fix/schedule-missing-crew-route-regression` |
+| **Head → merge SHA** | `ca711fe` → **`4430931`** |
+| **Merged** | 2026-07-22 16:42:47Z |
+| **Corrected `origin/main`** | **`4430931`** |
+| **Production deployment** | **`dpl_FZAtMj92NY9cCMqhvQHavRj6JRMM`** ● **Ready**, created 16:42:50Z, aliased to jkissllc.com |
+| **Scope** | 3 files, +105/−2 — `app/lib/schedule/conflicts.ts` (+13/−2), `scripts/schedule.test.ts`, `scripts/booking-assignment-flag-off.test.ts` |
+
+### Rollback commands
+
+```bash
+# Fastest — repoint the production alias, no rebuild
+vercel rollback dpl_DTjcqRv266kP41oAoGPWC39gYzPY --yes   # back to c791d4e (regression present)
+vercel rollback dpl_DFTgafHN2JemUBQmktwqzHHkMMxW --yes   # back to ee577c2 (before the whole sequence)
+
+# Durable — revert the hotfix merge
+git revert -m 1 4430931
+```
+
+### The fix
+
+```ts
+const noCrew = it.kind === 'route' ? it.crew.length === 0 : !it.crewComplete
+```
+
+`ScheduleKind` is exactly `'booking' | 'route'` with only two constructors, so the ternary is total. Routes return to the pre-#47 predicate **byte-for-byte**; bookings keep #47's `crewComplete` test, which is what makes an assignment rollback inert without blinding route detection.
+
+> **Coordinator note — S1's fix is better than the one this document originally proposed.** The earlier suggestion, `crew.length === 0 && !crewComplete` applied to *all* items, also restores routes, but it would have **changed the booking lane too**: a booking with crew present and `crewComplete === false` emits `missing_crew` under #47 and would have been silently suppressed. That was unauthorized scope. S1's lane-aware form touches routes only. The original proposal is superseded.
+
+### Independent verification (coordinator, not S1's reporting)
+
+**Negative control — the decisive check.** With **only the two test files** applied to `c791d4e` and the `conflicts.ts` fix withheld, **3 of the 5 new tests FAIL**: short-handed route flagged · flag on/off parity broken · merged schedule flags **2** items instead of 1. The other 2 pass either way — they are controls that must never change. The tests genuinely pin the regression rather than merely passing alongside it.
+
+**Tree identity:** `4430931^{tree}` == `ca711fe^{tree}` == `60d8193…` — the merge introduced no content beyond the verified preview.
+
+| Check | Result |
+|---|---|
+| focused conflict tests | **57 / 57** |
+| `npm test` (on `4430931`) | **1861 / 1861**, 0 fail (+5) |
+| `npm run test:ai:regression` | **2 / 2** |
+| `npx tsc --noEmit` | exit **0** |
+| focused ESLint (3 files) | exit **0** |
+| `npm run build` | exit **0** |
+| Remote CI `verify` · Vercel · Vercel Preview Comments | **pass / pass / pass** |
+| merge state | **CLEAN / MERGEABLE** |
+
+**Behavioural criteria — all confirmed:** route with an assigned driver no longer emits `missing_crew` ✅ · genuinely uncrewed route still does ✅ · booking-assignment flag-off remains inert ✅ · no cross-lane leakage (merged schedule flags exactly the booking, asserted via `itemIds[0].startsWith('booking:')`) ✅ · vehicle/equipment conflicts unchanged, `missing_vehicle` asserted in both directions ✅ · `customerView` still strips assignment internals (full suite) ✅
+
+### Post-deploy Production verification
+
+- `/` **200** · `/api/health` **200** · `/admin/operations/schedule` **200** · `/api/admin/platform/updates` **401** · `/api/automation/manifest` **405**
+- **Env unchanged — 42 variables, identical set to the pre-sequence audit.** `BLOB_STORE_ID` **absent** (0) · `BOOKING_ASSIGNMENT_ENABLED` **absent** (0) · all 9 `OPERION_*` present and OFF
+- **`flags.ts` never appears** in the diff across the entire sequence `ee577c2..4430931`; no `vercel.json`, `.env`, or workflow file touched
+- **UPD-1004 not retried** — last `Operion Update` run remains `2026-07-22T05:26:27Z` (failure), 11h before the sequence; **zero** Supercharged workflow runs after 16:00Z; no `operion/upd-1004` branch; no new Supercharged PR
+- **No automated transfer dispatched**
+
+Total delta across the whole sequence `ee577c2..4430931`: **13 files, +984/−23**.
 
 ### The regression — coordinator-verified independently
 
