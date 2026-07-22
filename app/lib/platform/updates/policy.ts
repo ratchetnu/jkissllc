@@ -4,7 +4,7 @@
 
 import type {
   PlatformUpdate, UpdateStatus, PlatformBusiness, DeploymentRecord, CheckStatus,
-  UpdateCompatibility,
+  UpdateCompatibility, CompatStatus,
 } from './types'
 import { PENDING_STATUSES, TERMINAL_STATUSES } from './types'
 
@@ -134,6 +134,167 @@ export function compatRollup(compats: UpdateCompatibility[]): { compatible: numb
 /** PATCH semantics for machine-enforced exclusions: omitted preserves; [] explicitly clears. */
 export function resolvePathsToExclude(existing: string[] | undefined, submitted: string[] | undefined): string[] | undefined {
   return submitted === undefined ? existing : submitted
+}
+
+// ── Required updates (issue #48 Phase B) ─────────────────────────────────────
+//
+// UPD-1004 failed because its files needed two modules from an EARLIER update that
+// Supercharged had never received. Phase A catches that at manifest-build time — by
+// which point a job exists and a workflow run has been spent. This moves the same
+// guarantee to where the owner actually is: `PlatformUpdate.dependencies`, the field
+// that already existed and was never enforced, becomes a blocking preflight gate, so
+// an update that needs an earlier one cannot start.
+//
+// ONE MODEL, NOT TWO. There is deliberately no new prerequisite type. The owner sees
+// "Required updates"; the record is the existing `dependencies` array.
+
+/** Anything wrong with a dependency list, in a form the API can turn into copy. */
+export type DependencyProblem =
+  | { kind: 'not_an_array' }
+  | { kind: 'too_many'; max: number }
+  | { kind: 'not_a_string'; index: number }
+  | { kind: 'self_dependency'; key: string }
+  | { kind: 'unknown_update'; keys: string[] }
+  | { kind: 'cycle'; path: string[] }
+
+export const MAX_DEPENDENCIES = 20
+
+/** PATCH semantics, mirroring exclusions: omitted preserves; [] explicitly clears. */
+export function resolveDependencies(existing: string[] | undefined, submitted: string[] | undefined): string[] | undefined {
+  return submitted === undefined ? existing : submitted
+}
+
+/**
+ * Validate a submitted dependency list for one update. Pure: the caller supplies the
+ * set of keys that exist and a lookup for each update's own dependencies, so cycle
+ * detection needs no store access.
+ *
+ * Fails closed on every malformed shape — an unparseable list must never be stored as
+ * "no requirements", because the empty list is exactly what lets a transfer proceed.
+ */
+export function validateDependencies(input: {
+  key: string
+  submitted: unknown
+  knownKeys: ReadonlySet<string>
+  dependenciesOf: (key: string) => string[] | undefined
+}): { ok: true; dependencies: string[] } | { ok: false; problems: DependencyProblem[] } {
+  const { key, submitted, knownKeys, dependenciesOf } = input
+  if (!Array.isArray(submitted)) return { ok: false, problems: [{ kind: 'not_an_array' }] }
+  if (submitted.length > MAX_DEPENDENCIES) return { ok: false, problems: [{ kind: 'too_many', max: MAX_DEPENDENCIES }] }
+
+  const problems: DependencyProblem[] = []
+  const cleaned: string[] = []
+  for (let i = 0; i < submitted.length; i++) {
+    const raw = submitted[i]
+    if (typeof raw !== 'string' || !raw.trim()) { problems.push({ kind: 'not_a_string', index: i }); continue }
+    const value = raw.trim()
+    if (!cleaned.includes(value)) cleaned.push(value)
+  }
+  if (problems.length) return { ok: false, problems }
+
+  if (cleaned.includes(key)) problems.push({ kind: 'self_dependency', key })
+  const unknown = cleaned.filter((k) => !knownKeys.has(k))
+  if (unknown.length) problems.push({ kind: 'unknown_update', keys: [...unknown].sort() })
+  if (problems.length) return { ok: false, problems }
+
+  // Cycle detection over the graph the submitted list WOULD create. Depth-first with
+  // an explicit stack so the report is the actual loop, not just a boolean.
+  const stack: string[] = []
+  const done = new Set<string>()
+  const depsFor = (k: string): string[] => (k === key ? cleaned : dependenciesOf(k) ?? [])
+  const walk = (k: string): string[] | null => {
+    const at = stack.indexOf(k)
+    if (at !== -1) return [...stack.slice(at), k]
+    if (done.has(k)) return null
+    stack.push(k)
+    for (const next of depsFor(k)) {
+      const cycle = walk(next)
+      if (cycle) return cycle
+    }
+    stack.pop(); done.add(k)
+    return null
+  }
+  const cycle = walk(key)
+  if (cycle) problems.push({ kind: 'cycle', path: cycle })
+
+  return problems.length ? { ok: false, problems } : { ok: true, dependencies: cleaned }
+}
+
+export function describeDependencyProblems(problems: DependencyProblem[]): string {
+  return problems.map((p) => {
+    switch (p.kind) {
+      case 'not_an_array': return 'required updates must be a list'
+      case 'too_many': return `an update cannot require more than ${p.max} others`
+      case 'not_a_string': return `required update #${p.index + 1} is not a valid update key`
+      case 'self_dependency': return `${p.key} cannot require itself`
+      case 'unknown_update': return `unknown required update${p.keys.length === 1 ? '' : 's'}: ${p.keys.join(', ')}`
+      case 'cycle': return `required updates form a loop: ${p.path.join(' → ')}`
+    }
+  }).join('; ')
+}
+
+/**
+ * Is ONE prerequisite already on ONE target? Pure — the caller resolves the records.
+ *
+ * Two ways to be satisfied, both real evidence the target carries the code:
+ *   • compatibility for that target is `already_present` — the owner assessed it as
+ *     shipped, or
+ *   • a deployment for that target lists the update, reached `deployed`, and its
+ *     verification is `passed` or `waived`.
+ *
+ * A deployment that is merely `deployed` with `pending` verification is NOT enough —
+ * unverified is precisely the state a half-finished rollout leaves behind.
+ */
+export function prerequisiteSatisfied(input: {
+  updateKey: string
+  compatStatus?: CompatStatus
+  deployments: Pick<DeploymentRecord, 'updateKeys' | 'businessId' | 'status' | 'verificationStatus'>[]
+  businessId: string
+}): { satisfied: boolean; via?: 'already_present' | 'verified_deployment'; reason?: string } {
+  if (input.compatStatus === 'already_present') return { satisfied: true, via: 'already_present' }
+  const forTarget = input.deployments.filter((d) => d.businessId === input.businessId && d.updateKeys?.includes(input.updateKey))
+  if (!forTarget.length) return { satisfied: false, reason: 'not installed on this business yet' }
+  const deployed = forTarget.filter((d) => d.status === 'deployed')
+  if (!deployed.length) return { satisfied: false, reason: 'started but never finished deploying' }
+  const verified = deployed.filter((d) => d.verificationStatus === 'passed' || d.verificationStatus === 'waived')
+  if (!verified.length) return { satisfied: false, reason: 'deployed but not verified yet' }
+  return { satisfied: true, via: 'verified_deployment' }
+}
+
+export type RequiredUpdateVerdict = {
+  key: string
+  satisfied: boolean
+  via?: 'already_present' | 'verified_deployment'
+  reason?: string
+}
+
+/**
+ * Every required update for one update × target. An update with no dependencies
+ * yields an empty list and a satisfied verdict — existing records keep working
+ * unchanged, which is the backward-compatibility requirement.
+ */
+export function evaluateRequiredUpdates(input: {
+  dependencies: string[] | undefined
+  businessId: string
+  compatStatusFor: (updateKey: string) => CompatStatus | undefined
+  deployments: Pick<DeploymentRecord, 'updateKeys' | 'businessId' | 'status' | 'verificationStatus'>[]
+}): { ok: boolean; verdicts: RequiredUpdateVerdict[]; missing: string[] } {
+  const verdicts = (input.dependencies ?? []).map((key) => ({
+    key,
+    ...prerequisiteSatisfied({
+      updateKey: key,
+      compatStatus: input.compatStatusFor(key),
+      deployments: input.deployments,
+      businessId: input.businessId,
+    }),
+  }))
+  const missing = verdicts.filter((v) => !v.satisfied).map((v) => v.key)
+  return { ok: missing.length === 0, verdicts, missing }
+}
+
+export function describeRequiredUpdates(verdicts: RequiredUpdateVerdict[]): string {
+  const missing = verdicts.filter((v) => !v.satisfied)
+  return missing.map((v) => `${v.key} (${v.reason ?? 'not ready'})`).join(', ')
 }
 
 // ── Businesses behind (target businesses not on the source's version) ────────
