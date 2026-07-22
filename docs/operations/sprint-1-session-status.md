@@ -6,6 +6,54 @@
 
 ---
 
+## 🔷 ROLE RESET + HARDENING INCREMENT 2 — AUDIT FIRST (2026-07-22 19:1xZ)
+
+### Roles, re-established
+
+Session 3 was accidentally issued coordinator instructions. Correcting explicitly:
+
+| Role | Owns | Does **NOT** own |
+|---|---|---|
+| **Coordinator** (this session) | Sequencing · merge decisions · executing every merge · releasing sessions · this status document · Production verification | Authoring feature code |
+| **Session 3** | **Implementation only**, within `app/lib/platform/**`, `app/api/automation/**`, `app/api/admin/platform/**`, `tools/product-sync/**`, `scripts/` platform tests | ⛔ **merging anything** · deciding sequence · releasing sessions · editing this file · Production actions · flag changes · registering or dispatching transfers |
+
+**Session 3 must not merge.** Open a PR and hand it to the coordinator; the coordinator reviews independently and merges. This has been the working pattern for #52/#47/#53/#54/#55 and it stays.
+
+### Increment 2 — mandate: **AUDIT FIRST, NO CODE**
+
+**Goal:** bounded, backward-compatible `transferEvidence` persisted on the job/deployment record, closing §4 #7 (audit-trail gap) so a failed transfer can be reviewed without git archaeology.
+
+⛔ **No code changes in this phase.** ⛔ No merge. ⛔ No flags. ⛭ No Production changes. Session 3 delivers a written audit and **stops** for coordinator review.
+
+#### Ground truth already established (do not re-derive; verify if you doubt it)
+
+- `UpdateAutomationJob` — `app/lib/platform/automation/types.ts:50`
+- Persistence — `app/lib/platform/automation/store.ts`, `saveJob`/`getJob`, JSON in Redis under `auto:*`
+- **The gap, precisely:** `app/api/automation/manifest/route.ts:63` returns `{ jobId, ...built.data }` **to the CI runner**. The evidence is computed server-side, transmitted over the wire, and **never written to the job record.** Nothing persists it.
+- `BuiltManifest` today carries: `manifest` · `contents` · `excludedPaths` · `driftCheckedPaths` · `targetBaseCommit` · `closureCheckedPaths` · `symbolCheckedPaths`
+- **Plus a known omission from #55:** `analyzeSymbols` returns `skippedModules` (unreadable target module → skipped by design and by test, not refused) and `manifest-builder` **discards it**. Coverage is currently unreportable. **This belongs in the evidence payload.**
+
+#### Audit deliverables — a document, not a diff
+
+1. **Current-state map.** Every field of `UpdateAutomationJob` and `DeploymentRecord`, which are written where, and which of the pipeline's computed artefacts are discarded today. Cite file:line.
+2. **Proposed `transferEvidence` shape.** Field-by-field, with the type. Minimum: manifest paths · `closureCheckedPaths` · `driftCheckedPaths` · `symbolCheckedPaths` · **`skippedModules`** · `excludedPaths` · source SHA · target SHA (`targetBaseCommit`) · preflight result.
+3. **Size analysis — the load-bearing one.** Measure, do not estimate: for a realistic 41-file transfer, the byte cost of each field and the total record size. State the Redis value ceiling you are designing against and the bound you propose (cap? truncate-with-count? store paths only?). **A silent cap is forbidden** — if coverage is bounded, the record must say what was dropped and how many.
+4. **`recordVersion` / backward-compatibility plan.** How existing job records without the field read back. Follow the `normalize()` backfill convention (`app/lib/bookings.ts`) — `docs/operations/07-migration-safety-checklist.md` governs any persisted-shape change.
+5. **Confidentiality review.** Confirm the payload is **paths and SHAs only** — never file contents (`contents` is base64 bytes and must never be persisted), never tokens, never customer data.
+6. **Write-path decision.** Where the write happens, and how it behaves when persistence fails. State plainly whether a failed evidence write may ever block a transfer. **Recommended: it must not** — evidence is observational; failing a transfer because we could not write a log would be a new failure mode. Argue it either way, but decide explicitly.
+7. **Flag-off / inertness statement.** Confirm the change is inert with automation flags off, and say by what mechanism.
+8. **Test plan.** Behavioural, driving real functions — **not source-text assertions.** (`scripts/portal-presigned-upload.test.ts`'s original style is the anti-pattern; it is exactly why the `req.json()` 500 survived to Preview.)
+
+#### Explicit non-goals
+
+Not in this increment: changing any gate's verdict · altering transfer behaviour · the canary · registering or dispatching anything · UPD-1004 · completion-photo lifecycle (separate, approval-gated plan).
+
+#### Stop condition
+
+Session 3 posts the audit and **stops**. The coordinator reviews it, and only then authorises implementation — as a PR, merged by the coordinator.
+
+---
+
 ## ✅ PR #55 MERGED — `main` = **`c48b6c7`** (2026-07-22 19:05Z)
 
 **Hardening increment 1 of the revised transfer plan is done.** Exported-symbol verification; closes issue #48 §9.
