@@ -1,0 +1,717 @@
+diff --git a/app/api/automation/manifest/route.ts b/app/api/automation/manifest/route.ts
+index 71ac4f2..1f01f20 100644
+--- a/app/api/automation/manifest/route.ts
++++ b/app/api/automation/manifest/route.ts
+@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
+ import { isEnabled } from '../../../lib/platform/flags'
+ import { verifyCallback } from '../../../lib/platform/automation/callback'
+ import { getJob } from '../../../lib/platform/automation/store'
+-import { getBusiness } from '../../../lib/platform/updates/store'
++import { getBusiness, getCompatMap } from '../../../lib/platform/updates/store'
+ import { getAutomationProvider } from '../../../lib/platform/automation/provider'
+ import { parseRepoName, businessRepoRef } from '../../../lib/platform/automation/repo-identity'
+ import { buildCommitTransferManifest } from '../../../lib/platform/automation/manifest-builder'
++import { KNOWN_ROLES } from '../../../lib/platform/automation/target-policy'
+ 
+ export const runtime = 'nodejs'
+ export const dynamic = 'force-dynamic'
+@@ -39,12 +40,30 @@ export async function POST(req: NextRequest) {
+   // Target allowlist: the job's target must resolve to the configured business repo.
+   if (!businessRepoRef(business)) return NextResponse.json({ error: 'target repository not configured' }, { status: 409 })
+ 
++  // Managed-target boundary context — resolved SERVER-SIDE from registered records only
++  // (never from the request body). Fail closed if the business role is not a known role.
++  if (!KNOWN_ROLES.includes(business.role)) {
++    return NextResponse.json({ error: 'target business role is not resolved', code: 'TARGET_CONTEXT_REQUIRED' }, { status: 409 })
++  }
++  const compat = (await getCompatMap(job.updateId))[business.id]
++
+   const built = await buildCommitTransferManifest({
+     provider: getAutomationProvider(),
+     installationId: business.githubInstallationId,
+     sourceRepo, sourceRepoName: job.sourceRepository!, sourceCommit: job.sourceCommit,
+     updateKey: job.updateId,
++    target: {
++      businessId: business.id,
++      role: business.role,
++      edition: business.edition,
++      componentsToExclude: compat?.componentsToExclude,
++    },
+   })
+-  if (!built.ok) return NextResponse.json({ error: built.error }, { status: 422 })
++  if (!built.ok) {
++    // Structured, non-secret blocker for the Release Center. No paths/tokens leak beyond
++    // the repo-relative path already present in the (server-derived) manifest.
++    const status = built.code === 'TARGET_CONTEXT_REQUIRED' ? 409 : 422
++    return NextResponse.json({ error: built.error, code: built.code, violations: built.violations }, { status })
++  }
+   return NextResponse.json({ jobId, ...built.data })
+ }
+diff --git a/app/lib/platform/automation/apply-executor.ts b/app/lib/platform/automation/apply-executor.ts
+index 120517f..9daf9ba 100644
+--- a/app/lib/platform/automation/apply-executor.ts
++++ b/app/lib/platform/automation/apply-executor.ts
+@@ -6,6 +6,7 @@
+ // against an in-memory tree (no real disk, no network).
+ 
+ import { type ApplyManifest, type ManifestEntry, isSafeRepoPath, sortEntries, sha256, validateManifest } from './manifest'
++import { evaluateTransfer, type TargetContext } from './target-policy'
+ 
+ export interface FsAdapter {
+   exists(path: string): boolean
+@@ -28,7 +29,7 @@ export type ApplyResult = {
+ /** Deterministically apply a manifest. Returns structured results; never throws on a bad
+  *  entry — it records a failure so the workflow can abort cleanly and leave the branch
+  *  recoverable (only touched files were written; the caller resets on ok=false). */
+-export function applyManifest(manifest: ApplyManifest, contents: ContentMap, fs: FsAdapter): ApplyResult {
++export function applyManifest(manifest: ApplyManifest, contents: ContentMap, fs: FsAdapter, opts?: { target?: TargetContext }): ApplyResult {
+   const applied: ApplyResult['applied'] = []
+   const skipped: ApplyResult['skipped'] = []
+   const failed: ApplyResult['failed'] = []
+@@ -37,6 +38,19 @@ export function applyManifest(manifest: ApplyManifest, contents: ContentMap, fs:
+   const v = validateManifest(manifest)
+   if (!v.ok) return { ok: false, changed: false, applied, skipped, failed: v.errors.map(e => ({ path: '(manifest)', reason: e })) }
+ 
++  // Managed-target boundary (defence in depth). Enforce whenever a target context is
++  // available: an explicit server-resolved `opts.target` takes precedence over the
++  // manifest's own stamped `target` metadata (so a forged manifest role cannot relax the
++  // policy). A legacy manifest with neither keeps the prior path-safety-only behavior.
++  const target: TargetContext | undefined = opts?.target
++    ?? (manifest.target ? { businessId: manifest.target.businessId, role: manifest.target.role, edition: manifest.target.edition } : undefined)
++  if (target) {
++    const policy = evaluateTransfer(manifest.entries.map(e => e.path), target)
++    if (!policy.ok) {
++      return { ok: false, changed: false, applied, skipped, failed: policy.violations.map(x => ({ path: x.path, reason: x.code })) }
++    }
++  }
++
+   for (const e of sortEntries(manifest.entries)) {
+     if (!isSafeRepoPath(e.path)) { failed.push({ path: e.path, reason: 'unsafe path' }); continue }
+     try {
+diff --git a/app/lib/platform/automation/manifest-builder.ts b/app/lib/platform/automation/manifest-builder.ts
+index de9145a..ba8c006 100644
+--- a/app/lib/platform/automation/manifest-builder.ts
++++ b/app/lib/platform/automation/manifest-builder.ts
+@@ -6,9 +6,22 @@
+ 
+ import { manifestFromCommitFiles, validateManifest, type ApplyManifest } from './manifest'
+ import type { UpdateAutomationProvider, RepoRef } from './provider'
++import type { BusinessRole } from '../updates/types'
++import { enforceManifestPolicy, TARGET_POLICY_VERSION, type TransferBlockerCode } from './target-policy'
+ 
+ export type BuiltManifest = { manifest: ApplyManifest; contents: Record<string, { contentBase64: string; sha256: string }> }
+-export type BuildResult = { ok: true; data: BuiltManifest } | { ok: false; error: string }
++export type BuildResult =
++  | { ok: true; data: BuiltManifest }
++  | { ok: false; error: string; code?: TransferBlockerCode; violations?: { path: string; code: TransferBlockerCode }[] }
++
++/** Server-resolved target of the transfer — the caller MUST derive these from the
++ *  registered business + compatibility records, never from browser/job input. */
++export type BuildTargetContext = {
++  businessId: string
++  role: BusinessRole
++  edition?: string
++  componentsToExclude?: string[]
++}
+ 
+ export async function buildCommitTransferManifest(input: {
+   provider: UpdateAutomationProvider
+@@ -17,8 +30,9 @@ export async function buildCommitTransferManifest(input: {
+   sourceRepoName: string     // "owner/name" for the record
+   sourceCommit: string
+   updateKey: string
++  target: BuildTargetContext // REQUIRED — a cross-repo transfer cannot be built without a resolved target
+ }): Promise<BuildResult> {
+-  const { provider, installationId, sourceRepo, sourceRepoName, sourceCommit, updateKey } = input
++  const { provider, installationId, sourceRepo, sourceRepoName, sourceCommit, updateKey, target } = input
+   if (!sourceCommit) return { ok: false, error: 'update has no source commit to transfer' }
+ 
+   const cf = await provider.readCommitFiles(installationId, sourceRepo, sourceCommit)
+@@ -34,8 +48,31 @@ export async function buildCommitTransferManifest(input: {
+     entries.push({ ...e, sha256: fc.data.sha256 })
+   }
+ 
+-  const manifest: ApplyManifest = { updateKey, sourceRepo: sourceRepoName, sourceCommit, entries }
++  const manifest: ApplyManifest = {
++    updateKey,
++    sourceRepo: sourceRepoName,
++    sourceCommit,
++    entries,
++    policyVersion: TARGET_POLICY_VERSION,
++    target: { businessId: target.businessId, role: target.role, edition: target.edition },
++  }
+   const v = validateManifest(manifest)
+   if (!v.ok) return { ok: false, error: `invalid manifest: ${v.errors.join('; ')}` }
++
++  // Managed-target boundary: reject (never silently drop) any control-plane or excluded path.
++  const policy = enforceManifestPolicy({
++    paths: entries.map(e => e.path),
++    policyVersion: manifest.policyVersion,
++    target,
++  })
++  if (!policy.ok) {
++    const first = policy.violations[0]
++    return {
++      ok: false,
++      error: first?.message ?? 'transfer blocked by target-path policy',
++      code: first?.code,
++      violations: policy.violations.map(x => ({ path: x.path, code: x.code })),
++    }
++  }
+   return { ok: true, data: { manifest, contents } }
+ }
+diff --git a/app/lib/platform/automation/manifest.ts b/app/lib/platform/automation/manifest.ts
+index af8c966..fe60caa 100644
+--- a/app/lib/platform/automation/manifest.ts
++++ b/app/lib/platform/automation/manifest.ts
+@@ -5,6 +5,7 @@
+ // duplicates, outside-repo, missing hashes). No I/O — fully testable.
+ 
+ import crypto from 'node:crypto'
++import type { ManifestTargetMeta } from './target-policy'
+ 
+ export type ManifestAction = 'add' | 'modify' | 'delete'
+ export type ManifestEntry = {
+@@ -18,6 +19,13 @@ export type ApplyManifest = {
+   sourceRepo: string
+   sourceCommit?: string
+   entries: ManifestEntry[]
++  // ── Managed-target boundary provenance (Stage 2A) ──────────────────────────
++  // Stamped by the manifest builder from SERVER-RESOLVED business records (never
++  // browser input). `policyVersion` + `target` let the CI runner and the apply
++  // executor independently re-enforce the target-path policy. A manifest lacking
++  // them must not be used for a new cross-repository transfer.
++  policyVersion?: number
++  target?: ManifestTargetMeta
+ }
+ 
+ export const MAX_MANIFEST_ENTRIES = 200
+diff --git a/app/lib/platform/automation/preflight.ts b/app/lib/platform/automation/preflight.ts
+index bf9090f..2cffc9c 100644
+--- a/app/lib/platform/automation/preflight.ts
++++ b/app/lib/platform/automation/preflight.ts
+@@ -5,6 +5,7 @@
+ 
+ import type { PlatformUpdate, PlatformBusiness, UpdateCompatibility } from '../updates/types'
+ import { businessRepoRef } from './repo-identity'
++import { KNOWN_ROLES } from './target-policy'
+ 
+ export type PreflightGate = { id: string; label: string; ok: boolean; blocking: boolean; reason?: string }
+ export type PreflightResult = { ok: boolean; gates: PreflightGate[] }
+@@ -33,6 +34,10 @@ export function evaluatePreflight(x: PreflightInput): PreflightResult {
+   add('github_actions_enabled', 'GitHub Actions execution enabled', x.flags.githubActions, true, 'OPERION_GITHUB_ACTIONS_ENABLED is off')
+   add('production_control_plane', 'Production control plane', x.flags.controlPlane !== false, true, 'workflow dispatch is disabled from Vercel Preview deployments')
+   add('target_is_target', 'Selected business is a deploy target', x.business.role === 'target' || x.business.role === 'source_and_target', true, 'business is not a target')
++  // Managed-target boundary readiness: the target identity (role + id) must be resolved
++  // server-side BEFORE dispatch, so the downstream manifest build enforces the target-path
++  // policy. Fail closed if the role is unknown — a transfer must never dispatch without it.
++  add('target_context_resolved', 'Target identity resolved server-side', KNOWN_ROLES.includes(x.business.role) && !!x.business.id, true, 'target business role/identity is not resolved (cannot enforce the managed-target boundary)')
+   add('target_configured', 'Target automation configured', x.business.configurationStatus === 'ready'
+     && !!businessRepoRef(x.business) && !!x.business.githubInstallationId && !!x.business.automationWorkflowFile,
+     true, 'target GitHub App install / repo / workflow not configured (status must be "ready")')
+diff --git a/app/lib/platform/automation/target-policy.ts b/app/lib/platform/automation/target-policy.ts
+new file mode 100644
+index 0000000..f48d0ae
+--- /dev/null
++++ b/app/lib/platform/automation/target-policy.ts
+@@ -0,0 +1,179 @@
++// ── Operion managed-target transfer boundary policy (PURE, server-authoritative) ─
++//
++// The single source of truth for WHICH repository paths may be transferred into WHICH
++// kind of business. It exists so a managed target (e.g. Supercharged) can NEVER receive
++// Operion control-plane code — even if an update is mislabeled or its source commit
++// happens to contain forbidden files. Enforcement is by PATH + resolved business ROLE,
++// never by a label. No I/O; fully testable; safe to mirror into the CI apply runner.
++//
++// Roles (from PlatformBusiness.role):
++//   • 'source' / 'source_and_target'  → the CONTROL PLANE (J KISS). May retain control-plane files.
++//   • 'target'                        → a MANAGED TARGET. Must reject control-plane paths.
++//   • undefined/unknown               → FAIL CLOSED (no cross-repository transfer permitted).
++
++import type { BusinessRole } from '../updates/types'
++
++/** Bump when the policy's wire contract changes. A manifest stamped with an unsupported
++ *  version must not be used for a new cross-repository automated transfer. */
++export const TARGET_POLICY_VERSION = 1
++export const SUPPORTED_POLICY_VERSIONS: readonly number[] = [1]
++
++/** Additive product vocabulary (typed; no broad migration performed here). */
++export type ComponentClass =
++  | 'operion_control_plane'
++  | 'operion_business_runtime'
++  | 'industry_pack'
++  | 'business_specific'
++
++/** Structured, non-secret blocker reasons — safe to surface in the Release Center. */
++export type TransferBlockerCode =
++  | 'CONTROL_PLANE_PATH_FORBIDDEN'
++  | 'TARGET_CONTEXT_REQUIRED'
++  | 'COMPONENT_EXCLUDED'
++  | 'MANIFEST_POLICY_VERSION_UNSUPPORTED'
++
++// Control-plane-only path families. Segment-prefix matched (NOT substring), so
++// `app/lib/platform/release-notes/…` is NOT caught by `app/lib/platform/release`.
++//
++// REQUIRED MINIMUM (Stage 2A objective):
++//   app/admin/operations/release  app/api/admin/release
++//   app/lib/platform/release      app/lib/platform/automation
++// ADDITIONAL — demonstrably control-plane-only, and NOT part of the minimal
++// signed-callback / workflow / apply integration a managed target needs (that
++// integration is `scripts/operion-apply.mjs` + `.github/workflows/operion-update.yml`,
++// both OUTSIDE `app/**`, so untouched by this list):
++//   app/api/automation      (M2M callback/manifest endpoints — hosted by the control plane)
++//   app/lib/platform/updates (Operion update-center system-of-record)
++//   app/lib/platform/sync    (control-plane reconciliation)
++export const CONTROL_PLANE_PATH_PREFIXES: readonly string[] = [
++  'app/admin/operations/release',
++  'app/api/admin/release',
++  'app/lib/platform/release',
++  'app/lib/platform/automation',
++  'app/api/automation',
++  'app/lib/platform/updates',
++  'app/lib/platform/sync',
++]
++
++function toSegments(p: string): string[] {
++  return String(p).split('/').filter(Boolean)
++}
++/** True when `pathSegs` begins with every segment of `prefixSegs` (segment-aware). */
++function hasSegmentPrefix(pathSegs: string[], prefixSegs: string[]): boolean {
++  if (pathSegs.length < prefixSegs.length) return false
++  for (let i = 0; i < prefixSegs.length; i++) if (pathSegs[i] !== prefixSegs[i]) return false
++  return true
++}
++
++const CONTROL_PLANE_SEGS = CONTROL_PLANE_PATH_PREFIXES.map(toSegments)
++
++/** Is this repo-relative path part of an Operion control-plane family? Segment-aware. */
++export function isControlPlanePath(path: string): boolean {
++  const segs = toSegments(path)
++  return CONTROL_PLANE_SEGS.some(pre => hasSegmentPrefix(segs, pre))
++}
++
++/** Best-effort component classification. Only the control-plane distinction is
++ *  enforcement-relevant; the other classes are reserved (additive, no migration). */
++export function classifyComponent(path: string): ComponentClass {
++  return isControlPlanePath(path) ? 'operion_control_plane' : 'operion_business_runtime'
++}
++
++export const KNOWN_ROLES: readonly BusinessRole[] = ['source', 'target', 'source_and_target']
++export function isManagedTargetRole(role?: BusinessRole): boolean {
++  return role === 'target'
++}
++
++/** Server-resolved target context. NEVER populated from browser input — the caller
++ *  resolves role/edition/exclusions from the registered business/compat records. */
++export type TargetContext = {
++  businessId?: string
++  role?: BusinessRole
++  edition?: string
++  componentsToExclude?: string[]
++}
++/** Provenance stamped onto a manifest (informational + runner defense-in-depth). */
++export type ManifestTargetMeta = { businessId: string; role: BusinessRole; edition?: string }
++
++export type TransferViolation = { path: string; code: TransferBlockerCode; message: string }
++export type TransferEvaluation = { ok: boolean; role: BusinessRole | 'unknown'; violations: TransferViolation[] }
++
++// componentsToExclude semantics:
++//   • Each entry is a repo-relative path: an exact file, a directory prefix, or `dir/**`.
++//   • Matching is segment-aware (a directory prefix matches the dir and everything under it).
++//   • An entry containing a wildcard other than a trailing `/**`, any `..`, an absolute/home
++//     prefix, a backslash, or a NUL is UNSAFE → it fails the whole transfer closed
++//     (COMPONENT_EXCLUDED) rather than being silently ignored.
++//   • If any manifest path matches an exclusion, the WHOLE manifest is rejected
++//     (COMPONENT_EXCLUDED) — we never silently drop a file and transfer the rest.
++type ParsedExclusion = { segs: string[] } | { invalid: true; raw: string }
++function parseExclusion(raw: unknown): ParsedExclusion {
++  if (typeof raw !== 'string') return { invalid: true, raw: String(raw) }
++  let pat = raw.trim()
++  if (pat.endsWith('/**')) pat = pat.slice(0, -3)
++  if (
++    !pat || pat.includes('*') || pat.includes('..') || pat.startsWith('/') ||
++    pat.startsWith('~') || /^[A-Za-z]:/.test(pat) || pat.includes('\\') || pat.includes('\0')
++  ) return { invalid: true, raw }
++  const segs = toSegments(pat)
++  if (!segs.length || segs.some(s => s === '.' || s === '..')) return { invalid: true, raw }
++  return { segs }
++}
++
++/** Evaluate a set of repo-relative paths against a resolved target context. Fails closed. */
++export function evaluateTransfer(paths: string[], ctx: TargetContext): TransferEvaluation {
++  // Fail closed when the target role/context is missing or not a known role.
++  if (!ctx || !KNOWN_ROLES.includes(ctx.role as BusinessRole)) {
++    return {
++      ok: false,
++      role: 'unknown',
++      violations: [{ path: '(target-context)', code: 'TARGET_CONTEXT_REQUIRED', message: 'a resolved target business role is required for a cross-repository transfer' }],
++    }
++  }
++  const violations: TransferViolation[] = []
++  const managed = isManagedTargetRole(ctx.role)
++
++  // Parse exclusions once; any unsafe pattern fails the transfer closed.
++  const parsed = (ctx.componentsToExclude ?? []).map(parseExclusion)
++  for (const p of parsed) {
++    if ('invalid' in p) {
++      violations.push({ path: `(exclusion:${p.raw})`, code: 'COMPONENT_EXCLUDED', message: `invalid or unsafe componentsToExclude pattern: ${p.raw}` })
++    }
++  }
++  const validExclusions = parsed.filter((p): p is { segs: string[] } => !('invalid' in p))
++
++  for (const path of paths) {
++    const segs = toSegments(path)
++    if (managed && isControlPlanePath(path)) {
++      violations.push({ path, code: 'CONTROL_PLANE_PATH_FORBIDDEN', message: `control-plane path may not be transferred to a managed target: ${path}` })
++    }
++    for (const ex of validExclusions) {
++      if (hasSegmentPrefix(segs, ex.segs)) {
++        violations.push({ path, code: 'COMPONENT_EXCLUDED', message: `path is excluded by componentsToExclude: ${path}` })
++        break
++      }
++    }
++  }
++  // ctx.role is guaranteed to be a known BusinessRole by the guard above.
++  return { ok: violations.length === 0, role: ctx.role as BusinessRole, violations }
++}
++
++/** Full manifest-level enforcement: policy version + target-aware paths. Fails closed.
++ *  `requirePolicyVersion` is set by cross-repository callers (manifest delivery, CI runner)
++ *  so a legacy manifest lacking target identity/version cannot drive a new transfer. */
++export function enforceManifestPolicy(input: {
++  paths: string[]
++  policyVersion?: number
++  target: TargetContext
++  requirePolicyVersion?: boolean
++}): TransferEvaluation {
++  const { paths, policyVersion, target, requirePolicyVersion } = input
++  const role: BusinessRole | 'unknown' = target?.role ?? 'unknown'
++  if (policyVersion !== undefined && !SUPPORTED_POLICY_VERSIONS.includes(policyVersion)) {
++    return { ok: false, role, violations: [{ path: '(policy)', code: 'MANIFEST_POLICY_VERSION_UNSUPPORTED', message: `unsupported manifest policy version: ${policyVersion}` }] }
++  }
++  if (requirePolicyVersion && policyVersion === undefined) {
++    return { ok: false, role, violations: [{ path: '(policy)', code: 'MANIFEST_POLICY_VERSION_UNSUPPORTED', message: 'manifest is missing a policy version and cannot be used for a new cross-repository transfer' }] }
++  }
++  return evaluateTransfer(paths, target)
++}
+diff --git a/scripts/manifest-builder.test.ts b/scripts/manifest-builder.test.ts
+index 069405f..2ee708b 100644
+--- a/scripts/manifest-builder.test.ts
++++ b/scripts/manifest-builder.test.ts
+@@ -20,13 +20,14 @@ function mockProvider(files: { filename: string; status: string }[], blobs: Reco
+   return p as UpdateAutomationProvider
+ }
+ const REPO = { owner: 'ratchetnu', name: 'jkissllc' }
++const TARGET = { businessId: 'supercharged', role: 'target' as const }
+ 
+ test('builds a valid manifest from a commit: add + modify + delete, with content + hashes', async () => {
+   const provider = mockProvider(
+     [{ filename: 'app/a.tsx', status: 'added' }, { filename: 'app/b.ts', status: 'modified' }, { filename: 'app/old.ts', status: 'removed' }],
+     { 'app/a.tsx': 'export const A = 1\n', 'app/b.ts': 'export const B = 2\n' },
+   )
+-  const r = await buildCommitTransferManifest({ provider, installationId: '146887383', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: 'deadbeef', updateKey: 'UPD-1004' })
++  const r = await buildCommitTransferManifest({ provider, installationId: '146887383', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: 'deadbeef', updateKey: 'UPD-1004', target: TARGET })
+   assert.equal(r.ok, true)
+   if (!r.ok) return
+   assert.equal(validateManifest(r.data.manifest).ok, true)
+@@ -43,20 +44,20 @@ test('builds a valid manifest from a commit: add + modify + delete, with content
+ 
+ test('fails cleanly when a source file cannot be read', async () => {
+   const provider = mockProvider([{ filename: 'app/x.ts', status: 'added' }], {})  // no blob for x.ts
+-  const r = await buildCommitTransferManifest({ provider, installationId: '1', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: 'abc', updateKey: 'UPD-1' })
++  const r = await buildCommitTransferManifest({ provider, installationId: '1', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: 'abc', updateKey: 'UPD-1', target: TARGET })
+   assert.equal(r.ok, false)
+   assert.match((r as { error: string }).error, /read app\/x\.ts/)
+ })
+ 
+ test('rejects a commit that changes an unsafe path (traversal)', async () => {
+   const provider = mockProvider([{ filename: '../escape.ts', status: 'added' }], { '../escape.ts': 'x' })
+-  const r = await buildCommitTransferManifest({ provider, installationId: '1', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: 'abc', updateKey: 'UPD-1' })
++  const r = await buildCommitTransferManifest({ provider, installationId: '1', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: 'abc', updateKey: 'UPD-1', target: TARGET })
+   assert.equal(r.ok, false)
+   assert.match((r as { error: string }).error, /invalid manifest/)
+ })
+ 
+ test('fails when the update has no source commit', async () => {
+   const provider = mockProvider([], {})
+-  const r = await buildCommitTransferManifest({ provider, installationId: '1', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: '', updateKey: 'UPD-1' })
++  const r = await buildCommitTransferManifest({ provider, installationId: '1', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: '', updateKey: 'UPD-1', target: TARGET })
+   assert.equal(r.ok, false)
+ })
+diff --git a/scripts/operion-apply.mjs b/scripts/operion-apply.mjs
+index a1c1b76..e344667 100644
+--- a/scripts/operion-apply.mjs
++++ b/scripts/operion-apply.mjs
+@@ -28,6 +28,20 @@ function isSafeRepoPath(p) {
+   return p.split('/').every(s => s !== '' && s !== '.' && s !== '..' && /^[A-Za-z0-9._()\[\]-]+$/.test(s))
+ }
+ 
++// ── Managed-target boundary (defence in depth) ───────────────────────────────
++// Mirrors app/lib/platform/automation/target-policy.ts. Keep the two in sync.
++const SUPPORTED_POLICY_VERSIONS = [1]
++const CONTROL_PLANE_PATH_PREFIXES = [
++  'app/admin/operations/release', 'app/api/admin/release',
++  'app/lib/platform/release', 'app/lib/platform/automation',
++  'app/api/automation', 'app/lib/platform/updates', 'app/lib/platform/sync',
++]
++const CONTROL_PLANE_SEGS = CONTROL_PLANE_PATH_PREFIXES.map(p => p.split('/').filter(Boolean))
++function isControlPlanePath(p) {
++  const segs = String(p).split('/').filter(Boolean)
++  return CONTROL_PLANE_SEGS.some(pre => segs.length >= pre.length && pre.every((s, i) => segs[i] === s))
++}
++
+ const manifestUrl = OPERION_CALLBACK_URL.replace(/\/callback\/?$/, '/manifest')
+ const body = JSON.stringify({ jobId: OPERION_JOB_ID })
+ const ts = String(Date.now())
+@@ -42,6 +56,16 @@ if (!res.ok) die(`manifest fetch failed (${res.status})`)
+ const { manifest, contents } = await res.json()
+ if (!manifest || !Array.isArray(manifest.entries)) die('manifest response malformed')
+ 
++// Managed-target boundary: a legacy manifest lacking policy/target identity must not drive
++// a cross-repository transfer, and a managed target must never receive control-plane paths.
++if (!SUPPORTED_POLICY_VERSIONS.includes(manifest.policyVersion)) die(`MANIFEST_POLICY_VERSION_UNSUPPORTED: ${manifest.policyVersion}`)
++const targetRole = manifest.target && manifest.target.role
++if (targetRole !== 'source' && targetRole !== 'target' && targetRole !== 'source_and_target') die('TARGET_CONTEXT_REQUIRED: manifest has no resolved target role')
++if (targetRole === 'target') {
++  const forbidden = manifest.entries.map(e => e.path).filter(isControlPlanePath)
++  if (forbidden.length) die(`CONTROL_PLANE_PATH_FORBIDDEN: ${forbidden.length} control-plane path(s) rejected for managed target`)
++}
++
+ // Deterministic order: explicit order, add/modify before delete, then path.
+ const rank = (a) => (a === 'delete' ? 1 : 0)
+ const entries = [...manifest.entries].sort((a, b) => (a.order ?? 1e9) - (b.order ?? 1e9) || rank(a.action) - rank(b.action) || a.path.localeCompare(b.path))
+diff --git a/scripts/operion-target-policy.test.ts b/scripts/operion-target-policy.test.ts
+new file mode 100644
+index 0000000..7d0e2e6
+--- /dev/null
++++ b/scripts/operion-target-policy.test.ts
+@@ -0,0 +1,229 @@
++// Operion managed-target transfer boundary — hermetic tests (no I/O, no network).
++// Proves a managed target can never receive control-plane files, that safe transfers
++// still work, and that enforcement holds at build, apply, and policy layers.
++import assert from 'node:assert/strict'
++import test from 'node:test'
++import {
++  isControlPlanePath, classifyComponent, evaluateTransfer, enforceManifestPolicy,
++  CONTROL_PLANE_PATH_PREFIXES, TARGET_POLICY_VERSION,
++} from '../app/lib/platform/automation/target-policy'
++import { applyManifest, type FsAdapter } from '../app/lib/platform/automation/apply-executor'
++import { sha256, type ApplyManifest } from '../app/lib/platform/automation/manifest'
++import { buildCommitTransferManifest } from '../app/lib/platform/automation/manifest-builder'
++import type { UpdateAutomationProvider } from '../app/lib/platform/automation/provider'
++
++const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64')
++const content = (s: string) => ({ contentBase64: b64(s), sha256: sha256(Buffer.from(s, 'utf8')) })
++function memFs(seed: Record<string, string> = {}): FsAdapter & { files: Map<string, string> } {
++  const files = new Map(Object.entries(seed))
++  return { files, exists: p => files.has(p), read: p => files.get(p) ?? null, write: (p, c) => { files.set(p, c.toString('utf8')) }, remove: p => { files.delete(p) } }
++}
++function mkManifest(entries: ApplyManifest['entries'], extra: Partial<ApplyManifest> = {}): ApplyManifest {
++  return { updateKey: 'UPD-1', sourceRepo: 'ratchetnu/jkissllc', sourceCommit: 'abc', entries, ...extra }
++}
++function mockProvider(files: { filename: string; status: string }[], blobs: Record<string, string>): UpdateAutomationProvider {
++  const p: Partial<UpdateAutomationProvider> = {
++    name: 'mock',
++    readCommitFiles: async () => ({ ok: true, data: { files } }),
++    readFileContent: async (_i, _r, path) => (path in blobs)
++      ? { ok: true, data: content(blobs[path]) }
++      : { ok: false, error: 'not found', category: 'not_found' },
++  }
++  return p as UpdateAutomationProvider
++}
++const REPO = { owner: 'ratchetnu', name: 'jkissllc' }
++const TARGET = { businessId: 'supercharged', role: 'target' as const }
++
++// ── Path classification ──────────────────────────────────────────────────────
++test('isControlPlanePath: every family matches segment-aware; near-matches do not', () => {
++  for (const fam of CONTROL_PLANE_PATH_PREFIXES) {
++    assert.equal(isControlPlanePath(fam), true, `exact ${fam}`)
++    assert.equal(isControlPlanePath(`${fam}/route.ts`), true, `under ${fam}`)
++    assert.equal(isControlPlanePath(`${fam}/deep/nested/x.tsx`), true, `deep ${fam}`)
++  }
++  for (const safe of [
++    'app/lib/platform/release-notes/x.ts',   // "release-notes" ≠ "release"
++    'app/lib/platform/automation-docs/x.ts', // "automation-docs" ≠ "automation"
++    'app/api/admin/releases-archive/x.ts',   // "releases-archive" ≠ "release"
++    'app/admin/operations/dashboard/x.tsx',  // "dashboard" ≠ "release"
++    'app/lib/platform/tenancy/keys.ts',      // shared multi-tenant runtime
++    'app/lib/release/manifest.ts',           // read-only snapshot lib (not platform/release)
++    'app/lib/businesses/supercharged.ts',
++    'app/components/Button.tsx',
++  ]) assert.equal(isControlPlanePath(safe), false, safe)
++})
++
++test('classifyComponent labels control-plane vs business runtime', () => {
++  assert.equal(classifyComponent('app/lib/platform/automation/orchestrator.ts'), 'operion_control_plane')
++  assert.equal(classifyComponent('app/api/admin/release/route.ts'), 'operion_control_plane')
++  assert.equal(classifyComponent('app/components/Button.tsx'), 'operion_business_runtime')
++})
++
++// ── Managed target rejects every forbidden family ────────────────────────────
++test('managed target rejects every control-plane path family (CONTROL_PLANE_PATH_FORBIDDEN)', () => {
++  for (const fam of CONTROL_PLANE_PATH_PREFIXES) {
++    const r = evaluateTransfer([`${fam}/x.ts`], { businessId: 'supercharged', role: 'target' })
++    assert.equal(r.ok, false, fam)
++    assert.equal(r.violations[0].code, 'CONTROL_PLANE_PATH_FORBIDDEN', fam)
++  }
++})
++
++test('apply executor rejects a control-plane path for a managed target across add / modify / delete', () => {
++  for (const action of ['add', 'modify', 'delete'] as const) {
++    const path = 'app/lib/platform/automation/evil.ts'
++    const del = action === 'delete'
++    const entry: ApplyManifest['entries'][number] = del ? { path, action } : { path, action, sha256: content('x').sha256 }
++    const fs = memFs(del ? { [path]: 'pre-existing' } : {})
++    const contents: Record<string, { contentBase64: string; sha256: string }> = del ? {} : { [path]: content('x') }
++    const res = applyManifest(mkManifest([entry], { policyVersion: TARGET_POLICY_VERSION, target: TARGET }), contents, fs)
++    assert.equal(res.ok, false, action)
++    assert.equal(res.applied.length, 0, action)
++    assert.equal(res.failed[0].reason, 'CONTROL_PLANE_PATH_FORBIDDEN', action)
++    if (action === 'delete') assert.equal(fs.files.get(path), 'pre-existing', 'delete: file must NOT be removed')
++    else assert.equal(fs.files.has(path), false, `${action}: file must NOT be written`)
++  }
++})
++
++// ── Safe transfers still work ────────────────────────────────────────────────
++test('near-match safe paths are not falsely rejected for a managed target', () => {
++  const r = evaluateTransfer([
++    'app/lib/platform/release-notes/x.ts', 'app/lib/platform/automation-docs/x.ts',
++    'app/lib/release/manifest.ts', 'app/lib/platform/tenancy/keys.ts',
++  ], TARGET)
++  assert.equal(r.ok, true)
++})
++
++test('safe shared-runtime files transfer to a managed target', () => {
++  const r = evaluateTransfer(['app/components/Button.tsx', 'app/lib/pricing.ts', 'app/api/health/route.ts'], TARGET)
++  assert.equal(r.ok, true)
++})
++
++test('industry-pack and business-specific safe files transfer to an eligible target', () => {
++  const r = evaluateTransfer(['app/industry/junk-removal/pack.ts', 'app/businesses/supercharged/theme.ts'], { ...TARGET, edition: 'standard' })
++  assert.equal(r.ok, true)
++})
++
++// ── Traversal / separator tricks ─────────────────────────────────────────────
++test('traversal / separator tricks remain rejected even with target context', () => {
++  for (const path of ['../app/lib/platform/automation/x.ts', 'app/lib/platform/automation/..\\x.ts', '/app/lib/platform/automation/x.ts']) {
++    const fs = memFs()
++    const res = applyManifest(mkManifest([{ path, action: 'add', sha256: content('x').sha256 }], { policyVersion: TARGET_POLICY_VERSION, target: TARGET }), { [path]: content('x') }, fs)
++    assert.equal(res.ok, false, path)
++    assert.equal(fs.files.size, 0, path)
++  }
++})
++
++// ── Fail-closed context ──────────────────────────────────────────────────────
++test('missing / unknown target role fails closed (TARGET_CONTEXT_REQUIRED)', () => {
++  for (const role of [undefined, 'nonsense', '']) {
++    const r = evaluateTransfer(['app/safe.ts'], { businessId: 'x', role: role as never })
++    assert.equal(r.ok, false, String(role))
++    assert.equal(r.violations[0].code, 'TARGET_CONTEXT_REQUIRED', String(role))
++  }
++})
++
++test('server-resolved target context overrides a forged manifest role', () => {
++  const path = 'app/lib/platform/release/rollback.ts'
++  const forged = mkManifest([{ path, action: 'add', sha256: content('x').sha256 }], { policyVersion: TARGET_POLICY_VERSION, target: { businessId: 'supercharged', role: 'source_and_target' } })
++  // Forged 'source_and_target' role, taken alone, would allow the control-plane file:
++  assert.equal(applyManifest(forged, { [path]: content('x') }, memFs()).ok, true)
++  // But the server-resolved real role ('target') is authoritative and rejects it:
++  const fs = memFs()
++  const res = applyManifest(forged, { [path]: content('x') }, fs, { target: TARGET })
++  assert.equal(res.ok, false)
++  assert.equal(res.failed[0].reason, 'CONTROL_PLANE_PATH_FORBIDDEN')
++  assert.equal(fs.files.size, 0)
++})
++
++// ── Control plane may retain control-plane files ─────────────────────────────
++test('control-plane business (source / source_and_target) may retain control-plane files', () => {
++  const paths = ['app/lib/platform/automation/orchestrator.ts', 'app/api/admin/release/route.ts']
++  assert.equal(evaluateTransfer(paths, { businessId: 'jkiss', role: 'source_and_target' }).ok, true)
++  assert.equal(evaluateTransfer(paths, { businessId: 'jkiss', role: 'source' }).ok, true)
++})
++
++// ── componentsToExclude ──────────────────────────────────────────────────────
++test('componentsToExclude is enforced; unsafe patterns fail closed; near-matches are safe', () => {
++  const r1 = evaluateTransfer(['app/experimental/x.ts', 'app/safe.ts'], { ...TARGET, componentsToExclude: ['app/experimental'] })
++  assert.equal(r1.ok, false)
++  assert.ok(r1.violations.some(v => v.code === 'COMPONENT_EXCLUDED' && v.path === 'app/experimental/x.ts'))
++  assert.equal(evaluateTransfer(['app/x/deep/y.ts'], { ...TARGET, componentsToExclude: ['app/x/**'] }).ok, false)   // recursive
++  assert.equal(evaluateTransfer(['app/keep.ts', 'app/drop.ts'], { ...TARGET, componentsToExclude: ['app/drop.ts'] }).ok, false) // exact file
++  assert.equal(evaluateTransfer(['app/experimental-ok/x.ts'], { ...TARGET, componentsToExclude: ['app/experimental'] }).ok, true) // near-match NOT excluded
++  for (const bad of ['../etc', 'app/**/*', 'app/a*', '/abs', 'a\\b', '~/x']) {
++    const r = evaluateTransfer(['app/whatever.ts'], { ...TARGET, componentsToExclude: [bad] })
++    assert.equal(r.ok, false, bad)
++    assert.ok(r.violations.some(v => v.code === 'COMPONENT_EXCLUDED'), bad)
++  }
++})
++
++// ── Policy version + legacy behavior ─────────────────────────────────────────
++test('legacy manifest: apply executor applies path-safe files with no target context (back-compat)', () => {
++  const path = 'app/safe.ts'
++  const fs = memFs()
++  const res = applyManifest(mkManifest([{ path, action: 'add', sha256: content('v').sha256 }]), { [path]: content('v') }, fs)
++  assert.equal(res.ok, true)
++  assert.equal(fs.files.get(path), 'v')
++})
++
++test('legacy manifest without policy version fails closed for cross-repo (MANIFEST_POLICY_VERSION_UNSUPPORTED)', () => {
++  const r = enforceManifestPolicy({ paths: ['app/x.ts'], policyVersion: undefined, target: TARGET, requirePolicyVersion: true })
++  assert.equal(r.ok, false)
++  assert.equal(r.violations[0].code, 'MANIFEST_POLICY_VERSION_UNSUPPORTED')
++})
++
++test('unsupported policy version is rejected', () => {
++  const r = enforceManifestPolicy({ paths: ['app/x.ts'], policyVersion: 999, target: TARGET })
++  assert.equal(r.ok, false)
++  assert.equal(r.violations[0].code, 'MANIFEST_POLICY_VERSION_UNSUPPORTED')
++})
++
++// ── Apply executor independent rejection via embedded metadata ───────────────
++test('apply executor independently rejects a forbidden manifest via its embedded target metadata', () => {
++  const path = 'app/api/admin/release/businesses/[id]/rollback/route.ts'
++  const fs = memFs()
++  const res = applyManifest(mkManifest([{ path, action: 'add', sha256: content('x').sha256 }], { policyVersion: TARGET_POLICY_VERSION, target: TARGET }), { [path]: content('x') }, fs)
++  assert.equal(res.ok, false)
++  assert.equal(res.failed[0].reason, 'CONTROL_PLANE_PATH_FORBIDDEN')
++  assert.equal(fs.files.size, 0)
++})
++
++// ── Manifest builder integration ─────────────────────────────────────────────
++test('manifest builder rejects control-plane files for a managed target and stamps metadata for the control plane', async () => {
++  const blocked = await buildCommitTransferManifest({
++    provider: mockProvider([{ filename: 'app/lib/platform/automation/x.ts', status: 'added' }], { 'app/lib/platform/automation/x.ts': 'x' }),
++    installationId: '1', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: 'abc', updateKey: 'UPD-9', target: TARGET,
++  })
++  assert.equal(blocked.ok, false)
++  assert.equal((blocked as { code?: string }).code, 'CONTROL_PLANE_PATH_FORBIDDEN')
++
++  const allowed = await buildCommitTransferManifest({
++    provider: mockProvider([{ filename: 'app/lib/platform/automation/x.ts', status: 'added' }], { 'app/lib/platform/automation/x.ts': 'x' }),
++    installationId: '1', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: 'abc', updateKey: 'UPD-9', target: { businessId: 'jkiss', role: 'source_and_target', edition: 'internal' },
++  })
++  assert.equal(allowed.ok, true)
++  if (allowed.ok) {
++    assert.equal(allowed.data.manifest.policyVersion, TARGET_POLICY_VERSION)
++    assert.equal(allowed.data.manifest.target?.role, 'source_and_target')
++    assert.equal(allowed.data.manifest.target?.businessId, 'jkiss')
++  }
++})
++
++test('manifest builder enforces componentsToExclude for a managed target', async () => {
++  const r = await buildCommitTransferManifest({
++    provider: mockProvider([{ filename: 'app/beta/x.ts', status: 'added' }], { 'app/beta/x.ts': 'x' }),
++    installationId: '1', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: 'abc', updateKey: 'UPD-10',
++    target: { ...TARGET, componentsToExclude: ['app/beta'] },
++  })
++  assert.equal(r.ok, false)
++  assert.equal((r as { code?: string }).code, 'COMPONENT_EXCLUDED')
++})
++
++// ── No secret leakage ────────────────────────────────────────────────────────
++test('violation messages and stamped manifests contain no secrets/env values', () => {
++  const r = evaluateTransfer(['app/lib/platform/automation/x.ts'], { ...TARGET, componentsToExclude: ['../bad'] })
++  const blob = JSON.stringify(r)
++  for (const s of ['TOKEN', 'SECRET', 'VERCEL_TOKEN', 'process.env', 'Bearer ', 'password', 'cookie', 'OPERION_CALLBACK']) {
++    assert.equal(blob.includes(s), false, s)
++  }
++})
