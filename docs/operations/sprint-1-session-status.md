@@ -98,6 +98,52 @@ Store IDs verified live: Production `jkiss-invoice-photos` = `store_WK8DoJzb2Q1l
 
 ---
 
+## 🔺 Transfer plan REVISED — UPD-A / UPD-B are dead (S3 read-only audit, accepted)
+
+**`OPERION_CURRENT_STATE.md` §12 Sprint 2 is superseded by this section.** It prescribed splitting `UPD-1004` into `UPD-A` (Book Now intake) and `UPD-B` (tenancy-only) and enabling the automation flags "in Preview only". The real closure and drift gates — the ones merged in #51 and #50 — prove **both scopes are invalid**.
+
+### Findings (recorded)
+
+| Finding | Detail |
+|---|---|
+| **UPD-A invalid** | **19 closure failures**, **7 drift failures**, unresolved import chain |
+| **UPD-B invalid** | **22 of 32 files fail drift** |
+| **Exclusions are not a rescue** | `pathsToExclude` cannot carve either scope down to a meaningful, test-safe transfer |
+| **Preview-only dispatch is impossible** | preflight **blocks when `VERCEL_ENV=preview`** — the handoff's "enable the flags in Preview only" plan cannot work at all |
+| **Correct topology** | source control plane must be **J KISS Production**, targeting **Supercharged Preview** |
+| **No verified transfer exists** | no transfer has ever ended in a verified `DeploymentRecord` |
+| **Closure gap** | closure checks module **existence only** — it does **not** verify that the imported **exported symbols** exist on the target |
+
+⛔ **`UPD-A` and `UPD-B` must not be registered or dispatched.** ⛔ **`UPD-1004` is not retried.**
+
+### Replacement sequence (authorized as a plan; execution gated)
+
+1. **Finish and merge the route-conflict hotfix first** ← blocking everything below
+2. **Hardening increment 1 — exported-symbol verification** (narrow, isolated)
+   - detect imports whose **exported symbols** do not exist on the target
+   - include the `app/lib/platform/session.ts` / `isPlatformOwner` **negative regression** test
+   - **fail before** job, branch, or dispatch creation
+3. **Hardening increment 2 — bounded `transferEvidence` persistence** (optional field on the job/deployment record)
+   - manifest paths · `closureCheckedPaths` · `driftCheckedPaths` · `excludedPaths` · source and target SHAs · preflight result
+   - **backward-compatible `recordVersion` handling** (readers backfill; see `normalize()` convention)
+   - closes §4 #7 of the handoff — the audit-trail gap
+4. **Canary:** commit **`106846c0`** as the **first one-file transfer**
+5. Dispatch **only** from the **J KISS Production** control plane
+6. Target **Supercharged Preview only**
+7. Require the **complete lifecycle**: preflight → one job → one branch → one dispatch → PR → Preview → verification → **verified `DeploymentRecord`**
+8. ⛔ **Do not promote to Supercharged Production**
+9. Only after the canary is verified, assess commit **`17ac1972`** as the next transfer
+
+**Gate:** nothing in steps 4–9 may be registered or dispatched until the route hotfix **and both hardening increments** are verified. Automation flags stay **OFF** until then.
+
+### ⚠️ Coordinator flag — an unresolved contradiction in steps 5 + "flags OFF"
+
+Steps 4–7 require dispatching from the **J KISS Production** control plane. Dispatch is gated by `OPERION_AUTOMATION_ENABLED` + `OPERION_PREVIEW_AUTOMATION_ENABLED` + `OPERION_GITHUB_ACTIONS_ENABLED`, which are **present but OFF in J KISS Production**. So the canary **cannot run** while "keep all automation flags OFF" holds literally.
+
+This is not a problem yet — dispatch is blocked behind two hardening increments regardless. But when the canary is ready it will require an **explicit owner-approved Production env flag change**, which is a Production write under the standing rules. **Flagging now so it is a planned decision, not a surprise at execution time.** No flag is being changed.
+
+---
+
 ## ✅ MERGE RECORD — Sprint 1 authorized sequence COMPLETE (2026-07-22 16:19Z)
 
 `origin/main`: `ee577c2` → **`c791d4e`**. Two merges, owner-authorized, executed one at a time.
