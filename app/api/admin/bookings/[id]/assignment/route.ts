@@ -128,7 +128,7 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
       if (who instanceof NextResponse) return who
       const staffId = str(body.staffId, 64)
       if (!staffId) return NextResponse.json({ error: 'invalid', message: 'Missing crew member.' }, { status: 400 })
-      return respond(await unassignCrewFromBooking(id, staffId))
+      return respond(await unassignCrewFromBooking(id, staffId, { actor: who.sub }))
     }
 
     case 'set_pay': {
@@ -143,7 +143,7 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
       if (!clear && cents === null) {
         return NextResponse.json({ error: 'invalid', message: 'Enter a valid amount, e.g. 175.00.' }, { status: 400 })
       }
-      return respond(await setBookingCrewPay(id, staffId, cents))
+      return respond(await setBookingCrewPay(id, staffId, cents, { actor: who.sub }))
     }
 
     case 'set_equipment': {
@@ -152,7 +152,7 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
       return respond(await setBookingEquipment(id, {
         equipmentId: str(body.equipmentId, 64) || null,
         vehicleLabel: str(body.vehicleLabel, 120) || null,
-      }))
+      }, { actor: who.sub }))
     }
 
     case 'record_completion': {
@@ -162,6 +162,7 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
         note: str(body.note, 2000) || undefined,
         photos: body.photos,
         by: 'admin',
+        actor: who.sub,
       }))
     }
 

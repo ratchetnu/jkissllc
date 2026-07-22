@@ -156,6 +156,11 @@ export type BookingEventAction =
   | 'ai.final_queued' | 'ai.final_analyzed' | 'ai.final_failed' | 'ai.final_manual_review'
   | 'ai.owner_approved' | 'ai.quote_simulated'
   | 'status.changed'
+  | 'assignment.crew_added' | 'assignment.crew_removed'
+  | 'assignment.pay_changed' | 'assignment.equipment_changed'
+  | 'assignment.accepted' | 'assignment.declined'
+  | 'assignment.clock_in' | 'assignment.clock_out'
+  | 'assignment.completion_recorded'
   | 'test.marked' | 'test.unmarked'
 
 export type BookingEvent = {
@@ -844,7 +849,7 @@ export function dollarsToCents(v: string | number): number {
 // a booking to the browser.
 export type CustomerBooking = Omit<Booking,
   'internalNotes' | 'agreementIp' | 'agreementUserAgent' | 'payments' | 'disposalEstimateCents' | 'disposalActualCents'
-  | 'aiEstimate' | 'finalAiEstimate' | 'events' | 'notifications' | 'replacementUpload' | 'idempotencyKey'> & {
+  | 'aiEstimate' | 'finalAiEstimate' | 'events' | 'notifications' | 'replacementUpload' | 'idempotencyKey' | 'assignees'> & {
   balanceDueCents: number
   paymentSummary: PaymentSummaryStatus
   payments: Array<Pick<Payment, 'type' | 'method' | 'status' | 'amountCents' | 'feeCents' | 'totalChargedCents' | 'createdAt' | 'confirmedAt'> & { hasProof: boolean }>
@@ -856,9 +861,9 @@ export function customerView(b: Booking): CustomerBooking {
   const {
     internalNotes: _i, agreementIp: _ip, agreementUserAgent: _ua, payments,
     disposalEstimateCents: _de, disposalActualCents: _da, aiEstimate: _ai, finalAiEstimate: _fai,
-    events: _ev, notifications: _no, replacementUpload: _ru, idempotencyKey: _ik, ...rest
+    events: _ev, notifications: _no, replacementUpload: _ru, idempotencyKey: _ik, assignees: _as, ...rest
   } = b
-  void _i; void _ip; void _ua; void _de; void _da; void _ai; void _fai; void _ev; void _no; void _ru; void _ik
+  void _i; void _ip; void _ua; void _de; void _da; void _ai; void _fai; void _ev; void _no; void _ru; void _ik; void _as
   return {
     ...rest,
     balanceDueCents: balanceDueCents(b),
