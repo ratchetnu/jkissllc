@@ -676,7 +676,12 @@ export function sanitizePhotos(v: unknown): InvoicePhoto[] {
 // The date a crew should actually show up: the return date for a continued job,
 // otherwise the scheduled/selected date. Used by the calendar + availability.
 export function effectiveServiceDate(b: Booking): string {
-  if (b.status === 'continued' && b.continuation?.returnDate) return b.continuation.returnDate
+  // Preserve the actual return visit after a continued job is later closed. The
+  // continuation record remains the audit source even though status advances to
+  // completed/partially_completed.
+  if (b.continuation?.returnDate && ['continued', 'completed', 'partially_completed'].includes(b.status)) {
+    return b.continuation.returnDate
+  }
   return b.selectedDate || (b.availableDates?.length === 1 ? b.availableDates[0] : '')
 }
 

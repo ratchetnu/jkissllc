@@ -15,6 +15,8 @@ import { isDateStr } from '../../../lib/dates'
 // null when the crew member has no activity in the window.
 async function buildSnapshot(staffId: string, start: string, end: string) {
   const summary = await computePay(start, end)
+  const payrollGaps = (summary.payrollGaps ?? []).filter(g => g.staffIds.includes(staffId))
+  if (payrollGaps.length) return { blockedBy: payrollGaps }
   const cp = summary.contractors.find(c => c.staffId === staffId)
   if (!cp) return null
   const lines: StatementLine[] = cp.routes
@@ -62,6 +64,13 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   const snap = await buildSnapshot(staffId, start, end)
   if (!snap) {
     return NextResponse.json({ ok: false, error: 'No completed jobs for this crew member in that period.' }, { status: 400 })
+  }
+  if ('blockedBy' in snap && snap.blockedBy) {
+    return NextResponse.json({
+      ok: false,
+      error: `Cannot generate this statement: ${snap.blockedBy.map(g => g.bookingNumber).join(', ')} needs a service date.`,
+      payrollGaps: snap.blockedBy,
+    }, { status: 409 })
   }
 
   if (preview) {

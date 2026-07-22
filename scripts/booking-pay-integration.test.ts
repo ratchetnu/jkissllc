@@ -45,7 +45,7 @@ const baseBooking = (overrides: Partial<Booking> = {}): Booking => ({
   token: generateToken(), bookingNumber: 'JK-B-2101', customerName: 'Alex Customer',
   serviceType: 'junk-removal', items: [], invoiceAmountCents: 45000,
   depositAmountCents: 0, amountPaidCents: 0, availableDates: [], availableWindows: [],
-  selectedDate: '2026-07-08', status: 'in_progress', payments: [], source: 'online',
+  selectedDate: '2026-07-08', status: 'completed', payments: [], source: 'online',
   createdAt: 1, updatedAt: 1, ...overrides,
 })
 
@@ -114,4 +114,92 @@ test('unfinished and out-of-period bookings never enter pay', async () => {
   assert.equal(pay.routeCount, 1)
   assert.equal(pay.bookingCount, 0)
   assert.equal(pay.contractors.find(c => c.staffId === 'marcus')!.grossCents, 17500)
+})
+
+test('cancelled, refunded, and could-not-complete bookings never enter pay', async () => {
+  await seed()
+  for (const [i, status] of (['cancelled', 'refunded', 'could_not_complete'] as const).entries()) {
+    await saveBooking(baseBooking({
+      token: generateToken(), bookingNumber: `JK-B-CLOSED-${i}`, status,
+      jobCompletedAt: Date.UTC(2026, 6, 8, 18),
+      assignees: [{ staffId: 'marcus', name: 'Marcus', token: generateToken(), payCents: 22500 }],
+    }))
+  }
+  const pay = await computePay('2026-07-06', '2026-07-12')
+  assert.equal(pay.bookingCount, 0)
+  assert.equal(pay.contractors.find(c => c.staffId === 'marcus')!.grossCents, 17500)
+})
+
+test('effective service date pays a single-date booking and continued return work in the correct week', async () => {
+  await seed()
+  await saveBooking(baseBooking({
+    bookingNumber: 'JK-B-AVAILABLE', selectedDate: undefined, availableDates: ['2026-07-08'],
+    jobCompletedAt: Date.UTC(2026, 6, 8, 18),
+    assignees: [{ staffId: 'marcus', name: 'Marcus', token: generateToken(), payCents: 22500 }],
+  }))
+  await saveBooking(baseBooking({
+    token: generateToken(), bookingNumber: 'JK-B-CONTINUED', status: 'completed', selectedDate: '2026-06-30',
+    continuation: { continuedAt: 1, returnDate: '2026-07-09' },
+    jobCompletedAt: Date.UTC(2026, 6, 9, 18),
+    assignees: [{ staffId: 'marcus', name: 'Marcus', token: generateToken(), payCents: 25000 }],
+  }))
+  const pay = await computePay('2026-07-06', '2026-07-12')
+  assert.equal(pay.bookingCount, 2)
+  const lines = pay.contractors.find(c => c.staffId === 'marcus')!.routes
+  assert.deepEqual(lines.map(r => r.routeDate), ['2026-07-07', '2026-07-08', '2026-07-09'])
+  assert.equal(lines[1].hasProof, false, 'a completion timestamp alone is not attachment proof')
+})
+
+test('completed crewed booking without any service date is a visible blocking gap', async () => {
+  await seed()
+  await saveBooking(baseBooking({
+    bookingNumber: 'JK-B-UNDATED', selectedDate: undefined, availableDates: [],
+    jobCompletedAt: Date.UTC(2026, 6, 8, 18),
+    assignees: [{ staffId: 'marcus', name: 'Marcus', token: generateToken(), payCents: 22500 }],
+  }))
+  const pay = await computePay('2026-07-06', '2026-07-12')
+  assert.deepEqual(pay.payrollGaps, [{ bookingNumber: 'JK-B-UNDATED', staffIds: ['marcus'], reason: 'missing_service_date' }])
+})
+
+test('flag false and absent both keep booking work out of pay', async () => {
+  await seed()
+  await saveBooking(baseBooking({
+    jobCompletedAt: Date.UTC(2026, 6, 8, 18),
+    assignees: [{ staffId: 'marcus', name: 'Marcus', token: generateToken(), payCents: 22500 }],
+  }))
+  const prior = process.env.BOOKING_ASSIGNMENT_ENABLED
+  try {
+    process.env.BOOKING_ASSIGNMENT_ENABLED = 'false'
+    const off = await computePay('2026-07-06', '2026-07-12')
+    assert.equal(off.routeCount, 1)
+    assert.equal(off.bookingCount, undefined)
+    assert.equal(off.contractors[0].routes[0].source, undefined)
+    assert.equal(off.contractors[0].routes[0].workedMinutes, undefined)
+    delete process.env.BOOKING_ASSIGNMENT_ENABLED
+    const absent = await computePay('2026-07-06', '2026-07-12')
+    assert.equal(absent.routeCount, 1)
+    assert.equal(absent.bookingCount, undefined)
+  } finally {
+    if (prior === undefined) delete process.env.BOOKING_ASSIGNMENT_ENABLED
+    else process.env.BOOKING_ASSIGNMENT_ENABLED = prior
+  }
+})
+
+test('archived/test bookings are excluded and legacy display pay remains a safe fallback', async () => {
+  await seed()
+  for (const [i, marker] of ([{ archived: true }, { isTest: true }] as const).entries()) {
+    await saveBooking(baseBooking({
+      token: generateToken(), bookingNumber: `JK-B-HIDDEN-${i}`, ...marker,
+      jobCompletedAt: Date.UTC(2026, 6, 8, 18),
+      assignees: [{ staffId: 'marcus', name: 'Marcus', token: generateToken(), payCents: 50000 }],
+    }))
+  }
+  await saveBooking(baseBooking({
+    token: generateToken(), bookingNumber: 'JK-B-FALLBACK', jobCompletedAt: Date.UTC(2026, 6, 8, 18),
+    assignees: [{ staffId: 'helper', name: 'Helper', token: generateToken(), pay: '$180.00' }],
+  }))
+  const pay = await computePay('2026-07-06', '2026-07-12')
+  assert.equal(pay.bookingCount, 1)
+  assert.equal(pay.contractors.find(c => c.staffId === 'marcus')!.grossCents, 17500)
+  assert.equal(pay.contractors.find(c => c.staffId === 'helper')!.grossCents, 18000)
 })

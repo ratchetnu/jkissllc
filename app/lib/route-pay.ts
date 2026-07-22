@@ -9,7 +9,7 @@
 // route, reason, amount and date.
 import { addDaysStr, centralToday, isDateStr, mondayOf } from './dates'
 import { listRoutes } from './routes'
-import { listBookings } from './bookings'
+import { effectiveServiceDate, listBookings } from './bookings'
 import { listStaff } from './staff'
 import { listClaims } from './claims'
 import { isEnabled } from './platform/flags'
@@ -56,6 +56,8 @@ export type PaySummary = {
   routeCount: number
   deliveryRouteCount?: number
   bookingCount?: number
+  payrollGaps?: Array<{ bookingNumber: string; staffIds: string[]; reason: 'missing_service_date' }>
+  bookingWindowSaturated?: boolean
   unpricedCount: number
 }
 
@@ -102,6 +104,7 @@ export async function computePay(startIn: string, endIn: string): Promise<PaySum
   const nameOf = new Map(staff.map(s => [s.id, s.name]))
   const byStaff = new Map<string, ContractorPay>()
   let unpriced = 0, routeCount = 0, deliveryRouteCount = 0, bookingCount = 0
+  const payrollGaps: NonNullable<PaySummary['payrollGaps']> = []
 
   const contractor = (id: string, fallbackName: string): ContractorPay => {
     let cp = byStaff.get(id)
@@ -132,7 +135,7 @@ export async function computePay(startIn: string, endIn: string): Promise<PaySum
     const id = input.staffId || 'unassigned'
     const cp = contractor(id, input.staffName || '')
     cp.routes.push({
-      source: input.source,
+      source: includeBookings ? input.source : undefined,
       routeNumber: input.number,
       routeDate: input.date,
       businessName: input.businessName,
@@ -140,7 +143,7 @@ export async function computePay(startIn: string, endIn: string): Promise<PaySum
       payRateRaw: input.payRateRaw,
       hasProof: input.hasProof,
       completedBy: input.completedBy,
-      workedMinutes: input.workedMinutes,
+      workedMinutes: includeBookings ? input.workedMinutes : undefined,
     })
     cp.count++
     if (input.amountCents == null) { cp.unpricedCount++; unpriced++ }
@@ -168,19 +171,27 @@ export async function computePay(startIn: string, endIn: string): Promise<PaySum
   // is enabled. Production remains byte-identical while the flag is OFF.
   for (const b of bookings) {
     if (b.archived || b.isTest) continue
-    if (!b.jobCompletedAt || !b.selectedDate) continue
-    if (b.selectedDate < start || b.selectedDate > end) continue
+    if (!b.jobCompletedAt) continue
     const crew = (b.assignees ?? []).filter(a => !a.declinedAt)
     if (!crew.length) continue
+    // Owner-controlled lifecycle is the pay authorization. Operational proof is
+    // necessary but cannot make cancelled/refunded/failed work payable by itself.
+    if (b.status !== 'completed' && b.status !== 'partially_completed') continue
+    const serviceDate = effectiveServiceDate(b)
+    if (!serviceDate) {
+      payrollGaps.push({ bookingNumber: b.bookingNumber, staffIds: crew.map(a => a.staffId), reason: 'missing_service_date' })
+      continue
+    }
+    if (serviceDate < start || serviceDate > end) continue
     routeCount++
     bookingCount++
-    const hasProof = Boolean(b.jobCompletedAt || b.completionNote || b.completionPhotos?.length)
+    const hasProof = Boolean(b.completionNote || b.completionPhotos?.length)
     for (const a of crew) {
       addEarning({
         source: 'booking',
         number: b.bookingNumber,
-        date: b.selectedDate,
-        businessName: b.customerName,
+        date: serviceDate,
+        businessName: 'Customer booking',
         staffId: a.staffId,
         staffName: a.name,
         amountCents: a.payCents ?? parsePayCents(a.pay),
@@ -220,6 +231,12 @@ export async function computePay(startIn: string, endIn: string): Promise<PaySum
   return {
     start, end, contractors,
     grandGrossCents: grandGross, grandDeductionCents: grandDeduction, grandNetCents: grandNet,
-    routeCount, deliveryRouteCount, bookingCount, unpricedCount: unpriced,
+    routeCount, unpricedCount: unpriced,
+    ...(includeBookings ? {
+      deliveryRouteCount,
+      bookingCount,
+      payrollGaps,
+      bookingWindowSaturated: bookings.length >= 2000,
+    } : {}),
   }
 }

@@ -9,7 +9,7 @@ type ContractorPay = {
   staffId: string; name: string; routes: PayLineRoute[]; count: number; grossCents: number; unpricedCount: number
   deductions: PayDeductionLine[]; deductionCents: number; appliedCents: number; netCents: number; shortfallCents: number
 }
-type PaySummary = { start: string; end: string; contractors: ContractorPay[]; grandGrossCents: number; grandDeductionCents: number; grandNetCents: number; routeCount: number; deliveryRouteCount?: number; bookingCount?: number; unpricedCount: number }
+type PaySummary = { start: string; end: string; contractors: ContractorPay[]; grandGrossCents: number; grandDeductionCents: number; grandNetCents: number; routeCount: number; deliveryRouteCount?: number; bookingCount?: number; payrollGaps?: Array<{ bookingNumber: string; reason: 'missing_service_date' }>; bookingWindowSaturated?: boolean; unpricedCount: number }
 
 const money = (cents: number) => (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 const fmtDate = (iso: string) => { const d = new Date(`${iso}T12:00:00Z`); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) }
@@ -54,7 +54,7 @@ function Pay() {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-3xl font-black text-white" style={{ letterSpacing: '-0.03em' }}>Contractor Pay</h1>
-          <p className="text-sm" style={{ color: 'var(--muted)' }}>Completed delivery routes and customer bookings by contractor.</p>
+          <p className="text-sm" style={{ color: 'var(--muted)' }}>Completed work by contractor for the selected pay period.</p>
         </div>
         <a href="/admin/routes" className="no-print" style={{ ...preset, textDecoration: 'none' }}>← Dispatch</a>
       </div>
@@ -99,6 +99,18 @@ function Pay() {
       {data && data.unpricedCount > 0 && (
         <div className="mb-6 text-sm" style={{ padding: '10px 14px', borderRadius: 10, background: 'rgba(245,158,11,.1)', border: '1px solid rgba(245,158,11,.3)', color: '#fcd34d' }}>
           {data.unpricedCount} completed job{data.unpricedCount === 1 ? ' has' : 's have'} no readable pay rate and {data.unpricedCount === 1 ? "isn't" : "aren't"} included in the total. Add a crew pay rate to count it.
+        </div>
+      )}
+
+      {data && (data.payrollGaps?.length ?? 0) > 0 && (
+        <div className="mb-6 text-sm" role="alert" style={{ padding: '10px 14px', borderRadius: 10, background: 'rgba(245,158,11,.1)', border: '1px solid rgba(245,158,11,.3)', color: '#fcd34d' }}>
+          Pay statement blocked: {data.payrollGaps!.map(g => g.bookingNumber).join(', ')} {data.payrollGaps!.length === 1 ? 'needs' : 'need'} a service date.
+        </div>
+      )}
+
+      {data?.bookingWindowSaturated && (
+        <div className="mb-6 text-sm" role="alert" style={{ padding: '10px 14px', borderRadius: 10, background: 'rgba(245,158,11,.1)', border: '1px solid rgba(245,158,11,.3)', color: '#fcd34d' }}>
+          Booking payroll scan reached its safety limit. Verify older completed bookings before issuing statements.
         </div>
       )}
 
