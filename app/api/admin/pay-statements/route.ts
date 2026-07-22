@@ -11,15 +11,17 @@ import { roleLabel } from '../../../lib/rbac'
 import { isDateStr } from '../../../lib/dates'
 
 // Build the pay figures for ONE crew member over a period from the deterministic
-// engine (computePay uses completed routes + the claims-deduction ledger). Returns
+// engine (computePay uses completed routes/bookings + the claims ledger). Returns
 // null when the crew member has no activity in the window.
 async function buildSnapshot(staffId: string, start: string, end: string) {
   const summary = await computePay(start, end)
+  const payrollGaps = (summary.payrollGaps ?? []).filter(g => g.staffIds.includes(staffId))
+  if (payrollGaps.length) return { blockedBy: payrollGaps }
   const cp = summary.contractors.find(c => c.staffId === staffId)
   if (!cp) return null
   const lines: StatementLine[] = cp.routes
     .filter(r => r.amountCents != null)
-    .map(r => ({ routeNumber: r.routeNumber, routeDate: r.routeDate, businessName: r.businessName, amountCents: r.amountCents as number }))
+    .map(r => ({ source: r.source, routeNumber: r.routeNumber, routeDate: r.routeDate, businessName: r.businessName, amountCents: r.amountCents as number, workedMinutes: r.workedMinutes }))
   const deductions: StatementDeduction[] = cp.deductions.map(d => ({
     label: `${d.reason}${d.claimNumber ? ` (${d.claimNumber})` : ''}`,
     amountCents: d.amountCents,
@@ -61,7 +63,14 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
 
   const snap = await buildSnapshot(staffId, start, end)
   if (!snap) {
-    return NextResponse.json({ ok: false, error: 'No completed routes for this crew member in that period.' }, { status: 400 })
+    return NextResponse.json({ ok: false, error: 'No completed jobs for this crew member in that period.' }, { status: 400 })
+  }
+  if ('blockedBy' in snap && snap.blockedBy) {
+    return NextResponse.json({
+      ok: false,
+      error: `Cannot generate this statement: ${snap.blockedBy.map(g => g.bookingNumber).join(', ')} needs a service date.`,
+      payrollGaps: snap.blockedBy,
+    }, { status: 409 })
   }
 
   if (preview) {

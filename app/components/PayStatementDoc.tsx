@@ -133,13 +133,13 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
               ...g.lines.map((l, i) => (
                 <tr key={`${g.businessName}-${l.routeNumber}-${i}`}>
                   <td style={{ padding: '9px 0', borderTop: `1px solid ${HAIR}`, color: INK, whiteSpace: 'nowrap' }}>{day(l.routeDate)}</td>
-                  <td style={{ padding: '9px 0', borderTop: `1px solid ${HAIR}`, color: INK }}>Route</td>
-                  <td style={{ padding: '9px 0', borderTop: `1px solid ${HAIR}`, color: SUBTLE, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }}>{l.routeNumber}</td>
+                  <td style={{ padding: '9px 0', borderTop: `1px solid ${HAIR}`, color: INK }}>{l.source === 'booking' ? 'Booking' : 'Route'}</td>
+                  <td style={{ padding: '9px 0', borderTop: `1px solid ${HAIR}`, color: SUBTLE, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }}>{l.routeNumber}{l.workedMinutes !== undefined ? ` · ${Math.floor(l.workedMinutes / 60)}h ${l.workedMinutes % 60}m` : ''}</td>
                   <td style={{ padding: '9px 0', borderTop: `1px solid ${HAIR}`, color: INK, textAlign: 'right' }} className="tabular-nums">{money(l.amountCents)}</td>
                 </tr>
               )),
               <tr key={`sub-${g.businessName}`}>
-                <td colSpan={3} style={{ padding: '9px 0 4px', borderTop: `1px solid ${HAIR}`, color: SUBTLE, fontSize: 12 }}>{g.lines.length} route{g.lines.length === 1 ? '' : 's'}</td>
+                <td colSpan={3} style={{ padding: '9px 0 4px', borderTop: `1px solid ${HAIR}`, color: SUBTLE, fontSize: 12 }}>{g.lines.length} completed job{g.lines.length === 1 ? '' : 's'}</td>
                 <td style={{ padding: '9px 0 4px', borderTop: `1px solid ${HAIR}`, color: INK, textAlign: 'right', fontWeight: 600 }} className="tabular-nums">{money(g.subtotalCents)}</td>
               </tr>,
             ])}

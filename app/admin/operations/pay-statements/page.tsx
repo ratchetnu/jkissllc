@@ -151,7 +151,7 @@ function PayStatements() {
                     {s.status === 'void' && <span style={{ fontSize: 10.5, fontWeight: 800, color: '#fca5a5' }}>VOID</span>}
                     {s.emailedAt && <span style={{ fontSize: 10.5, fontWeight: 700, color: '#86efac' }}>emailed</span>}
                   </div>
-                  <p style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 2 }}>{fmtDay(s.periodStart)} – {fmtDay(s.periodEnd)} · {s.routeCount} route{s.routeCount === 1 ? '' : 's'} · issued {fmtTs(s.issuedAt)}</p>
+                  <p style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 2 }}>{fmtDay(s.periodStart)} – {fmtDay(s.periodEnd)} · {s.routeCount} completed job{s.routeCount === 1 ? '' : 's'} · issued {fmtTs(s.issuedAt)}</p>
                 </div>
                 <div style={{ textAlign: 'right', flexShrink: 0 }}>
                   <p className="jkos-h tabular-nums" style={{ fontSize: 18 }}>{money(s.netCents)}</p>

@@ -7,10 +7,12 @@ import { redis } from './redis'
 // the snapshot is the record. Duplicate prevention is keyed on crew + exact period.
 
 export type StatementLine = {
+  source?: 'route' | 'booking'
   routeNumber: string
   routeDate: string
   businessName: string
   amountCents: number
+  workedMinutes?: number
 }
 
 export type StatementDeduction = {
