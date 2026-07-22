@@ -6,21 +6,47 @@
 
 ---
 
-## ⚠️ Evidence status — read this before citing the plan
+## ✅ Evidence status — RESOLVED 2026-07-22 (updated)
 
-**This session did not observe any dead photo references in live data.** Preview validation never authenticated (the Crew Portal requires a password, which I will not enter), so no booking record and no photo list was ever read, in any environment.
+Open question #1 of the original draft ("were dead references actually observed?") is now **answered: yes.**
 
-What follows is a **structural finding proven from source**, not an observed data incident:
+**Source:** Session 1, reading real **Preview** booking data. Not observed by the coordinator session — this plan's author never authenticated and never read a booking record. Attributed, not claimed.
 
-| Claim | Basis | Confidence |
+### Observed instance
+
+Booking `b5d04027…` (crewed with both test accounts) holds **4 completion photos**. Three point at `x9k2.public.blob.vercel-storage.com` — **a store that is neither Preview (`ulabe9q3gbd8zyqh`) nor Production (`wk8dojzb2q1lu5sv`)**. All four were fetched:
+
+| URL | Result |
+|---|---|
+| `x9k2…/sprint1-completion-1.jpg` | **400, no bytes** |
+| `x9k2…/sprint1-completion-2.jpg` | **400, no bytes** |
+| `x9k2…/sprint1-completion-3.jpg` | **400, no bytes** |
+| `ulabe9q3gbd8zyqh…/operion-preview-isolation-test-….png` | 200, 995,543 bytes, image/png |
+
+**Three confirmed Class A dead references on one record.** They were admitted purely because the old host-suffix floor accepted any `*.blob.vercel-storage.com` host — so this is **P1-B demonstrated on real data**, not argued from code. Under PR #54's `requireStore` they would be refused on write.
+
+The 4th is a genuine Preview-store URL, correctly accepted and persisted. It was recorded at **02:31 UTC, ~10h before PR #54**, and came from earlier isolation work — **not** from the crew presigned flow on this code. That flow still has never been exercised by anyone.
+
+### What this changes
+
+| Claim | Prior status | Now |
 |---|---|---|
-| Completion photos are append-only, with no removal path | source-verified | **Certain** |
-| Nothing ever deletes a completion-photo blob | source-verified | **Certain** |
-| No reconciliation exists between the Blob store and booking records | source-verified | **Certain** |
-| Dead references and orphaned bytes *can* accumulate | follows deductively from the three above | **Certain (mechanism)** |
-| Dead references / orphaned bytes *do* exist right now, and how many | ❓ **NOT ESTABLISHED** | **Unknown** |
+| Append-only, no removal path | Certain (source) | Certain |
+| Nothing deletes a completion-photo blob | Certain (source) | Certain |
+| No blob↔record reconciliation | Certain (source) | Certain |
+| Dead references **do** exist | ❓ Unknown | ✅ **Confirmed — ≥3, on one Preview booking** |
+| Total population across all records | Unknown | **Still unknown** — Phase 1 still required |
 
-> If specific dead references were observed, they were found by another session. **Do not attribute them to this plan without a source.** The counting task is step 1 below precisely because the number is currently unknown.
+**Phase 1 (measure) is not obsoleted by this.** One record was inspected; the population across Preview and Production remains uncounted, and Production cannot be classified reliably until `BLOB_STORE_ID` is set there (blocker 5).
+
+### The consequence Session 1 correctly identified
+
+Those three dead URLs are **permanent**. `mergeCompletionPhotos` re-pushes every existing URL verbatim and there is no removal path anywhere in `app/lib` or `app/api`. Therefore:
+
+- The 3 dead references cannot be cleaned through any supported flow.
+- **Any photo added during validation is equally permanent.** Blob *bytes* are deletable (`vercel blob del`); the *reference* on the booking record is not.
+
+This is why a "create test data, then delete it" validation cannot fully clean up after itself: the bytes can go, the reference cannot. Session 1 stopped rather than mutating the booking to prove the refusal path — the right call.
 
 ---
 
@@ -143,8 +169,8 @@ Preview rehearsal → owner review of the exact target list → Production, boun
 
 ## 6. Open questions for the owner
 
-1. **Were specific dead photo references actually observed?** If so, by which session, in which environment, and with what evidence? This session did not observe any (§Evidence status). The answer changes the urgency materially.
-2. **Is hard deletion ever acceptable** for a completion photo, given payroll and claims use it as evidence — or is soft-delete/tombstone the permanent answer?
+1. ~~Were specific dead photo references actually observed?~~ **ANSWERED 2026-07-22** — yes: 3 on Preview booking `b5d04027…`, found by Session 1. See §Evidence status. Population-wide count still open (Phase 1).
+2. **Is hard deletion ever acceptable** for a completion photo, given payroll and claims use it as evidence — or is soft-delete/tombstone the permanent answer? **This is now the gating question**, because a removal path is being considered as a prerequisite to validation rather than a later phase.
 3. **What is the intended retention period**, if any? No policy exists today.
 4. Does the same lifecycle gap apply to the other Blob writers (`careers/upload`, `portal/uniform`, `payment-proof`, `image-convert`)? They use `put` with no `del` either — likely the same structural class, **unverified**, and out of scope until asked.
 
