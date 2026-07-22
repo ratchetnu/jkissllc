@@ -21,6 +21,14 @@ export type BuiltManifest = {
   closureCheckedPaths: string[]
   /** Target modules whose EXPORTED SYMBOLS were verified against this transfer's imports. */
   symbolCheckedPaths: string[]
+  /**
+   * Target modules the symbol gate could NOT analyse, and why — the fail-open record.
+   * The gate deliberately skips anything it cannot parse with certainty (re-export
+   * barrels, destructuring exports, CJS, `.d.ts`, an unreadable target file…), so this
+   * is the list of modules whose exports were never actually checked. For an audit
+   * trail, what was knowingly left unverified matters as much as what was verified.
+   */
+  skippedModules: { module: string; reason: string }[]
 }
 export type BuildResult = { ok: true; data: BuiltManifest } | { ok: false; error: string }
 
@@ -194,5 +202,6 @@ export async function buildCommitTransferManifest(input: {
     targetBaseCommit: targetBase.data.commit,
     closureCheckedPaths: closure.scannedPaths,
     symbolCheckedPaths: symbols.checkedModules,
+    skippedModules: symbols.skippedModules,
   } }
 }

@@ -63,7 +63,7 @@ import { NextRequest } from 'next/server'
 import { POST as manifestPOST } from '../app/api/automation/manifest/route'
 import { saveJob, getJob, saveTransferEvidence, getTransferEvidence } from '../app/lib/platform/automation/store'
 import { saveBusiness, saveCompat } from '../app/lib/platform/updates/store'
-import { buildTransferEvidence, buildRefusalEvidence, boundPaths } from '../app/lib/platform/automation/evidence'
+import { buildTransferEvidence, buildRefusalEvidence, boundList } from '../app/lib/platform/automation/evidence'
 import {
   AUTOMATION_JOB_VERSION, TRANSFER_EVIDENCE_VERSION, EVIDENCE_MAX_PATHS, EVIDENCE_TTL_MS,
   type UpdateAutomationJob, type TransferEvidence, type EvidenceTruncation,
@@ -92,6 +92,7 @@ function mkBuilt(p: Partial<BuiltManifest> = {}): BuiltManifest {
     targetBaseCommit: 'target-pinned-sha',
     closureCheckedPaths: ['app/lib/new.ts'],
     symbolCheckedPaths: ['app/lib/dep.ts'],
+    skippedModules: [{ module: 'app/lib/barrel.ts', reason: 're-export barrel (export *)' }],
     ...p,
   } as BuiltManifest
 }
@@ -155,6 +156,51 @@ test('a built manifest records every list, the pinned target commit, and the tru
   assert.equal(e.truncated, undefined, 'nothing dropped ⇒ no truncation key at all')
 })
 
+// ── skippedModules: what the symbol gate knowingly did NOT verify ────────────
+
+test('skippedModules is captured with its reasons — the fail-open record', () => {
+  const e = buildTransferEvidence(mkBuilt({
+    symbolCheckedPaths: ['app/lib/dep.ts'],
+    skippedModules: [
+      { module: 'app/lib/barrel.ts', reason: 're-export barrel (export *)' },
+      { module: 'app/lib/legacy.d.ts', reason: 'declaration file' },
+      { module: 'app/lib/cjs.ts', reason: 'CommonJS module.exports' },
+    ],
+  }), COMMON)
+  assert.deepEqual(e.skippedModules, [
+    { module: 'app/lib/barrel.ts', reason: 're-export barrel (export *)' },
+    { module: 'app/lib/legacy.d.ts', reason: 'declaration file' },
+    { module: 'app/lib/cjs.ts', reason: 'CommonJS module.exports' },
+  ], 'module AND reason survive — the reason is the whole point of the field')
+  // Checked and skipped together are the complete account of the gate's decision.
+  assert.deepEqual(e.symbolCheckedPaths, ['app/lib/dep.ts'])
+  assert.equal(e.truncated?.skippedModules, undefined, 'a short list is not reported as truncated')
+})
+
+test('an empty skippedModules list is preserved as empty — "nothing skipped" is a real answer', () => {
+  const e = buildTransferEvidence(mkBuilt({ skippedModules: [] }), COMMON)
+  assert.deepEqual(e.skippedModules, [], 'distinct from absent; the gate analysed everything it looked at')
+})
+
+test('skippedModules is bounded and its truncation is accounted for', () => {
+  const many = Array.from({ length: EVIDENCE_MAX_PATHS + 12 }, (_, i) => ({
+    module: `app/lib/skip${i}.ts`, reason: 'no recognisable export form',
+  }))
+  const e = buildTransferEvidence(mkBuilt({ skippedModules: many }), COMMON)
+  assert.equal(e.skippedModules?.length, EVIDENCE_MAX_PATHS, 'capped like every other list')
+  assert.equal(e.truncated?.skippedModules, 12, 'the dropped count is recorded, never silent')
+  assert.deepEqual(e.skippedModules?.[0], { module: 'app/lib/skip0.ts', reason: 'no recognisable export form' })
+  assert.equal(e.truncated?.symbolCheckedPaths, undefined, 'lists that fit are untouched')
+})
+
+test('boundList bounds object lists exactly as it bounds path lists', () => {
+  const t: EvidenceTruncation = {}
+  const pairs = [{ module: 'a.ts', reason: 'r' }, { module: 'b.ts', reason: 'r' }, { module: 'c.ts', reason: 'r' }]
+  assert.deepEqual(boundList(pairs, 'skippedModules', t, 2), pairs.slice(0, 2))
+  assert.equal(t.skippedModules, 1)
+  assert.equal(boundList(undefined, 'skippedModules', t), undefined)
+})
+
 test('THE SAFETY PROPERTY: no file contents, no content hashes, no secrets reach the record', () => {
   const raw = JSON.stringify(buildTransferEvidence(mkBuilt(), COMMON))
   assert.ok(!raw.includes(SECRET_BODY), 'no file body')
@@ -165,9 +211,22 @@ test('THE SAFETY PROPERTY: no file contents, no content hashes, no secrets reach
   // Belt and braces: the record's own keys are a closed, reviewed set.
   assert.deepEqual(Object.keys(JSON.parse(raw)).sort(), [
     'attempt', 'closureCheckedPaths', 'driftCheckedPaths', 'evidenceVersion', 'excludedPaths',
-    'jobId', 'manifestEntryCount', 'manifestPaths', 'outcome', 'recordedAt', 'sourceCommit',
-    'symbolCheckedPaths', 'targetBaseCommit',
+    'jobId', 'manifestEntryCount', 'manifestPaths', 'outcome', 'recordedAt', 'skippedModules',
+    'sourceCommit', 'symbolCheckedPaths', 'targetBaseCommit',
   ])
+})
+
+test('skipped-module reasons are static gate vocabulary, never file content', () => {
+  // The reasons come from a fixed set in exports.ts, so they cannot leak target bytes.
+  const e = buildTransferEvidence(mkBuilt({
+    skippedModules: [{ module: 'app/lib/barrel.ts', reason: 're-export barrel (export *)' }],
+  }), COMMON)
+  const raw = JSON.stringify(e)
+  assert.ok(!raw.includes(SECRET_BODY))
+  assert.ok(!raw.includes('contentBase64'))
+  for (const s of e.skippedModules ?? []) {
+    assert.ok(s.reason.length < 80, 'a reason is a short label, not a payload')
+  }
 })
 
 test('a refusal records the reason and claims no manifest fields', () => {
@@ -201,12 +260,12 @@ test('truncation reports the dropped count and preserves the true total', () => 
   assert.equal(e.truncated?.excludedPaths, undefined, 'lists that fit are not reported as truncated')
 })
 
-test('boundPaths passes short lists through untouched and leaves undefined undefined', () => {
+test('boundList passes short lists through untouched and leaves undefined undefined', () => {
   const t: EvidenceTruncation = {}
-  assert.deepEqual(boundPaths(['a', 'b'], 'manifestPaths', t), ['a', 'b'])
-  assert.equal(boundPaths(undefined, 'manifestPaths', t), undefined)
+  assert.deepEqual(boundList(['a', 'b'], 'manifestPaths', t), ['a', 'b'])
+  assert.equal(boundList(undefined, 'manifestPaths', t), undefined)
   assert.deepEqual(t, {})
-  assert.deepEqual(boundPaths(['a', 'b', 'c'], 'manifestPaths', t, 2), ['a', 'b'])
+  assert.deepEqual(boundList(['a', 'b', 'c'], 'manifestPaths', t, 2), ['a', 'b'])
   assert.equal(t.manifestPaths, 1)
 })
 

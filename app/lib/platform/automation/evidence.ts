@@ -17,17 +17,24 @@ import {
 } from './types'
 import type { BuiltManifest } from './manifest-builder'
 
-/** Cap one path list, recording anything dropped so a short list never reads as complete. */
-export function boundPaths(
-  paths: string[] | undefined,
+/**
+ * Cap one list, recording anything dropped so a short list never reads as complete.
+ *
+ * Generic over the element type because not every bounded list is a list of paths:
+ * `skippedModules` carries `{ module, reason }` pairs, and the reason is the entire
+ * point of that field. One bounding rule for every list keeps the truncation
+ * accounting uniform.
+ */
+export function boundList<T>(
+  items: T[] | undefined,
   field: keyof EvidenceTruncation,
   truncated: EvidenceTruncation,
   max: number = EVIDENCE_MAX_PATHS,
-): string[] | undefined {
-  if (!paths) return undefined
-  if (paths.length <= max) return paths
-  truncated[field] = paths.length - max
-  return paths.slice(0, max)
+): T[] | undefined {
+  if (!items) return undefined
+  if (items.length <= max) return items
+  truncated[field] = items.length - max
+  return items.slice(0, max)
 }
 
 type Common = { jobId: string; attempt: number; sourceCommit?: string; now: number }
@@ -39,6 +46,10 @@ type Common = { jobId: string; attempt: number; sourceCommit?: string; now: numb
  * The manifest's entries carry content hashes; only their `path` is copied out. The
  * true entry count is always preserved even when the path list is truncated, so a
  * capped record still tells you how big the transfer really was.
+ *
+ * `skippedModules` is captured alongside `symbolCheckedPaths` on purpose: together they
+ * are the complete account of the symbol gate's decision — what it verified, and what
+ * it knowingly failed open on.
  */
 export function buildTransferEvidence(data: BuiltManifest, c: Common): TransferEvidence {
   const truncated: EvidenceTruncation = {}
@@ -51,11 +62,12 @@ export function buildTransferEvidence(data: BuiltManifest, c: Common): TransferE
     sourceCommit: c.sourceCommit,
     targetBaseCommit: data.targetBaseCommit,
     manifestEntryCount: data.manifest.entries.length,
-    manifestPaths: boundPaths(data.manifest.entries.map((e) => e.path), 'manifestPaths', truncated),
-    excludedPaths: boundPaths(data.excludedPaths, 'excludedPaths', truncated),
-    driftCheckedPaths: boundPaths(data.driftCheckedPaths, 'driftCheckedPaths', truncated),
-    closureCheckedPaths: boundPaths(data.closureCheckedPaths, 'closureCheckedPaths', truncated),
-    symbolCheckedPaths: boundPaths(data.symbolCheckedPaths, 'symbolCheckedPaths', truncated),
+    manifestPaths: boundList(data.manifest.entries.map((e) => e.path), 'manifestPaths', truncated),
+    excludedPaths: boundList(data.excludedPaths, 'excludedPaths', truncated),
+    driftCheckedPaths: boundList(data.driftCheckedPaths, 'driftCheckedPaths', truncated),
+    closureCheckedPaths: boundList(data.closureCheckedPaths, 'closureCheckedPaths', truncated),
+    symbolCheckedPaths: boundList(data.symbolCheckedPaths, 'symbolCheckedPaths', truncated),
+    skippedModules: boundList(data.skippedModules, 'skippedModules', truncated),
   }
   if (Object.keys(truncated).length) evidence.truncated = truncated
   return evidence

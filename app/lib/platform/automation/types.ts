@@ -70,7 +70,15 @@ export type WorkflowResult = {
 // marker; the evidence itself is fetched on demand.
 
 export const TRANSFER_EVIDENCE_VERSION = 1
-/** Per-array entry cap. UPD-1004 was 41 paths; closure's own module cap is 200. */
+/**
+ * Per-list entry cap, sized to sit ABOVE every producer that feeds this record so it
+ * is a genuine ceiling rather than a routine trim:
+ *   • the real UPD-1004 transfer was 41 paths;
+ *   • dependency closure walks at most `DEFAULT_CLOSURE_LIMITS.maxModules` = **200**;
+ *   • the exported-symbol gate reads at most `DEFAULT_MAX_TARGET_MODULES` = **150**
+ *     target modules, which bounds both `symbolCheckedPaths` and `skippedModules`.
+ * A list that does hit this cap is reported in `truncated`, never silently shortened.
+ */
 export const EVIDENCE_MAX_PATHS = 250
 /** A path is already bounded to 400 chars upstream by `isSafeRepoPath`. */
 export const EVIDENCE_MAX_REASON = 2000
@@ -79,7 +87,7 @@ export const EVIDENCE_TTL_MS = 90 * 24 * 60 * 60_000
 
 /** Which bounded lists were truncated, and by how many entries. Never silent. */
 export type EvidenceTruncation = Partial<Record<
-  'manifestPaths' | 'excludedPaths' | 'driftCheckedPaths' | 'closureCheckedPaths' | 'symbolCheckedPaths',
+  'manifestPaths' | 'excludedPaths' | 'driftCheckedPaths' | 'closureCheckedPaths' | 'symbolCheckedPaths' | 'skippedModules',
   number
 >>
 
@@ -99,6 +107,13 @@ export type TransferEvidence = {
   driftCheckedPaths?: string[]
   closureCheckedPaths?: string[]
   symbolCheckedPaths?: string[]
+  /**
+   * Target modules the symbol gate FAILED OPEN on, with the reason. The gate skips
+   * anything it cannot parse with certainty, so this is the record of what was
+   * knowingly NOT verified — the question an incident review asks second, right after
+   * "what did we check?". Module paths and short static reason strings only.
+   */
+  skippedModules?: { module: string; reason: string }[]
   truncated?: EvidenceTruncation
   /** The refusal reason, verbatim and length-capped, when outcome is 'refused'. */
   failureReason?: string
