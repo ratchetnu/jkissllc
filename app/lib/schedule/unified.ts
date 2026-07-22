@@ -186,10 +186,11 @@ export function bookingToScheduleItem(b: Booking): ScheduleItem {
   // a booking's crew to a route's crew by staffId instead of by string equality.
   const assignmentEnabled = isEnabled('BOOKING_ASSIGNMENT_ENABLED')
   const rosterManaged = b.assignees !== undefined
+  const assignmentHidden = !assignmentEnabled && rosterManaged
   const roster = assignmentEnabled ? activeCrew(b.assignees) : []
   const crew: ScheduleCrew[] = roster.length
     ? roster.map(a => ({ name: a.name, staffId: a.staffId, role: a.role, confirmed: !!a.confirmedAt }))
-    : (!assignmentEnabled && rosterManaged ? [] : legacyCrewChips(b))
+    : (assignmentHidden ? [] : legacyCrewChips(b))
   const gap = jobCrewGap(assignmentEnabled ? b.assignees : undefined, b.crewSize)
 
   // Equipment. Bookings used to project nothing here at all, which made the
@@ -242,14 +243,14 @@ export function bookingToScheduleItem(b: Booking): ScheduleItem {
     // With a roster crew we can say whether the job has the people it NEEDS
     // (crewSize, a driver). With only free-text names, "someone is named" remains
     // the best available signal — unchanged from before.
-    crewComplete: roster.length ? !gap.incomplete : crew.length > 0,
+    crewComplete: assignmentHidden ? !!b.assignedTo?.trim() : (roster.length ? !gap.incomplete : crew.length > 0),
     vehicle,
     equipmentId,
     equipment,
 
     valueCents: netInvoiceCents(b) || undefined,
     paymentState: paymentSummaryStatus(b),
-    attention: attentionForBooking(b, { scheduled, placementDate, gap, roster: roster.length, visibleCrew: crew.length }),
+    attention: attentionForBooking(b, { scheduled, placementDate, gap, roster: roster.length, assignmentHidden }),
 
     href: `/admin/operations/book-now/${b.token}`,
   }
@@ -328,7 +329,7 @@ export function routeToScheduleItem(r: RouteRecord): ScheduleItem {
 // ── Per-item attention flags (deterministic; cross-record checks live in conflicts.ts) ──
 function attentionForBooking(
   b: Booking,
-  ctx: { scheduled: boolean; placementDate: string; gap: JobCrewGap; roster: number; visibleCrew: number },
+  ctx: { scheduled: boolean; placementDate: string; gap: JobCrewGap; roster: number; assignmentHidden: boolean },
 ): string[] {
   const out: string[] = []
   if (b.status === 'quote_received') out.push('needs_review')
@@ -349,7 +350,7 @@ function attentionForBooking(
       else if (ctx.gap.short) out.push('needs_helper')
       else if (ctx.gap.needsDriver) out.push('needs_driver')
       if (!b.vehicle && !b.equipmentId) out.push('no_vehicle')
-    } else if (!ctx.visibleCrew) {
+    } else if (!ctx.assignmentHidden && !b.assignedTo?.trim()) {
       out.push('no_crew')
     }
   }

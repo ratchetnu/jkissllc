@@ -188,7 +188,8 @@ test('flag off hides persisted roster crew and equipment from the schedule proje
     assert.equal(item.vehicle, undefined)
     assert.equal(item.equipmentId, undefined)
     assert.deepEqual(item.equipment, [])
-    assert.ok(item.attention.includes('no_crew'))
+    assert.ok(!item.attention.includes('no_crew'), 'hidden assignments do not become a false missing-crew warning')
+    assert.equal(item.crewComplete, true, 'the retained assignment remains staffed without exposing identities')
   })
 
   await withFlag(undefined, () => {
@@ -230,5 +231,6 @@ test('flag off removes cross-lane conflicts created only by booking assignments'
     assert.ok(!types.includes('crew_overlap'))
     assert.ok(!types.includes('equipment_overlap'))
     assert.ok(!types.includes('vehicle_overlap'))
+    assert.ok(!types.includes('missing_crew'))
   })
 })
