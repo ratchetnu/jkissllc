@@ -129,7 +129,10 @@ export class GitHubActionsProvider implements UpdateAutomationProvider {
     return this.get(installationId, `/repos/${repo.owner}/${repo.name}/branches/${encodeURIComponent(branch)}`, (b) => ({ commit: (b as { commit: { sha: string } }).commit.sha }))
   }
   readCommit(installationId: string, repo: RepoRef, sha: string) {
-    return this.get(installationId, `/repos/${repo.owner}/${repo.name}/commits/${encodeURIComponent(sha)}`, (b) => { const r = b as { sha: string; commit: { message: string } }; return { sha: r.sha, message: r.commit.message } })
+    return this.get(installationId, `/repos/${repo.owner}/${repo.name}/commits/${encodeURIComponent(sha)}`, (b) => {
+      const r = b as { sha: string; commit: { message: string }; parents?: { sha: string }[] }
+      return { sha: r.sha, message: r.commit.message, parentSha: r.parents?.[0]?.sha, parentCount: r.parents?.length ?? 0 }
+    })
   }
   readCommitFiles(installationId: string, repo: RepoRef, sha: string) {
     return this.get(installationId, `/repos/${repo.owner}/${repo.name}/commits/${encodeURIComponent(sha)}`, (b) => {

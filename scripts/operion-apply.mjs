@@ -12,6 +12,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 
 const { OPERION_CALLBACK_URL, OPERION_CALLBACK_SECRET, OPERION_JOB_ID } = process.env
 const RESULT = process.env.OPERION_APPLY_RESULT || 'apply-result.json'
@@ -39,8 +40,12 @@ const res = await fetch(manifestUrl, {
   body,
 })
 if (!res.ok) die(`manifest fetch failed (${res.status})`)
-const { manifest, contents } = await res.json()
+const { manifest, contents, targetBaseCommit } = await res.json()
 if (!manifest || !Array.isArray(manifest.entries)) die('manifest response malformed')
+if (typeof targetBaseCommit !== 'string' || !targetBaseCommit) die('manifest response missing target base commit')
+let checkoutCommit
+try { checkoutCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() } catch { die('unable to verify target checkout commit') }
+if (checkoutCommit !== targetBaseCommit) die('target checkout changed after drift validation — retry from the latest base')
 
 // Deterministic order: explicit order, add/modify before delete, then path.
 const rank = (a) => (a === 'delete' ? 1 : 0)

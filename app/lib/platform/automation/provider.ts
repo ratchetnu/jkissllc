@@ -21,7 +21,7 @@ export interface UpdateAutomationProvider {
   validateConnection(installationId: string): Promise<ProviderResult<{ connected: boolean; login?: string }>>
   readRepository(installationId: string, repo: RepoRef): Promise<ProviderResult<{ defaultBranch: string; private: boolean }>>
   readBranch(installationId: string, repo: RepoRef, branch: string): Promise<ProviderResult<{ commit: string }>>
-  readCommit(installationId: string, repo: RepoRef, sha: string): Promise<ProviderResult<{ sha: string; message: string }>>
+  readCommit(installationId: string, repo: RepoRef, sha: string): Promise<ProviderResult<{ sha: string; message: string; parentSha?: string; parentCount?: number }>>
   /** Files changed in a commit — the deterministic basis for a commit-transfer manifest. */
   readCommitFiles(installationId: string, repo: RepoRef, sha: string): Promise<ProviderResult<{ files: { filename: string; status: string }[] }>>
   /** Raw file content at a ref (base64) — the approved bytes a manifest transfers. */
@@ -52,7 +52,7 @@ export class StubProvider implements UpdateAutomationProvider {
   validateConnection() { return fail<{ connected: boolean; login?: string }>() }
   readRepository() { return fail<{ defaultBranch: string; private: boolean }>() }
   readBranch() { return fail<{ commit: string }>() }
-  readCommit() { return fail<{ sha: string; message: string }>() }
+  readCommit() { return fail<{ sha: string; message: string; parentSha?: string; parentCount?: number }>() }
   readCommitFiles() { return fail<{ files: { filename: string; status: string }[] }>() }
   readFileContent() { return fail<{ contentBase64: string; sha256: string }>() }
   createBranch() { return fail<{ branch: string; commit: string }>() }

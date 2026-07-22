@@ -151,6 +151,14 @@ test('target workflow never expands dispatch inputs directly inside shell source
   assert.ok(shellBodies.length > 0)
   for (const body of shellBodies) assert.doesNotMatch(body, /\$\{\{\s*inputs\./)
 })
+test('commit-transfer runner refuses a checkout that differs from the drift-checked target base', () => {
+  const runner = readFileSync(new URL('./operion-apply.mjs', import.meta.url), 'utf8')
+  assert.match(runner, /targetBaseCommit/)
+  assert.match(runner, /execFileSync\('git', \['rev-parse', 'HEAD'\]/)
+  assert.match(runner, /checkoutCommit !== targetBaseCommit/)
+  assert.match(runner, /target checkout changed after drift validation/)
+  assert.ok(runner.indexOf('checkoutCommit !== targetBaseCommit') < runner.indexOf('for (const e of entries)'), 'base commit guard must run before any file write')
+})
 test('commit drift + automatic rollback eligibility', () => {
   assert.equal(commitDriftDetected('abc', 'abc'), false)
   assert.equal(commitDriftDetected('abc', 'def'), true)
