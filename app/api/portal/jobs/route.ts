@@ -132,16 +132,19 @@ function fromBooking(b: Booking, staffId: string, showPay: boolean): PortalJob |
 }
 
 export const GET = withTenantRoute(async (req: NextRequest) => {
+  // OFF MEANS ABSENT, not "the same feed minus bookings". With the flag off this
+  // surface would show exactly what /portal/routes already shows — a second tab
+  // onto identical work — so it 404s instead, and Production keeps precisely the
+  // portal it has today. The page and the nav item are gated on the same flag.
+  if (!isEnabled('BOOKING_ASSIGNMENT_ENABLED')) {
+    return NextResponse.json({ error: 'not_found' }, { status: 404 })
+  }
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
 
-  const bookingsEnabled = isEnabled('BOOKING_ASSIGNMENT_ENABLED')
-
   const [routes, bookings, fin] = await Promise.all([
     listRoutes(500),
-    // With the flag off we don't even read the booking store — the feed is exactly
-    // the routes feed, which is what the portal has always shown.
-    bookingsEnabled ? listBookings(500) : Promise.resolve([] as Booking[]),
+    listBookings(500),
     getFinanceSettings(),
   ])
   const showPay = !!fin?.showPayInConfirm

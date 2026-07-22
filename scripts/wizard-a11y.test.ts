@@ -18,7 +18,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -92,6 +92,54 @@ test('photo upload exposes a live status and the submission error is an alert', 
   for (const fi of fileInputs) {
     assert.ok(/\baria-label="[^"]+"/.test(fi), `file input needs an aria-label: ${fi.slice(0, 100)}…`)
   }
+})
+
+// The same rule, applied to EVERY file input the app ships — not just the wizard's.
+//
+// The wizard-only scope above is why a `display:none` picker shipped in the crew
+// portal's completion-photo upload: the rule existed, the guard just wasn't looking
+// there. Any new upload surface is now covered the moment it is added.
+// PRE-EXISTING violations, recorded rather than hidden. These predate the sweep and
+// are outside the scope of the change that added it; they are listed here so the
+// guard can protect everything else today instead of waiting on a cleanup. Removing
+// a file from this list is the fix — nothing may ever be ADDED to it.
+const KNOWN_GAPS = new Set([
+  'app/admin/operations/claims/NewClaim.tsx',
+  'app/admin/operations/claims/[id]/page.tsx',
+  'app/portal/CrewTasks.tsx',
+])
+
+test('EVERY file input in the app stays keyboard-reachable, not just the wizard’s', () => {
+  const roots = ['app']
+  const files: string[] = []
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, entry.name)
+      if (entry.isDirectory()) { if (entry.name !== 'node_modules') walk(p) }
+      else if (entry.name.endsWith('.tsx')) files.push(p)
+    }
+  }
+  for (const r of roots) walk(join(here, '..', r))
+
+  let checked = 0
+  for (const file of files) {
+    const rel = file.slice(file.indexOf('/app/') + 1)
+    if (KNOWN_GAPS.has(rel)) continue
+    const text = readFileSync(file, 'utf8').replace(/=>/g, '=~')
+    for (const m of text.matchAll(/<input\b[^>]*type="file"[^>]*>/g)) {
+      const fi = m[0]
+      checked++
+      const where = `${rel}: ${fi.slice(0, 90)}…`
+      assert.ok(!/\bhidden\b/.test(fi), `file input must not use the \`hidden\` attribute — use .file-input-a11y — ${where}`)
+      assert.ok(!/display:\s*['"]?none/.test(fi), `file input must not be display:none — use .file-input-a11y — ${where}`)
+      assert.ok(/\bfile-input-a11y\b/.test(fi), `file input must be visually hidden via .file-input-a11y (keeps it focusable) — ${where}`)
+    }
+  }
+  // The crew portal's completion-photo upload is the one this rule was extended for.
+  const portal = readFileSync(join(here, '..', 'app', 'portal', 'jobs', '[id]', 'JobDetailClient.tsx'), 'utf8')
+  assert.match(portal, /className="file-input-a11y"/, 'the portal completion-photo input must use the accessible pattern')
+  assert.doesNotMatch(portal, /type="file"[^>]*display:\s*['"]?none/, 'the portal completion-photo input must not be display:none')
+  assert.ok(checked >= 8, `expected the sweep to find the app’s file inputs, found ${checked}`)
 })
 
 test('file inputs stay keyboard-reachable (no display:none / hidden that drops them from tab order)', () => {

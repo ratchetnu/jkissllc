@@ -263,21 +263,102 @@ export type JobCompletion = {
   completionPhotos?: string[]   // Vercel Blob URLs
 }
 
-// Accept only http(s) URLs, deduped and capped — the same defensive posture as
-// lib/bookings.sanitizePhotos, which this deliberately mirrors rather than
-// re-invents. Blob URLs are the only thing that should ever land here.
-export function sanitizeCompletionPhotos(v: unknown, max = 20): string[] {
+// ── Completion-photo URL policy ──────────────────────────────────────────────
+// Blob URLs are the ONLY thing that should ever land in `completionPhotos`, and
+// these strings are rendered as <img src> on the admin booking page and in the
+// crew portal. So this is an allow-list, not a scheme filter:
+//
+//   • https only          — `http:` is mixed content on an https admin surface,
+//                           and lib/bookings.sanitizePhotos (the sibling this
+//                           mirrors) has always been https-only. Matching it.
+//   • ≤ 1000 chars        — the same cap sanitizePhotos uses, so a bad payload
+//                           can't bloat the record.
+//   • a Vercel Blob host  — `*.blob.vercel-storage.com`, the same rule the
+//                           @vercel/blob SDK enforces on its own URLs.
+//   • the CONFIGURED store, when this deployment names one. Preview and
+//     Production are intentionally isolated; a deployment bound to
+//     `operion-preview-blob` must not be able to persist a URL pointing at
+//     `jkiss-invoice-photos`, in either direction. Public Blob URLs are
+//     `https://<storeId>.public.blob.vercel-storage.com/<pathname>`, so the
+//     first host label IS the store id (minus the `store_` prefix).
+//
+// When no store id is configured the suffix rule still applies — that is the
+// fail-closed floor, never an open door.
+const MAX_PHOTO_URL_LEN = 1000
+const BLOB_HOST_SUFFIX = '.blob.vercel-storage.com'
+
+export type CompletionPhotoPolicy = {
+  max?: number
+  /** Blob store id this deployment is bound to, with or without `store_`. */
+  storeId?: string
+}
+
+// Normalize a store id to the host label form used in a Blob URL. Hostnames are
+// case-insensitive, so comparison is lowercased on both sides.
+const storeHostLabel = (storeId: string): string =>
+  storeId.trim().replace(/^store_/i, '').toLowerCase()
+
+export function isCompletionPhotoUrl(raw: unknown, policy: CompletionPhotoPolicy = {}): boolean {
+  if (typeof raw !== 'string') return false
+  const url = raw.trim()
+  if (!url || url.length > MAX_PHOTO_URL_LEN) return false
+
+  let parsed: URL
+  try { parsed = new URL(url) } catch { return false }
+  if (parsed.protocol !== 'https:') return false
+
+  const host = parsed.hostname.toLowerCase()
+  if (!host.endsWith(BLOB_HOST_SUFFIX)) return false
+
+  const want = policy.storeId ? storeHostLabel(policy.storeId) : ''
+  if (!want) return true
+  // `<storeId>.public.blob.vercel-storage.com` → the first label is the store.
+  return host.split('.')[0] === want
+}
+
+// Validate + dedupe + cap an INCOMING list. Anything that is not a well-formed
+// Blob URL for this deployment's store is dropped silently, exactly as
+// sanitizePhotos drops a malformed invoice photo.
+export function sanitizeCompletionPhotos(v: unknown, policy: CompletionPhotoPolicy = {}): string[] {
   if (!Array.isArray(v)) return []
+  const max = policy.max ?? 20
   const out: string[] = []
   const seen = new Set<string>()
   for (const item of v) {
-    if (typeof item !== 'string') continue
-    const url = item.trim()
-    if (!/^https?:\/\//i.test(url)) continue
+    if (!isCompletionPhotoUrl(item, policy)) continue
+    const url = (item as string).trim()
     if (seen.has(url)) continue
     seen.add(url)
     out.push(url)
     if (out.length >= max) break
   }
+  return out
+}
+
+// Append newly-uploaded photos to what a booking already holds.
+//
+// ALREADY-PERSISTED URLs ARE PRESERVED VERBATIM. Tightening the policy must not
+// retroactively delete proof of work that was accepted under the old rules — a
+// record written before this policy (or from a store this deployment is no longer
+// bound to) stays exactly as it is. The new rules gate what may be ADDED, which is
+// where the injection risk actually lives. Existing entries are still deduped and
+// still capped, so the record cannot grow without bound.
+export function mergeCompletionPhotos(
+  existing: readonly string[] | undefined,
+  incoming: unknown,
+  policy: CompletionPhotoPolicy = {},
+): string[] {
+  const max = policy.max ?? 20
+  const out: string[] = []
+  const seen = new Set<string>()
+  const push = (url: string) => {
+    if (seen.has(url) || out.length >= max) return
+    seen.add(url)
+    out.push(url)
+  }
+  for (const url of existing ?? []) {
+    if (typeof url === 'string' && url.trim()) push(url.trim())
+  }
+  for (const url of sanitizeCompletionPhotos(incoming, policy)) push(url)
   return out
 }

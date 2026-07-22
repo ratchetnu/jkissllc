@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const route = readFileSync(new URL('../app/api/portal/upload/route.ts', import.meta.url), 'utf8')
-const page = readFileSync(new URL('../app/portal/jobs/[id]/page.tsx', import.meta.url), 'utf8')
+// The upload lives in the CLIENT half of the job screen; ./page.tsx is now the
+// server component that gates the whole segment on BOOKING_ASSIGNMENT_ENABLED.
+const page = readFileSync(new URL('../app/portal/jobs/[id]/JobDetailClient.tsx', import.meta.url), 'utf8')
 
 test('crew completion uploads use the OIDC-compatible presigned Blob transport end to end', () => {
   assert.match(route, /handleUploadPresigned/)

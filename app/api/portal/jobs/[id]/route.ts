@@ -136,10 +136,16 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
     case 'complete':
       // Proof of work, NOT a billing decision: this records photos and a note and
       // never changes BookingStatus. The owner still closes the job out.
+      //
+      // `staffId` comes from the SIGNED SESSION, never the body, and the
+      // orchestrator refuses unless that crew member is actually on this booking
+      // and has not declined it — so a booking token alone grants nothing here,
+      // exactly as it grants nothing to accept / decline / clock_in / clock_out.
       return respond(await recordBookingCompletion(id, {
         note: str(body.note, 2000),
         photos: body.photos,
         by: 'crew',
+        staffId: who.staffId,
       }))
 
     default:

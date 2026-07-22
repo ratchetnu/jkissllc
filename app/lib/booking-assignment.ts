@@ -33,9 +33,9 @@ import { getEquipment } from './equipment'
 import { isEnabled } from './platform/flags'
 import { getStaff } from './staff'
 import {
-  type JobAssignee,
+  type CompletionPhotoPolicy, type JobAssignee,
   applyPaySnapshot, clearJobPay, deriveLegacyCrewNames,
-  makeJobAssignee, sanitizeCompletionPhotos, validateAssignees,
+  makeJobAssignee, mergeCompletionPhotos, validateAssignees,
 } from './job-assignment'
 
 // Why an assignment write was refused. Callers map these to HTTP + copy; they are
@@ -177,25 +177,54 @@ export async function setBookingEquipment(
 }
 
 // ── Completion proof ─────────────────────────────────────────────────────────
+// The Blob store THIS deployment is bound to. Read at call time (not module load)
+// so a test or a redeploy sees the current binding. When it is absent the photo
+// policy still requires a Vercel Blob host — the floor is never removed, only
+// narrowed to a single store when we know which store that is.
+const photoPolicy = (): CompletionPhotoPolicy => ({ storeId: process.env.BLOB_STORE_ID?.trim() || undefined })
+
+// WHO is recording the proof. A discriminated union rather than a bare
+// `by: 'crew' | 'admin'` string, because the crew path REQUIRES an identity to
+// authorize against and the admin path does not — making that a type error rather
+// than a convention is the point. An admin reached this through
+// `requirePermission(routes:manage)`; a crew member must prove they are on the job.
+export type CompletionActor =
+  | { by: 'crew'; staffId: string }
+  | { by: 'admin' }
+
 // On-site proof from the crew or the admin. Deliberately does NOT touch
 // BookingStatus: recording arrival photos must never silently close out a job's
 // money. The owner still decides when a booking is 'completed'.
+//
+// AUTHORIZATION. For the crew path this re-resolves the caller's OWN assignment on
+// the freshly-loaded booking and refuses with `not_assigned` when they are not on
+// it — the same rule accept/decline/punch already enforce. It was missing here,
+// which meant a crew principal holding a booking token (one they had been removed
+// from, or declined) could stamp completion proof on a job that was not theirs.
+// The booking token is the CUSTOMER's link key and is not a crew credential.
 export async function recordBookingCompletion(
   token: string,
-  input: { note?: string; photos?: unknown; by: 'crew' | 'admin'; at?: number },
+  input: { note?: string; photos?: unknown; at?: number } & CompletionActor,
 ): Promise<AssignmentResult> {
   if (!enabled()) return { ok: false, error: 'disabled' }
 
-  const photos = sanitizeCompletionPhotos(input.photos)
+  const policy = photoPolicy()
   const note = input.note?.trim().slice(0, 2000)
   const at = input.at ?? Date.now()
 
   return persist(token, (b) => {
-    // Photos ACCUMULATE — a second upload from the field adds to the set rather
-    // than replacing what the first crew member already sent.
-    if (photos.length) {
-      b.completionPhotos = sanitizeCompletionPhotos([...(b.completionPhotos ?? []), ...photos])
+    if (input.by === 'crew') {
+      const me = (b.assignees ?? []).find(a => a.staffId === input.staffId)
+      // A DECLINED crew member is not working this job, so they may not file proof
+      // for it — the same exclusion activeCrew() applies everywhere else.
+      if (!me || me.declinedAt) return { abort: 'not_assigned' as const }
     }
+
+    // Photos ACCUMULATE — a second upload from the field adds to the set rather
+    // than replacing what the first crew member already sent. Existing entries are
+    // preserved as stored; only NEW ones must satisfy the current store policy.
+    const photos = mergeCompletionPhotos(b.completionPhotos, input.photos, policy)
+    if (photos.length) b.completionPhotos = photos
     if (note) b.completionNote = note
     b.jobCompletedAt = at
     b.jobCompletedBy = input.by

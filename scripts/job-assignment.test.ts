@@ -14,7 +14,8 @@ import {
   type JobAssignee, type JobEquipment,
   isDriverRole, isHelperRole, activeCrew,
   deriveLegacyCrewNames, makeJobAssignee, applyPaySnapshot, clearJobPay,
-  jobCrewGap, hasEquipment, validateAssignees, sanitizeCompletionPhotos,
+  jobCrewGap, hasEquipment, validateAssignees,
+  isCompletionPhotoUrl, sanitizeCompletionPhotos, mergeCompletionPhotos,
 } from '../app/lib/job-assignment'
 import type { Assignee } from '../app/lib/routes'
 import { fmtCents } from '../app/lib/finance'
@@ -240,24 +241,101 @@ test('a well-formed crew list has no problems', () => {
 })
 
 // ── Completion proof ─────────────────────────────────────────────────────────
-test('completion photos accept only http(s) urls, deduped', () => {
+// These strings are rendered as <img src> on the admin booking page and in the
+// crew portal, so the policy is an ALLOW-list: https, length-capped, on a Vercel
+// Blob host, and — when the deployment names a store — on THAT store only.
+const PREVIEW_STORE = 'store_Ulabe9q3GBD8ZYQh'
+const previewUrl = (p: string) => `https://ulabe9q3gbd8zyqh.public.blob.vercel-storage.com/${p}`
+const prodUrl = (p: string) => `https://wk8dojzb2q1lu5sv.public.blob.vercel-storage.com/${p}`
+
+test('completion photos accept only https Blob URLs, trimmed and deduped', () => {
   const out = sanitizeCompletionPhotos([
-    'https://blob.vercel-storage.com/a.jpg',
-    'https://blob.vercel-storage.com/a.jpg',   // dup
-    'javascript:alert(1)',                      // rejected
-    'data:image/png;base64,AAAA',               // rejected
-    '  https://blob.vercel-storage.com/b.jpg ', // trimmed
-    42,                                         // rejected
+    previewUrl('a.jpg'),
+    previewUrl('a.jpg'),                        // dup
+    `  ${previewUrl('b.jpg')} `,                // trimmed
+    'javascript:alert(1)',                      // rejected — scheme
+    'data:image/png;base64,AAAA',               // rejected — scheme
+    prodUrl('c.jpg').replace('https:', 'http:'), // rejected — http is mixed content
+    42,                                         // rejected — not a string
+    '',                                         // rejected — empty
   ])
-  assert.deepEqual(out, ['https://blob.vercel-storage.com/a.jpg', 'https://blob.vercel-storage.com/b.jpg'])
+  assert.deepEqual(out, [previewUrl('a.jpg'), previewUrl('b.jpg')])
+})
+
+test('a plain http Blob URL is refused even on the right host', () => {
+  const insecure = previewUrl('a.jpg').replace('https://', 'http://')
+  assert.equal(isCompletionPhotoUrl(insecure), false)
+  assert.equal(isCompletionPhotoUrl(insecure, { storeId: PREVIEW_STORE }), false)
+  assert.deepEqual(sanitizeCompletionPhotos([insecure], { storeId: PREVIEW_STORE }), [])
+})
+
+test('an oversized URL is refused at the same 1000-char cap sanitizePhotos uses', () => {
+  assert.equal(isCompletionPhotoUrl(previewUrl('a'.repeat(200))), true)
+  const huge = previewUrl('a'.repeat(1200))
+  assert.ok(huge.length > 1000)
+  assert.equal(isCompletionPhotoUrl(huge), false)
+  assert.deepEqual(sanitizeCompletionPhotos([huge]), [])
+})
+
+test('a foreign host is refused even over https', () => {
+  for (const bad of [
+    'https://evil.example.com/a.jpg',
+    'https://tracker.test/pixel.gif',
+    // Look-alikes: the suffix must be a real label boundary, not a substring.
+    'https://blob.vercel-storage.com.evil.test/a.jpg',
+    'https://notblob.vercel-storage.com.attacker.io/a.jpg',
+  ]) {
+    assert.equal(isCompletionPhotoUrl(bad), false, `${bad} must be refused`)
+  }
+  assert.deepEqual(sanitizeCompletionPhotos(['https://evil.example.com/a.jpg', previewUrl('ok.jpg')]), [previewUrl('ok.jpg')])
+})
+
+test('a configured store id pins uploads to THAT store — Preview cannot persist a Production URL', () => {
+  // Bound to Preview: the preview store's URLs pass, the production store's do not.
+  assert.equal(isCompletionPhotoUrl(previewUrl('a.jpg'), { storeId: PREVIEW_STORE }), true)
+  assert.equal(isCompletionPhotoUrl(prodUrl('a.jpg'), { storeId: PREVIEW_STORE }), false)
+  // The `store_` prefix is optional, and hostnames are case-insensitive.
+  assert.equal(isCompletionPhotoUrl(previewUrl('a.jpg'), { storeId: 'Ulabe9q3GBD8ZYQh' }), true)
+  assert.deepEqual(
+    sanitizeCompletionPhotos([prodUrl('leak.jpg'), previewUrl('ok.jpg')], { storeId: PREVIEW_STORE }),
+    [previewUrl('ok.jpg')],
+    'a URL from the other environment’s store is dropped, not persisted',
+  )
+})
+
+test('with NO store configured the Blob-host floor still applies', () => {
+  // Production carries no BLOB_STORE_ID today; the suffix rule is the fail-closed
+  // floor, so the admin path keeps working while junk is still refused.
+  assert.equal(isCompletionPhotoUrl(prodUrl('a.jpg')), true)
+  assert.equal(isCompletionPhotoUrl(previewUrl('a.jpg')), true)
+  assert.equal(isCompletionPhotoUrl('https://evil.example.com/a.jpg'), false)
 })
 
 test('completion photos are capped and non-arrays are safe', () => {
-  const many = Array.from({ length: 40 }, (_, i) => `https://x/${i}.jpg`)
+  const many = Array.from({ length: 40 }, (_, i) => previewUrl(`${i}.jpg`))
   assert.equal(sanitizeCompletionPhotos(many).length, 20)
-  assert.equal(sanitizeCompletionPhotos(many, 3).length, 3)
+  assert.equal(sanitizeCompletionPhotos(many, { max: 3 }).length, 3)
   assert.deepEqual(sanitizeCompletionPhotos(null), [])
   assert.deepEqual(sanitizeCompletionPhotos('nope'), [])
+  assert.deepEqual(sanitizeCompletionPhotos(undefined), [])
+})
+
+test('merging preserves already-persisted photos and appends only valid new ones', () => {
+  // A record written before this policy — or from a store this deployment is no
+  // longer bound to — must NOT be retroactively deleted by tightening the rules.
+  const existing = [prodUrl('old.jpg'), 'https://legacy.example.com/historic.jpg']
+  const out = mergeCompletionPhotos(existing, [previewUrl('new.jpg'), 'https://evil.example.com/x.jpg'], { storeId: PREVIEW_STORE })
+  assert.deepEqual(out, [...existing, previewUrl('new.jpg')], 'existing kept verbatim, only valid new URLs appended')
+})
+
+test('merging dedupes across old and new, and still caps the record', () => {
+  assert.deepEqual(
+    mergeCompletionPhotos([previewUrl('a.jpg')], [previewUrl('a.jpg'), previewUrl('b.jpg')]),
+    [previewUrl('a.jpg'), previewUrl('b.jpg')],
+  )
+  const many = Array.from({ length: 30 }, (_, i) => previewUrl(`${i}.jpg`))
+  assert.equal(mergeCompletionPhotos(many, [previewUrl('extra.jpg')]).length, 20)
+  assert.deepEqual(mergeCompletionPhotos(undefined, undefined), [])
 })
 
 // ── The flag-off guarantee ───────────────────────────────────────────────────

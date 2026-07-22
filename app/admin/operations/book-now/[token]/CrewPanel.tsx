@@ -10,9 +10,12 @@ import { Avatar, money } from '../../ui'
 // pay, a truck off the equipment roster), so an owner who can crew a route
 // already knows how to crew a job.
 //
-// FLAG-AWARE WITHOUT FLAG PLUMBING. The API 404s when BOOKING_ASSIGNMENT_ENABLED
-// is off, so the panel probes once and renders NOTHING on a 404. With the flag
-// off this component is invisible and the page is exactly as it was.
+// FLAG-AWARE. `enabled` is resolved server-side and rides along on
+// /api/admin/book-now — a response the detail page already fetches — so with
+// BOOKING_ASSIGNMENT_ENABLED off this component renders nothing and issues NO
+// request at all. It used to probe the assignment endpoint and rely on the 404,
+// which meant every Production booking page fired a request it knew would fail.
+// The 404 guard on the API remains as the real gate; this is just not knocking.
 //
 // Assigning sends nothing. There is deliberately no "text the crew" button here:
 // dispatch is a separate, explicit action, as it is on a route.
@@ -55,9 +58,9 @@ const btn: React.CSSProperties = {
   background: 'transparent', color: 'var(--text)', cursor: 'pointer',
 }
 
-export default function CrewPanel({ token }: { token: string }) {
+export default function CrewPanel({ token, enabled = false }: { token: string; enabled?: boolean }) {
   const [a, setA] = useState<Assignment | null>(null)
-  const [available, setAvailable] = useState(true)     // false once the API 404s (flag off)
+  const [available, setAvailable] = useState(enabled)   // false once the API 404s (belt and braces)
   const [staff, setStaff] = useState<Staff[]>([])
   const [equipment, setEquipment] = useState<Equipment[]>([])
   const [busy, setBusy] = useState('')
@@ -69,13 +72,16 @@ export default function CrewPanel({ token }: { token: string }) {
   const [pickPay, setPickPay] = useState('')
 
   const load = useCallback(async () => {
+    // Flag off ⇒ the surface does not exist. Don't ask.
+    if (!enabled) return
     const res = await fetch(`/api/admin/bookings/${token}/assignment`, { credentials: 'same-origin' })
     if (res.status === 404) { setAvailable(false); return }
     if (!res.ok) { setError('Could not load crew.'); return }
     const d = await res.json()
     setA(d.assignment)
-  }, [token])
+  }, [token, enabled])
 
+  useEffect(() => { setAvailable(enabled) }, [enabled])
   useEffect(() => { load() }, [load])
 
   // Rosters load only once we know the surface is live, so a flag-off page makes
