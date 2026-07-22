@@ -168,7 +168,7 @@ export function detectConflicts(items: ScheduleItem[]): Conflict[] {
     if (it.cancelled || it.completed) continue
 
     // Committed work with no crew assigned.
-    if (it.lane === 'confirmed' && it.scheduled && it.crew.length === 0) {
+    if (it.lane === 'confirmed' && it.scheduled && !it.crewComplete) {
       out.push({
         type: 'missing_crew', severity: 'warning', day: it.date, resource: it.number,
         message: `${it.number} (${it.title}) is confirmed for ${it.date} with no crew assigned.`,
