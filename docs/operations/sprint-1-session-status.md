@@ -6,6 +6,37 @@
 
 ---
 
+## ✅ PR #55 MERGED — `main` = **`c48b6c7`** (2026-07-22 19:05Z)
+
+**Hardening increment 1 of the revised transfer plan is done.** Exported-symbol verification; closes issue #48 §9.
+
+| Item | Value |
+|---|---|
+| **PR** | **#55** — `feat(operion): verify exported symbols before a transfer is prepared` |
+| **Head → merge SHA** | `47d3d6e` → **`c48b6c7`** |
+| **Merged** | 19:05:22Z · **Scope** 4 files, +841/−7 |
+| **Production deployment** | **`dpl_3vTAZXk82vMnWaVgzQyTKQbCkBZV`** ● **Ready**, 19:05:26Z |
+| **Rollback target** | `dpl_BnLZtuEX169htUT83eA3q43uGxq1` (pre-#55) |
+
+```bash
+vercel rollback dpl_BnLZtuEX169htUT83eA3q43uGxq1 --yes
+git revert -m 1 c48b6c7
+```
+
+**What it closes:** closure proves a module *exists* on the target; it never proved the target's copy *exports* the names the transfer reads. `e014ad25` clears closure then fails the target's typecheck on one missing export. The required negative regression — `app/api/admin/_lib/session.ts` / `isPlatformOwner`, in its real `e014ad25` shape — is present and asserts the exact message.
+
+**Design verified independently:** runs after closure (cheaper gate speaks first) and before the drift loop (a doomed transfer costs no drift reads) · modules read are by construction *not* in the manifest, so **no read amplification** · fails before job, branch or dispatch creation · 150-module cap **fails closed** (`limit_exceeded`) · reuses `closure.ts`'s `lexicalView`/`matchStartsInCode` rather than copying them, so both gates mask comments/strings/templates identically.
+
+**Verification:** symbol 37/37 · closure+builder+preflight 58/58 · **full suite 1912/1912** on a merge preview against *current* main (`1614239`; the PR was based on `4430931`, merged clean) · tsc 0 · ESLint 0 · build 0 · AI regression 2/2 · all remote checks pass. **Mutation check:** forcing `analyzeSymbols` to always pass breaks **6 of 37** tests — they bind to real behaviour, not vacuously.
+
+**Post-deploy:** `/` 200 · `/api/health` 200 · platform updates **401** · manifest **405** · `POST /api/portal/upload` **404** (booking feature still inert) · env **42 vars unchanged**, both `BLOB_STORE_ID` and `BOOKING_ASSIGNMENT_ENABLED` absent · `flags.ts`/`vercel.json`/`.env`/workflows **untouched across the entire sprint** (`ee577c2..c48b6c7`) · no transfer dispatched · UPD-1004 untouched.
+
+> **Non-blocking finding, tracked not fixed:** `analyzeSymbols` returns `skippedModules` (an unreadable target module is skipped by design and by test, not refused), but `manifest-builder` **discards it** — only `symbolCheckedPaths` reaches `BuiltManifest`. An operator therefore sees what *was* verified with no signal about what was not. This is the natural payload for **hardening increment 2** (bounded `transferEvidence`), which already lists `closureCheckedPaths`/`driftCheckedPaths`/`excludedPaths`. Strictly additive either way — before this PR there was zero symbol checking.
+
+**Next in the transfer sequence:** hardening increment 2 (bounded `transferEvidence` persistence), then the `106846c0` one-file canary — dispatched only from J KISS **Production** to Supercharged **Preview**, which will require the owner-approved Production flag change already flagged below.
+
+---
+
 ## ✅ PR #54 MERGED — `main` = **`1614239`** (2026-07-22 18:50Z)
 
 Blob upload readiness (P1-A + P1-B) plus the malformed-body fix. Owner-approved, merge only.
