@@ -1,8 +1,9 @@
 // ── Operion Commit-Transfer manifest builder (server-side) ───────────────────
 // Turns an approved update's source commit into a deterministic, hash-verified manifest +
-// the approved file contents, read read-only from the SOURCE repo via the GitHub App. The
-// manifest is derived from the commit's own file list — never from scanning a repo — so the
-// transfer set is exactly what the update changed and nothing else.
+// the approved file contents, read read-only via the GitHub App. Before returning any
+// payload it performs a three-way source-baseline/source-new/target-current comparison,
+// so target-owned changes fail closed instead of being overwritten. The manifest is derived
+// from the commit's own file list — never from scanning a repo.
 
 import { isSafeRepoPath, manifestFromCommitFiles, validateManifest, type ApplyManifest } from './manifest'
 import type { UpdateAutomationProvider, RepoRef } from './provider'
@@ -12,6 +13,8 @@ export type BuiltManifest = {
   manifest: ApplyManifest
   contents: Record<string, { contentBase64: string; sha256: string }>
   excludedPaths: string[]
+  driftCheckedPaths: string[]
+  targetBaseCommit: string
 }
 export type BuildResult = { ok: true; data: BuiltManifest } | { ok: false; error: string }
 
@@ -21,17 +24,27 @@ export async function buildCommitTransferManifest(input: {
   sourceRepo: RepoRef        // {owner,name}
   sourceRepoName: string     // "owner/name" for the record
   sourceCommit: string
+  targetRepo: RepoRef
+  targetBranch: string
   updateKey: string
   compatibility?: Pick<UpdateCompatibility, 'status' | 'pathsToExclude'>
 }): Promise<BuildResult> {
-  const { provider, installationId, sourceRepo, sourceRepoName, sourceCommit, updateKey } = input
+  const { provider, installationId, sourceRepo, sourceRepoName, sourceCommit, targetRepo, targetBranch, updateKey } = input
   if (!sourceCommit) return { ok: false, error: 'update has no source commit to transfer' }
+  if (!targetBranch) return { ok: false, error: 'target has no base branch for drift validation' }
 
   const compatibility = input.compatibility
   if (!compatibility) return { ok: false, error: 'target compatibility record is required to build a transfer manifest' }
   if (compatibility.status !== 'compatible' && compatibility.status !== 'compatible_with_changes') {
     return { ok: false, error: `target compatibility status does not allow deterministic transfer: ${compatibility.status}` }
   }
+
+  const [sourceCommitInfo, targetBase] = await Promise.all([
+    provider.readCommit(installationId, sourceRepo, sourceCommit),
+    provider.readBranch(installationId, targetRepo, targetBranch),
+  ])
+  if (!sourceCommitInfo.ok) return { ok: false, error: `read source commit: ${sourceCommitInfo.error}` }
+  if (!targetBase.ok) return { ok: false, error: `read target base branch: ${targetBase.error}` }
 
   const excluded = new Set<string>()
   for (const raw of compatibility.pathsToExclude ?? []) {
@@ -53,11 +66,37 @@ export async function buildCommitTransferManifest(input: {
   const contents: Record<string, { contentBase64: string; sha256: string }> = {}
   const entries: ApplyManifest['entries'] = []
   const excludedPaths: string[] = []
+  const driftCheckedPaths: string[] = []
   for (const e of commitEntries) {
     if (excluded.has(e.path)) { excludedPaths.push(e.path); continue }
-    if (e.action === 'delete') { entries.push(e); continue }
+
+    const targetFile = await provider.readFileContent(installationId, targetRepo, e.path, targetBase.data.commit)
+    if (!targetFile.ok && targetFile.category !== 'not_found') return { ok: false, error: `read target ${e.path}: ${targetFile.error}` }
+    const targetHash = targetFile.ok ? targetFile.data.sha256 : undefined
+
+    let baselineHash: string | undefined
+    if (e.action !== 'add') {
+      if (!sourceCommitInfo.data.parentSha) return { ok: false, error: `source commit has no parent for drift validation of ${e.path}` }
+      const baseline = await provider.readFileContent(installationId, sourceRepo, e.path, sourceCommitInfo.data.parentSha)
+      if (!baseline.ok) return { ok: false, error: `read source baseline ${e.path}: ${baseline.error}` }
+      baselineHash = baseline.data.sha256
+    }
+
+    if (e.action === 'delete') {
+      if (targetHash && targetHash !== baselineHash) return { ok: false, error: `target drift detected for ${e.path}` }
+      driftCheckedPaths.push(e.path)
+      entries.push(e)
+      continue
+    }
+
     const fc = await provider.readFileContent(installationId, sourceRepo, e.path, sourceCommit)
     if (!fc.ok) return { ok: false, error: `read ${e.path}: ${fc.error}` }
+    if (e.action === 'add') {
+      if (targetHash && targetHash !== fc.data.sha256) return { ok: false, error: `target drift detected for ${e.path}` }
+    } else if (!targetHash || (targetHash !== baselineHash && targetHash !== fc.data.sha256)) {
+      return { ok: false, error: `target drift detected for ${e.path}` }
+    }
+    driftCheckedPaths.push(e.path)
     contents[e.path] = { contentBase64: fc.data.contentBase64, sha256: fc.data.sha256 }
     entries.push({ ...e, sha256: fc.data.sha256 })
   }
@@ -65,5 +104,11 @@ export async function buildCommitTransferManifest(input: {
   const manifest: ApplyManifest = { updateKey, sourceRepo: sourceRepoName, sourceCommit, entries }
   const v = validateManifest(manifest)
   if (!v.ok) return { ok: false, error: `invalid manifest: ${v.errors.join('; ')}` }
-  return { ok: true, data: { manifest, contents, excludedPaths: excludedPaths.sort() } }
+  return { ok: true, data: {
+    manifest,
+    contents,
+    excludedPaths: excludedPaths.sort(),
+    driftCheckedPaths: driftCheckedPaths.sort(),
+    targetBaseCommit: targetBase.data.commit,
+  } }
 }

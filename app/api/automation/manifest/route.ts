@@ -37,7 +37,8 @@ export async function POST(req: NextRequest) {
   if (!sourceRepo) return NextResponse.json({ error: 'job has no valid source repository' }, { status: 409 })
   if (!job.sourceCommit) return NextResponse.json({ error: 'job has no source commit' }, { status: 409 })
   // Target allowlist: the job's target must resolve to the configured business repo.
-  if (!businessRepoRef(business)) return NextResponse.json({ error: 'target repository not configured' }, { status: 409 })
+  const targetRepo = businessRepoRef(business)
+  if (!targetRepo) return NextResponse.json({ error: 'target repository not configured' }, { status: 409 })
 
   // Target-specific exclusions are part of the approved compatibility assessment.
   // They must constrain the machine manifest, not merely appear in a human-facing prompt.
@@ -47,6 +48,7 @@ export async function POST(req: NextRequest) {
     provider: getAutomationProvider(),
     installationId: business.githubInstallationId,
     sourceRepo, sourceRepoName: job.sourceRepository!, sourceCommit: job.sourceCommit,
+    targetRepo, targetBranch: business.defaultBranch,
     updateKey: job.updateId,
     compatibility,
   })

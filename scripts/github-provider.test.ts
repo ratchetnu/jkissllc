@@ -69,6 +69,18 @@ test('read op returns mapped data and never mutates', async () => {
   assert.ok(m.calls.every(c => !c.url.includes('/merge')))
 })
 
+test('readCommit returns the first-parent baseline used by three-way drift checks', async () => {
+  const m = mockFetch([
+    tokenRoute,
+    ['/repos/ratchetnu/supercharged/commits/merge-sha', () => ({
+      status: 200,
+      body: { sha: 'merge-sha', commit: { message: 'merge update' }, parents: [{ sha: 'first-parent' }, { sha: 'second-parent' }] },
+    })],
+  ])
+  const r = await new GitHubActionsProvider(ENV, { fetch: m.fetch, now: () => T }).readCommit('999', REPO, 'merge-sha')
+  assert.deepEqual(r, { ok: true, data: { sha: 'merge-sha', message: 'merge update', parentSha: 'first-parent', parentCount: 2 } })
+})
+
 test('getRepoInstallation discovers the installation id (200) and fails closed when app not installed (404)', async () => {
   const ok = mockFetch([['/repos/ratchetnu/supercharged/installation', () => ({ status: 200, body: { id: 146887383 } })]])
   const r1 = await new GitHubActionsProvider(ENV, { fetch: ok.fetch, now: () => T }).getRepoInstallation(REPO)
