@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
-import { Home, ClipboardList, MessageSquare, CalendarCheck, CalendarOff, Wallet, User, LogOut, Clock, FileText, MoreHorizontal, X } from 'lucide-react'
+import { Home, ClipboardList, MessageSquare, Package, CalendarCheck, CalendarOff, Wallet, User, LogOut, Clock, FileText, MoreHorizontal, X } from 'lucide-react'
 import { usePortalSession } from './usePortalSession'
 import LastLogin from '../admin/operations/LastLogin'
 import { OpsPilotMark, OpsPilotWordmark } from '../components/opspilot/OpsPilotMark'
@@ -11,38 +11,58 @@ import { OpsPilotMark, OpsPilotWordmark } from '../components/opspilot/OpsPilotM
 // One nav model drives both docks. `primary` items live in the mobile bottom bar
 // (the daily-use destinations); the rest collapse into a "More" sheet so the bar
 // never crowds at 390px. The desktop dock shows everything.
+//
+// `flag` marks a destination that only exists when a feature flag is on. The flag
+// is resolved SERVER-side in app/portal/layout.tsx and passed down, because a
+// client component cannot read process.env — and a nav item pointing at a route
+// that 404s is worse than no nav item at all.
 const NAV = [
   { href: '/portal', label: 'Home', Icon: Home, primary: true },
   { href: '/portal/routes', label: 'Routes', Icon: ClipboardList, primary: true },
   { href: '/portal/clock', label: 'Clock', Icon: Clock, primary: true },
   { href: '/portal/messages', label: 'Messages', Icon: MessageSquare, primary: true },
+  // "Jobs" is the unified feed (contract routes AND customer bookings). It is
+  // SECONDARY for now: two near-identical primary tabs would just confuse, and it
+  // is why the bottom bar stays at four — a fifth crowds at 390px. When bookings
+  // are live, Jobs takes the Routes slot rather than sitting beside it.
+  { href: '/portal/jobs', label: 'Jobs', Icon: Package, flag: 'jobs' as const },
   { href: '/portal/availability', label: 'Availability', Icon: CalendarCheck },
   { href: '/portal/timeoff', label: 'Time Off', Icon: CalendarOff },
   { href: '/portal/pay', label: 'Pay', Icon: Wallet },
   { href: '/portal/documents', label: 'Documents', Icon: FileText },
   { href: '/portal/profile', label: 'Profile', Icon: User },
 ]
-const PRIMARY = NAV.filter(n => n.primary)
-const MORE = NAV.filter(n => !n.primary)
+
+// The nav a given crew member actually sees. With bookings off this is
+// byte-identical to the portal's pre-Sprint-1 nav.
+export function portalNav(showJobs: boolean) {
+  return NAV.filter(n => n.flag !== 'jobs' || showJobs)
+}
 
 const iStyle: React.CSSProperties = {
   width: '100%', padding: '13px 15px', background: 'color-mix(in srgb, var(--card) 90%, transparent)',
   border: '1px solid var(--line)', borderRadius: 12, color: 'var(--text)', fontSize: 15, outline: 'none',
 }
 
-export default function PortalShell({ children }: { children: React.ReactNode }) {
+export default function PortalShell({ children, showJobs = false }: { children: React.ReactNode; showJobs?: boolean }) {
   const { me, authed, checked, error, loading, login, signOut, lastLogin } = usePortalSession()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [moreOpen, setMoreOpen] = useState(false)
   const pathname = usePathname()
 
+  // Defaults to `false`: if a future caller forgets to pass the flag, the portal
+  // falls back to the nav it has always had rather than exposing a 404 route.
+  const nav = portalNav(showJobs)
+  const PRIMARY = nav.filter(n => n.primary)
+  const MORE = nav.filter(n => !n.primary)
+
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (await login(email, password)) { setPassword('') }
   }
 
-  const activeHref = [...NAV]
+  const activeHref = [...nav]
     .filter(n => pathname === n.href || (n.href !== '/portal' && pathname.startsWith(n.href + '/')))
     .sort((a, b) => b.href.length - a.href.length)[0]?.href ?? '/portal'
   // Highlight the "More" trigger when the current page lives in the overflow group.

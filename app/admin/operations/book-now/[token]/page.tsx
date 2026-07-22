@@ -7,6 +7,7 @@ import { ArrowLeft, Camera, ExternalLink, Send, RefreshCw, CheckCircle2, Message
 import OperationsShell from '../../OperationsShell'
 import WorkflowTimeline from '../../../bookings/WorkflowTimeline'
 import BookingAICard from '../../ai/BookingAICard'
+import CrewPanel from './CrewPanel'
 import { fmtTs, money } from '../../ui'
 import { SERVICE_LABELS, INFO_REQUEST_FIELD_LABEL, type Booking, type InfoRequestField } from '../../../../lib/bookings'
 import {
@@ -42,6 +43,9 @@ function ProvBadge({ p }: { p: string }) {
 
 function Detail({ token }: { token: string }) {
   const [b, setB] = useState<Booking | null>(null)
+  // Which optional surfaces this deployment has. Rides along on the feed the page
+  // already loads, so a flag-off deployment issues no extra (404ing) request.
+  const [crewAssignment, setCrewAssignment] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
@@ -70,6 +74,7 @@ function Detail({ token }: { token: string }) {
       if (!res.ok) throw new Error(j.error ?? 'Failed')
       const found = (j.items as Booking[]).find(x => x.token === token) ?? null
       setB(found)
+      setCrewAssignment(!!j.flags?.bookingAssignment)
       if (!found) setError('Request not found.')
     } catch (e) { setError(e instanceof Error ? e.message : 'Failed') }
     finally { if (!background) setLoading(false) }
@@ -177,6 +182,10 @@ function Detail({ token }: { token: string }) {
         <KV k="Access" v={b.accessNotes} />
         <KV k="Special instructions" v={b.specialInstructions} />
       </Section>
+
+      {/* Renders nothing — and requests nothing — unless BOOKING_ASSIGNMENT_ENABLED
+          is on. The flag arrives with the feed above; the API still 404s regardless. */}
+      <CrewPanel token={token} enabled={crewAssignment} />
 
       <Section title={`Photos · ${b.invoicePhotos?.length ?? 0}`}>
         {b.invoicePhotos && b.invoicePhotos.length > 0 ? (
