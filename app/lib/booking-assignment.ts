@@ -194,10 +194,18 @@ export async function setBookingEquipment(
 
 // ── Completion proof ─────────────────────────────────────────────────────────
 // The Blob store THIS deployment is bound to. Read at call time (not module load)
-// so a test or a redeploy sees the current binding. When it is absent the photo
-// policy still requires a Vercel Blob host — the floor is never removed, only
-// narrowed to a single store when we know which store that is.
-const photoPolicy = (): CompletionPhotoPolicy => ({ storeId: process.env.BLOB_STORE_ID?.trim() || undefined })
+// so a test or a redeploy sees the current binding.
+//
+// `requireStore` is what makes the booking lane fail CLOSED. Without it, a
+// deployment with no BLOB_STORE_ID accepts any Vercel Blob host, which is how a
+// Production record could come to cite Preview-store bytes. Under the flag we
+// would rather refuse proof of work than record a reference we cannot vouch for.
+// It is tied to `enabled()` rather than hard-coded `true` so the policy states its
+// own precondition — every current caller is already behind that same gate.
+const photoPolicy = (): CompletionPhotoPolicy => ({
+  storeId: process.env.BLOB_STORE_ID?.trim() || undefined,
+  requireStore: enabled(),
+})
 
 // WHO is recording the proof. A discriminated union rather than a bare
 // `by: 'crew' | 'admin'` string, because the crew path REQUIRES an identity to

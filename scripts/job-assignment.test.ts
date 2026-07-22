@@ -16,6 +16,7 @@ import {
   deriveLegacyCrewNames, makeJobAssignee, applyPaySnapshot, clearJobPay,
   jobCrewGap, hasEquipment, validateAssignees,
   isCompletionPhotoUrl, sanitizeCompletionPhotos, mergeCompletionPhotos,
+  completionUploadReadiness,
 } from '../app/lib/job-assignment'
 import type { Assignee } from '../app/lib/routes'
 import { fmtCents } from '../app/lib/finance'
@@ -245,6 +246,7 @@ test('a well-formed crew list has no problems', () => {
 // crew portal, so the policy is an ALLOW-list: https, length-capped, on a Vercel
 // Blob host, and — when the deployment names a store — on THAT store only.
 const PREVIEW_STORE = 'store_Ulabe9q3GBD8ZYQh'
+const PROD_STORE = 'store_WK8DoJzb2Q1lu5sv'
 const previewUrl = (p: string) => `https://ulabe9q3gbd8zyqh.public.blob.vercel-storage.com/${p}`
 const prodUrl = (p: string) => `https://wk8dojzb2q1lu5sv.public.blob.vercel-storage.com/${p}`
 
@@ -304,11 +306,89 @@ test('a configured store id pins uploads to THAT store — Preview cannot persis
 })
 
 test('with NO store configured the Blob-host floor still applies', () => {
-  // Production carries no BLOB_STORE_ID today; the suffix rule is the fail-closed
-  // floor, so the admin path keeps working while junk is still refused.
+  // The LEGACY ADMIN path has always run without a BLOB_STORE_ID; the suffix rule is
+  // its floor, so that path keeps working while junk is still refused. The booking
+  // lane no longer relies on this — see the `requireStore` tests below.
   assert.equal(isCompletionPhotoUrl(prodUrl('a.jpg')), true)
   assert.equal(isCompletionPhotoUrl(previewUrl('a.jpg')), true)
   assert.equal(isCompletionPhotoUrl('https://evil.example.com/a.jpg'), false)
+})
+
+// ── P1-B: exact-store validation for the booking lane ────────────────────────
+
+test('P1-B: requireStore + no configured store refuses EVERYTHING, including valid Blob URLs', () => {
+  // This is the defect. Without requireStore, both of these returned true, so a
+  // Production deployment (which carries no BLOB_STORE_ID) would happily persist a
+  // URL pointing at the Preview store's bytes.
+  const policy = { requireStore: true }
+  assert.equal(isCompletionPhotoUrl(prodUrl('a.jpg'), policy), false)
+  assert.equal(isCompletionPhotoUrl(previewUrl('a.jpg'), policy), false)
+  assert.equal(isCompletionPhotoUrl('https://evil.example.com/a.jpg', policy), false)
+  assert.deepEqual(
+    sanitizeCompletionPhotos([prodUrl('a.jpg'), previewUrl('b.jpg')], policy),
+    [],
+    'refusing is the point — an unpinned deployment records no new proof at all',
+  )
+})
+
+test('P1-B: requireStore + a configured store pins to THAT store, both directions', () => {
+  assert.equal(isCompletionPhotoUrl(previewUrl('a.jpg'), { storeId: PREVIEW_STORE, requireStore: true }), true)
+  assert.equal(isCompletionPhotoUrl(prodUrl('a.jpg'), { storeId: PREVIEW_STORE, requireStore: true }), false)
+  assert.equal(isCompletionPhotoUrl(prodUrl('a.jpg'), { storeId: PROD_STORE, requireStore: true }), true)
+  assert.equal(isCompletionPhotoUrl(previewUrl('a.jpg'), { storeId: PROD_STORE, requireStore: true }), false)
+  // The `store_` prefix stays optional and hostnames stay case-insensitive.
+  assert.equal(
+    isCompletionPhotoUrl(previewUrl('a.jpg'), { storeId: PREVIEW_STORE.replace(/^store_/, '').toUpperCase(), requireStore: true }),
+    true,
+  )
+})
+
+test('P1-B: requireStore is OPT-IN — omitting it preserves the legacy floor byte-for-byte', () => {
+  // The admin path passes no requireStore. Every one of these must behave exactly as
+  // it did before the flag existed; this is the regression guard for that path.
+  for (const policy of [undefined, {}, { requireStore: false }, { max: 5 }]) {
+    assert.equal(isCompletionPhotoUrl(prodUrl('a.jpg'), policy), true)
+    assert.equal(isCompletionPhotoUrl(previewUrl('a.jpg'), policy), true)
+    assert.equal(isCompletionPhotoUrl('https://evil.example.com/a.jpg', policy), false)
+    assert.equal(isCompletionPhotoUrl(previewUrl('a.jpg').replace('https:', 'http:'), policy), false)
+  }
+})
+
+test('P1-B: sanitize drops rather than throws under requireStore, and the cap still holds', () => {
+  assert.deepEqual(sanitizeCompletionPhotos(null, { requireStore: true }), [])
+  assert.deepEqual(sanitizeCompletionPhotos([42, '', {}], { requireStore: true }), [])
+  const many = Array.from({ length: 40 }, (_, i) => previewUrl(`${i}.jpg`))
+  assert.equal(sanitizeCompletionPhotos(many, { storeId: PREVIEW_STORE, requireStore: true, max: 3 }).length, 3)
+})
+
+test('P1-B: tightening the policy NEVER deletes proof already on the record', () => {
+  // Photos accepted under the old rules are somebody's evidence that they did the
+  // work. Pinning the store gates what may be ADDED; it must not retroactively
+  // erase history. This is the invariant that makes the change safe to deploy.
+  const existing = [prodUrl('old-1.jpg'), previewUrl('old-2.jpg')]
+  const merged = mergeCompletionPhotos(existing, [prodUrl('new.jpg')], {
+    storeId: PREVIEW_STORE, requireStore: true,
+  })
+  assert.deepEqual(merged, existing, 'existing entries survive verbatim; the new off-store URL is refused')
+
+  const accepted = mergeCompletionPhotos(existing, [previewUrl('new.jpg')], {
+    storeId: PREVIEW_STORE, requireStore: true,
+  })
+  assert.deepEqual(accepted, [...existing, previewUrl('new.jpg')], 'an on-store URL still appends')
+})
+
+// ── P1-A: upload readiness ───────────────────────────────────────────────────
+
+test('P1-A: completionUploadReadiness reports a configured store, and refuses without one', () => {
+  assert.deepEqual(completionUploadReadiness('store_abc123'), { ready: true, storeId: 'store_abc123' })
+  assert.deepEqual(completionUploadReadiness('  store_abc123  '), { ready: true, storeId: 'store_abc123' })
+  for (const absent of [undefined, '', '   ']) {
+    assert.deepEqual(
+      completionUploadReadiness(absent),
+      { ready: false, reason: 'blob_store_not_configured' },
+      'an unset or blank BLOB_STORE_ID is not ready — never a silent fallback',
+    )
+  }
 })
 
 test('completion photos are capped and non-arrays are safe', () => {
