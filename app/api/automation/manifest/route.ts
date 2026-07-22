@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
     installationId: business.githubInstallationId,
     sourceRepo, sourceRepoName: job.sourceRepository!, sourceCommit: job.sourceCommit,
     updateKey: job.updateId,
-    componentsToExclude: compatibility?.componentsToExclude,
+    compatibility,
   })
   if (!built.ok) return NextResponse.json({ error: built.error }, { status: 422 })
   return NextResponse.json({ jobId, ...built.data })

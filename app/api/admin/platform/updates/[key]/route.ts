@@ -8,6 +8,7 @@ import {
 import { canTransitionUpdate, canMarkVerified } from '../../../../../lib/platform/updates/policy'
 import { buildDeploymentPrompt } from '../../../../../lib/platform/updates/prompt'
 import { PLATFORM_UPDATE_VERSION, type UpdateStatus, type CheckStatus, type CompatStatus, type DeploymentRecord, type DeploymentStatus } from '../../../../../lib/platform/updates/types'
+import { isSafeRepoPath } from '../../../../../lib/platform/automation/manifest'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -71,6 +72,11 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
     case 'assess-compat': {
       const businessId = s(body.businessId, 60)
       if (!businessId || !(await getBusiness(businessId))) return NextResponse.json({ error: 'unknown business' }, { status: 400 })
+      const rawPaths = body.pathsToExclude
+      if (rawPaths !== undefined && (!Array.isArray(rawPaths) || rawPaths.length > 40 || rawPaths.some((x: unknown) => typeof x !== 'string' || !isSafeRepoPath(x.trim())))) {
+        return NextResponse.json({ error: 'pathsToExclude must contain at most 40 exact repository-relative paths' }, { status: 400 })
+      }
+      const pathsToExclude = Array.isArray(rawPaths) ? [...new Set(rawPaths.map((x: string) => x.trim()))] : undefined
       await saveCompat({
         recordVersion: PLATFORM_UPDATE_VERSION, updateKey: key, businessId,
         status: (body.status as CompatStatus) ?? 'under_review', reason: s(body.reason, 2000),
@@ -79,6 +85,7 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
         secretRequired: body.secretRequired === true, featureFlagRequired: body.featureFlagRequired === true,
         brandingChangesRequired: body.brandingChangesRequired === true, dataModelChangesRequired: body.dataModelChangesRequired === true,
         componentsToExclude: Array.isArray(body.componentsToExclude) ? body.componentsToExclude.filter((x: unknown) => typeof x === 'string').slice(0, 40) : undefined,
+        pathsToExclude,
         blockingIssues: s(body.blockingIssues, 2000),
         overrideReason: s(body.overrideReason, 2000), // required to force a compatible status past a blocker (owner judgment)
         assessedBy: actor, createdAt: now, updatedAt: now,

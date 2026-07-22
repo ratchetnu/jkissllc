@@ -6,6 +6,7 @@
 
 import { isSafeRepoPath, manifestFromCommitFiles, validateManifest, type ApplyManifest } from './manifest'
 import type { UpdateAutomationProvider, RepoRef } from './provider'
+import type { UpdateCompatibility } from '../updates/types'
 
 export type BuiltManifest = {
   manifest: ApplyManifest
@@ -21,15 +22,21 @@ export async function buildCommitTransferManifest(input: {
   sourceRepoName: string     // "owner/name" for the record
   sourceCommit: string
   updateKey: string
-  componentsToExclude?: string[]
+  compatibility?: Pick<UpdateCompatibility, 'status' | 'pathsToExclude'>
 }): Promise<BuildResult> {
   const { provider, installationId, sourceRepo, sourceRepoName, sourceCommit, updateKey } = input
   if (!sourceCommit) return { ok: false, error: 'update has no source commit to transfer' }
 
+  const compatibility = input.compatibility
+  if (!compatibility) return { ok: false, error: 'target compatibility record is required to build a transfer manifest' }
+  if (compatibility.status !== 'compatible' && compatibility.status !== 'compatible_with_changes') {
+    return { ok: false, error: `target compatibility status does not allow deterministic transfer: ${compatibility.status}` }
+  }
+
   const excluded = new Set<string>()
-  for (const raw of input.componentsToExclude ?? []) {
+  for (const raw of compatibility.pathsToExclude ?? []) {
     const path = raw.trim()
-    if (!isSafeRepoPath(path)) return { ok: false, error: `invalid excluded component path: ${JSON.stringify(raw)}` }
+    if (!isSafeRepoPath(path)) return { ok: false, error: `invalid excluded repository path: ${JSON.stringify(raw)}` }
     excluded.add(path)
   }
 
@@ -40,7 +47,7 @@ export async function buildCommitTransferManifest(input: {
   const commitPaths = new Set(commitEntries.map((entry) => entry.path))
   const unmatchedExclusions = [...excluded].filter((path) => !commitPaths.has(path))
   if (unmatchedExclusions.length) {
-    return { ok: false, error: `excluded component path not present in source commit: ${unmatchedExclusions.sort().join(', ')}` }
+    return { ok: false, error: `excluded repository path not present in source commit: ${unmatchedExclusions.sort().join(', ')}` }
   }
 
   const contents: Record<string, { contentBase64: string; sha256: string }> = {}

@@ -21,13 +21,14 @@ function mockProvider(files: { filename: string; status: string }[], blobs: Reco
   return p as UpdateAutomationProvider
 }
 const REPO = { owner: 'ratchetnu', name: 'jkissllc' }
+const COMPAT = { status: 'compatible' as const }
 
 test('builds a valid manifest from a commit: add + modify + delete, with content + hashes', async () => {
   const provider = mockProvider(
     [{ filename: 'app/a.tsx', status: 'added' }, { filename: 'app/b.ts', status: 'modified' }, { filename: 'app/old.ts', status: 'removed' }],
     { 'app/a.tsx': 'export const A = 1\n', 'app/b.ts': 'export const B = 2\n' },
   )
-  const r = await buildCommitTransferManifest({ provider, installationId: '146887383', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: 'deadbeef', updateKey: 'UPD-1004' })
+  const r = await buildCommitTransferManifest({ provider, installationId: '146887383', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: 'deadbeef', updateKey: 'UPD-1004', compatibility: COMPAT })
   assert.equal(r.ok, true)
   if (!r.ok) return
   assert.equal(validateManifest(r.data.manifest).ok, true)
@@ -44,21 +45,21 @@ test('builds a valid manifest from a commit: add + modify + delete, with content
 
 test('fails cleanly when a source file cannot be read', async () => {
   const provider = mockProvider([{ filename: 'app/x.ts', status: 'added' }], {})  // no blob for x.ts
-  const r = await buildCommitTransferManifest({ provider, installationId: '1', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: 'abc', updateKey: 'UPD-1' })
+  const r = await buildCommitTransferManifest({ provider, installationId: '1', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: 'abc', updateKey: 'UPD-1', compatibility: COMPAT })
   assert.equal(r.ok, false)
   assert.match((r as { error: string }).error, /read app\/x\.ts/)
 })
 
 test('rejects a commit that changes an unsafe path (traversal)', async () => {
   const provider = mockProvider([{ filename: '../escape.ts', status: 'added' }], { '../escape.ts': 'x' })
-  const r = await buildCommitTransferManifest({ provider, installationId: '1', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: 'abc', updateKey: 'UPD-1' })
+  const r = await buildCommitTransferManifest({ provider, installationId: '1', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: 'abc', updateKey: 'UPD-1', compatibility: COMPAT })
   assert.equal(r.ok, false)
   assert.match((r as { error: string }).error, /invalid manifest/)
 })
 
 test('fails when the update has no source commit', async () => {
   const provider = mockProvider([], {})
-  const r = await buildCommitTransferManifest({ provider, installationId: '1', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: '', updateKey: 'UPD-1' })
+  const r = await buildCommitTransferManifest({ provider, installationId: '1', sourceRepo: REPO, sourceRepoName: 'ratchetnu/jkissllc', sourceCommit: '', updateKey: 'UPD-1', compatibility: COMPAT })
   assert.equal(r.ok, false)
 })
 
@@ -84,7 +85,7 @@ test('excludes target-specific paths before reading source content', async () =>
     sourceRepoName: 'ratchetnu/jkissllc',
     sourceCommit: 'abc',
     updateKey: 'UPD-1004',
-    componentsToExclude: [' app/quote/page.tsx ', 'app/lib/telemetry.ts'],
+    compatibility: { status: 'compatible_with_changes', pathsToExclude: [' app/quote/page.tsx ', 'app/lib/telemetry.ts'] },
   })
   assert.equal(r.ok, true)
   if (!r.ok) return
@@ -103,7 +104,7 @@ test('excludes deletions as well as added or modified files', async () => {
     sourceRepoName: 'ratchetnu/jkissllc',
     sourceCommit: 'abc',
     updateKey: 'UPD-1',
-    componentsToExclude: ['app/target-only.ts'],
+    compatibility: { status: 'compatible_with_changes', pathsToExclude: ['app/target-only.ts'] },
   })
   assert.equal(r.ok, true)
   if (!r.ok) return
@@ -121,9 +122,31 @@ test('fails closed on unsafe or unmatched excluded component values', async () =
       sourceRepoName: 'ratchetnu/jkissllc',
       sourceCommit: 'abc',
       updateKey: 'UPD-1',
-      componentsToExclude: [excluded],
+      compatibility: { status: 'compatible_with_changes', pathsToExclude: [excluded] },
     })
     assert.equal(r.ok, false, excluded)
-    assert.match((r as { error: string }).error, /invalid excluded component path|not present in source commit/)
+    assert.match((r as { error: string }).error, /invalid excluded repository path|not present in source commit/)
   }
+})
+
+test('refuses missing or repudiated compatibility before reading the source commit', async () => {
+  let commitReads = 0
+  const provider = mockProvider([{ filename: 'app/safe.ts', status: 'added' }], { 'app/safe.ts': 'safe' })
+  provider.readCommitFiles = async () => { commitReads += 1; return { ok: true, data: { files: [] } } }
+
+  const statuses = [undefined, 'unknown', 'under_review', 'already_present', 'not_applicable', 'incompatible', 'blocked'] as const
+  for (const status of statuses) {
+    const r = await buildCommitTransferManifest({
+      provider,
+      installationId: '1',
+      sourceRepo: REPO,
+      sourceRepoName: 'ratchetnu/jkissllc',
+      sourceCommit: 'abc',
+      updateKey: 'UPD-1004',
+      compatibility: status ? { status } : undefined,
+    })
+    assert.equal(r.ok, false, status)
+    assert.match((r as { error: string }).error, /compatibility/)
+  }
+  assert.equal(commitReads, 0)
 })
