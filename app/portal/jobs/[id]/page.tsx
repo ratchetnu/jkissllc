@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import { upload } from '@vercel/blob/client'
+import { uploadPresigned } from '@vercel/blob/client'
 import { AlertTriangle, ArrowLeft, Camera, Check, Clock, MapPin, X } from 'lucide-react'
 import { fmtLongDay, mapsUrl, money } from '../../ui'
 
@@ -111,7 +111,7 @@ function JobDetail({ id }: { id: string }) {
     try {
       const urls: string[] = []
       for (const f of Array.from(files).slice(0, 10)) {
-        const blob = await upload(f.name, f, {
+        const blob = await uploadPresigned(f.name, f, {
           access: 'public',
           handleUploadUrl: '/api/portal/upload',
         })
