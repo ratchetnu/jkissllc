@@ -68,7 +68,7 @@ import {
   AUTOMATION_JOB_VERSION, TRANSFER_EVIDENCE_VERSION, EVIDENCE_MAX_PATHS, EVIDENCE_TTL_MS,
   type UpdateAutomationJob, type TransferEvidence, type EvidenceTruncation,
 } from '../app/lib/platform/automation/types'
-import type { BuiltManifest } from '../app/lib/platform/automation/manifest-builder'
+import { buildCommitTransferManifest, type BuiltManifest } from '../app/lib/platform/automation/manifest-builder'
 import type { PlatformBusiness, UpdateCompatibility } from '../app/lib/platform/updates/types'
 import { sha256 } from '../app/lib/platform/automation/manifest'
 
@@ -301,6 +301,52 @@ test('a job written before this feature reads back unchanged, with no evidence',
   assert.equal(back.status, 'creating_branch')
   assert.equal(back.jobVersion, AUTOMATION_JOB_VERSION, 'no version bump — the field is additive and optional')
   assert.equal(await getTransferEvidence(JOB_ID), null)
+})
+
+// ── What the CI runner actually receives ─────────────────────────────────────
+//
+// The manifest route answers `{ jobId, ...built.data }`, so EVERY field added to
+// `BuiltManifest` is also handed to the runner over the wire. That is easy to miss:
+// `symbolCheckedPaths` (PR #55) and `skippedModules` (this PR) each widened that
+// payload as a side effect of adding builder output. Both are harmless — the runner
+// destructures `{ manifest, contents, targetBaseCommit }` and ignores the rest — but
+// nothing pinned the boundary, so a future field carrying something it should not
+// would reach a CI runner silently. This test is that boundary.
+
+test('the runner payload is a closed set — a new BuiltManifest field cannot widen it silently', async () => {
+  const body = `export const n = 1\n`
+  const mock = {
+    name: 'payload-mock',
+    readCommit: async (_i: string, _r: unknown, sha: string) => ({ ok: true, data: { sha, message: 'u', parentSha: 'source-parent', parentCount: 1 } }),
+    readBranch: async () => ({ ok: true, data: { commit: 'target-pinned-sha' } }),
+    readTree: async () => ({ ok: true, data: { paths: [] } }),
+    readCommitFiles: async () => ({ ok: true, data: { files: [{ filename: 'app/lib/new.ts', status: 'added' }] } }),
+    readFileContent: async (_i: string, repo: { name: string }, path: string) => (
+      repo.name === 'supercharged' || path !== 'app/lib/new.ts'
+        ? { ok: false, error: 'not found', category: 'not_found' }
+        : { ok: true, data: { contentBase64: Buffer.from(body).toString('base64'), sha256: sha256(body) } }
+    ),
+  } as never
+
+  const built = await buildCommitTransferManifest({
+    provider: mock, installationId: '1',
+    sourceRepo: { owner: 'ratchetnu', name: 'jkissllc' }, sourceRepoName: 'ratchetnu/jkissllc',
+    sourceCommit: 'source-new', targetRepo: { owner: 'ratchetnu', name: 'supercharged' },
+    targetBranch: 'main', updateKey: 'UPD-TEST', compatibility: { status: 'compatible' },
+  })
+  assert.equal(built.ok, true)
+  if (!built.ok) return
+
+  // Exactly what `{ jobId, ...built.data }` puts on the wire. Adding a field here is a
+  // deliberate act — it changes a machine-facing contract, so it must change this list.
+  assert.deepEqual(Object.keys({ jobId: 'x', ...built.data }).sort(), [
+    'closureCheckedPaths', 'contents', 'driftCheckedPaths', 'excludedPaths',
+    'jobId', 'manifest', 'skippedModules', 'symbolCheckedPaths', 'targetBaseCommit',
+  ])
+  // The three fields the runner actually consumes stay present and well-formed.
+  assert.ok(Array.isArray(built.data.manifest.entries))
+  assert.ok(built.data.contents['app/lib/new.ts'])
+  assert.equal(built.data.targetBaseCommit, 'target-pinned-sha')
 })
 
 // ── The real route ───────────────────────────────────────────────────────────
