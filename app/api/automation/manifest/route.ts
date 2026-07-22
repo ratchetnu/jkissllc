@@ -1,14 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isEnabled } from '../../../lib/platform/flags'
 import { verifyCallback } from '../../../lib/platform/automation/callback'
-import { getJob } from '../../../lib/platform/automation/store'
+import { getJob, saveJob, saveTransferEvidence, withBusinessLock } from '../../../lib/platform/automation/store'
 import { getBusiness, getCompatMap } from '../../../lib/platform/updates/store'
 import { getAutomationProvider } from '../../../lib/platform/automation/provider'
 import { parseRepoName, businessRepoRef } from '../../../lib/platform/automation/repo-identity'
 import { buildCommitTransferManifest } from '../../../lib/platform/automation/manifest-builder'
+import { buildTransferEvidence, buildRefusalEvidence } from '../../../lib/platform/automation/evidence'
+import type { TransferEvidence, UpdateAutomationJob } from '../../../lib/platform/automation/types'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+
+/**
+ * Persist what the builder decided (§4 #7).
+ *
+ * FAIL-SOFT, ALWAYS. An audit write must never break the transfer it is auditing —
+ * the CI runner is blocked on this response. Same doctrine as the post-promotion
+ * record reconciliation in orchestrator.ts: a hiccup here must not undo real work.
+ *
+ * The job itself gets only a timestamp marker, written under the per-business lock so
+ * a concurrent status write is never clobbered; `updatedAt` is deliberately NOT
+ * touched, so an audit write cannot disturb the job's position in the index.
+ */
+async function recordEvidence(job: UpdateAutomationJob, evidence: TransferEvidence): Promise<void> {
+  try {
+    await saveTransferEvidence(evidence)
+    await withBusinessLock(job.businessId, async () => {
+      const fresh = await getJob(job.id)
+      if (!fresh) return
+      fresh.transferEvidenceAt = evidence.recordedAt
+      await saveJob(fresh)
+    }, { onBusy: () => undefined, token: `evidence:${job.id}:${evidence.recordedAt}` })
+  } catch (err) {
+    console.warn('[operion] transfer evidence not recorded (non-fatal):', err instanceof Error ? err.message : err)
+  }
+}
 
 // POST /api/automation/manifest — the CI runner fetches the approved commit-transfer manifest
 // + file contents for a job. Machine-to-machine: gated by the SAME HMAC signature as the
@@ -52,6 +79,17 @@ export async function POST(req: NextRequest) {
     updateKey: job.updateId,
     compatibility,
   })
-  if (!built.ok) return NextResponse.json({ error: built.error }, { status: 422 })
+  const common = { jobId, attempt: job.attemptCount ?? 0, sourceCommit: job.sourceCommit, now: Date.now() }
+
+  // A REFUSAL is the case worth keeping most: it is the state that previously left no
+  // trace at all, and the one an incident review actually asks about.
+  if (!built.ok) {
+    await recordEvidence(job, buildRefusalEvidence(built.error, common))
+    return NextResponse.json({ error: built.error }, { status: 422 })
+  }
+
+  await recordEvidence(job, buildTransferEvidence(built.data, common))
+
+  // Response shape is unchanged — the runner sees exactly what it saw before.
   return NextResponse.json({ jobId, ...built.data })
 }
