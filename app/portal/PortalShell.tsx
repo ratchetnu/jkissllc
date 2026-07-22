@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
-import { Home, ClipboardList, MessageSquare, CalendarCheck, CalendarOff, Wallet, User, LogOut, Clock, FileText, MoreHorizontal, X } from 'lucide-react'
+import { Home, ClipboardList, MessageSquare, Package, CalendarCheck, CalendarOff, Wallet, User, LogOut, Clock, FileText, MoreHorizontal, X } from 'lucide-react'
 import { usePortalSession } from './usePortalSession'
 import LastLogin from '../admin/operations/LastLogin'
 import { OpsPilotMark, OpsPilotWordmark } from '../components/opspilot/OpsPilotMark'
@@ -16,6 +16,12 @@ const NAV = [
   { href: '/portal/routes', label: 'Routes', Icon: ClipboardList, primary: true },
   { href: '/portal/clock', label: 'Clock', Icon: Clock, primary: true },
   { href: '/portal/messages', label: 'Messages', Icon: MessageSquare, primary: true },
+  // "Jobs" is the unified feed (contract routes AND customer bookings). It is
+  // SECONDARY for now: with BOOKING_ASSIGNMENT_ENABLED off it shows the same work
+  // as Routes, and two identical primary tabs would just confuse. It is also why
+  // the bottom bar stays at four — a fifth crowds at 390px. When bookings are
+  // live, Jobs takes the Routes slot rather than sitting beside it.
+  { href: '/portal/jobs', label: 'Jobs', Icon: Package },
   { href: '/portal/availability', label: 'Availability', Icon: CalendarCheck },
   { href: '/portal/timeoff', label: 'Time Off', Icon: CalendarOff },
   { href: '/portal/pay', label: 'Pay', Icon: Wallet },

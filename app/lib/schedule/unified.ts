@@ -34,6 +34,7 @@ import {
   type RouteRecord, type RouteStatus,
   ROUTE_STATUS_LABEL, rollupStatus, crewGap,
 } from '../routes'
+import { type JobCrewGap, activeCrew, jobCrewGap } from '../job-assignment'
 
 // ── Common vocabulary ────────────────────────────────────────────────────────
 export type ScheduleSource =
@@ -177,9 +178,23 @@ export function bookingToScheduleItem(b: Booking): ScheduleItem {
   const lane: ScheduleLane = BOOKING_PENDING_STATUSES.has(b.status) ? 'pending' : 'confirmed'
   const tentative = !scheduled && !!requestedDate
 
-  const crew: ScheduleCrew[] = []
-  if (b.assignedTo?.trim()) crew.push({ name: b.assignedTo.trim(), role: 'Lead' })
-  if (b.assignedHelper?.trim()) crew.push({ name: b.assignedHelper.trim(), role: 'Helper' })
+  // Crew. A booking assigned through the roster carries real `assignees` (staffId,
+  // role, own confirmation) exactly as a route does; one that predates the roster —
+  // or was typed by hand — still carries only the two free-text names. Project
+  // whichever exists, preferring the roster, so conflict detection can finally match
+  // a booking's crew to a route's crew by staffId instead of by string equality.
+  const roster = activeCrew(b.assignees)
+  const crew: ScheduleCrew[] = roster.length
+    ? roster.map(a => ({ name: a.name, staffId: a.staffId, role: a.role, confirmed: !!a.confirmedAt }))
+    : legacyCrewChips(b)
+  const gap = jobCrewGap(b.assignees, b.crewSize)
+
+  // Equipment. Bookings used to project nothing here at all, which made the
+  // schedule's vehicle/equipment conflict detection structurally blind to every
+  // customer job. Same two-field convention as routes: `vehicle` is the display
+  // snapshot (and how "crew's own equipment" is represented), `equipmentId` the
+  // roster link when a specific asset was picked.
+  const equipment: string[] = b.vehicle ? [b.vehicle] : []
 
   const placementDate = scheduled ? date : (requestedDate ?? '')
   const sortMinutes = parseTimeToMinutes(timeLabel) ?? UNTIMED
@@ -219,17 +234,31 @@ export function bookingToScheduleItem(b: Booking): ScheduleItem {
     inProgress,
 
     crew,
-    crewComplete: crew.length > 0,
-    vehicle: undefined,
-    equipmentId: undefined,
-    equipment: [],
+    // With a roster crew we can say whether the job has the people it NEEDS
+    // (crewSize, a driver). With only free-text names, "someone is named" remains
+    // the best available signal — unchanged from before.
+    crewComplete: roster.length ? !gap.incomplete : crew.length > 0,
+    vehicle: b.vehicle || undefined,
+    equipmentId: b.equipmentId,
+    equipment,
 
     valueCents: netInvoiceCents(b) || undefined,
     paymentState: paymentSummaryStatus(b),
-    attention: attentionForBooking(b, { scheduled, placementDate }),
+    attention: attentionForBooking(b, { scheduled, placementDate, gap, roster: roster.length }),
 
     href: `/admin/operations/book-now/${b.token}`,
   }
+}
+
+// The pre-roster projection: the two free-text names, as chips. Kept verbatim so a
+// booking that was never roster-assigned renders on the schedule exactly as it did
+// before this model existed. `staffId` stays absent, which is precisely what tells
+// conflict detection it cannot trust these names for cross-record crew matching.
+function legacyCrewChips(b: Booking): ScheduleCrew[] {
+  const out: ScheduleCrew[] = []
+  if (b.assignedTo?.trim()) out.push({ name: b.assignedTo.trim(), role: 'Lead' })
+  if (b.assignedHelper?.trim()) out.push({ name: b.assignedHelper.trim(), role: 'Helper' })
+  return out
 }
 
 // ── Route → ScheduleItem ─────────────────────────────────────────────────────
@@ -292,7 +321,10 @@ export function routeToScheduleItem(r: RouteRecord): ScheduleItem {
 }
 
 // ── Per-item attention flags (deterministic; cross-record checks live in conflicts.ts) ──
-function attentionForBooking(b: Booking, ctx: { scheduled: boolean; placementDate: string }): string[] {
+function attentionForBooking(
+  b: Booking,
+  ctx: { scheduled: boolean; placementDate: string; gap: JobCrewGap; roster: number },
+): string[] {
   const out: string[] = []
   if (b.status === 'quote_received') out.push('needs_review')
   if (b.status === 'pending_zelle_verification') out.push('zelle_review')
@@ -301,10 +333,21 @@ function attentionForBooking(b: Booking, ctx: { scheduled: boolean; placementDat
   if (!BOOKING_PENDING_STATUSES.has(b.status) && !BOOKING_CANCELLED.has(b.status) && balanceDueCents(b) > 0) {
     out.push('balance_due')
   }
-  // Committed work missing a crew.
+  // Committed work missing crew or equipment. A roster-assigned booking gets the
+  // same specific flags a route does (short-handed, no driver, no vehicle); one
+  // with only free-text names keeps the original coarse "is anybody named" check,
+  // so nothing about an existing booking's flags changes.
   const committed = b.status === 'confirmed' || b.status === 'in_progress'
-  if (committed && !b.assignedTo?.trim()) out.push('no_crew')
-  void ctx
+  if (committed) {
+    if (ctx.roster) {
+      if (ctx.gap.needsCrew) out.push('no_crew')
+      else if (ctx.gap.short) out.push('needs_helper')
+      else if (ctx.gap.needsDriver) out.push('needs_driver')
+      if (!b.vehicle && !b.equipmentId) out.push('no_vehicle')
+    } else if (!b.assignedTo?.trim()) {
+      out.push('no_crew')
+    }
+  }
   return out
 }
 

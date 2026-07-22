@@ -176,8 +176,14 @@ export function detectConflicts(items: ScheduleItem[]): Conflict[] {
       })
     }
 
-    // A route confirmed for a day but no vehicle/equipment picked.
-    if (it.kind === 'route' && it.lane === 'confirmed' && it.scheduled && !it.vehicle && !it.equipmentId) {
+    // Confirmed work for a day with no vehicle/equipment picked. Routes always
+    // qualify. A booking qualifies only once it is ROSTER-staffed (some crew member
+    // carries a staffId) — that is what says the job is being run under the
+    // assignment model and therefore has an equipment answer to give. Bookings
+    // still crewed by hand-typed names are left alone, so turning this on adds no
+    // warnings to work that predates the model.
+    const equippable = it.kind === 'route' || it.crew.some(c => c.staffId)
+    if (equippable && it.lane === 'confirmed' && it.scheduled && !it.vehicle && !it.equipmentId) {
       out.push({
         type: 'missing_vehicle', severity: 'warning', day: it.date, resource: it.number,
         message: `${it.number} (${it.title}) is confirmed for ${it.date} with no vehicle or equipment.`,

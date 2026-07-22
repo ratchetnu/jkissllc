@@ -1,3 +1,4 @@
+import type { JobAssignee } from './job-assignment'
 import { listRoutes, type Assignee, type RouteRecord } from './routes'
 import { getStaff, staffUsesTimeclock } from './staff'
 import { centralToday } from './dates'
@@ -123,7 +124,14 @@ export type PunchResult =
 // outcome. Idempotent: a repeat clock_in/clock_out makes no change and returns
 // `already: true`. GPS is best-effort — a denied/missing fix still records the time
 // and flags `denied` so the owner sees the pin is missing, never blocking the shift.
-export function applyPunch(assignee: Assignee, action: ClockAction, gps: Gps, now: number): PunchResult {
+//
+// Typed against the SHARED JobAssignee shape (lib/job-assignment) rather than the
+// route-specific Assignee, because it only ever touches fields both lanes have:
+// confirmedAt and the clock/GPS stamps. A routes.Assignee satisfies JobAssignee, so
+// every existing caller is unaffected — this widening is what lets a crew member
+// clock into a customer booking with the exact same, already-proven punch logic
+// instead of a second copy of it.
+export function applyPunch(assignee: JobAssignee, action: ClockAction, gps: Gps, now: number): PunchResult {
   if (!assignee.confirmedAt) return { ok: false, code: 'not_confirmed' }
 
   const lat = coord(gps.lat, -90, 90)

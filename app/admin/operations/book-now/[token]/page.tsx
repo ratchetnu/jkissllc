@@ -7,6 +7,7 @@ import { ArrowLeft, Camera, ExternalLink, Send, RefreshCw, CheckCircle2, Message
 import OperationsShell from '../../OperationsShell'
 import WorkflowTimeline from '../../../bookings/WorkflowTimeline'
 import BookingAICard from '../../ai/BookingAICard'
+import CrewPanel from './CrewPanel'
 import { fmtTs, money } from '../../ui'
 import { SERVICE_LABELS, INFO_REQUEST_FIELD_LABEL, type Booking, type InfoRequestField } from '../../../../lib/bookings'
 import {
@@ -177,6 +178,9 @@ function Detail({ token }: { token: string }) {
         <KV k="Access" v={b.accessNotes} />
         <KV k="Special instructions" v={b.specialInstructions} />
       </Section>
+
+      {/* Renders nothing unless BOOKING_ASSIGNMENT_ENABLED is on (the API 404s). */}
+      <CrewPanel token={token} />
 
       <Section title={`Photos · ${b.invoicePhotos?.length ?? 0}`}>
         {b.invoicePhotos && b.invoicePhotos.length > 0 ? (
