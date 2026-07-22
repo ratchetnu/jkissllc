@@ -113,11 +113,12 @@ export async function unassignCrewFromBooking(
   return persist(token, (b) => {
     const before = b.assignees ?? []
     if (!before.some(a => a.staffId === staffId)) return { abort: 'not_assigned' as const }
-    const after = before.filter(a => a.staffId !== staffId)
-    // Empty list → drop the field, so an un-crewed booking is indistinguishable
-    // from one never assigned. Leaving `[]` behind would read as "assigned to
-    // nobody" everywhere downstream.
-    b.assignees = after.length ? after : undefined
+    // Keep the array even when it empties. It is the marker that this booking is
+    // roster-managed, which is what tells persist() to re-derive (and therefore
+    // CLEAR) the customer-facing names. Dropping the field here would make an
+    // emptied booking look like one that was never assigned, stranding a derived
+    // name on the customer's confirmation page.
+    b.assignees = before.filter(a => a.staffId !== staffId)
     return null
   })
 }
@@ -300,15 +301,27 @@ async function persist(
 
     // THE compatibility guarantee, applied on every single write. Re-derived from
     // the crew list rather than edited in place, so the two views can never drift.
-    const legacy = deriveLegacyCrewNames(b.assignees)
-    if (b.assignees?.length) {
+    //
+    // The condition is `assignees !== undefined`, NOT `assignees?.length`. The
+    // PRESENCE of the array — even empty — is what marks this booking as
+    // roster-managed, and for a roster-managed booking the legacy names are a
+    // projection, so emptying the crew must clear them too.
+    //
+    // Getting this wrong is a customer-visible bug, and it was: an earlier version
+    // skipped the derivation when the list was empty, on the theory that it was
+    // protecting a name the owner had typed by hand. But on a roster-managed
+    // booking that name was DERIVED, so removing the last crew member left the
+    // customer's confirmation page naming someone who was no longer on the job —
+    // and left a phantom name-matched crew conflict on the schedule. Caught by the
+    // Sprint 1 Preview validation; see OPERION-V1-SPRINT-1-VALIDATION.md.
+    //
+    // A booking that was NEVER roster-managed has `assignees === undefined`, so its
+    // hand-typed names are still never touched.
+    if (b.assignees !== undefined) {
+      const legacy = deriveLegacyCrewNames(b.assignees)
       b.assignedTo = legacy.assignedTo
       b.assignedHelper = legacy.assignedHelper
     }
-    // With no roster crew we leave the hand-typed names alone — removing the last
-    // roster assignee must not erase a name the owner typed before any of this
-    // existed. (`assignees` is already undefined by then, so the legacy fields are
-    // once again the only record, exactly as they were.)
   })
 
   if (outcome.ok) return { ok: true, booking: outcome.value }

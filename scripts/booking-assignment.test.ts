@@ -225,6 +225,51 @@ test('the names derived for the customer match what an owner would have typed', 
   assert.ok(it.crew.every(c => c.staffId))
 })
 
+// ── Regression: emptying a roster-managed crew must clear the customer's names ──
+// Found by the Sprint 1 Preview validation. Removing the last roster crew member
+// left `assignedTo` naming someone no longer on the job — visible to the customer
+// on the confirmation page, and it also produced a phantom name-matched
+// crew_overlap on the schedule because the projector fell back to the stale name.
+test('an emptied roster crew derives NO customer-facing names', () => {
+  // The array is present but empty = roster-managed with nobody on it.
+  assert.deepEqual(deriveLegacyCrewNames([]), { assignedTo: undefined, assignedHelper: undefined })
+})
+
+test('a booking whose roster crew was emptied projects no crew and no phantom conflict', () => {
+  // Mirrors the post-fix persisted shape: assignees === [] and the derived names
+  // cleared, rather than assignees === undefined with a stale name left behind.
+  const emptied = booking({
+    status: 'confirmed', selectedDate: '2026-07-24', selectedWindow: '8am–10am',
+    assignees: [], assignedTo: undefined, assignedHelper: undefined,
+  })
+  const it = bookingToScheduleItem(emptied)
+  assert.deepEqual(it.crew, [], 'no crew chips at all')
+  assert.ok(it.attention.includes('no_crew'))
+
+  // And it must not collide with a route the same morning that DOES have crew.
+  const items = mergeSchedule({
+    bookings: [emptied],
+    routes: [route({ routeDate: '2026-07-24', reportTime: '8:00 AM', assignees: [routeCrew('s1', { name: 'Marcus' })] })],
+  })
+  assert.ok(!typesOf(detectConflicts(items)).includes('crew_overlap'),
+    'an un-crewed booking must not phantom-conflict via a stale derived name')
+})
+
+test('the stale-name shape that caused the bug would still be caught', () => {
+  // If a regression ever re-introduces "empty assignees + leftover name", the
+  // projector falls back to the legacy chip and a phantom conflict reappears.
+  const stale = booking({
+    status: 'confirmed', selectedDate: '2026-07-24', selectedWindow: '8am–10am',
+    assignees: [], assignedTo: 'Marcus',
+  })
+  const items = mergeSchedule({
+    bookings: [stale],
+    routes: [route({ routeDate: '2026-07-24', reportTime: '8:00 AM', assignees: [routeCrew('s1', { name: 'Marcus' })] })],
+  })
+  assert.ok(typesOf(detectConflicts(items)).includes('crew_overlap'),
+    'documents WHY the names must be cleared — a leftover name still matches by name')
+})
+
 // ── Route lane untouched ─────────────────────────────────────────────────────
 test('the route projection is unchanged by any of this', () => {
   const it = routeToScheduleItem(route({
