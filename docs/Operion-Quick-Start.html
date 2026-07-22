@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operion — Quick Start Guide</title>
+<style>
+  :root{
+    --ink:#0A0A0F; --paper:#FFFFFF; --accent:#E11D2E; --accent-2:#FF5568;
+    --muted:#697082; --line:#E9EBF1; --surface:#F6F7FA; --surface-2:#EEF0F5;
+    --ok:#12A36B; --amber:#C77700; --ink-soft:#3A3F4C;
+    --font:-apple-system,"SF Pro Display","Inter","Segoe UI","Helvetica Neue",Arial,sans-serif;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{font-family:var(--font); color:var(--ink); background:#54565e; -webkit-font-smoothing:antialiased; line-height:1.55; font-size:15px;}
+  a{color:var(--accent); text-decoration:none}
+
+  /* ---- print sheet model ---- */
+  .sheet{
+    position:relative; width:210mm; min-height:297mm; margin:10mm auto; background:var(--paper);
+    padding:22mm 20mm; box-shadow:0 8px 40px rgba(0,0,0,.28); overflow:hidden;
+  }
+  @page{ size:A4; margin:0 }
+  @media print{
+    body{background:#fff}
+    .sheet{ width:auto; min-height:auto; margin:0; box-shadow:none; page-break-after:always; }
+    .sheet:last-child{ page-break-after:auto }
+  }
+
+  /* ---- kickers / headings ---- */
+  .kicker{ font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--accent); font-weight:700; }
+  h1{ font-size:40px; line-height:1.05; letter-spacing:-.02em; margin:.1em 0 .3em; font-weight:800 }
+  h2{ font-size:25px; letter-spacing:-.015em; margin:0 0 .35em; font-weight:750 }
+  h3{ font-size:16px; margin:0 0 .3em; font-weight:700 }
+  p{ margin:.55em 0; color:var(--ink-soft) }
+  .lead{ font-size:18px; color:var(--muted); line-height:1.5 }
+  .rule{ height:1px; background:var(--line); border:0; margin:20px 0 }
+
+  /* ---- cover ---- */
+  .cover{ background:radial-gradient(120% 90% at 18% 0%, #1b1c26 0%, #0A0A0F 55%); color:#fff; padding:0; display:flex; flex-direction:column; }
+  .cover .top{ padding:24mm 20mm 0 }
+  .cover .wordmark{ font-size:15px; font-weight:800; letter-spacing:.02em }
+  .cover .wordmark .r{ color:var(--accent-2) }
+  .cover .mid{ margin-top:auto; padding:0 20mm }
+  .cover .eyebrow{ color:var(--accent-2); letter-spacing:.18em; text-transform:uppercase; font-size:12px; font-weight:700 }
+  .cover h1{ font-size:62px; line-height:1; letter-spacing:-.03em; margin:14px 0 10px; }
+  .cover .sub{ font-size:19px; color:#B9BDC9; max-width:70% }
+  .cover .foot{ margin-top:auto; padding:0 20mm 22mm; display:flex; justify-content:space-between; align-items:flex-end; color:#8A8F9E; font-size:13px }
+  .cover .foot .edition{ color:#fff; font-weight:600 }
+  .glow{ position:absolute; right:-120px; top:-80px; width:520px; height:520px; border-radius:50%;
+    background:radial-gradient(circle, rgba(225,29,46,.55), rgba(225,29,46,0) 62%); filter:blur(6px); }
+  .cover-badges{ display:flex; gap:10px; margin-top:26px; flex-wrap:wrap }
+  .cover-badges span{ border:1px solid rgba(255,255,255,.16); color:#D7DAE3; border-radius:999px; padding:7px 14px; font-size:12.5px; font-weight:600 }
+
+  /* ---- contents cards ---- */
+  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:8px }
+  .card{ border:1px solid var(--line); border-radius:14px; padding:16px 16px; background:#fff }
+  .card .n{ width:30px;height:30px;border-radius:9px; background:var(--surface); color:var(--accent); font-weight:800; font-size:14px; display:flex; align-items:center; justify-content:center; margin-bottom:10px }
+  .card h3{ font-size:15px }
+  .card p{ margin:.25em 0 0; font-size:13.5px; color:var(--muted) }
+
+  /* ---- section divider ---- */
+  .divider{ display:flex; align-items:baseline; gap:16px; margin:0 0 18px }
+  .divider .step{ font-size:64px; font-weight:800; letter-spacing:-.04em; color:var(--surface-2); line-height:.8 }
+  .divider .txt .kicker{ display:block; margin-bottom:2px }
+  .divider .txt h2{ margin:0 }
+
+  /* ---- browser-framed screenshot ---- */
+  figure{ margin:16px 0 6px }
+  .shot{ border:1px solid var(--line); border-radius:12px; overflow:hidden; box-shadow:0 10px 30px rgba(16,18,30,.10); background:#0A0A0F }
+  .shot .bar{ height:30px; background:#15161d; display:flex; align-items:center; gap:7px; padding:0 12px; border-bottom:1px solid #23242d }
+  .shot .bar i{ width:11px;height:11px;border-radius:50%; background:#33343d; display:inline-block }
+  .shot .bar i:nth-child(1){ background:#ff5f57 } .shot .bar i:nth-child(2){ background:#febc2e } .shot .bar i:nth-child(3){ background:#28c840 }
+  .shot .bar .u{ margin-left:12px; font-size:11px; color:#7c7f8b; font-family:var(--mono) }
+  .shot img{ display:block; width:100% }
+  .shot .frame{ position:relative }
+  .anno{ position:absolute; width:26px;height:26px; border-radius:50%; background:var(--accent); color:#fff; font-weight:800; font-size:13px; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(225,29,46,.5); border:2px solid #fff }
+  figcaption{ font-size:12.5px; color:var(--muted); margin-top:9px }
+  .legend{ list-style:none; padding:0; margin:10px 0 0; display:grid; grid-template-columns:1fr 1fr; gap:6px 18px }
+  .legend li{ font-size:13px; color:var(--ink-soft); display:flex; gap:9px; align-items:flex-start }
+  .legend .b{ flex:0 0 20px; height:20px; border-radius:50%; background:var(--accent); color:#fff; font-weight:800; font-size:11.5px; display:flex; align-items:center; justify-content:center; margin-top:1px }
+
+  /* ---- workflow card ---- */
+  .flow{ border:1px solid var(--line); border-radius:16px; overflow:hidden; margin:16px 0 }
+  .flow .meta{ display:flex; gap:0; background:var(--surface); border-bottom:1px solid var(--line) }
+  .flow .meta div{ padding:12px 16px; border-right:1px solid var(--line); }
+  .flow .meta div:last-child{ border-right:0 }
+  .flow .meta .lab{ font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); font-weight:700 }
+  .flow .meta .val{ font-size:14px; font-weight:700; margin-top:2px }
+  .flow .body{ padding:16px 18px }
+  ol.steps{ counter-reset:s; list-style:none; padding:0; margin:0 }
+  ol.steps li{ counter-increment:s; position:relative; padding:8px 0 8px 40px; border-bottom:1px dashed var(--line) }
+  ol.steps li:last-child{ border-bottom:0 }
+  ol.steps li::before{ content:counter(s); position:absolute; left:0; top:8px; width:26px;height:26px;border-radius:8px; background:var(--ink); color:#fff; font-weight:800; font-size:13px; display:flex; align-items:center; justify-content:center }
+  ol.steps li b{ color:var(--ink) }
+
+  /* ---- callouts ---- */
+  .callout{ border-radius:12px; padding:13px 15px 13px 46px; margin:14px 0; position:relative; font-size:14px; border:1px solid }
+  .callout .ic{ position:absolute; left:14px; top:12px; font-size:18px }
+  .callout.tip{ background:#F0FAF4; border-color:#CDEBDB; color:#0f5c3c }
+  .callout.warn{ background:#FDF1F2; border-color:#F6CDD2; color:#8f1420 }
+  .callout.note{ background:#F4F6FF; border-color:#D9E0FB; color:#243a86 }
+  .callout b{ color:inherit }
+
+  /* ---- checklist / kbd / mistakes ---- */
+  ul.check{ list-style:none; padding:0; margin:8px 0 }
+  ul.check li{ padding:7px 0 7px 30px; position:relative; border-bottom:1px solid var(--line); font-size:14px }
+  ul.check li::before{ content:""; position:absolute; left:0; top:9px; width:16px;height:16px; border-radius:5px; border:1.8px solid var(--accent) }
+  kbd{ font-family:var(--font); font-size:12px; font-weight:700; background:#fff; border:1px solid #cfd3dd; border-bottom-width:2px; border-radius:6px; padding:2px 8px; color:var(--ink) }
+  .kbdrow{ display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--line); font-size:14px }
+  .mistakes{ counter-reset:m; list-style:none; padding:0; margin:6px 0 }
+  .mistakes li{ counter-increment:m; position:relative; padding:9px 0 9px 42px; border-bottom:1px solid var(--line); font-size:14px }
+  .mistakes li::before{ content:counter(m); position:absolute; left:0; top:8px; width:28px;height:28px;border-radius:50%; background:var(--surface); color:var(--accent); font-weight:800; display:flex; align-items:center; justify-content:center; font-size:13px }
+  .qref{ display:grid; grid-template-columns:1fr 1fr; gap:12px }
+  .qref .box{ border:1px solid var(--line); border-radius:12px; padding:14px 15px }
+  .qref .box h3{ font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--accent); margin-bottom:8px }
+  .qref .box p{ margin:3px 0; font-size:13.5px }
+  .footer{ position:absolute; left:20mm; right:20mm; bottom:12mm; display:flex; justify-content:space-between; font-size:11px; color:var(--muted); border-top:1px solid var(--line); padding-top:8px }
+  .pill{ display:inline-block; background:var(--surface); border:1px solid var(--line); border-radius:999px; padding:3px 11px; font-size:12px; font-weight:600; color:var(--ink-soft) }
+  .tag-red{ color:var(--accent); font-weight:700 }
+</style>
+</head>
+<body>
+
+<!-- ============ COVER ============ -->
+<section class="sheet cover">
+  <div class="glow"></div>
+  <div class="top">
+    <div class="wordmark">Operion<span class="r">.</span></div>
+  </div>
+  <div class="mid">
+    <div class="eyebrow">Administrator</div>
+    <h1>Quick Start<br>Guide</h1>
+    <div class="sub">Everything you need to run your first day in Operion — from signing in to closing out the day with confidence.</div>
+    <div class="cover-badges"><span>15-minute read</span><span>For new administrators</span><span>Step-by-step</span></div>
+  </div>
+  <div class="foot">
+    <div>J KISS LLC · jkissllc.com</div>
+    <div class="edition">Edition 2026.07</div>
+  </div>
+</section>
+
+<!-- ============ WELCOME + CONTENTS ============ -->
+<section class="sheet">
+  <div class="kicker">Welcome</div>
+  <h1>You’ll be running the day in 15 minutes.</h1>
+  <p class="lead">Operion brings your entire operation into one calm, fast workspace. This guide walks you through the six things every administrator does — nothing more, nothing you don’t need. Follow it once and the rest of the platform will feel obvious.</p>
+
+  <hr class="rule">
+  <div class="kicker">Two ideas that make everything click</div>
+  <div class="grid" style="margin-top:12px">
+    <div class="card"><div class="n">A</div><h3>A booking</h3><p>A customer’s job — the request, the quote, the money.</p></div>
+    <div class="card"><div class="n">B</div><h3>A route</h3><p>The crew assignment that actually gets that job done.</p></div>
+  </div>
+  <p style="margin-top:14px">Keep those two in mind and Operion falls into place: customers create <b>bookings</b>; you dispatch <b>routes</b>; the schedule shows both.</p>
+
+  <hr class="rule">
+  <div class="kicker">What you’ll master</div>
+  <div class="grid" style="margin-top:12px">
+    <div class="card"><div class="n">1</div><h3>Sign in</h3><p>Get into your operations workspace.</p></div>
+    <div class="card"><div class="n">2</div><h3>Find your way around</h3><p>Navigation, search, and the one shortcut that matters.</p></div>
+    <div class="card"><div class="n">3</div><h3>Read the morning dashboard</h3><p>Know what needs you before you touch anything.</p></div>
+    <div class="card"><div class="n">4</div><h3>Dispatch a crew</h3><p>Create a route, assign, and confirm.</p></div>
+    <div class="card"><div class="n">5</div><h3>Review AI quotes</h3><p>Clear the Book Now queue like a pro.</p></div>
+    <div class="card"><div class="n">6</div><h3>Finish the day</h3><p>A 60-second close-out checklist.</p></div>
+  </div>
+  <div class="footer"><span>Operion · Quick Start Guide</span><span>Welcome</span></div>
+</section>
+
+<!-- ============ 1 SIGN IN ============ -->
+<section class="sheet">
+  <div class="divider"><div class="step">1</div><div class="txt"><span class="kicker">Getting in</span><h2>Sign in</h2></div></div>
+  <p class="lead">Operion opens to a single, focused sign-in screen. Owners and team members use the same door.</p>
+
+  <div class="flow">
+    <div class="meta">
+      <div><div class="lab">Goal</div><div class="val">Reach your workspace</div></div>
+      <div><div class="lab">Time</div><div class="val">30 seconds</div></div>
+      <div><div class="lab">You’ll need</div><div class="val">Your password</div></div>
+    </div>
+    <div class="body">
+      <ol class="steps">
+        <li>Open your Operion web address in any modern browser.</li>
+        <li><b>Owner?</b> Leave the email field blank and enter the owner password.</li>
+        <li><b>Team member?</b> Enter your email and your password.</li>
+        <li>Select <b>Sign In</b>. Crew land in the Crew Portal; you land in Operations.</li>
+      </ol>
+    </div>
+  </div>
+
+  <figure>
+    <div class="shot">
+      <div class="bar"><i></i><i></i><i></i><span class="u">jkissllc.com/admin</span></div>
+      <div class="frame"><img src="admin-manual-assets/screenshots/01-sign-in.jpg" alt="Operion sign-in"></div>
+    </div>
+    <figcaption>The sign-in screen. Owners leave the email blank; everyone else signs in with their email.</figcaption>
+  </figure>
+
+  <div class="callout note"><span class="ic">🔒</span><b>Signed out automatically.</b> For safety, Operion signs you out after 10 minutes of inactivity. Just sign back in — you’ll return right where you were. Forgot your password? An administrator can set a new one for you.</div>
+  <div class="footer"><span>Operion · Quick Start Guide</span><span>1 · Sign in</span></div>
+</section>
+
+<!-- ============ 2 NAVIGATE ============ -->
+<section class="sheet">
+  <div class="divider"><div class="step">2</div><div class="txt"><span class="kicker">Orientation</span><h2>Find your way around</h2></div></div>
+  <p class="lead">The dark bar across the top is your map. Your everyday sections live front and center; everything else is one click away under <b>More</b>.</p>
+
+  <figure>
+    <div class="shot">
+      <div class="bar"><i></i><i></i><i></i><span class="u">Operations · More menu</span></div>
+      <div class="frame">
+        <img src="admin-manual-assets/screenshots/08-more-menu.jpg" alt="Operion navigation and More menu">
+        <span class="anno" style="left:70.5%; top:2.6%">1</span>
+        <span class="anno" style="left:13.5%; top:14%">2</span>
+        <span class="anno" style="left:1%; top:2.6%">3</span>
+      </div>
+    </div>
+    <ul class="legend">
+      <li><span class="b">1</span><div><b>More menu</b> — everything grouped: Communication, Business, Finance, Release, Platform.</div></li>
+      <li><span class="b">2</span><div><b>Grouped destinations</b> — Businesses, Equipment, Claims, Pay, Settings, and more.</div></li>
+      <li><span class="b">3</span><div><b>Home brand</b> — click any time to return to your dashboard.</div></li>
+    </ul>
+  </figure>
+
+  <div class="callout tip"><span class="ic">⌘</span><b>The one shortcut to learn.</b> Press <kbd>⌘ K</kbd> (or <kbd>Ctrl K</kbd>) anywhere to open the command palette and jump straight to any page. It’s the fastest way to move through Operion.</div>
+
+  <div class="grid" style="margin-top:6px">
+    <div class="card"><div class="n">✦</div><h3>The “+” button</h3><p>Always starts a <b>New assignment</b>, from anywhere.</p></div>
+    <div class="card"><div class="n">◑</div><h3>The Book Now bell</h3><p>Shows how many online requests are waiting for you.</p></div>
+  </div>
+  <div class="footer"><span>Operion · Quick Start Guide</span><span>2 · Navigate</span></div>
+</section>
+
+<!-- ============ 3 DASHBOARD ============ -->
+<section class="sheet">
+  <div class="divider"><div class="step">3</div><div class="txt"><span class="kicker">Situational awareness</span><h2>Read your morning dashboard</h2></div></div>
+  <p class="lead">Home tells you what needs attention before you touch anything. Start here every day.</p>
+
+  <figure>
+    <div class="shot">
+      <div class="bar"><i></i><i></i><i></i><span class="u">Home</span></div>
+      <div class="frame">
+        <img src="admin-manual-assets/screenshots/02-dashboard.jpg" alt="Operion dashboard">
+        <span class="anno" style="left:11%; top:31%">1</span>
+        <span class="anno" style="left:12%; top:57%">2</span>
+        <span class="anno" style="left:12%; top:80%">3</span>
+      </div>
+    </div>
+    <ul class="legend">
+      <li><span class="b">1</span><div><b>Attention counts</b> — needs confirmation, needs reassignment, and tomorrow. Each clicks through to the exact list.</div></li>
+      <li><span class="b">2</span><div><b>Book Now requests</b> — every online submission by stage, at a glance.</div></li>
+      <li><span class="b">3</span><div><b>Today’s operations</b> — expandable cards with crew, time, and address.</div></li>
+    </ul>
+  </figure>
+
+  <div class="callout note"><span class="ic">🌙</span><b>Evening head-start.</b> After 5 pm, the dashboard automatically switches its focus to <b>tomorrow</b> so you can prep the next day before you leave.</div>
+  <div class="footer"><span>Operion · Quick Start Guide</span><span>3 · Dashboard</span></div>
+</section>
+
+<!-- ============ 4 DISPATCH ============ -->
+<section class="sheet">
+  <div class="divider"><div class="step">4</div><div class="txt"><span class="kicker">The core loop</span><h2>Dispatch a crew</h2></div></div>
+  <p class="lead">Jobs get done by putting crew on a <b>route</b>. Create it, assign your people, and let them confirm.</p>
+
+  <div class="flow">
+    <div class="meta">
+      <div><div class="lab">Goal</div><div class="val">Get a crew on a job</div></div>
+      <div><div class="lab">Time</div><div class="val">2–3 minutes</div></div>
+      <div><div class="lab">You’ll need</div><div class="val">Business, date, crew</div></div>
+    </div>
+    <div class="body">
+      <ol class="steps">
+        <li>Press <b>“+” → New assignment</b> and choose the business.</li>
+        <li>Set the <b>price and equipment</b>, then the <b>address</b> and <b>date/time</b> (one-off or recurring).</li>
+        <li>Add <b>crew</b> and their pay, then create the route.</li>
+        <li>Open the route, <b>assign</b> and <b>send</b> the assignment text.</li>
+        <li>As crew confirm, the status updates itself. On the day, <b>Mark complete</b>.</li>
+      </ol>
+    </div>
+  </div>
+
+  <figure>
+    <div class="shot">
+      <div class="bar"><i></i><i></i><i></i><span class="u">New assignment · Step 1 of 6</span></div>
+      <div class="frame"><img src="admin-manual-assets/screenshots/07-new-assignment.jpg" alt="New assignment wizard"></div>
+    </div>
+    <figcaption>The guided six-step builder starts by choosing the business — your recent clients appear as one-tap chips.</figcaption>
+  </figure>
+
+  <div class="callout tip"><span class="ic">◎</span><b>Expected result.</b> The route appears in <b>Operations</b> with a live status — <span class="pill">Assigned</span> → <span class="pill">Awaiting confirm</span> → <span class="pill">Confirmed</span> — so you always know where every crew stands.</div>
+  <div class="footer"><span>Operion · Quick Start Guide</span><span>4 · Dispatch</span></div>
+</section>
+
+<!-- ============ 4b OPERATIONS BOARD ============ -->
+<section class="sheet">
+  <div class="kicker">Where your routes live</div>
+  <h2>The Operations board</h2>
+  <p class="lead">Every route, grouped by business or shown as a flat list — with the ones that need you surfaced first.</p>
+
+  <figure>
+    <div class="shot">
+      <div class="bar"><i></i><i></i><i></i><span class="u">Operations</span></div>
+      <div class="frame">
+        <img src="admin-manual-assets/screenshots/03-operations.jpg" alt="Operations board">
+        <span class="anno" style="left:12%; top:41%">1</span>
+        <span class="anno" style="left:83%; top:44%">2</span>
+      </div>
+    </div>
+    <ul class="legend">
+      <li><span class="b">1</span><div><b>Business cards</b> — upcoming, pending, and completed counts, plus the crew and value.</div></li>
+      <li><span class="b">2</span><div><b>Attention badge</b> — flags routes that are declined, unanswered, or short-staffed.</div></li>
+    </ul>
+  </figure>
+
+  <div class="callout warn"><span class="ic">⚠︎</span><b>Do this first each morning.</b> Switch on the <b>Attention</b> filter. It gathers every route that’s declined, unanswered, or missing crew — clear those before anything else and your day stays calm.</div>
+  <div class="footer"><span>Operion · Quick Start Guide</span><span>4 · Dispatch</span></div>
+</section>
+
+<!-- ============ 5 AI QUOTES ============ -->
+<section class="sheet">
+  <div class="divider"><div class="step">5</div><div class="txt"><span class="kicker">Intake</span><h2>Review AI quotes</h2></div></div>
+  <p class="lead">When customers request a quote online, Operion’s AI reads their photos and suggests a price. Your job is to work the <b>Book Now</b> queue and approve or price the borderline ones.</p>
+
+  <figure>
+    <div class="shot">
+      <div class="bar"><i></i><i></i><i></i><span class="u">Book Now Requests</span></div>
+      <div class="frame">
+        <img src="admin-manual-assets/screenshots/04-book-now.jpg" alt="Book Now queue">
+        <span class="anno" style="left:30%; top:26%">1</span>
+        <span class="anno" style="left:65%; top:38%">2</span>
+      </div>
+    </div>
+    <ul class="legend">
+      <li><span class="b">1</span><div><b>Stage pills</b> — New, Awaiting AI, Quote Ready, Pending Payment, Booked, and pending revenue.</div></li>
+      <li><span class="b">2</span><div><b>Search & filter</b> — find any request by name, phone, email, or address.</div></li>
+    </ul>
+  </figure>
+
+  <div class="callout note"><span class="ic">✳︎</span><b>How the AI decides.</b> Clear, single-load jobs get an <b>instant quote</b>. Anything uncertain — possible hazards, very large loads, or unclear photos — is sent to <b>Manual Review</b> for you. The AI only observes; your pricing always sets the final number.</div>
+  <div class="callout tip"><span class="ic">✓</span><b>Your rhythm.</b> Clear <b>Manual Review</b> first, then send the <b>Quote Ready</b> ones. Moving and delivery jobs are always priced by hand — never by AI.</div>
+  <div class="footer"><span>Operion · Quick Start Guide</span><span>5 · AI quotes</span></div>
+</section>
+
+<!-- ============ 6 SCHEDULE + FINISH ============ -->
+<section class="sheet">
+  <div class="divider"><div class="step">6</div><div class="txt"><span class="kicker">Keep the day on track</span><h2>The schedule & finishing up</h2></div></div>
+  <p class="lead">The schedule shows everything — online bookings and crew routes — on one board, and quietly flags conflicts before they become problems.</p>
+
+  <figure>
+    <div class="shot">
+      <div class="bar"><i></i><i></i><i></i><span class="u">Schedule</span></div>
+      <div class="frame">
+        <img src="admin-manual-assets/screenshots/05-schedule.jpg" alt="Schedule board">
+        <span class="anno" style="left:76%; top:42%">1</span>
+        <span class="anno" style="left:16%; top:52%">2</span>
+      </div>
+    </div>
+    <ul class="legend">
+      <li><span class="b">1</span><div><b>Conflicts</b> — the same crew, truck, or time booked twice, surfaced for you to resolve.</div></li>
+      <li><span class="b">2</span><div><b>Day counts</b> — confirmed, pending, unscheduled, and attention at a glance.</div></li>
+    </ul>
+  </figure>
+
+  <div class="callout note"><span class="ic">👆</span><b>Read-only by design.</b> The schedule is for <i>seeing</i> your day. To change a job, click its card to open the booking or route and edit it there.</div>
+
+  <h3 style="margin-top:16px">Your 60-second close-out</h3>
+  <ul class="check">
+    <li>Book Now queue is clear — no Manual Review left hanging.</li>
+    <li>Every route for tomorrow is <b>Confirmed</b> (check the Attention filter).</li>
+    <li>Any completed jobs are marked <b>Complete</b>.</li>
+    <li>Nothing red is left on the dashboard.</li>
+  </ul>
+  <div class="footer"><span>Operion · Quick Start Guide</span><span>6 · Schedule & finish</span></div>
+</section>
+
+<!-- ============ DAILY CHECKLIST ============ -->
+<section class="sheet">
+  <div class="kicker">Keep this by your desk</div>
+  <h1>The daily checklist</h1>
+  <div class="grid" style="margin-top:6px">
+    <div class="card">
+      <h3 style="color:var(--accent)">Morning</h3>
+      <ul class="check" style="margin-top:4px">
+        <li>Open <b>Home</b> — scan the attention counts.</li>
+        <li>Operations → <b>Attention</b> filter → fix declines & gaps.</li>
+        <li>Confirm crew for today and tomorrow.</li>
+        <li>Clear the <b>Book Now</b> Manual Review items.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--accent)">Evening</h3>
+      <ul class="check" style="margin-top:4px">
+        <li>Mark completed jobs <b>Complete</b>.</li>
+        <li>Send any <b>Quote Ready</b> bookings.</li>
+        <li>Confirm tomorrow’s crew.</li>
+        <li>Nothing red left on the dashboard.</li>
+      </ul>
+    </div>
+  </div>
+
+  <hr class="rule">
+  <div class="kicker">Every week</div>
+  <div class="grid" style="margin-top:8px">
+    <div class="card"><div class="n">$</div><h3>Run pay & statements</h3><p>Contractor Pay for the period; issue statements.</p></div>
+    <div class="card"><div class="n">◷</div><h3>Review people</h3><p>Time-off requests and next week’s availability.</p></div>
+    <div class="card"><div class="n">◆</div><h3>Check claims</h3><p>Move open claims forward; keep deductions on track.</p></div>
+    <div class="card"><div class="n">↗</div><h3>Send invoices</h3><p>Bill business clients for completed routes.</p></div>
+  </div>
+  <div class="footer"><span>Operion · Quick Start Guide</span><span>Daily checklist</span></div>
+</section>
+
+<!-- ============ REFERENCE CARDS ============ -->
+<section class="sheet">
+  <div class="kicker">Quick reference</div>
+  <h1>Shortcuts, mistakes & terms</h1>
+
+  <div class="qref" style="margin-top:10px">
+    <div class="box">
+      <h3>Keyboard shortcuts</h3>
+      <div class="kbdrow"><span>Command palette</span><kbd>⌘ K</kbd></div>
+      <div class="kbdrow"><span>Search (same)</span><kbd>Ctrl K</kbd></div>
+      <div class="kbdrow"><span>Close a panel</span><kbd>Esc</kbd></div>
+      <div class="kbdrow" style="border-bottom:0"><span>New assignment</span><kbd>+</kbd></div>
+    </div>
+    <div class="box">
+      <h3>Words you’ll hear</h3>
+      <p><b>Booking</b> — a customer’s job.</p>
+      <p><b>Route</b> — the crew’s dispatch for it.</p>
+      <p><b>Book Now</b> — the online request queue.</p>
+      <p><b>Manual Review</b> — a quote handed to you.</p>
+      <p><b>Statement / Invoice</b> — pay crew / bill clients.</p>
+    </div>
+  </div>
+
+  <hr class="rule">
+  <div class="kicker">Top 10 first-week mistakes</div>
+  <ol class="mistakes">
+    <li>Skipping the <b>Attention</b> filter — that’s where the fires are.</li>
+    <li>Marking a route complete before the crew <b>confirmed</b> it.</li>
+    <li>Letting <b>Manual Review</b> bookings pile up unpriced.</li>
+    <li>Trying to drag jobs on the schedule — open the card to edit instead.</li>
+    <li>Forgetting that after 5 pm the dashboard shows <b>tomorrow</b>.</li>
+    <li>Not confirming tomorrow’s crew before leaving.</li>
+    <li>Expecting the AI to price moving/delivery jobs — those are always by hand.</li>
+    <li>Missing that a customer reply <b>pauses</b> automated messages.</li>
+    <li>Editing pay on a route after it ran — pay is snapshotted when assigned.</li>
+    <li>Not using <kbd>⌘ K</kbd> — it’s the fastest way to get anywhere.</li>
+  </ol>
+
+  <div class="callout tip" style="margin-top:14px"><span class="ic">💬</span><b>Need a hand?</b> Reach your administrator or platform owner. For the complete reference, see the <b>Operion Administrator Guide</b>.</div>
+  <div class="footer"><span>Operion · Quick Start Guide · Edition 2026.07</span><span>Reference</span></div>
+</section>
+
+</body>
+</html>
