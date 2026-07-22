@@ -122,3 +122,33 @@ test('error handling: installation not found + forbidden fail closed', async () 
   const r2 = await p2.readRepository('999', REPO)
   assert.equal(r2.ok, false); assert.ok(!r2.ok && r2.category === 'permission')
 })
+
+test('readTree lists blob paths in one call and fails closed on a truncated tree', async () => {
+  const body = {
+    sha: 'target-sha',
+    truncated: false,
+    tree: [
+      { path: 'app', type: 'tree' },                       // directories can't satisfy an import
+      { path: 'app/lib/intake-workflow.ts', type: 'blob' },
+      { path: 'app/lib/pack-services.ts', type: 'blob' },
+      { type: 'blob' },                                    // malformed entry, no path
+    ],
+  }
+  const m = mockFetch([tokenRoute, ['/repos/ratchetnu/supercharged/git/trees/target-sha', () => ({ status: 200, body })]])
+  const r = await new GitHubActionsProvider(ENV, { fetch: m.fetch, now: () => T }).readTree('999', REPO, 'target-sha')
+  assert.deepEqual(r, { ok: true, data: { paths: ['app/lib/intake-workflow.ts', 'app/lib/pack-services.ts'] } })
+  // Exactly one tree request (plus the installation-token exchange).
+  assert.equal(m.calls.filter(c => c.url.includes('/git/trees/')).length, 1)
+  assert.ok(m.calls.some(c => c.url.includes('recursive=1')), 'must request the full recursive listing')
+  // Read-only: the only repo endpoint touched is the tree listing itself.
+  assert.deepEqual(
+    m.calls.filter(c => c.url.includes('/repos/')).map(c => c.url.split('/repos/')[1].split('?')[0]),
+    ['ratchetnu/supercharged/git/trees/target-sha'],
+  )
+
+  // A truncated listing cannot prove a module is absent, so it must not be trusted.
+  const t = mockFetch([tokenRoute, ['/repos/ratchetnu/supercharged/git/trees/target-sha', () => ({ status: 200, body: { ...body, truncated: true } })]])
+  const rt = await new GitHubActionsProvider(ENV, { fetch: t.fetch, now: () => T }).readTree('999', REPO, 'target-sha')
+  assert.equal(rt.ok, false)
+  assert.match((rt as { error: string }).error, /truncated/)
+})

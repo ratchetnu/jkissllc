@@ -151,6 +151,24 @@ export class GitHubActionsProvider implements UpdateAutomationProvider {
       return { contentBase64, sha256 }
     })
   }
+  // The whole file list at a commit in ONE call, for the dependency-closure gate.
+  // Blobs only — `tree` entries are directories and can never satisfy an import.
+  // A TRUNCATED response is a hard failure: GitHub truncates very large trees, and a
+  // partial listing would let the gate conclude "module absent" (block, safe) or
+  // worse "module present" is unaffected — but it can never PROVE absence, which is
+  // exactly the claim the gate makes. Fail closed rather than reason over a subset.
+  async readTree(installationId: string, repo: RepoRef, sha: string): Promise<ProviderResult<{ paths: string[] }>> {
+    const r = await this.get(installationId, `/repos/${repo.owner}/${repo.name}/git/trees/${encodeURIComponent(sha)}?recursive=1`, (b) => {
+      const t = b as { truncated?: boolean; tree?: { path?: string; type?: string }[] }
+      return {
+        truncated: t.truncated === true,
+        paths: (t.tree ?? []).filter(e => e.type === 'blob' && typeof e.path === 'string').map(e => e.path as string),
+      }
+    })
+    if (!r.ok) return r
+    if (r.data.truncated) return { ok: false, error: 'target tree listing was truncated — cannot verify dependencies', category: 'api' }
+    return { ok: true, data: { paths: r.data.paths } }
+  }
   // Compare two commits/refs (read-only). ahead_by = commits `head` has that `base` lacks.
   // Sync Status uses base=target's synced baseline, head=source main → aheadBy = how many
   // source commits the target hasn't taken yet.
