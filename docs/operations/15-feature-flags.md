@@ -45,12 +45,30 @@ booleans only, never the underlying env value.
 | `SHADOW_ALERTING_ENABLED` | OFF | Read-only alert evaluation over the same shadow jobs. Sends no customer anything. |
 
 > **Two independent notes.** (1) `VISION_SHADOW_SELECTED_ONLY` defaulting ON is *safe* —
-> it narrows eligibility. (2) All `OPERION_*` automation flags are OFF and the control
-> plane ships inert; live GitHub/Vercel execution additionally requires the owner to
-> provision external setup (GitHub App, Vercel token, target workflow). This
-> Activation Readiness tab evaluates those prerequisites without exposing secrets or
-> changing flags. A green readiness result is evidence that a staged flag change may be
-> considered; it is not permission to enable every stage at once.
+> it narrows eligibility. (2) The `Default` column above is the code default (all
+> `OPERION_*` default OFF); it is **not** the resolved Production state. As audited
+> 2026-07-22, the Operion automation flags are **provisioned and enabled in Production**
+> (`OPERION_AUTOMATION_ENABLED` resolves ON, and the preview-automation / GitHub-Actions
+> path is live). Enablement only makes the control plane *eligible*: every side-effecting
+> action — transfer, Preview canary, Production promotion, rollback — additionally requires
+> the owner's provisioned external setup (GitHub App, Vercel token, target workflow) **and**
+> a staged approval with typed confirmation, so **no automated Production transfer has
+> executed** (see `OPERION_CURRENT_STATE.md` §7/§9). The Activation Readiness tab evaluates
+> those prerequisites without exposing secrets or changing flags. A green readiness result is
+> evidence that a staged action may be *considered*; it is not permission to run one.
+
+> **Phase P0 rehearsal (2026-07-22) — what it did and did not authorize.** A read-only
+> rehearsal exercised the whole transfer decision path — manifest construction, every
+> gate (compatibility, exclusions, rename, dependency closure, exported-symbol, drift),
+> evidence generation and the evidence record shape — in an isolated, credential-free
+> sandbox with the network blocked. It **validated the safety properties**: the gates
+> refused every malformed transfer, an incompatible update was refused with zero
+> repository reads, the evidence record carries no file bytes / hashes / secrets and
+> truncates loudly, and preflight blocks a Preview-origin dispatch. **The rehearsal
+> changed no flag, dispatched nothing, and wrote nothing.** It is *not* an approval to run
+> a transfer. **Executing the first Preview canary still requires explicit owner approval
+> and a staged flag change** — the rehearsal only shows the machinery is safe to approve,
+> not that approval has been given.
 
 ## Production reality caveat
 

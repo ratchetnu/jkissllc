@@ -11,10 +11,13 @@ import { evaluatePreflight, workBranchFor, commitDriftDetected, automaticRollbac
 import { businessRepoRef } from './repo-identity'
 import { canPromote, canAutoRollback } from './promotion'
 import { isProductionApprovalTransition } from './machine'
-import { getAutomationProvider } from './provider'
+import { getAutomationProvider, type UpdateAutomationProvider } from './provider'
 import { getPreviewProvider } from './vercel-provider'
 import { artifactsComplete, isAlreadyDeployed } from './deploy-view'
-import { getBusiness, getUpdate } from '../updates/store'
+import { getBusiness, getUpdate, getCompatMap, listDeployments } from '../updates/store'
+import { evaluateRequiredUpdates, describeRequiredUpdates, type RequiredUpdateVerdict } from '../updates/policy'
+import { buildCommitTransferManifest } from './manifest-builder'
+import { parseRepoName } from './repo-identity'
 import { productionProjectFor } from '../production-project'
 import * as store from './store'
 
@@ -40,13 +43,100 @@ export type PrepareResult = { ok: boolean; preflight: PreflightResult; job?: Upd
 export type ReadinessInput = {
   update: PlatformUpdate; business: PlatformBusiness; compat?: UpdateCompatibility
   approvals?: { migration?: boolean; environment?: boolean }; env?: Record<string, string | undefined>
+  /** Test seam only — production always resolves the real provider. */
+  provider?: UpdateAutomationProvider
+  /** Skip the (network-bound) exact transfer check. Used by the cheap UI poll. */
+  skipTransferCheck?: boolean
+}
+
+/**
+ * Resolve "Required updates" for one update × target (issue #48 Phase B).
+ *
+ * An update with no `dependencies` short-circuits with zero store reads, so every
+ * record that predates this gate keeps its exact previous behaviour.
+ */
+export async function resolveRequiredUpdates(update: PlatformUpdate, business: PlatformBusiness): Promise<{
+  ok: boolean; missing: string[]; detail?: string; verdicts: RequiredUpdateVerdict[]
+}> {
+  const deps = update.dependencies ?? []
+  if (!deps.length) return { ok: true, missing: [], verdicts: [] }
+  const [deployments, ...compatMaps] = await Promise.all([
+    listDeployments(500),
+    ...deps.map((k) => getCompatMap(k)),
+  ])
+  const compatByKey = new Map(deps.map((k, i) => [k, compatMaps[i]?.[business.id]?.status]))
+  const r = evaluateRequiredUpdates({
+    dependencies: deps,
+    businessId: business.id,
+    compatStatusFor: (k) => compatByKey.get(k),
+    deployments,
+  })
+  return { ...r, detail: describeRequiredUpdates(r.verdicts) || undefined }
+}
+
+/**
+ * The EXACT transfer, checked before a job exists (issue #48 Phase A → preflight).
+ *
+ * Builds the real commit-transfer manifest through the same builder the runner will
+ * use, so the dependency-closure, drift, rename and exclusion gates all speak here.
+ * Read-only: the builder never writes. Repository identities come from the canonical
+ * records (`update.sourceRepo`, `businessRepoRef`) and never from request input.
+ */
+export async function checkTransferReady(input: {
+  update: PlatformUpdate; business: PlatformBusiness; compat?: UpdateCompatibility
+  provider?: UpdateAutomationProvider
+}): Promise<{ ok: boolean; reason?: string }> {
+  const { update, business, compat } = input
+  const provider = input.provider ?? getAutomationProvider()
+  // A provider that cannot READ is not evidence that the transfer is incomplete.
+  // With no GitHub App credentials the inert StubProvider fails every call, and
+  // turning that into "transfer incomplete" would block every unprovisioned
+  // environment — while the real safety net (dispatch stops at "execution not
+  // configured") already covers that case. Leave the gate unevaluated instead.
+  if (provider.name === 'stub') return { ok: true }
+  const sourceRepo = parseRepoName(update.sourceRepo)
+  const targetRepo = businessRepoRef(business)
+  // Anything missing here is already covered by an earlier, cheaper gate; not a
+  // reason to invent a second failure for the same cause.
+  if (!sourceRepo || !targetRepo || !update.sourceCommit || !business.githubInstallationId || !business.defaultBranch) {
+    return { ok: true }
+  }
+  const built = await buildCommitTransferManifest({
+    provider,
+    installationId: business.githubInstallationId,
+    sourceRepo, sourceRepoName: update.sourceRepo!, sourceCommit: update.sourceCommit,
+    targetRepo, targetBranch: business.defaultBranch,
+    updateKey: update.key,
+    compatibility: compat,
+  })
+  return built.ok ? { ok: true } : { ok: false, reason: built.error }
 }
 
 /** READ-ONLY preflight evaluation — no job is created, nothing is dispatched. The UI calls
  *  this to render readiness + disable "Prepare Preview" until every blocking gate passes. */
 export async function evaluatePreviewReadiness(input: ReadinessInput): Promise<PreflightResult> {
   const env = input.env ?? process.env
-  const hasActiveJob = !!(await store.activeJobForBusiness(input.business.id))
+  const [hasActiveJob, requiredUpdates] = await Promise.all([
+    store.activeJobForBusiness(input.business.id).then(Boolean),
+    resolveRequiredUpdates(input.update, input.business),
+  ])
+  // The transfer check costs GitHub reads, so it runs only when every cheaper gate
+  // already passes — and never for the read-only UI poll.
+  let transferReady: { ok: boolean; reason?: string } | undefined
+  if (!input.skipTransferCheck && requiredUpdates.ok) {
+    const cheap = evaluatePreflight({
+      update: input.update, business: input.business, compat: input.compat, hasActiveJob,
+      flags: {
+        automation: flag('OPERION_AUTOMATION_ENABLED', env),
+        preview: flag('OPERION_PREVIEW_AUTOMATION_ENABLED', env),
+        githubActions: flag('OPERION_GITHUB_ACTIONS_ENABLED', env),
+        controlPlane: env.VERCEL_ENV !== 'preview',
+      },
+      approvals: input.approvals,
+      requiredUpdates,
+    })
+    if (cheap.ok) transferReady = await checkTransferReady({ update: input.update, business: input.business, compat: input.compat, provider: input.provider })
+  }
   return evaluatePreflight({
     update: input.update, business: input.business, compat: input.compat, hasActiveJob,
     flags: {
@@ -58,6 +148,8 @@ export async function evaluatePreviewReadiness(input: ReadinessInput): Promise<P
       controlPlane: env.VERCEL_ENV !== 'preview',
     },
     approvals: input.approvals,
+    requiredUpdates,
+    transferReady,
   })
 }
 
@@ -67,10 +159,14 @@ export async function preparePreview(input: {
   update: PlatformUpdate; business: PlatformBusiness; compat?: UpdateCompatibility
   actor: string; strategy?: ExecutionStrategy; approvals?: { migration?: boolean; environment?: boolean }
   env?: Record<string, string | undefined>
+  /** Test seam only — production always resolves the real provider. */
+  provider?: UpdateAutomationProvider
 }): Promise<PrepareResult> {
   const { update, business, compat, actor } = input
   const env = input.env ?? process.env
-  const preflight = await evaluatePreviewReadiness({ update, business, compat, approvals: input.approvals, env })
+  // Full readiness INCLUDING the exact transfer check. A failure here means no job is
+  // created, no branch, no dispatch, no deployment — nothing external happens at all.
+  const preflight = await evaluatePreviewReadiness({ update, business, compat, approvals: input.approvals, env, provider: input.provider })
   // Already-present guard (defense in depth): if compat says this target already carries the
   // update, there is nothing to transfer. Never create a job / dispatch — a re-transfer of
   // identical files just fails at commit. Treat it as satisfied, not a failure.
@@ -112,7 +208,7 @@ export async function preparePreview(input: {
     // provider is provisioned. The Stub fails closed → the job is blocked, not run.
     const repoRef = businessRepoRef(business)
     if (flag('OPERION_PREVIEW_AUTOMATION_ENABLED', env) && flag('OPERION_GITHUB_ACTIONS_ENABLED', env) && business.githubInstallationId && repoRef && business.automationWorkflowFile) {
-      const provider = getAutomationProvider(env)
+      const provider = input.provider ?? getAutomationProvider(env)
       const res = await provider.dispatchWorkflow(business.githubInstallationId, repoRef, business.automationWorkflowFile, business.defaultBranch, { deploymentRequestId: id, updateId: update.key, targetBranch: job.workBranch!, executionStrategy: job.strategy })
       if (res.ok) { job.status = 'creating_branch'; job.currentStep = 'branch'; job.startedAt = now() }
       else { job.status = 'blocked'; job.failureCategory = 'provider_error'; job.failureSummary = res.error }

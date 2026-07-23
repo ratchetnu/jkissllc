@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePlatformOwner, getPrincipal } from '../../../_lib/session'
-import { getJob } from '../../../../../lib/platform/automation/store'
+import { getJob, getTransferEvidence } from '../../../../../lib/platform/automation/store'
 import { getBusiness } from '../../../../../lib/platform/updates/store'
 import { approveProduction, transitionJob, retryPreview, finalizePreview } from '../../../../../lib/platform/automation/orchestrator'
 
@@ -9,13 +9,22 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 // GET — one automation job. Platform-owner only.
+//
+// Also returns the job's transfer evidence (§4 #7) when it exists: the pinned target
+// base commit and the paths that were transferred, excluded, drift-checked,
+// closure-checked and symbol-checked — or, for a refused build, the reason. Read-only
+// and additive; `evidence` is simply absent for jobs that predate the record or whose
+// retention window has closed, and no caller may assume it is present.
 export const GET = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const who = await requirePlatformOwner(req)
   if (who instanceof NextResponse) return who
   const { id } = await params
   const job = await getJob(id)
   if (!job) return NextResponse.json({ error: 'not_found' }, { status: 404 })
-  return NextResponse.json({ job })
+  // Fail-soft on read too — a missing or unreadable audit record must never turn the
+  // job view itself into an error.
+  const evidence = await getTransferEvidence(id).catch(() => null)
+  return NextResponse.json(evidence ? { job, evidence } : { job })
 })
 
 // POST — owner actions. Production promotion ALWAYS requires the platform owner here.

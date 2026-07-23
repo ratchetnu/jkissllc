@@ -8,7 +8,7 @@
 // mapped by href in the shell) so the model is unit-testable. Permission rules
 // (`adminOnly`/`ownerOnly`) are unchanged and are ALSO enforced server-side on each route.
 
-export type NavGroup = 'comms' | 'business' | 'finance' | 'release' | 'platform'
+export type NavGroup = 'team' | 'comms' | 'business' | 'finance' | 'release' | 'platform'
 
 export type NavItem = {
   href: string
@@ -35,6 +35,11 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/admin/operations/employees', label: 'Crew', desktopPrimary: true }, // mobile: lives in More
   // ── Book Now (special action — bell on desktop, raised centre button on mobile) ──
   { href: BOOK_NOW_HREF, label: 'Book Now' },
+  // ── More menu — Team ──
+  // Team & Access (logins, roles, deactivation) was reachable ONLY via Settings, so
+  // adding a crew login meant a detour through an unrelated screen. It belongs beside
+  // Crew: same subject, different half — the roster vs. who can sign in.
+  { href: '/admin/operations/users', label: 'Team & Access', group: 'team', adminOnly: true },
   // ── More menu — Communication ──
   { href: '/admin/operations/communications', label: 'Communications', group: 'comms' },
   { href: '/admin/operations/ai', label: 'AI Command Center', group: 'comms', adminOnly: true, ownerOnly: true },
@@ -52,9 +57,9 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/admin/operations/sync', label: 'Sync Status', group: 'platform', adminOnly: true, ownerOnly: true },
 ]
 
-export const GROUP_ORDER: NavGroup[] = ['comms', 'business', 'finance', 'release', 'platform']
+export const GROUP_ORDER: NavGroup[] = ['team', 'comms', 'business', 'finance', 'release', 'platform']
 export const GROUP_LABELS: Record<NavGroup, string> = {
-  comms: 'Communication', business: 'Business', finance: 'Finance', release: 'Release', platform: 'Platform',
+  team: 'Team', comms: 'Communication', business: 'Business', finance: 'Finance', release: 'Release', platform: 'Platform',
 }
 
 /** Destinations the current role/owner may see (managers lose adminOnly; ownerOnly is owner-only).
@@ -82,9 +87,15 @@ export function menuGroups(visible: NavItem[]): NavMenuGroup[] {
     .filter(g => g.items.length > 0)
 }
 
-/** Mobile "More" sheet: top-level destinations not in the bottom bar (Crew) first, then the categories. */
+/** Mobile "More" sheet: top-level destinations not in the bottom bar (Crew) lead, then the
+ *  categories. Crew and Team & Access are ONE section, never two headings both reading
+ *  "Team" — the bottom-bar overflow merges into the real group rather than sitting above it. */
 export function mobileMoreGroups(visible: NavItem[]): NavMenuGroup[] {
   const topLevelExtra = visible.filter(n => n.desktopPrimary && !n.mobilePrimary && !isBookNow(n))
   const groups = menuGroups(visible)
-  return topLevelExtra.length ? [{ key: 'team', label: 'Team', items: topLevelExtra }, ...groups] : groups
+  if (!topLevelExtra.length) return groups
+  const i = groups.findIndex(g => g.key === 'team')
+  if (i === -1) return [{ key: 'team', label: GROUP_LABELS.team, items: topLevelExtra }, ...groups]
+  const merged = { ...groups[i], items: [...topLevelExtra, ...groups[i].items] }
+  return [merged, ...groups.slice(0, i), ...groups.slice(i + 1)]
 }

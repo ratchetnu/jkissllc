@@ -8,7 +8,17 @@
 > J KISS `main` = `ee577c2` · Supercharged `main` = `52d50b7`
 > J KISS tests **1830/1830** · Supercharged tests **469/469** · both TypeScript-clean
 > J KISS Production **Ready** · Supercharged Production serving prior Ready build
-> **Every Operion automation flag is OFF in Production. Nothing auto-deploys today.**
+> **Operion automation flags are provisioned and enabled in Production; the actions they
+> gate stay behind explicit owner approval.** The master switch `OPERION_AUTOMATION_ENABLED`
+> is ON in the Production runtime (audited 2026-07-22 via the Release Center's resolved
+> state), alongside the preview-automation and GitHub-Actions flags. What is *gated* — not
+> off — is every side-effecting action: cross-business transfer, Preview canary, and
+> Production promotion each require a staged owner approval and typed confirmation. As a
+> result **no automated Production transfer has ever executed** — 0 `approved_production`
+> jobs, 0 promotions, 0 publish/rollback records. Separately, J KISS Production keeps
+> deploying normally through its **own Vercel Git integration** (a push to `main` builds and
+> promotes, as it always has); that path is independent of Operion release automation. See
+> §7 and §9.
 
 ---
 
@@ -43,7 +53,7 @@ Supercharged is a *branded copy*, not a fork you can rebase. It has its own bran
 │  Book Now intake → AI photo estimate → quote → booking →        │
 │  crew assignment → crew portal execution → pay statements       │
 └─────────────────────────────────────────────────────────────────┘
-┌─ Operion control plane (built, flag-gated OFF in prod) ─────────┐
+┌─ Operion control plane (built; flags on, actions gated) ────────┐
 │  Update registry → compatibility → preflight → commit transfer  │
 │  → GitHub Actions on the target → Preview → owner approval      │
 │  → production promotion → rollback                              │
@@ -247,7 +257,7 @@ Ordered by consequence. None is currently reachable in Production because the re
 | Preview | Ready (12h before audit) |
 | Ignored Build Step | Configured at **project level**, not in `vercel.json` — a scripts-only PR correctly skips its build and reports a green Vercel check |
 
-**Nothing in Operion deploys automatically.** `OPERION_PREVIEW_AUTOMATION_ENABLED` and `OPERION_GITHUB_ACTIONS_ENABLED` are the two gates; both are present in J KISS Production env but the flag values are off, and the workflow dispatches only on `workflow_dispatch`.
+**No automated Production transfer has executed.** `OPERION_PREVIEW_AUTOMATION_ENABLED` and `OPERION_GITHUB_ACTIONS_ENABLED` are **enabled** in J KISS Production, so owner-initiated Preview canaries do run — the target workflow dispatches only on `workflow_dispatch` and lands a work branch + PR + Vercel **Preview**, never Production. As of the audit, seven owner-initiated automation jobs exist, all `automated_preview` mode (four failed before reaching a verified Preview, two were cancelled at owner review, one reached a verified Preview); none is `approved_production` and none carries a promotion. One update (UPD-1006) *is* on Supercharged Production, but it arrived through a **manual PR merge** of its Operion preview branch (commit `dd8f658`, PR #1) into the target's `main` — Supercharged's own Vercel Git integration then deployed it, and reconciliation merely recorded it (`DEP-1001`). That is a human git merge, not an Operion production promotion.
 
 ---
 
@@ -290,6 +300,17 @@ Key namespaces: `bk:*` bookings · `rt:*` routes · `paystmt:*` pay statements �
 ### J KISS Production — Operion-relevant
 
 Present: `OPERION_AUTOMATION_ENABLED` · `OPERION_GITHUB_ACTIONS_ENABLED` · `OPERION_PREVIEW_AUTOMATION_ENABLED` · `OPERION_PRODUCTION_PROMOTION_ENABLED` · `OPERION_APPROVAL_GATE_ENABLED` · `OPERION_AI_ADAPTATION_ENABLED` · `OPERION_AUTOMATIC_ROLLBACK_ENABLED` · `OPERION_SYNC_STATUS_ENABLED` · `OPERION_SYNC_PRODUCT_IDS` · `OPERION_CALLBACK_SECRET` · `GITHUB_APP_ID` · `GITHUB_APP_PRIVATE_KEY` · `VERCEL_TOKEN` · `VERCEL_TEAM_ID` · `BLOB_READ_WRITE_TOKEN`
+
+> **Resolved flag state (audited 2026-07-22).** These Operion flags are not merely present —
+> the automation switches are **enabled** in the Production runtime. `OPERION_AUTOMATION_ENABLED`
+> resolves ON (confirmed via the Release Center; `vercel env pull` redacts the raw value, so the
+> runtime is the source of truth), and the preview-automation and GitHub-Actions path is live
+> (owner-initiated Preview canaries have dispatched). All Operion flags in Production were
+> created by the account owner (Vercel team OWNER `nunubaby-6829`), the automation set on
+> 2026-07-16; `OPERION_PRODUCTION_PROMOTION_ENABLED` was last modified 2026-07-20. Enablement
+> only makes a subsystem *eligible* — the transfer/promotion **actions stay approval-gated**, and
+> per §7 no automated Production transfer has executed. Doc 15's inventory table lists code
+> **defaults** (all `OPERION_*` default OFF); this note records the resolved Production values.
 
 **Absent (deliberately or as a gap):**
 - `BOOKING_ASSIGNMENT_ENABLED` — absent ⇒ default `false`. Correct today.

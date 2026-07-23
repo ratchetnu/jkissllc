@@ -18,6 +18,8 @@ import { detectConflicts } from '../app/lib/schedule/conflicts'
 import type { JobAssignee } from '../app/lib/job-assignment'
 import { deriveLegacyCrewNames } from '../app/lib/job-assignment'
 
+process.env.BOOKING_ASSIGNMENT_ENABLED = 'true'
+
 // ── factories ────────────────────────────────────────────────────────────────
 let n = 5000
 const booking = (o: Partial<Booking> = {}): Booking => ({

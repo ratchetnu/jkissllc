@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePlatformOwner, getPrincipal } from '../../_lib/session'
 import { listUpdates, saveUpdate, nextUpdateKey, getBusiness } from '../../../../lib/platform/updates/store'
-import { computeUpdateKpis } from '../../../../lib/platform/updates/policy'
+import { computeUpdateKpis, validateDependencies, describeDependencyProblems } from '../../../../lib/platform/updates/policy'
 import { PLATFORM_UPDATE_VERSION, type PlatformUpdate, type ValidationChecklist } from '../../../../lib/platform/updates/types'
 
 export const runtime = 'nodejs'
@@ -33,6 +33,21 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   const actor = (await getPrincipal(req))?.sub || 'owner'
   const now = Date.now()
   const key = await nextUpdateKey()
+  // Required updates ("dependencies") are validated BEFORE the record exists: an
+  // unparseable list must never be stored as "no requirements", because an empty list
+  // is exactly what lets a transfer proceed. Omitted stays undefined.
+  let dependencies: string[] | undefined
+  if (body.dependencies !== undefined) {
+    const known = await listUpdates(500)
+    const v = validateDependencies({
+      key,
+      submitted: body.dependencies,
+      knownKeys: new Set(known.map((u) => u.key)),
+      dependenciesOf: (k) => known.find((u) => u.key === k)?.dependencies,
+    })
+    if (!v.ok) return NextResponse.json({ error: describeDependencyProblems(v.problems) }, { status: 400 })
+    dependencies = v.dependencies
+  }
   const u: PlatformUpdate = {
     recordVersion: PLATFORM_UPDATE_VERSION, key,
     title, summary: s(body.summary, 1000) ?? title, description: s(body.description, 8000),
@@ -49,6 +64,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     featureFlagRequired: b(body.featureFlagRequired), manualPortRequired: b(body.manualPortRequired),
     rollbackSupported: b(body.rollbackSupported),
     requiredModules: Array.isArray(body.requiredModules) ? body.requiredModules.filter((x: unknown) => typeof x === 'string').slice(0, 40) : undefined,
+    dependencies,
     validation: BLANK_VALIDATION, risks: s(body.risks, 2000), limitations: s(body.limitations, 2000),
     exclusions: s(body.exclusions, 2000), ownerNotes: s(body.ownerNotes, 4000),
     createdBy: actor, createdAt: now, updatedAt: now,

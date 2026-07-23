@@ -51,6 +51,10 @@ import { GET as jobGET } from '../app/api/portal/jobs/[id]/route'
 import { portalNav } from '../app/portal/PortalShell'
 import MyJobsPage from '../app/portal/jobs/page'
 import JobDetailPage from '../app/portal/jobs/[id]/page'
+import { bookingToScheduleItem, mergeSchedule } from '../app/lib/schedule/unified'
+import { detectConflicts } from '../app/lib/schedule/conflicts'
+import type { Booking } from '../app/lib/bookings'
+import type { RouteRecord } from '../app/lib/routes'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const CTX = { params: Promise.resolve({} as Record<string, string>) }
@@ -166,4 +170,98 @@ test('the Jobs tab appears — as a secondary item — only when bookings are on
   assert.ok(!('primary' in jobs && jobs.primary), 'Jobs stays out of the 4-item mobile bottom bar')
   // The flag toggles exactly one destination, nothing else.
   assert.equal(on.length, portalNav(false).length + 1)
+})
+
+test('flag off hides persisted roster crew and equipment from the schedule projection', async () => {
+  const booking = {
+    token: 'b'.repeat(64), bookingNumber: 'JK-B-FLAG', customerName: 'Customer',
+    serviceType: 'moving', status: 'confirmed', selectedDate: '2026-07-20', selectedWindow: '8:00 AM',
+    assignedTo: 'Crew One', vehicle: 'Truck One', equipmentId: 'truck-1',
+    assignees: [{ staffId: 'crew-1', name: 'Crew One', token: 'private-job-token' }],
+    items: [], payments: [], availableDates: [], availableWindows: [],
+    invoiceAmountCents: 0, depositAmountCents: 0, amountPaidCents: 0, createdAt: 1, updatedAt: 1,
+  } as unknown as Booking
+
+  await withFlag('false', () => {
+    const item = bookingToScheduleItem(booking)
+    assert.deepEqual(item.crew, [])
+    assert.equal(item.vehicle, undefined)
+    assert.equal(item.equipmentId, undefined)
+    assert.deepEqual(item.equipment, [])
+    assert.ok(!item.attention.includes('no_crew'), 'hidden assignments do not become a false missing-crew warning')
+    assert.equal(item.crewComplete, true, 'the retained assignment remains staffed without exposing identities')
+  })
+
+  await withFlag(undefined, () => {
+    const item = bookingToScheduleItem(booking)
+    assert.deepEqual(item.crew, [], 'an absent Production flag is identical to explicit false')
+    assert.equal(item.equipmentId, undefined)
+  })
+
+  await withFlag('true', () => {
+    const item = bookingToScheduleItem(booking)
+    assert.equal(item.crew[0]?.staffId, 'crew-1')
+    assert.equal(item.vehicle, 'Truck One')
+    assert.equal(item.equipmentId, 'truck-1')
+  })
+})
+
+test('flag off removes cross-lane conflicts created only by booking assignments', async () => {
+  const booking = {
+    token: 'c'.repeat(64), bookingNumber: 'JK-B-CONFLICT', customerName: 'Customer',
+    serviceType: 'moving', status: 'confirmed', selectedDate: '2026-07-20', selectedWindow: '8:00 AM',
+    assignedTo: 'Crew One', vehicle: 'Truck One', equipmentId: 'truck-1',
+    assignees: [{ staffId: 'crew-1', name: 'Crew One', token: 'private-job-token' }],
+    items: [], payments: [], availableDates: [], availableWindows: [],
+    invoiceAmountCents: 0, depositAmountCents: 0, amountPaidCents: 0, createdAt: 1, updatedAt: 1,
+  } as unknown as Booking
+  const route = {
+    token: 'r'.repeat(16), routeNumber: 'JK-R-CONFLICT', status: 'assigned', routeDate: '2026-07-20', reportTime: '8:00 AM',
+    businessName: 'Business', reportAddress: 'Address', vehicle: 'Truck One', equipmentId: 'truck-1',
+    assignees: [{ staffId: 'crew-1', name: 'Crew One', token: 'route-token' }], events: [], audit: [], createdAt: 1, updatedAt: 1,
+  } as unknown as RouteRecord
+
+  await withFlag('true', () => {
+    const types = detectConflicts(mergeSchedule({ bookings: [booking], routes: [route] })).map(c => c.type)
+    assert.ok(types.includes('crew_overlap'))
+    assert.ok(types.includes('equipment_overlap'))
+  })
+  await withFlag('false', () => {
+    const types = detectConflicts(mergeSchedule({ bookings: [booking], routes: [route] })).map(c => c.type)
+    assert.ok(!types.includes('crew_overlap'))
+    assert.ok(!types.includes('equipment_overlap'))
+    assert.ok(!types.includes('vehicle_overlap'))
+    assert.ok(!types.includes('missing_crew'))
+  })
+})
+
+// Routes are NOT part of the booking-assignment model, so the flag must not move
+// route detection in either direction. Suppressing a booking's hidden crew is the
+// whole job; a short-handed route stays quiet and an empty route stays flagged, and
+// both answers have to be identical with the flag on and off.
+test('route missing-crew detection is identical with the flag on and off', async () => {
+  const base = {
+    reportTime: '8:00 AM', businessName: 'Business', reportAddress: 'Address',
+    vehicle: 'Truck One', routeDate: '2026-07-20', status: 'assigned',
+    requiresHelper: true, events: [], audit: [], createdAt: 1, updatedAt: 1,
+  }
+  const shortHanded = {
+    ...base, token: 's'.repeat(16), routeNumber: 'JK-R-SHORT',
+    assignees: [{ staffId: 'crew-1', name: 'Crew One', role: 'driver', token: 't1' }],
+  } as unknown as RouteRecord
+  const unstaffed = {
+    ...base, token: 'u'.repeat(16), routeNumber: 'JK-R-EMPTY', assignees: [],
+  } as unknown as RouteRecord
+
+  const missingCrewFor = (r: RouteRecord) =>
+    detectConflicts(mergeSchedule({ routes: [r] })).filter(c => c.type === 'missing_crew')
+
+  for (const flag of ['true', 'false'] as const) {
+    await withFlag(flag, () => {
+      assert.equal(missingCrewFor(shortHanded).length, 0,
+        `short-handed route must not be flagged (flag=${flag})`)
+      assert.equal(missingCrewFor(unstaffed).length, 1,
+        `genuinely unstaffed route must still be flagged (flag=${flag})`)
+    })
+  }
 })

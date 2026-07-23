@@ -7,6 +7,7 @@
 
 import { isSafeRepoPath, manifestFromCommitFiles, validateManifest, type ApplyManifest } from './manifest'
 import { analyzeClosure, describeClosureProblems, isCodePath, type ClosureProblem } from './closure'
+import { analyzeSymbols, collectTargetModules, describeSymbolProblems } from './exports'
 import type { UpdateAutomationProvider, RepoRef } from './provider'
 import type { UpdateCompatibility } from '../updates/types'
 
@@ -18,6 +19,16 @@ export type BuiltManifest = {
   targetBaseCommit: string
   /** Manifest code files whose local imports were verified against the target. */
   closureCheckedPaths: string[]
+  /** Target modules whose EXPORTED SYMBOLS were verified against this transfer's imports. */
+  symbolCheckedPaths: string[]
+  /**
+   * Target modules the symbol gate could NOT analyse, and why — the fail-open record.
+   * The gate deliberately skips anything it cannot parse with certainty (re-export
+   * barrels, destructuring exports, CJS, `.d.ts`, an unreadable target file…), so this
+   * is the list of modules whose exports were never actually checked. For an audit
+   * trail, what was knowingly left unverified matters as much as what was verified.
+   */
+  skippedModules: { module: string; reason: string }[]
 }
 export type BuildResult = { ok: true; data: BuiltManifest } | { ok: false; error: string }
 
@@ -92,17 +103,52 @@ export async function buildCommitTransferManifest(input: {
     sourceCache.set(e.path, fc.data)
   }
 
+  const manifestCodePaths = kept.filter((e) => e.action !== 'delete').map((e) => e.path)
+  const sourceTextOf = (path: string): string | undefined => {
+    const hit = sourceCache.get(path)
+    return hit ? Buffer.from(hit.contentBase64, 'base64').toString('utf8') : undefined
+  }
+
   const closure = analyzeClosure({
-    manifestPaths: kept.filter((e) => e.action !== 'delete').map((e) => e.path),
+    manifestPaths: manifestCodePaths,
     excludedPaths: [...excluded],
     targetPaths: targetTree.data.paths,
-    sourceOf: (path) => {
-      const hit = sourceCache.get(path)
-      return hit ? Buffer.from(hit.contentBase64, 'base64').toString('utf8') : undefined
-    },
+    sourceOf: sourceTextOf,
   })
   if (!closure.ok) {
     return { ok: false, error: `dependency closure failed — ${describeClosureProblems(closure.problems as ClosureProblem[])}` }
+  }
+
+  // ── Exported-symbol verification (issue #48 §9) ─────────────────────────────
+  // Closure proved every referenced module EXISTS on the target. That is not the same
+  // as proving the target's copy exports the names this transfer reads out of it —
+  // `e014ad25` clears closure and then fails the target's typecheck on a single missing
+  // export. Runs AFTER closure so the cheaper gate always speaks first about the same
+  // file, and BEFORE the drift loop so a doomed transfer costs no per-file drift reads.
+  //
+  // The modules read here are, by construction, NOT in the manifest — so this set is
+  // disjoint from the drift loop's target reads and no file is fetched twice.
+  const symbolPlan = collectTargetModules({
+    manifestPaths: manifestCodePaths,
+    sourceOf: sourceTextOf,
+    targetPaths: targetTree.data.paths,
+  })
+  const targetSources = new Map<string, string>()
+  for (const modulePath of symbolPlan.modules) {
+    const tf = await provider.readFileContent(installationId, targetRepo, modulePath, targetBase.data.commit)
+    // A module we cannot read is treated as unanalysable and skipped, never as a
+    // refusal — a transient read must not manufacture a blocking verdict.
+    if (tf.ok) targetSources.set(modulePath, Buffer.from(tf.data.contentBase64, 'base64').toString('utf8'))
+  }
+  const symbols = analyzeSymbols({
+    manifestPaths: manifestCodePaths,
+    sourceOf: sourceTextOf,
+    targetPaths: targetTree.data.paths,
+    targetSourceOf: (path) => targetSources.get(path),
+    overflow: symbolPlan.overflow,
+  })
+  if (!symbols.ok) {
+    return { ok: false, error: `symbol verification failed — ${describeSymbolProblems(symbols.problems)}` }
   }
 
   const contents: Record<string, { contentBase64: string; sha256: string }> = {}
@@ -155,5 +201,7 @@ export async function buildCommitTransferManifest(input: {
     driftCheckedPaths: driftCheckedPaths.sort(),
     targetBaseCommit: targetBase.data.commit,
     closureCheckedPaths: closure.scannedPaths,
+    symbolCheckedPaths: symbols.checkedModules,
+    skippedModules: symbols.skippedModules,
   } }
 }
