@@ -90,15 +90,35 @@ values.
 5. **`UPD-1004` remains terminal/rejected and must not be retried** — this is unchanged, not
    superseded, and is restated here so it is not lost in the corrections above.
 
-### ⛔ Unresolved — deliberately NOT invented
+### ⛔ Unresolved — deliberately NOT invented (record-keeping items, **not blockers**)
 
-**Admin manual screenshot placeholders.** `docs/Admin-User-Manual.md` still contains **15
-`[SCREENSHOT: …]` text placeholders**, while `docs/admin-manual-assets/screenshots/` holds **16
-`.jpg` assets**. The filenames *suggest* a mapping (`01-sign-in.jpg` ↔ `[SCREENSHOT: Sign in]`),
-but no placeholder→asset pairing has been visually verified, and the counts do not match. **No
+**1. Admin manual screenshot placeholders.** `docs/Admin-User-Manual.md` *(lives on branch
+`docs/operion-handoff-2026-07-22`; not on `main`)* still contains **15 `[SCREENSHOT: …]` text
+placeholders**, while `docs/admin-manual-assets/screenshots/` holds **16 `.jpg` assets**. The
+filenames *suggest* a mapping (`01-sign-in.jpg` ↔ `[SCREENSHOT: Sign in]`), but no
+placeholder→asset pairing has been visually verified, and the counts do not match. **No
 placeholder was replaced and no filename was guessed.** Marked **unresolved**; resolving it
 requires opening each asset and confirming the page it depicts. Out of scope for this
 state-only correction.
+
+**2. No verified Supercharged `DeploymentRecord` for UPD-1007.** The Preview validation itself
+passed (run `29697932299` = `success`), but the ledger entry that would make `required_updates`
+satisfiable for a dependent update **was never written**. This is a **record-keeping gap, not a
+validation gap**, and it does **not** re-open the canary: nothing is pending and no dispatch is
+required. Closing it is a separate, later decision.
+
+**3. Runtime flag-state provenance is not a repository artifact.** The authoritative Operion
+Production flag state was read from `/api/admin/release/activation-readiness` in an
+**owner-authenticated session**. It cannot be re-verified from the repo — `vercel env pull`
+redacts `OPERION_*`, and the endpoint returns `401` to anyone without an owner session. The state
+is recorded here as authoritative per owner instruction, **with its provenance labelled**;
+preserving a durable, checked-in evidence artifact remains **open**. Not a blocker.
+
+> **Companion documents referenced above that are not on `main`:**
+> `completion-photo-lifecycle-hardening.md`, `preview-transfer-validation-runbook.md`,
+> `pr56-transfer-evidence-preview-validation.md`, `docs/Admin-User-Manual.md`. They live on
+> `docs/operion-handoff-2026-07-22` (or, for the S2 document, in that session's working tree) and
+> were deliberately **not** pulled into this state-only publication.
 
 ### ⚠️ Idempotency fact (verified in code, do NOT act on it)
 `bindIdempotency` is written once and **never cleared** on cancel/fail. Key `auto:supercharged:UPD-1007:106846c0…` is still bound to the cancelled `AUTO-4273c3ce`. A fresh prepare of UPD-1007@106846c0 returns `{ ok:true, reason:'idempotent_existing' }` with the **old cancelled job** — it will NOT create a new run unless the binding is cleared. **Binding NOT cleared. This is a decision for the owner.**
