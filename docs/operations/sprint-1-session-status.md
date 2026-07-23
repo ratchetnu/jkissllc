@@ -6,6 +6,35 @@
 
 ---
 
+## 📌 CANARY IDENTITY CORRECTION + RELEASE STATE (2026-07-23, owner-verified live)
+
+**Recorded at owner request. No dispatch, no idempotency change, no flag change, no UPD-B registration.**
+
+### Canary identity — corrected
+- The approved Preview canary candidate is **UPD-1007** (commit **`106846c0`** / `106846c060ca5e368e03f4486b45b5dd3c90ee77`).
+- It is **NOT "UPD-A".** "UPD-A" was the proposed Book Now split of UPD-1004 — declared **dead/invalid** (19 closure + 7 drift failures), never registered. Do not conflate them.
+- **UPD-1007 already completed Preview validation successfully** — job `AUTO-4273c3ce`: tests/build/lint all passed, 1 file, Preview `dpl_CwBMYUAWgXsDv78vn9BWuDas3WY4`, PR #3.
+- **Production promotion was intentionally NOT requested** — job cancelled at owner review: *"Preview canary verified successfully; Production promotion intentionally not requested."*
+
+### Release state (live, owner session, `environment: production`, 2026-07-23)
+- **Flags all ON:** `OPERION_AUTOMATION_ENABLED`, `OPERION_PREVIEW_AUTOMATION_ENABLED`, `OPERION_GITHUB_ACTIONS_ENABLED`, `OPERION_PRODUCTION_PROMOTION_ENABLED`, `OPERION_APPROVAL_GATE_ENABLED`. OFF: `OPERION_AI_ADAPTATION_ENABLED`, `OPERION_AUTOMATIC_ROLLBACK_ENABLED`. `safeToEnablePreview/Production: true`. (Source: `/api/admin/release/activation-readiness`.)
+- **Supercharged:** fully preview- AND production-ready — business config ready, repo allowlisted, GitHub installation mapped, workflow + preview target configured, rollback target + executor present.
+- **UPD-1004 (`AUTO-1005`):** terminal `failed`, attemptCount 4, `apply_failed`, commit `e42af39`. Terminal ⇒ NOT in `AUTOMATION_ACTIVE` ⇒ does **not** block a new job. Do **not** retry. Cancelling it is optional hygiene, not required.
+- **`main`:** J KISS `2dc6f6e` (PR #60 merged) · Supercharged `dcb5e1a` (PR #15 merged). Failure-reason chain live end-to-end.
+- **Open PRs:** J KISS #43, #38 · Supercharged #13.
+
+### ⚠️ Idempotency fact (verified in code, do NOT act on it)
+`bindIdempotency` is written once and **never cleared** on cancel/fail. Key `auto:supercharged:UPD-1007:106846c0…` is still bound to the cancelled `AUTO-4273c3ce`. A fresh prepare of UPD-1007@106846c0 returns `{ ok:true, reason:'idempotent_existing' }` with the **old cancelled job** — it will NOT create a new run unless the binding is cleared. **Binding NOT cleared. This is a decision for the owner.**
+
+### NEXT REQUIRED ACTION (owner decision — nothing is dispatched until then)
+Choose one, explicitly:
+1. **Accept the existing verified Preview** (`AUTO-4273c3ce`, PR #3, `dpl_CwBMYUAWgXsDv78vn9BWuDas3WY4`) as the canary evidence — no new dispatch needed; proceed to whatever comes after "canary verified."
+2. **Run a fresh canary** of UPD-1007@`106846c0` — requires clearing the idempotency binding first (owner-authorized), then dispatch.
+
+Do not register UPD-A or UPD-B. Do not retry UPD-1004. Production promotion remains a separate, later, owner-approved step.
+
+---
+
 ## 🔧 WORK ORDER — PR #56 revision (coordinator → Session 3)
 
 **PR #56 reviewed. Verdict: approve-pending-one-change.** Everything else in it stands — do not rework it.
