@@ -18,6 +18,11 @@ export type RateHistoryEntry = {
 export type Business = {
   key: string            // normalized name (join key)
   name: string           // display name
+
+  // Opaque, rename-safe identity (tenant-isolation doc 07). Absent until the
+  // stable-id migration assigns one; `key` remains the join key either way, so a
+  // record without this behaves exactly as it always has.
+  stableId?: string
   contactName?: string
   contactPhone?: string
   contactEmail?: string
@@ -61,12 +66,39 @@ const INDEX = 'biz:index'
 //   • `biz:byname:{normalized}` → stableId — lookup for the legacy name join
 // Staff.payByBusiness is then rekeyed from bizKey(name) → stableId during the data
 // run. These builders MATERIALIZE that scheme; the live getters/setters below stay
-// name-keyed for compatibility until cutover. Nothing calls these yet.
+// name-keyed for compatibility until cutover.
 export const newBizId = () => stableId('biz')
 export const bizIdKey = (id: string) => `biz:id:${id}`
 export const bizNameIndexKey = (name: string) => `biz:byname:${bizKey(name)}`
 /** Guard: true when a business identity is (unsafely) name-derived rather than a stableId. */
 export const isNameDerivedBizKey = (k: string) => !isStableId(k) && looksNameDerived(k)
+
+/**
+ * Resolve a business's rename-safe id from its name, or null when it has not been
+ * through the stable-id migration. Callers pass the result to `resolveCrewPay` as
+ * the preferred pay-map key; a null simply means "resolve by name, as before".
+ */
+export async function getBusinessStableId(name: string): Promise<string | null> {
+  const id = await redis.get(bizNameIndexKey(name))
+  return id && isStableId(id) ? id : null
+}
+
+/**
+ * Assign a stableId to a business and publish the name→id index. Idempotent: a
+ * record that already has one is returned untouched, so re-running the migration
+ * cannot mint a second identity for the same business.
+ *
+ * Writes the index only after the record itself carries the id, so a crash between
+ * the two leaves a business with an id and no index (harmless — pay resolution
+ * falls back to the name) rather than an index pointing at an id nobody holds.
+ */
+export async function ensureBusinessStableId(b: Business, id: string = newBizId()): Promise<string> {
+  if (b.stableId) return b.stableId
+  b.stableId = id
+  await saveBusiness(b)
+  await redis.set(bizNameIndexKey(b.name), id)
+  return id
+}
 
 export async function getBusiness(key: string): Promise<Business | null> {
   const raw = await redis.get(KEY(key))
