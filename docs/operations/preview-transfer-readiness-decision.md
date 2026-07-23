@@ -1,5 +1,27 @@
 # Preview Transfer Readiness — Coordinator Decision
 
+> ## ⚠️ HISTORICAL (2026-07-22) — the canary question it gates is already answered
+>
+> This document reasons toward *whether a first Preview canary may be dispatched*. **That canary
+> has already run and passed.** The approved Preview canary is **UPD-1007 @ `106846c0`** — not
+> "UPD-A", which was a dead, never-registered proposal and **not a second update**. Workflow run
+> **`29697932299`** completed **`success`**; Supercharged **PR #3** carried exactly
+> `operion-canary.json` and was **closed, never merged**; **Production promotion was
+> intentionally not requested and is not pending.**
+>
+> Two premises below are obsolete:
+> - **CB-3 ("Production flag enablement — owner decision, still outstanding") is CLOSED.** The
+>   Operion automation flags are **ON** in J KISS Production (audited 2026-07-22, confirmed in a
+>   live owner session 2026-07-23). Statements here or elsewhere that all Operion Production
+>   flags are OFF are wrong; the **audited runtime state** is authoritative.
+> - **No "first canary" needs dispatching.** Read the blocker list as a record of what was
+>   unverified on 2026-07-22, not as work outstanding today.
+>
+> Unchanged and still binding: **`UPD-1004` is terminal/rejected — do not retry it**; **`UPD-B`
+> remains unregistered by decision**; **the idempotency binding was not cleared**.
+>
+> Canonical state: `sprint-1-session-status.md` → *"CANARY IDENTITY CORRECTION + RELEASE STATE"*.
+
 **Decided:** 2026-07-22 · **Coordinator:** lead session · **Base:** `main` `126a101`
 **Inputs:** S2's `pr56-transfer-evidence-preview-validation.md` (findings M-1…M-7) · `preview-transfer-validation-runbook.md` (Phase P0)
 **Nothing was implemented, no PR opened, no environment touched in reaching this decision.**
@@ -64,7 +86,7 @@ Those require a **real transfer**: `OPERION_AUTOMATION_ENABLED` on, a real job c
 |---|---|
 | **CB-1** | **M-1 again, at higher severity.** Before a canary, the evidence route is the surface an owner reads during an incident. Unverified owner gating on it is not acceptable. |
 | **CB-2** | **M-5 — rollback/evidence semantics undefined.** A rolled-back transfer leaves evidence still reading `built`, with no indication the result was reverted. For a record whose stated purpose is incident review, that actively misleads. |
-| **CB-3** | **Production flag enablement** — `OPERION_AUTOMATION_ENABLED` + `OPERION_PREVIEW_AUTOMATION_ENABLED` + `OPERION_GITHUB_ACTIONS_ENABLED` on the J KISS control plane. A Production write; unavoidable, because `preflight.ts:34` blocks Preview dispatch by design. **Owner decision, still outstanding.** |
+| **CB-3** | ✅ **CLOSED (2026-07-23).** ~~**Production flag enablement** … **Owner decision, still outstanding.**~~ The three flags (`OPERION_AUTOMATION_ENABLED` + `OPERION_PREVIEW_AUTOMATION_ENABLED` + `OPERION_GITHUB_ACTIONS_ENABLED`) were **already ON** in J KISS Production — audited 2026-07-22, confirmed in a live owner session 2026-07-23. **No Production write was needed and none was made.** `preflight.ts:34` still blocks Preview-deployment dispatch by design; that is unrelated to flag state. |
 | **CB-4** | **Authorisation to write to Supercharged** (branch + PR on Preview). Owner decision. |
 | **CB-5** | **The apply path has never executed.** `operion-apply.mjs`, the `targetBaseCommit` TOCTOU handshake, the signed callback, and a verified `DeploymentRecord` are all unexercised. P0 explicitly does not touch them. |
 | **CB-6** | **M-6 — the route's success path is unreachable end to end in tests.** Shaping and persistence are tested in isolation; their composition on the 200 path is not. A canary would be its first execution. |

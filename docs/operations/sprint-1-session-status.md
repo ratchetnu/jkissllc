@@ -6,15 +6,21 @@
 
 ---
 
-## 📌 CANARY IDENTITY CORRECTION + RELEASE STATE (2026-07-23, owner-verified live)
+## 📌 CANARY IDENTITY CORRECTION + RELEASE STATE (2026-07-23, owner-verified live · **reconciled against merged `main` 2026-07-23**)
 
 **Recorded at owner request. No dispatch, no idempotency change, no flag change, no UPD-B registration.**
+
+> **Authority.** This section is the canonical Operion release state. Where any other
+> statement in this file, in `OPERION_CURRENT_STATE.md`, or in any `docs/operations/**`
+> document disagrees with it, **this section wins** — the earlier statements were written
+> before the merges below and before the Production flag audit.
 
 ### Canary identity — corrected
 - The approved Preview canary candidate is **UPD-1007** (commit **`106846c0`** / `106846c060ca5e368e03f4486b45b5dd3c90ee77`).
 - It is **NOT "UPD-A".** "UPD-A" was the proposed Book Now split of UPD-1004 — declared **dead/invalid** (19 closure + 7 drift failures), never registered. Do not conflate them.
 - **UPD-1007 already completed Preview validation successfully** — job `AUTO-4273c3ce`: tests/build/lint all passed, 1 file, Preview `dpl_CwBMYUAWgXsDv78vn9BWuDas3WY4`, PR #3.
-- **Production promotion was intentionally NOT requested** — job cancelled at owner review: *"Preview canary verified successfully; Production promotion intentionally not requested."*
+- **Production promotion was intentionally NOT requested** — job cancelled at owner review: *"Preview canary verified successfully; Production promotion intentionally not requested."* It is **not pending**, not deferred, and not a missing step.
+- **Independently re-verified in the target repo (2026-07-23, read-only):** workflow run **`29697932299`** — *"Operion UPD-1007 → operion/upd-1007"* — `completed` / **`success`**, 2026-07-19T18:00:25Z · Supercharged **PR #3** *"Operion: UPD-1007"*, head `operion/upd-1007`, exactly **1 file** (`operion-canary.json`), opened 17:52:59Z, **closed 18:08:13Z, never merged** — which is precisely what "Preview verified, promotion not requested" looks like from the target side.
 
 ### Release state (live, owner session, `environment: production`, 2026-07-23)
 - **Flags all ON:** `OPERION_AUTOMATION_ENABLED`, `OPERION_PREVIEW_AUTOMATION_ENABLED`, `OPERION_GITHUB_ACTIONS_ENABLED`, `OPERION_PRODUCTION_PROMOTION_ENABLED`, `OPERION_APPROVAL_GATE_ENABLED`. OFF: `OPERION_AI_ADAPTATION_ENABLED`, `OPERION_AUTOMATIC_ROLLBACK_ENABLED`. `safeToEnablePreview/Production: true`. (Source: `/api/admin/release/activation-readiness`.)
@@ -23,13 +29,88 @@
 - **`main`:** J KISS `2dc6f6e` (PR #60 merged) · Supercharged `dcb5e1a` (PR #15 merged). Failure-reason chain live end-to-end.
 - **Open PRs:** J KISS #43, #38 · Supercharged #13.
 
+### Merged-state reconciliation (repo-verified read-only, 2026-07-23)
+
+| PR | Repo | State | Merge commit | Merged at |
+|---|---|---|---|---|
+| **#58** docs/p0-rollback-clarification | J KISS | ✅ **MERGED** | `4d936fb` | 2026-07-22T23:17:13Z |
+| **#59** Operion rehearsal harness | J KISS | ✅ **MERGED** | `826e1d7` | 2026-07-23T05:46:23Z |
+| **#60** failure-reason visibility | J KISS | ✅ **MERGED** | `2dc6f6e` | 2026-07-23T06:04:28Z |
+| **#15** failure-reason visibility (target mirror) | Supercharged | ✅ **MERGED** | `dcb5e1a` | 2026-07-23T06:13:47Z |
+
+**None of #58, #59, #60 or Supercharged #15 is held. All four are merged.** Any statement in
+this file or elsewhere describing them as *held*, *awaiting sequencing*, or *not merged* is
+**obsolete** and superseded here.
+
+**Failure-reason chain — verified live end-to-end on `origin/main` (`2dc6f6e`), file by file:**
+
+| Link | File on `main` | Verified marker |
+|---|---|---|
+| 1. runner captures | `scripts/operion-apply.mjs` | `ERRFILE = process.env.OPERION_APPLY_ERROR \|\| 'apply-error.txt'` |
+| 2. workflow forwards | `.github/workflows/operion-update.yml` | `errorSummary:(if $es == "" then null else $es end)` |
+| 3. callback persists | `app/api/automation/callback/route.ts` | `job.failureSummary` (pre-existing) |
+| 4. API exposes (owner-only, failed states) | `app/api/admin/release/businesses/[id]/update/route.ts` | `const failureReason = FAILED.has(job.status) ? (job.failureSummary ?? null) : null` |
+| 5. UI renders | `app/admin/operations/release/page.tsx` | `{failureReason && …}` in "Technical details" |
+
+The target-side mirror (runner + workflow) is live on Supercharged `dcb5e1a`; the control-plane
+half (API + UI) is correctly J KISS-only.
+
+### Nothing is pending (verified on the target, read-only, 2026-07-23)
+
+- **No canary workflow run is in progress** — Supercharged has **0** non-completed workflow runs.
+- **No canary validation is awaiting a result.** The newest `operion-update.yml` run is
+  `29962327283` (UPD-1004, 2026-07-22T22:17:17Z, `completed`/`failure`); nothing has run since.
+- **No open Operion PR on the target** — the only `operion/*` branch left is the pre-existing
+  `operion/upd-1006`. UPD-1007's PR #3 is closed.
+- **`UPD-B` remains unregistered, by decision.** **Idempotency was not cleared.** No update was
+  registered, no workflow dispatched, no flag or environment value changed by this correction.
+
+### Authoritative Operion Production flag state
+
+The authoritative statement is the **audited runtime state** recorded above and in
+`OPERION_CURRENT_STATE.md` §9 (*"Resolved flag state (audited 2026-07-22)"*): the automation
+switches are **ON** in J KISS Production, and what constrains them is **owner approval gating on
+the actions**, not the flags being off. The **P0 rehearsal wording** — which described the flags
+as OFF and treated flag enablement as an unmet canary blocker (**CB-3**) — is **obsolete and must
+not be quoted as current state**. `docs/operations/15-feature-flags.md` remains an inventory of
+**code defaults** (all `OPERION_*` default `false`); defaults are not the resolved Production
+values.
+
+### Superseded by this section (do not act on these statements)
+
+1. Any claim that **PR #59, PR #60, or Supercharged PR #15 is held** — all merged, see above.
+2. Any claim that **all Operion Production flags are OFF** — contradicted by the 2026-07-22 audit.
+3. Any instruction implying **another "first canary" must be dispatched** — the Preview canary
+   already ran and passed as **UPD-1007 @ `106846c0`**. §"Transfer plan REVISED", the
+   `preview-transfer-readiness-decision.md` canary-blocker list, and the ⚠️ "flags OFF"
+   contradiction note below are historical.
+4. Any **`UPD-A`** reference used as the canary identity — `UPD-A` is a dead, never-registered
+   proposal, **not a second update**. Where `UPD-A′` was used as a label for `106846c0`, the
+   correct identity is **UPD-1007**.
+5. **`UPD-1004` remains terminal/rejected and must not be retried** — this is unchanged, not
+   superseded, and is restated here so it is not lost in the corrections above.
+
+### ⛔ Unresolved — deliberately NOT invented
+
+**Admin manual screenshot placeholders.** `docs/Admin-User-Manual.md` still contains **15
+`[SCREENSHOT: …]` text placeholders**, while `docs/admin-manual-assets/screenshots/` holds **16
+`.jpg` assets**. The filenames *suggest* a mapping (`01-sign-in.jpg` ↔ `[SCREENSHOT: Sign in]`),
+but no placeholder→asset pairing has been visually verified, and the counts do not match. **No
+placeholder was replaced and no filename was guessed.** Marked **unresolved**; resolving it
+requires opening each asset and confirming the page it depicts. Out of scope for this
+state-only correction.
+
 ### ⚠️ Idempotency fact (verified in code, do NOT act on it)
 `bindIdempotency` is written once and **never cleared** on cancel/fail. Key `auto:supercharged:UPD-1007:106846c0…` is still bound to the cancelled `AUTO-4273c3ce`. A fresh prepare of UPD-1007@106846c0 returns `{ ok:true, reason:'idempotent_existing' }` with the **old cancelled job** — it will NOT create a new run unless the binding is cleared. **Binding NOT cleared. This is a decision for the owner.**
 
 ### NEXT REQUIRED ACTION (owner decision — nothing is dispatched until then)
+
+**No canary is outstanding.** The Preview canary requirement is already satisfied by UPD-1007;
+option 2 below is an *optional re-run*, not a required first canary.
+
 Choose one, explicitly:
-1. **Accept the existing verified Preview** (`AUTO-4273c3ce`, PR #3, `dpl_CwBMYUAWgXsDv78vn9BWuDas3WY4`) as the canary evidence — no new dispatch needed; proceed to whatever comes after "canary verified."
-2. **Run a fresh canary** of UPD-1007@`106846c0` — requires clearing the idempotency binding first (owner-authorized), then dispatch.
+1. **Accept the existing verified Preview** (`AUTO-4273c3ce`, PR #3, `dpl_CwBMYUAWgXsDv78vn9BWuDas3WY4`) as the canary evidence — no new dispatch needed; proceed to whatever comes after "canary verified." *(State-consistent default: this is what the repo evidence already shows.)*
+2. **Re-run the canary** of UPD-1007@`106846c0` — optional; requires clearing the idempotency binding first (owner-authorized), then dispatch.
 
 Do not register UPD-A or UPD-B. Do not retry UPD-1004. Production promotion remains a separate, later, owner-approved step.
 
@@ -180,7 +261,7 @@ git revert -m 1 1614239                                   # durable
 - A byte upload through the crew presigned path has **never** been exercised. Pre-existing transport; gated behind activation readiness (issue #46). Needs a **fresh Preview-only credential**.
 - **Completion-photo lifecycle** — append-only, no removal path; 3 confirmed dead references on Preview booking `b5d04027…`. See `completion-photo-lifecycle-hardening.md`. **Approval-gated, no code.**
 
-**PR #55** (`codex/operion-symbol-verification-gate`, head `47d3d6e`) — **HELD** at owner instruction until the #54 sequence completes.
+**PR #55** (`codex/operion-symbol-verification-gate`, head `47d3d6e`) — ~~**HELD** at owner instruction until the #54 sequence completes.~~ **OBSOLETE — PR #55 was MERGED 2026-07-22T19:05:22Z (`c48b6c7`).** No J KISS or Supercharged PR in this file's scope is held any longer; see the reconciliation table at the top.
 
 ---
 
@@ -308,7 +389,13 @@ For routes the added clause is provably a no-op (`crew.length === 0` ⇒ `assign
 
 ### Merge criteria for the hotfix — all must hold
 
-route behavior restored · booking flag-off behavior still correct · full suite · `tsc` · ESLint · AI regression · `npm run build` · Preview green · all flags OFF · no env var changed.
+route behavior restored · booking flag-off behavior still correct · full suite · `tsc` · ESLint · AI regression · `npm run build` · Preview green · ~~all flags OFF~~ **no flag changed by the hotfix** · no env var changed.
+
+> **Correction (2026-07-23):** "all flags OFF" was never an accurate description of J KISS
+> Production — the 2026-07-22 audit found the Operion automation switches **ON**, with the
+> side-effecting actions approval-gated. The criterion that actually mattered here was *the
+> hotfix changes no flag*, which is what this line now says. Historical section; the hotfix
+> merged long ago.
 
 ---
 
@@ -374,13 +461,22 @@ Store IDs verified live: Production `jkiss-invoice-photos` = `store_WK8DoJzb2Q1l
 8. ⛔ **Do not promote to Supercharged Production**
 9. Only after the canary is verified, assess commit **`17ac1972`** as the next transfer
 
-**Gate:** nothing in steps 4–9 may be registered or dispatched until the route hotfix **and both hardening increments** are verified. Automation flags stay **OFF** until then.
+**Gate:** nothing in steps 4–9 may be registered or dispatched until the route hotfix **and both hardening increments** are verified. ~~Automation flags stay **OFF** until then.~~ **Correction (2026-07-23): the Operion automation flags were already ON in J KISS Production (audited 2026-07-22); the real gate is owner approval of each side-effecting action, and no flag was changed.**
 
-### ⚠️ Coordinator flag — an unresolved contradiction in steps 5 + "flags OFF"
+### ✅ RESOLVED (2026-07-23) — the "flags OFF" contradiction was based on a wrong premise
 
-Steps 4–7 require dispatching from the **J KISS Production** control plane. Dispatch is gated by `OPERION_AUTOMATION_ENABLED` + `OPERION_PREVIEW_AUTOMATION_ENABLED` + `OPERION_GITHUB_ACTIONS_ENABLED`, which are **present but OFF in J KISS Production**. So the canary **cannot run** while "keep all automation flags OFF" holds literally.
+~~Steps 4–7 require dispatching from the **J KISS Production** control plane. Dispatch is gated by `OPERION_AUTOMATION_ENABLED` + `OPERION_PREVIEW_AUTOMATION_ENABLED` + `OPERION_GITHUB_ACTIONS_ENABLED`, which are **present but OFF in J KISS Production**. So the canary **cannot run** while "keep all automation flags OFF" holds literally.~~
 
-This is not a problem yet — dispatch is blocked behind two hardening increments regardless. But when the canary is ready it will require an **explicit owner-approved Production env flag change**, which is a Production write under the standing rules. **Flagging now so it is a planned decision, not a surprise at execution time.** No flag is being changed.
+**The premise was false.** The 2026-07-22 Production audit established that
+`OPERION_AUTOMATION_ENABLED`, `OPERION_PREVIEW_AUTOMATION_ENABLED` and
+`OPERION_GITHUB_ACTIONS_ENABLED` are **ON** in J KISS Production (created by the account owner
+2026-07-16); what is gated is each side-effecting **action**, by owner approval. No flag change
+was ever required, **and none was made**.
+
+The contradiction is moot for a second reason: **the canary already ran and passed** — UPD-1007 @
+`106846c0`, workflow run `29697932299` (`success`), Supercharged PR #3, Production promotion
+intentionally not requested. Nothing in steps 4–7 is waiting on a flag decision. See the
+reconciliation section at the top of this file.
 
 ---
 

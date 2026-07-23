@@ -1,6 +1,23 @@
 # Execution Order — post-#58 (2026-07-23)
 
-**Coordinator sequencing. No merges executed here — plan only, per instruction.**
+> ## ✅ SUPERSEDED — this plan has been executed (2026-07-23)
+>
+> **Steps 1–4 are done. Do not re-run them.** Repo-verified state:
+> **PR #59 MERGED** (`826e1d7`, 05:46:23Z) · **PR #60 MERGED** (`2dc6f6e`, 06:04:28Z) ·
+> **Supercharged PR #15 MERGED** (`dcb5e1a`, 06:13:47Z) · PR #58 MERGED (`4d936fb`).
+> `main` = J KISS **`2dc6f6e`** / Supercharged **`dcb5e1a`**; the failure-reason chain is
+> **live end-to-end**. **Nothing here is held.**
+>
+> **Step 5 outcome (the canary readiness check):** the Production flag audit below is
+> **confirmed** and is now the authoritative flag state — CB-3 is **closed**, not open. And the
+> question Step 5 was meant to answer is already answered: the approved Preview canary is
+> **UPD-1007 @ `106846c0`**, it **completed Preview validation successfully** (run
+> `29697932299` = `success`, Supercharged PR #3), and **Production promotion was intentionally
+> not requested** — it is not pending. **No canary needs to be dispatched.**
+>
+> Canonical state: `sprint-1-session-status.md` → *"CANARY IDENTITY CORRECTION + RELEASE STATE"*.
+
+**Coordinator sequencing. No merges executed here — plan only, per instruction.** *(Historical: the merges have since been executed — see the banner above.)*
 **Base:** `main` `4d936fb` (PR #58 merged 2026-07-22T23:17Z).
 
 Every merge to `main` triggers a J KISS **Production deploy** via Vercel Git integration — true for all steps below. That does not make them unsafe, but it is why each step re-checks `origin/main` and waits for Ready.
@@ -15,9 +32,16 @@ PR #58 carried commit `41493ae`, *"reflect audited Production flag state (enable
 - **7 owner-initiated Preview automation jobs already exist** (4 failed pre-Preview, 2 cancelled at review, 1 reached a verified Preview); 0 `approved_production`, 0 promotions
 - Side-effecting actions (transfer, canary, promotion) remain **approval-gated**, so no automated Production transfer has executed
 
-**This contradicts the premise carried all session** ("all Operion flags OFF; the canary needs a Production flag change" — canary blocker CB-3). If the audit is correct, **CB-3 is already satisfied** and the flag-enablement step the canary was waiting on has effectively happened.
+**This contradicts the premise carried all session** ("all Operion flags OFF; the canary needs a Production flag change" — canary blocker CB-3). ~~If the audit is correct,~~ **The audit is confirmed (see below): CB-3 is already satisfied** and the flag-enablement step the canary was waiting on had effectively already happened. **The "all Operion flags OFF" premise is obsolete wording — do not carry it forward.**
 
-**It is not independently verified.** `vercel env pull` redacts `OPERION_*` (known), so the doc says the Release Center *resolved runtime* is the source of truth — which needs an owner login I don't have. **Step 5 must confirm this against the live runtime before treating CB-3 as closed. Do not carry the doc's claim forward as fact.**
+~~**It is not independently verified.**~~ **CONFIRMED 2026-07-23 (owner session, live runtime).**
+`vercel env pull` redacts `OPERION_*`, so the Release Center *resolved runtime* is the source of
+truth — and it was read in an owner session against `environment: production`:
+`OPERION_AUTOMATION_ENABLED`, `OPERION_PREVIEW_AUTOMATION_ENABLED`,
+`OPERION_GITHUB_ACTIONS_ENABLED`, `OPERION_PRODUCTION_PROMOTION_ENABLED` and
+`OPERION_APPROVAL_GATE_ENABLED` all **ON**. **CB-3 is CLOSED.** The audited runtime state — not
+the earlier "all flags OFF" P0 rehearsal wording — is authoritative. **No flag was changed to
+reach this state or to record it.**
 
 Nothing in Steps 1–4 depends on the flag state.
 
