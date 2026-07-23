@@ -111,7 +111,7 @@ jobs:
           TARGET_BRANCH: ${{ inputs.targetBranch }}
           UPDATE_ID: ${{ inputs.updateId }}
         run: |
-          git add -A -- ':!apply-result.json'   # keep the runner's result file out of the commit
+          git add -A -- ':!apply-result.json' ':!apply-error.txt'   # keep the runner's result/error files out of the commit
           git commit -m "chore(operion): apply update $UPDATE_ID (job $DEPLOYMENT_REQUEST_ID)" || echo "nothing to commit"
           git push --force origin "$TARGET_BRANCH"   # automation-owned branch; retries overwrite cleanly
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -168,6 +168,12 @@ jobs:
           elif [ "$TEST_OUTCOME" = "failure" ]; then STATUS="tests_failed"
           elif [ "$BUILD_OUTCOME" = "failure" ]; then STATUS="build_failed"
           elif [ "$JOB_STATUS" != "success" ]; then STATUS="preview_failed"; fi
+          # The apply runner records one human-readable reason (no secrets) when it refuses.
+          # Forward it so Operion stores it as failureSummary and the owner sees the real cause.
+          ERRSUMMARY=""
+          if [ "$STATUS" != "preview_ready" ] && [ -f apply-error.txt ]; then
+            ERRSUMMARY=$(head -c 2000 apply-error.txt)
+          fi
           TP=false; [ "$TEST_OUTCOME" = "success" ] && TP=true
           BP=false; [ "$BUILD_OUTCOME" = "success" ] && BP=true
           LP=false; [ "$LINT_OUTCOME" = "success" ] && LP=true
@@ -181,10 +187,12 @@ jobs:
             --arg run "${{ github.run_id }}" \
             --arg prn "$PR_NUMBER" \
             --arg prurl "$PR_URL" \
+            --arg es "$ERRSUMMARY" \
             --argjson tp "$TP" --argjson bp "$BP" --argjson lp "$LP" \
             --argjson ap "$APPLIED" --argjson sk "$SKIPPED" --argjson fl "$FAILEDN" \
             '{deliveryId:$d, jobId:$j, status:$s, branch:$br, commit:$c, workflowRunId:$run,
               pullRequestNumber:(if $prn == "" then null else ($prn | tonumber) end), pullRequestUrl:$prurl,
+              errorSummary:(if $es == "" then null else $es end),
               result:{testsPassed:$tp, buildPassed:$bp, lintPassed:$lp, changedFiles:$ap, filesApplied:$ap, filesSkipped:$sk, filesFailed:$fl}}')
           SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$OPERION_CALLBACK_SECRET" | sed 's/^.*= *//')
           curl -sSL -X POST "$OPERION_CALLBACK_URL" \
