@@ -22,6 +22,64 @@
 
 ---
 
+## 0. RECONCILIATION WITH MERGED `main` (2026-07-23) — read this first
+
+This document was audited at `main` = `ee577c2`. The repository has moved. Where §1–§13 disagree
+with this section, **this section wins**. Canonical companion:
+`docs/operations/sprint-1-session-status.md` → *"CANARY IDENTITY CORRECTION + RELEASE STATE"*.
+
+**Merged state (repo-verified, read-only):** J KISS `main` = **`2dc6f6e`** · Supercharged `main` =
+**`dcb5e1a`**.
+
+| PR | Repo | State | Merge commit | Merged at |
+|---|---|---|---|---|
+| **#58** P0 rollback clarification | J KISS | ✅ MERGED | `4d936fb` | 2026-07-22T23:17:13Z |
+| **#59** Operion rehearsal harness | J KISS | ✅ MERGED | `826e1d7` | 2026-07-23T05:46:23Z |
+| **#60** failure-reason visibility | J KISS | ✅ MERGED | `2dc6f6e` | 2026-07-23T06:04:28Z |
+| **#15** failure-reason visibility (target mirror) | Supercharged | ✅ MERGED | `dcb5e1a` | 2026-07-23T06:13:47Z |
+
+**None of these is held.** Earlier text describing #59/#60/#15 as held or awaiting sequencing is
+obsolete. Also merged earlier: #52 (`b015564`), #47 (`c791d4e`), #54, #55 (`c48b6c7`), #56
+(`126a101`).
+
+**The failure-reason chain is live end-to-end on `main`:** `scripts/operion-apply.mjs` writes
+`apply-error.txt` → `.github/workflows/operion-update.yml` forwards `errorSummary` →
+`app/api/automation/callback/route.ts` persists `job.failureSummary` →
+`app/api/admin/release/businesses/[id]/update/route.ts` exposes `failureReason` (owner-only,
+failed states) → `app/admin/operations/release/page.tsx` renders it under "Technical details".
+The target mirror (runner + workflow) is live on Supercharged `dcb5e1a`; the control-plane half is
+correctly J KISS-only.
+
+**Canary identity — corrected.** The approved Preview canary is **UPD-1007** at commit
+**`106846c0`**. It is **not "UPD-A"**: `UPD-A` was a proposed Book Now split of `UPD-1004`,
+declared dead/invalid and never registered — **not a second update**. Any `UPD-A` / `UPD-A′`
+reference used for `106846c0`, including in §12, is superseded by this identity.
+
+**UPD-1007 completed Preview validation successfully** — job `AUTO-4273c3ce` (tests/build/lint
+passed, 1 file, Preview `dpl_CwBMYUAWgXsDv78vn9BWuDas3WY4`); target-side evidence: workflow run
+**`29697932299`** `completed`/**`success`** (2026-07-19T18:00:25Z) and Supercharged **PR #3**
+(`operion/upd-1007`, exactly `operion-canary.json`) **closed, never merged**.
+
+**Production promotion was intentionally NOT requested** — the job was cancelled at owner review.
+It is **not pending** and not a missing step.
+
+**Nothing is pending.** Supercharged has **0** in-progress workflow runs; the newest
+`operion-update.yml` run is `29962327283` (UPD-1004, 2026-07-22T22:17:17Z, `failure`); the only
+`operion/*` branch left on the target is the pre-existing `operion/upd-1006`.
+
+**Unchanged and binding:** **`UPD-1004` is terminal/rejected — do not retry it.** **`UPD-B`
+remains unregistered, by decision.** **The idempotency binding was not cleared** (a fresh prepare
+of UPD-1007@`106846c0` would return the old cancelled job, not a new run).
+
+**Authoritative flag state:** the **audited runtime state** in the banner above and in §9
+(*"Resolved flag state"*) — automation switches **ON** in J KISS Production, side-effecting
+actions approval-gated. The **P0 rehearsal wording that described all Operion Production flags as
+OFF is obsolete** and must not be quoted as current state. `docs/operations/15-feature-flags.md`
+lists **code defaults** (all `OPERION_*` default `false`), which are not the resolved Production
+values. **No flag or environment value was changed to record any of this.**
+
+---
+
 ## 1. Architecture overview
 
 ### 1.1 The two products
@@ -393,15 +451,34 @@ Scoped strictly to *making Operion work for J KISS and Supercharged day to day*.
 
 ### Sprint 2 — Make a transfer actually succeed end to end
 
-**Goal:** one real Operion update reaches Supercharged Preview through the automated path. This has *never* happened.
+> ### ⛔ SUPERSEDED — do not execute steps 1–4 (see §0)
+>
+> **The goal is already met.** One real Operion update reached Supercharged Preview through the
+> automated path: **UPD-1007 @ `106846c0`**, run `29697932299` **`success`**, Supercharged PR #3.
+> The sentence *"This has never happened"* is **no longer true**.
+>
+> - **Step 1 is void.** The `UPD-A` / `UPD-B` split was audited and **rejected on evidence**
+>   (`UPD-A` = 19 closure + 7 drift failures; `UPD-B` = 22/32 drift failures). **`UPD-A` is not a
+>   second update and was never registered**; the canary's identity is **UPD-1007**, never
+>   "UPD-A". **`UPD-B` remains unregistered, by decision.**
+> - **Step 2 is void.** Preview-only enablement is impossible by design — `preflight.ts`
+>   (`production_control_plane`) blocks dispatch from a Preview deployment — and it is moot: the
+>   Operion automation flags are **already ON in J KISS Production** (audited 2026-07-22). **Do
+>   not change any flag.**
+> - **Steps 3–4 are void.** No canary needs dispatching. **`UPD-1004` is terminal/rejected — do
+>   not retry it.**
+> - **Step 5 is DONE** — shipped in PR #56 (`126a101`) as bounded `transferEvidence` under
+>   `platform:autoev:<jobId>`.
 
-1. Split `UPD-1004` into ordered updates using the now-enforced `dependencies` field: `UPD-A` Book Now intake (`intake-workflow.ts`, `pack-services.ts` + consumers) → `UPD-B` tenancy-only (the safe ~30 files of `e42af39`), excluding `app/quote/page.tsx`, `app/lib/businesses.ts`, the confirmation route and `docs/opspilot-os/**`.
-2. Enable `OPERION_PREVIEW_AUTOMATION_ENABLED` + `OPERION_GITHUB_ACTIONS_ENABLED` **in Preview only**.
-3. Dispatch `UPD-A` → PR on Supercharged → Preview deploy → owner verify → record a `DeploymentRecord` with `verificationStatus: passed`.
-4. Dispatch `UPD-B` and watch `required_updates` pass because `UPD-A` is verified.
-5. Persist the transfer manifest + `driftCheckedPaths` + `closureCheckedPaths` on the job record (§4 #7) so the run is auditable afterwards.
+~~**Goal:** one real Operion update reaches Supercharged Preview through the automated path. This has *never* happened.~~
 
-**Done when:** two updates land on Supercharged through automation, with an audit record you can read without git archaeology.
+1. ~~Split `UPD-1004` into ordered updates using the now-enforced `dependencies` field: `UPD-A` Book Now intake (`intake-workflow.ts`, `pack-services.ts` + consumers) → `UPD-B` tenancy-only (the safe ~30 files of `e42af39`), excluding `app/quote/page.tsx`, `app/lib/businesses.ts`, the confirmation route and `docs/opspilot-os/**`.~~
+2. ~~Enable `OPERION_PREVIEW_AUTOMATION_ENABLED` + `OPERION_GITHUB_ACTIONS_ENABLED` **in Preview only**.~~
+3. ~~Dispatch `UPD-A` → PR on Supercharged → Preview deploy → owner verify → record a `DeploymentRecord` with `verificationStatus: passed`.~~
+4. ~~Dispatch `UPD-B` and watch `required_updates` pass because `UPD-A` is verified.~~
+5. ~~Persist the transfer manifest + `driftCheckedPaths` + `closureCheckedPaths` on the job record (§4 #7) so the run is auditable afterwards.~~ ✅ **Done (PR #56).**
+
+~~**Done when:** two updates land on Supercharged through automation, with an audit record you can read without git archaeology.~~ **Residual gap (real, unchanged):** no **verified `DeploymentRecord`** has ever been written for Supercharged — a record-keeping gap, distinct from the Preview validation itself, which UPD-1007 passed.
 
 ### Sprint 3 — Finish the booking→money loop
 
