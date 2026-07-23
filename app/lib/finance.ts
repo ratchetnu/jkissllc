@@ -77,12 +77,21 @@ export type PaySource = 'crew_business' | 'crew_default' | 'manual'
 
 // What this crew member is paid for a route at this business. A per-business
 // override beats their default. Returns null when neither is set.
+//
+// `businessStableId` is the rename-safe identity (tenant-isolation doc 07 §businesses).
+// It is read FIRST and the normalized-name key is the fallback, so a business that has
+// been through the stable-id migration keeps its overrides across a rename, while a
+// business that has not is resolved exactly as before. Callers that do not have an id
+// omit it — and until the migration runs, no pay map contains a stableId key, so this
+// is byte-identical to the name-only behaviour it replaces.
 export function resolveCrewPay(
   staff: Pick<Staff, 'defaultPayCents' | 'payByBusiness' | 'payActive'> | null | undefined,
   businessName: string,
+  businessStableId?: string,
 ): { cents: number; source: PaySource } | null {
   if (!staff || staff.payActive === false) return null
-  const override = staff.payByBusiness?.[bizKey(businessName)]
+  const byId = businessStableId ? staff.payByBusiness?.[businessStableId] : undefined
+  const override = byId !== undefined ? byId : staff.payByBusiness?.[bizKey(businessName)]
   if (typeof override === 'number' && Number.isFinite(override) && override >= 0) {
     return { cents: override, source: 'crew_business' }
   }
