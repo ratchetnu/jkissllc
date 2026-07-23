@@ -136,6 +136,43 @@ export const redis = {
   },
 }
 
+// The read surface a caller may inject to READ without the ability to write. The
+// live `redis` object satisfies it, and so does `redisRO` below — but a consumer
+// typed to `RedisReader` literally cannot call set/del/zadd/etc., because those
+// methods are not in the type. Used by the owner-only payroll dry-run so its read
+// path is write-incapable at the type level, not merely by convention.
+export type RedisReader = Pick<typeof redis, 'get' | 'zrevrange'>
+
+// A physically read-only Upstash client, bound to KV_REST_API_READ_ONLY_TOKEN (the
+// integration injects it alongside the read-write token). An Upstash read-only token
+// is rejected server-side for any write command, so this client cannot mutate the
+// store even if the code tried to — defense-in-depth beneath the type-level guard.
+// It deliberately exposes ONLY reads (GET / ZREVRANGE) and skips dark-launch dual
+// reads: this is a plain, faithful read of the same scoped keys `redis` would read.
+async function callReadOnly(args: (string | number)[]): Promise<unknown> {
+  const url = process.env.KV_REST_API_URL
+  const token = process.env.KV_REST_API_READ_ONLY_TOKEN
+  if (!url || !token) throw new Error('UPSTASH_READONLY_NOT_CONFIGURED')
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(args.map(String)),
+    cache: 'no-store',
+  })
+  const json = (await res.json()) as RedisResult
+  if ('error' in json) throw new Error(json.error)
+  return json.result
+}
+
+export const redisRO: RedisReader = {
+  async get(key: string): Promise<string | null> {
+    return (await callReadOnly(['GET', scopeKey(key)])) as string | null
+  },
+  async zrevrange(key: string, start: number, stop: number): Promise<string[]> {
+    return ((await callReadOnly(['ZREVRANGE', scopeKey(key), start, stop])) ?? []) as string[]
+  },
+}
+
 // The configured KV store HOST (non-secret), or '' when unset. Exposed so callers can
 // make store-identity decisions (e.g. "is this the production store?") WITHOUT importing
 // the raw credential env — the bypass-detection gate forbids KV_REST_API references
