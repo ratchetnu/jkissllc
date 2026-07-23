@@ -136,6 +136,41 @@ Do not register UPD-A or UPD-B. Do not retry UPD-1004. Production promotion rema
 
 ---
 
+## 🧩 SPRINT 2 COMPLETION TRACKS — Supercharged "Partly installed" items (2026-07-23)
+
+Audit/planning basis: J KISS `main` `0f174c4` vs Supercharged `main` `61a6d65` (later moved to `dcb5e1a`→`61a6d65`), verified read-only. Three tracks; **none is a file transfer** — SC owns divergent copies, so completion is additive build / in-place adaptation against SC's own code, never a raw commit transfer of the archived UPD-1004.
+
+### UPD-1004 completion track — tenant-safe boundaries
+
+The archived `UPD-1004` (`e42af39`, 41 files at once) is **not** retried. It is replaced by a bounded, independently-testable sequence. J KISS wraps **161** route files with `withTenantRoute`; Supercharged wraps **3** of its 129 → **126 unwrapped**. The wrapper (`with-tenant-route.ts` + `request-context.ts`) is **byte-identical** on both and a **no-op while `TENANCY_ENABLED=false`**, so adoption is backward-compatible.
+
+| Update | Scope | Status |
+|---|---|---|
+| **UPD-1016** | Tenant-boundary **test harness** (tests only) | ✅ **APPROVED (owner) + PUBLISHED — Supercharged [PR #17](https://github.com/ratchetnu/supercharged/pull/17), head `a3a68c0`, NOT merged.** Assigned to **Session 3**. |
+| **UPD-1017** | Wrap webhooks (twilio/stripe/email) | 🔴 **BLOCKED pending the UPD-1016 test-gate result** |
+| **UPD-1018** | Wrap cron (background-tenant) | 🔴 **BLOCKED pending UPD-1016** |
+| **UPD-1019** | Wrap public token routes | 🔴 **BLOCKED pending UPD-1016** |
+| **UPD-1020** | Wrap portal routes | 🔴 **BLOCKED pending UPD-1016** |
+| **UPD-1021** | Wrap admin/ai + estimator routes | 🔴 **BLOCKED pending UPD-1016** |
+| **UPD-1022** | Wrap core admin (bookings/routes/comms/claims/messages/reminders) | 🔴 **BLOCKED pending UPD-1016** |
+| **UPD-1023** | Wrap remaining admin | 🔴 **BLOCKED pending UPD-1016** |
+
+**UPD-1004 → "Installed" only when all seven wrapping increments land AND the UPD-1016 suite passes with `TENANCY_ENABLED=true` in Preview.** Any partial leaves routes unwrapped → not tenant-safe → stays *Partly*.
+
+### UPD-1016 result (Session 3, 2026-07-23)
+
+**PUBLISHED, NOT MERGED — held for coordinator review.** SC PR #17, branch `codex/operion-upd-1016-tenant-boundary-tests`, head `a3a68c0`, 5 new `scripts/*.test.ts` (+623/−0, **tests only**). SC baseline **487/487 → 542/542** with the harness; **tsc clean**; CI `regression` **SUCCESS** (`30038216829`), Vercel skipped (scripts-only). The 3 existing wrapped routes still pass and are pinned by a regression guard + an "exactly 3 wrapped" tripwire. Both flag states exercised (`TENANCY_ENABLED` toggled only inside a test-local helper, restored in `finally` — no persistent env change). **Key gate findings recorded in the PR:** SC sessions carry no `tenantId` yet, so `withTenantRoute` fail-closes for every unauthenticated family → token/webhook/cron need **resource/explicit** resolution, not the session wrapper; SC's host map excludes the Supercharged host; only `app/api/upload` scopes blob paths; `PROOF_PATH_RE` is not tenant-prefix-aware. **No route wrapping, no flag/env/Production write, no update registration, no dispatch, no merge; archived UPD-1004 untouched; SC `main` still `61a6d65`.**
+
+### UPD-1002 completion track — independent background estimator (PLANNED, NOT STARTED)
+
+SC's `shadow-*` estimator is **divergent & self-contained** ("its own cron, its own queue, its own budget"). Reported gaps are partly a drift artifact: **queue + per-run budget exist in a different form**. Genuine gaps: **run-status reporting** (`shadow-run-status.ts` + `groundTruthQuote` + admin `ai-queue` route/page — all absent on SC) and the **persistent daily spend-ceiling + kill-switch** (`shadow-budget.ts` + store spend fns — absent). Proposed **UPD-1014** (run-status) → **UPD-1015** (spend ceiling), additive + symbol-adapted to SC's shapes (JK's modules cannot drop in — symbol-level breaks). The 6-file alert subsystem is product-specific → excluded unless owner wants it. **Not started.**
+
+### IMG-002 completion track — photo optimisation results view (PLANNED, NOT STARTED, data-blocked)
+
+The two "missing" files don't exist on JK either — they're the top of a **4-layer stack** (A/B record → persist → API → UI) with **no data source** (`IMAGE_OPTIMIZATION_ENABLED` OFF → zero eval records). Proposed **UPD-1010** (A/B shadow recording) → **UPD-1011** (persistence) → **UPD-1012** (read API) → **UPD-1013** (admin UI). Code-buildable, but **IMG-002 → "Installed" stays BLOCKED on an owner-approved data-source run in Preview** (a view over no records is permanently empty). **Not started.**
+
+---
+
 ## 🔧 WORK ORDER — PR #56 revision (coordinator → Session 3)
 
 **PR #56 reviewed. Verdict: approve-pending-one-change.** Everything else in it stands — do not rework it.
@@ -708,3 +743,4 @@ After S1 lands #47 and #52, both sessions rebase onto the new `main` — a no-op
 | When | Who | What |
 |---|---|---|
 | 2026-07-22 | coordinator | Audit complete; ownership map published; all sessions gated on B-1. |
+| 2026-07-23 | S3 | **UPD-1016 (tenant-boundary test harness) APPROVED by owner, IMPLEMENTED + PUBLISHED — Supercharged [PR #17](https://github.com/ratchetnu/supercharged/pull/17), head `a3a68c0`, NOT merged.** First bounded increment replacing archived UPD-1004 (`e42af39`) — **tests only, SC only.** 5 `scripts/*.test.ts` (+623/−0). SC **487/487 → 542/542**, tsc clean, CI `regression` SUCCESS (`30038216829`), Vercel skipped (scripts-only). 3 existing wrapped routes still pass (regression-guarded) + a 3-wrapped tripwire. Both flag states exercised (env toggled only in a test-local `finally`-restored helper). Findings: SC sessions carry no `tenantId` → `withTenantRoute` fail-closes for unauthenticated families → token/webhook/cron need resource/explicit resolution; SC host map excludes the SC host; only `app/api/upload` scopes blob paths; `PROOF_PATH_RE` not prefix-aware. **UPD-1017–1023 BLOCKED pending this test-gate; UPD-1002 (UPD-1014/1015) and IMG-002 (UPD-1010–1013) PLANNED, not started (IMG-002 data-blocked).** No route wrapping, no flag/env/Production write, no registration, no dispatch, no merge; archived UPD-1004 untouched; SC `main` still `61a6d65`. |
