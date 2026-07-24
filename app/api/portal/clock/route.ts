@@ -9,9 +9,11 @@ import {
   pickActiveClockable,
   applyPunch,
   crewUsesTimeclock,
+  hasOtherOpenPunch,
   type ClockAction,
   type PunchResult,
 } from '../../../lib/crew-timeclock'
+import { punchBookingClock } from '../../../lib/booking-assignment'
 import { centralToday } from '../../../lib/dates'
 
 export const runtime = 'nodejs'
@@ -68,6 +70,27 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   }
 
   const gps = { lat: body.lat, lng: body.lng, accuracy: body.accuracy, locationDenied: body.locationDenied }
+
+  // One shift at a time — refuse a second concurrent clock-in on a DIFFERENT job
+  // (route or booking). Clock-out and idempotent re-taps of the same job are unaffected.
+  if (action === 'clock_in' && hasOtherOpenPunch(clockable, target.assigneeToken)) {
+    return NextResponse.json({ error: 'You’re still clocked into another job. Clock out there first.' }, { status: 409 })
+  }
+
+  // Booking-lane punch: the SAME applyPunch logic, mutated under the BOOKING write
+  // lock (punchBookingClock) instead of the route lock. Only reachable when
+  // BOOKING_ASSIGNMENT_ENABLED is on (else no booking item is ever in `clockable`).
+  if (target.type === 'booking') {
+    const r = await punchBookingClock(target.routeToken, who.staffId, action, gps)
+    if (!r.ok) {
+      if (r.error === 'not_confirmed') return NextResponse.json({ error: 'Please confirm the job before clocking in.' }, { status: 409 })
+      if (r.error === 'not_clocked_in') return NextResponse.json({ error: 'Clock in before you clock out.' }, { status: 409 })
+      if (r.error === 'conflict') return NextResponse.json({ error: 'The job is being updated — please try again.' }, { status: 503 })
+      return NextResponse.json({ error: 'not_found' }, { status: 404 })
+    }
+    return NextResponse.json({ ok: true, already: r.already, denied: r.denied })
+  }
+
   let outcome: PunchResult | undefined
   let ownershipOk = true
   let crewName = ''
