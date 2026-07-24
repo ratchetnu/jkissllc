@@ -66,7 +66,7 @@ test('desktop mega-menu categories are ordered + non-empty, with the reference g
   assert.ok(byKey('comms').includes('/admin/operations/communications'))
   assert.ok(byKey('comms').includes('/admin/operations/ai'), 'AI Command Center under Communication')
   assert.deepEqual(byKey('business'), ['/admin/operations/businesses', '/admin/operations/equipment', '/admin/operations/claims'])
-  assert.deepEqual(byKey('finance'), ['/admin/operations/pay-statements', '/admin/operations/timesheets', '/admin/operations/settings'])
+  assert.deepEqual(byKey('finance'), ['/admin/operations/pay-statements', '/admin/operations/timesheets', '/admin/operations/reports', '/admin/operations/settings'])
   assert.deepEqual(byKey('release'), ['/admin/operations/release'])
   assert.deepEqual(byKey('platform'), ['/admin/operations/platform', '/admin/operations/sync'])
 })

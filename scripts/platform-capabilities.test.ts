@@ -52,7 +52,7 @@ test('gps-verification is partial: capture + admin-review UI ship; geofence veri
 
 test('reporting and analytics declare the permissions their routes actually enforce', () => {
   const reporting = CAPABILITY_REGISTRY['reporting'].requiredPermissions
-  assert.ok(reporting.includes('reports:view') && reporting.includes('claims:manage'), 'reporting spans reports:view + claims:manage')
+  assert.ok(reporting.includes('reports:view'), 'reporting read is gated reports:view (Wave G reconciled the claims report to reports:view; claims:manage stays on the claims capability)')
   const analytics = CAPABILITY_REGISTRY['analytics'].requiredPermissions
   assert.ok(
     analytics.includes('reports:view') && analytics.includes('ai:analytics') && analytics.includes('comms:analytics'),

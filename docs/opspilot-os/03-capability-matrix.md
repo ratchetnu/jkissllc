@@ -49,7 +49,7 @@
 | 31 | Tax / 1099 | **Partial** | `app/lib/tax-readiness.ts:5` | Readiness assessment only; **no form generation/e-file**; full TIN never stored |
 | 32 | Expenses | **Absent** | — | No expense entity/ledger/receipt capture |
 | 33 | Profitability | **Partial** | `app/lib/finance.ts:248-324` | **Route P&L only**; booking revenue excluded; no expenses |
-| 34 | Reporting | **Partial** | `app/api/admin/finance/route.ts`, `analytics.ts` | Route finance + site analytics; no consolidated company P&L. _(Wave F 2026-07-24: the **analytics** capability reached `full` — `ai/analytics` tenant-wrapped, comms-analytics UI added at `/admin/operations/analytics`, quote funnel surfaced; see registry `analytics`)_ |
+| 34 | Reporting | **Full** | `app/admin/operations/reports`, `app/lib/reports/*` | _(Wave G 2026-07-24)_ Dedicated reports surface (revenue + claims) with safe CSV export (formula-injection-escaped, row-capped); claims report now read via `reports:view` (`claims:manage` kept for management). **No company P&L** — net profit needs the planned `expenses` capability. _(Wave F: the **analytics** capability also reached `full` — see registry `analytics`)_ |
 | 35 | Audit logs | **Full** | `app/lib/audit.ts`, `app/admin/operations/audit` | _(Wave D/E 2026-07-24)_ Tenant-stamped attributed trail (actor/role/action/target/outcome/correlation); now covers admin identity/security events (user create/update/role/suspend/delete, incl. **denied** attempts); read-only viewer (`audit:view`); legacy records still readable |
 | 36 | AI functions | **Full (governed)** | `app/lib/ai/service.ts` | 5 read-only/draft-only features; see doc 07 |
 | 37 | File storage | **Full** | `@vercel/blob`, `doc-crypto.ts` | Public store; identity docs encrypted |

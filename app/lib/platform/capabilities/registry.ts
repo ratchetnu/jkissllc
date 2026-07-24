@@ -85,7 +85,12 @@ const LIST: Capability[] = [
   cap({ id: 'payments', displayName: 'Payments', description: 'Stripe + Zelle + manual.', domain: 'Payments', status: 'full', kind: 'core' }),
   cap({ id: 'contractor-compensation', displayName: 'Contractor Compensation', description: 'Pay resolution + statements.', domain: 'Compensation', status: 'full', kind: 'core', requiredPermissions: ['pay:generate'] }),
   cap({ id: 'expenses', displayName: 'Expenses', description: 'Expense ledger.', domain: 'Compensation', status: 'planned', kind: 'core', enabledForJkiss: false }),
-  cap({ id: 'reporting', displayName: 'Reporting', description: 'Operational + financial reports.', domain: 'Analytics', status: 'partial', kind: 'core', dependencies: ['bookings', 'payments', 'ai-intelligence'], requiredPermissions: ['reports:view', 'claims:manage'], aiActions: [{ id: 'insights.brief', level: 1 }] }),
+  // Wave G: dedicated /admin/operations/reports surface over the two live engines
+  // (revenue + claims) with CSV export, plus the authz reconciliation — the claims
+  // financial report is now READ via reports:view (claims:manage stays for claims
+  // management, unchanged). No company P&L: net profit needs `expenses` (planned), so
+  // only revenue + claims-recovery reports exist, labeled as such.
+  cap({ id: 'reporting', displayName: 'Reporting', description: 'Revenue + claims reports (read-only, CSV export).', domain: 'Analytics', status: 'full', kind: 'core', dependencies: ['bookings', 'payments', 'ai-intelligence'], requiredPermissions: ['reports:view'], aiActions: [{ id: 'insights.brief', level: 1 }] }),
   // Wave F: the one un-wrapped analytics route (ai/analytics) is now tenant-wrapped;
   // comms analytics has a UI; the previously WRITE-ONLY quote funnel is surfaced (reader
   // + UI). Spans several guards — reports:view (site + funnel), ai:analytics (AI Control
