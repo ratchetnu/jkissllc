@@ -41,7 +41,7 @@
 | 23 | Recurring reminders | **Full (SMS off)** | `app/lib/reminders.ts`, `app/api/cron/reminders/route.ts` | Engine complete; automated SMS suppressed |
 | 24 | Customer status pages | **Full** | `app/booking/[token]/`, `app/track/`, `app/client/[token]/` | Three surfaces |
 | 25 | Worker portals | **Full** | `app/portal/*` (7 tabs), `app/api/portal/*` | Crew + applicant portals |
-| 26 | Invoices | **Duplicated** | `app/lib/bookings.ts:339`, `app/lib/route-invoices.ts` | Two systems (`JK-INV` booking + `JK-RI` route); booking "invoice" has no lifecycle object |
+| 26 | Invoices | **Full (two consolidated lanes)** | `app/lib/route-invoices.ts`, `app/lib/bookings.ts`, `app/lib/invoicing/{shared,adapters}.ts` | _(Wave B 2026-07-24)_ Two legitimate lanes (`JK-RI` route/B2B, `JK-INV` booking/B2C) kept separate but consolidated onto shared plumbing + one `InvoiceLike` contract; unified idempotent Stripe recording gives route invoices the webhook backstop; entities/keyspaces/counters unmerged |
 | 27 | Change orders | **Absent** | — | No change-order entity; nearest is booking continuation + editable amount |
 | 28 | Payments | **Full** | `app/lib/payments.ts`, `stripe.ts`, `payment-proof.ts` | Stripe + Zelle sealed proof + manual |
 | 29 | Contractor earnings | **Full** | `app/lib/staff.ts`, `finance.ts`, `route-pay.ts` | Snapshotted pay; claim-deduction integration |
@@ -66,8 +66,8 @@
 
 ## Status roll-up
 
-- _(Updated 2026-07-14)_ **Full: 24** · **Partial: 12** · **Backend-only: 1** ·
-  **Duplicated: 1** · **Absent: 8** · (Enforcement-drift flagged on Permissions).
+- _(Updated 2026-07-24, Wave B)_ **Full: 25** · **Partial: 12** · **Backend-only: 1** ·
+  **Duplicated: 0** · **Absent: 8** · (Enforcement-drift flagged on Permissions).
   Three capabilities moved **Absent → Partial** as the platform scaffolding
   landed: **#3 Organizations/tenancy** (context wired), **#42 Monitoring**
   (observability substrate scaffolded but dormant), **#46 Tenant isolation**
