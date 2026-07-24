@@ -13,6 +13,8 @@ import {
   parseMoneyCents, snapshotManualPrice, snapshotCrewPay, clearCrewPay, computeRouteMoney,
   payExceedsPrice, fmtCents, isFrozen,
 } from '../../../../lib/finance'
+import { getEquipment } from '../../../../lib/equipment'
+import { deriveMaintenanceStatus } from '../../../../lib/fleet/maintenance'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 
@@ -141,6 +143,27 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
     ]
     for (const [k, max] of fields) {
       if (body[k] !== undefined) (route as Record<string, unknown>)[k] = S(body[k], max) || undefined
+    }
+    // Equipment assignment (additive). Only touched when the client sends equipmentId,
+    // so an edit that doesn't change equipment is byte-identical to before. Unassigning
+    // is explicit (empty value), never silent. Out-of-service equipment is refused; an
+    // overdue/inspection-due asset warns unless acknowledged.
+    if (body.equipmentId !== undefined) {
+      const eqId = S(body.equipmentId, 80)
+      if (!eqId) {
+        (route as { equipmentId?: string }).equipmentId = undefined
+      } else {
+        const eq = await getEquipment(eqId) // tenant-scoped via the redis chokepoint
+        if (!eq) return NextResponse.json({ error: 'That equipment no longer exists.' }, { status: 400 })
+        const st = deriveMaintenanceStatus(eq, Date.now())
+        if (st === 'out_of_service' || eq.active === false) {
+          return NextResponse.json({ error: `${eq.name} is out of service and can’t be assigned.` }, { status: 409 })
+        }
+        if ((st === 'overdue' || st === 'inspection_required') && body.acknowledgeWarning !== true) {
+          return NextResponse.json({ warning: 'equipment_maintenance', message: `${eq.name} is ${st === 'overdue' ? 'overdue for service' : 'due for inspection'}. Assign anyway?`, status: st }, { status: 409 })
+        }
+        (route as { equipmentId?: string }).equipmentId = eqId
+      }
     }
     pushAudit(route, 'admin', 'Route details edited')
   } else {
