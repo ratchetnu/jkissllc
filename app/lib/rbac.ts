@@ -69,6 +69,7 @@ export type Permission =
   | 'settings:manage'      // global settings / company config
   | 'integrations:manage'
   | 'audit:view'
+  | 'permissions:view'     // read-only RBAC matrix viewer
   | 'accounts:suspend'     // suspend / reactivate accounts
   | 'reports:view'         // operational reports
   // ── Crew self-service (portal) ──
@@ -95,7 +96,7 @@ const ADMIN: Permission[] = [
   'pay:configure', 'pay:generate', 'pay:view:all', 'pay:adjust:submit', 'pay:approve', 'tax:view',
   'invoices:manage', 'profitability:view',
   'claims:manage', 'claims:create', 'claimguard:use',
-  'settings:manage', 'integrations:manage', 'audit:view', 'accounts:suspend', 'reports:view',
+  'settings:manage', 'integrations:manage', 'audit:view', 'permissions:view', 'accounts:suspend', 'reports:view',
 ]
 
 // Manager = operational only. Explicitly excludes: roles:manage, settings:manage,
@@ -112,6 +113,7 @@ const MANAGER: Permission[] = [
   'pay:adjust:submit',       // submit adjustments for admin approval — not configure/approve
   'claims:manage', 'claims:create', 'claimguard:use',
   'reports:view',
+  'permissions:view',   // read-only matrix viewer (NOT audit:view — that stays admin-only)
 ]
 
 // Crew = own data only. All crew permissions are self-scoped; the server further
@@ -149,3 +151,26 @@ export const roleLabel: Record<Role, string> = {
   manager: 'Manager',
   crew: 'Crew',
 }
+
+// ── Permission vocabulary, grouped by domain ─────────────────────────────────
+// The read model the (read-only) matrix VIEWER renders. It lists every Permission
+// exactly once; a test asserts every role grant is covered, so the viewer can never
+// drift from the union above or omit a permission enforcement actually uses. Grants
+// are always computed through `can()` — the same primitive the guards use — so the
+// viewer cannot disagree with runtime enforcement.
+export const PERMISSION_DOMAINS: ReadonlyArray<{ domain: string; permissions: readonly Permission[] }> = [
+  { domain: 'Business & operations', permissions: ['businesses:manage', 'routes:manage', 'routes:view', 'recurring:manage', 'equipment:manage', 'equipment:assign'] },
+  { domain: 'Crew directory', permissions: ['crew:manage', 'crew:view', 'crew:assign', 'crew:score:view'] },
+  { domain: 'Availability & time off', permissions: ['availability:view', 'timeoff:view', 'timeoff:approve'] },
+  { domain: 'Applicants', permissions: ['applicants:review', 'applicants:decide'] },
+  { domain: 'AI', permissions: ['ai:use', 'ai:analytics', 'ai:prompts:manage'] },
+  { domain: 'Communications', permissions: ['messages:send', 'reminders:view', 'reminders:manage', 'dispatch:send', 'comms:analytics'] },
+  { domain: 'Users & identity', permissions: ['users:manage', 'roles:manage'] },
+  { domain: 'Compensation & pay', permissions: ['pay:configure', 'pay:generate', 'pay:view:all', 'pay:adjust:submit', 'pay:approve', 'tax:view'] },
+  { domain: 'Money', permissions: ['invoices:manage', 'profitability:view'] },
+  { domain: 'Claims', permissions: ['claims:manage', 'claims:create', 'claimguard:use'] },
+  { domain: 'Platform & governance', permissions: ['settings:manage', 'integrations:manage', 'audit:view', 'permissions:view', 'accounts:suspend', 'reports:view'] },
+  { domain: 'Crew self-service', permissions: ['self:view', 'self:availability', 'self:timeoff', 'self:timeclock', 'self:pay:request', 'self:messages', 'self:reminders', 'self:uniform'] },
+]
+
+export const ALL_PERMISSIONS: Permission[] = PERMISSION_DOMAINS.flatMap((d) => [...d.permissions])

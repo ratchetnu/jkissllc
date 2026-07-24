@@ -40,6 +40,8 @@ export const NAV_ITEMS: NavItem[] = [
   // adding a crew login meant a detour through an unrelated screen. It belongs beside
   // Crew: same subject, different half — the roster vs. who can sign in.
   { href: '/admin/operations/users', label: 'Team & Access', group: 'team', adminOnly: true },
+  { href: '/admin/operations/permissions', label: 'Permissions', group: 'team' },
+  { href: '/admin/operations/audit', label: 'Audit Log', group: 'team', adminOnly: true },
   // ── More menu — Communication ──
   { href: '/admin/operations/communications', label: 'Communications', group: 'comms' },
   { href: '/admin/operations/ai', label: 'AI Command Center', group: 'comms', adminOnly: true, ownerOnly: true },
