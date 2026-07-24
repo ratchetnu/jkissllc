@@ -42,6 +42,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/admin/operations/users', label: 'Team & Access', group: 'team', adminOnly: true },
   // ── More menu — Communication ──
   { href: '/admin/operations/communications', label: 'Communications', group: 'comms' },
+  { href: '/admin/operations/analytics', label: 'Analytics', group: 'comms' },
   { href: '/admin/operations/ai', label: 'AI Command Center', group: 'comms', adminOnly: true, ownerOnly: true },
   // ── More menu — Business ──
   { href: '/admin/operations/businesses', label: 'Businesses', group: 'business' },

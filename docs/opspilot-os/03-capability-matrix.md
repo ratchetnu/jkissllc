@@ -49,7 +49,7 @@
 | 31 | Tax / 1099 | **Partial** | `app/lib/tax-readiness.ts:5` | Readiness assessment only; **no form generation/e-file**; full TIN never stored |
 | 32 | Expenses | **Absent** | — | No expense entity/ledger/receipt capture |
 | 33 | Profitability | **Partial** | `app/lib/finance.ts:248-324` | **Route P&L only**; booking revenue excluded; no expenses |
-| 34 | Reporting | **Partial** | `app/api/admin/finance/route.ts`, `analytics.ts` | Route finance + site analytics; no consolidated company P&L |
+| 34 | Reporting | **Partial** | `app/api/admin/finance/route.ts`, `analytics.ts` | Route finance + site analytics; no consolidated company P&L. _(Wave F 2026-07-24: the **analytics** capability reached `full` — `ai/analytics` tenant-wrapped, comms-analytics UI added at `/admin/operations/analytics`, quote funnel surfaced; see registry `analytics`)_ |
 | 35 | Audit logs | **Full (narrow + coarse)** | `app/lib/audit.ts`, `routes.ts:301` | Central log covers comms/reminders only; per-record actor = literal `'admin'` |
 | 36 | AI functions | **Full (governed)** | `app/lib/ai/service.ts` | 5 read-only/draft-only features; see doc 07 |
 | 37 | File storage | **Full** | `@vercel/blob`, `doc-crypto.ts` | Public store; identity docs encrypted |
