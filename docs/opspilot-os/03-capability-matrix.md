@@ -35,7 +35,7 @@
 | 17 | GPS collection | **Backend-only** | `app/api/route/[token]/route.ts:129,137` | Collected & stored; **no verification/geofence** |
 | 18 | Photo uploads | **Full** | `app/lib/uniform.ts`, `app/api/careers/upload/route.ts` | Uniform + completion + applicant docs |
 | 19 | Equipment inventory | **Full (basic)** | `app/lib/equipment.ts` | Roster only |
-| 20 | Equipment assignment | **Partial** | `app/lib/routes.ts:123-124` | Snapshot `equipmentId`; no double-book check; `equipment:assign` perm **declared-unused** |
+| 20 | Equipment assignment | **Full** | `app/lib/fleet/*`, `app/admin/operations/fleet` | _(Wave H 2026-07-24)_ Additive maintenance model + deterministic status engine + authorized maintenance UI/API; route PATCH now assigns `equipmentId` (out-of-service refused, overdue/inspection warns); `maintenance.flag` has a real narrow internal-only idempotent executor. `equipment:assign` now enforced; `equipment:view`/`fleet:maintenance` added |
 | 21 | Messaging | **Full** | `app/lib/messages.ts`, `app/api/webhooks/twilio/sms/route.ts` | Inbound SMS, opt-out, dedup; booking-match is a 1000-row linear scan |
 | 22 | Notifications | **Full (push degraded)** | `app/lib/notify.ts`, `crew-notify.ts:12-13` | `push` channel has no transport → falls back to in-app |
 | 23 | Recurring reminders | **Full (SMS off)** | `app/lib/reminders.ts`, `app/api/cron/reminders/route.ts` | Engine complete; automated SMS suppressed |

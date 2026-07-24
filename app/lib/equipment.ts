@@ -1,4 +1,5 @@
 import { redis } from './redis'
+import type { EquipmentMaintenance } from './fleet/maintenance'
 
 // A lightweight registry of the equipment the operation runs — box trucks,
 // trailers, dollies, and whatever a contractor brings to the job. Standalone
@@ -17,6 +18,9 @@ export type Equipment = {
   contractorName?: string  // when contractor-owned, whose it is (optional)
   notes?: string
   active: boolean
+  // Additive fleet-maintenance sub-record (Wave H). Absent on legacy equipment →
+  // status derives as 'unknown'; never backfilled. See lib/fleet/maintenance.
+  maintenance?: EquipmentMaintenance
   createdAt: number
   updatedAt: number
 }
