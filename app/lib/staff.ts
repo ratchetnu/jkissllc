@@ -1,4 +1,4 @@
-import { redis } from './redis'
+import { redis, type RedisReader } from './redis'
 
 // Lightweight crew/staff roster. Names here populate the booking "Assigned To"
 // picker; assignment itself is stored on the booking (assignedTo).
@@ -97,10 +97,13 @@ export function redactStaffForViewer(s: Staff, opts: { pay: boolean; tax: boolea
 const KEY = (id: string) => `staff:${id}`
 const INDEX = 'staff:index'
 
-export async function listStaff(limit = 200): Promise<Staff[]> {
-  const ids = await redis.zrevrange(INDEX, 0, limit - 1)
+// `reader` defaults to the live read-write client (existing callers unchanged). The
+// owner-only payroll dry-run injects a read-only client; the `RedisReader` type keeps
+// this body read-only (GET/ZREVRANGE) whichever client is passed.
+export async function listStaff(limit = 200, reader: RedisReader = redis): Promise<Staff[]> {
+  const ids = await reader.zrevrange(INDEX, 0, limit - 1)
   if (!ids.length) return []
-  const raws = await Promise.all(ids.map(id => redis.get(KEY(id))))
+  const raws = await Promise.all(ids.map(id => reader.get(KEY(id))))
   return raws
     .filter(Boolean)
     .map(r => { try { return JSON.parse(r as string) as Staff } catch { return null } })

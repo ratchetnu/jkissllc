@@ -2,7 +2,7 @@
 // invoices/templates all reference a client by free-text name; this stores the
 // details worth editing (contact, address, notes) keyed by the normalized name,
 // so the Businesses hub can overlay it without changing how routes are joined.
-import { redis } from './redis'
+import { redis, type RedisReader } from './redis'
 import { stableId, isStableId, looksNameDerived } from './platform/tenancy/stable-id'
 
 // One entry per rate change, newest last. Written by the businesses API on every
@@ -117,10 +117,14 @@ export async function deleteBusiness(key: string): Promise<void> {
   await redis.zrem(INDEX, key)
 }
 
-export async function listBusinesses(limit = 500): Promise<Business[]> {
-  const keys = await redis.zrevrange(INDEX, 0, limit - 1)
+// `reader` defaults to the live read-write client (unchanged for every existing
+// caller). The owner-only payroll dry-run injects a read-only client so its scan is
+// write-incapable; because `reader` is typed `RedisReader`, this function body can
+// only ever GET/ZREVRANGE regardless of which client is passed.
+export async function listBusinesses(limit = 500, reader: RedisReader = redis): Promise<Business[]> {
+  const keys = await reader.zrevrange(INDEX, 0, limit - 1)
   if (!keys.length) return []
-  const raws = await Promise.all(keys.map(k => redis.get(KEY(k))))
+  const raws = await Promise.all(keys.map(k => reader.get(KEY(k))))
   return raws
     .map(r => { try { return r ? JSON.parse(r) as Business : null } catch { return null } })
     .filter((b): b is Business => b !== null)
