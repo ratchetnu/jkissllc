@@ -286,7 +286,9 @@ export default function OperationsShell({ children }: { children: React.ReactNod
 
       {/* ── Mobile bottom bar — 4 destinations + raised Book Now centre + More ────── */}
       <nav aria-label="Primary" className="os-glass" data-dock="mobile"
-        style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'space-around', alignItems: 'flex-end', padding: '8px 6px calc(8px + env(safe-area-inset-bottom))', borderLeft: 'none', borderRight: 'none', borderBottom: 'none' }}>
+        style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', padding: '8px 6px calc(8px + env(safe-area-inset-bottom))', borderLeft: 'none', borderRight: 'none', borderBottom: 'none' }}>
+        {/* left zone — equal flex so the raised Book Now stays dead-centre */}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'space-around', alignItems: 'flex-end' }}>
         {mobPrimary.slice(0, 3).map(n => {
           const Icon = iconFor(n.href); const active = n.href === activeHref
           return (
@@ -297,9 +299,10 @@ export default function OperationsShell({ children }: { children: React.ReactNod
             </Link>
           )
         })}
+        </div>
         {bookNow && (
           <Link href={bookNow.href} aria-label={bookNowNew > 0 ? `Book Now — ${bookNowNew} pending` : 'Book Now'}
-            className="os-tap" style={{ flex: 1, display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 5, textDecoration: 'none', minWidth: 0 }}>
+            className="os-tap" style={{ flexShrink: 0, display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 5, textDecoration: 'none' }}>
             <span style={{ position: 'relative', width: 52, height: 52, marginTop: -22, borderRadius: 999, background: 'var(--red)', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'var(--os-shadow)', border: '3px solid var(--bg)' }}>
               <Plus size={26} strokeWidth={2.4} />
               {bookNowNew > 0 && <span aria-hidden style={{ position: 'absolute', top: -3, right: -3, fontSize: 9.5, fontWeight: 800, background: '#fff', color: 'var(--red)', borderRadius: 999, minWidth: 17, height: 17, padding: '0 4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--bg)' }}>{bookNowNew}</span>}
@@ -307,6 +310,8 @@ export default function OperationsShell({ children }: { children: React.ReactNod
             <span style={{ fontSize: 10.5, fontWeight: 700, color: activeHref === BOOK_NOW_HREF ? 'var(--text)' : 'var(--muted)' }}>Book Now</span>
           </Link>
         )}
+        {/* right zone — equal flex; remaining destinations + More */}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'space-around', alignItems: 'flex-end' }}>
         {mobPrimary.slice(3).map(n => {
           const Icon = iconFor(n.href); const active = n.href === activeHref
           return (
@@ -323,6 +328,7 @@ export default function OperationsShell({ children }: { children: React.ReactNod
           <MoreHorizontal size={22} strokeWidth={2} />
           <span style={{ fontSize: 10.5, fontWeight: 700 }}>More</span>
         </button>
+        </div>
       </nav>
 
       {/* ── Mobile More sheet — grouped, role-filtered, safe-area padded ──────────── */}
