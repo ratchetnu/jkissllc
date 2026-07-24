@@ -1,6 +1,8 @@
 import type { JobAssignee } from './job-assignment'
 import { listRoutes, type Assignee, type RouteRecord } from './routes'
+import { listBookings, effectiveServiceDate, type Booking } from './bookings'
 import { getStaff, staffUsesTimeclock } from './staff'
+import { isEnabled } from './platform/flags'
 import { centralToday } from './dates'
 
 // ── Crew-portal timeclock ──────────────────────────────────────────────────────
@@ -48,8 +50,9 @@ export function isClockable(
 // financials, other crew, or GPS coordinates — only this crew member's own punch
 // timestamps (coordinates are the owner's proof, surfaced admin-side, not back to crew).
 export type ClockableRoute = {
+  type: 'route' | 'booking' // which lane this work item came from; dispatches the punch
   assigneeToken: string   // this crew member's own token — the mutation key
-  routeToken: string      // canonical route token (display/deep-link only)
+  routeToken: string      // route token (routes) OR booking token (bookings) — the record key
   routeNumber: string
   businessName: string
   reportAddress: string
@@ -71,6 +74,7 @@ export function selectClockable(routes: RouteRecord[], staffId: string, day: str
     const a = r.assignees?.find((x) => x.staffId === staffId)
     if (!a || !isClockable(r, a)) continue
     out.push({
+      type: 'route',
       assigneeToken: a.token,
       routeToken: r.token,
       routeNumber: r.routeNumber,
@@ -88,9 +92,74 @@ export function selectClockable(routes: RouteRecord[], staffId: string, day: str
   return out
 }
 
+// ── Booking-lane clock ingress ─────────────────────────────────────────────────
+// A booking a crew member may punch: accepted (confirmedAt), not declined, and the
+// job is still live (not cancelled/completed). Mirrors isClockable but reads the
+// booking's own status vocabulary + completion stamp.
+const BOOKING_NOT_CLOCKABLE = new Set(['cancelled', 'completed', 'partially_completed'])
+
+export function isBookingClockable(
+  b: Pick<Booking, 'status' | 'completedAt'>,
+  a: Pick<JobAssignee, 'confirmedAt' | 'declinedAt'>,
+): boolean {
+  return !!a.confirmedAt && !a.declinedAt && !b.completedAt && !BOOKING_NOT_CLOCKABLE.has(b.status)
+}
+
+// Pure projection of a staff member's clockable BOOKINGS for `day` — the same flat,
+// portal-safe shape as selectClockable, tagged type:'booking'. routeToken carries the
+// BOOKING token (the key punchBookingClock mutates). Pure ⇒ unit-tested without Redis.
+export function selectClockableBookings(bookings: Booking[], staffId: string, day: string): ClockableRoute[] {
+  const out: ClockableRoute[] = []
+  for (const b of bookings) {
+    if (effectiveServiceDate(b) !== day) continue
+    const a = b.assignees?.find((x) => x.staffId === staffId)
+    if (!a || !isBookingClockable(b, a)) continue
+    out.push({
+      type: 'booking',
+      assigneeToken: a.token,
+      routeToken: b.token,          // booking token — the punchBookingClock key
+      routeNumber: b.bookingNumber,
+      businessName: b.customerName,
+      reportAddress: b.jobSiteAddress || b.pickupAddress || b.dropoffAddress || '',
+      reportTime: '',
+      routeDate: effectiveServiceDate(b),
+      role: a.role ?? null,
+      status: b.status,
+      clockInAt: a.clockInAt ?? null,
+      clockOutAt: a.clockOutAt ?? null,
+      phase: clockPhase(a),
+    })
+  }
+  return out
+}
+
+// Cross-lane single-shift guard (pure). True when this crew member already has an
+// OPEN punch (clocked in, not out) on a DIFFERENT job than the one they're about to
+// clock into — you can't be on two jobs at once, route or booking.
+export function hasOtherOpenPunch(items: ClockableRoute[], exceptAssigneeToken: string): boolean {
+  return items.some((c) => c.assigneeToken !== exceptAssigneeToken && c.phase === 'clocked_in')
+}
+
+// Pure merge of both lanes for `day`. Bookings are included ONLY when
+// `bookingEnabled` — off ⇒ byte-identical to the routes-only list. Split out so the
+// flag gate is unit-testable without Redis.
+export function mergeClockable(
+  routes: RouteRecord[], bookings: Booking[], staffId: string, day: string, bookingEnabled: boolean,
+): ClockableRoute[] {
+  const items = selectClockable(routes, staffId, day)
+  if (bookingEnabled) items.push(...selectClockableBookings(bookings, staffId, day))
+  return items
+}
+
+// Routes always; bookings only when BOOKING_ASSIGNMENT_ENABLED. Flag OFF ⇒ no
+// booking read at all (byte-identical to the routes-only behavior).
 export async function listClockableForStaff(staffId: string, day = centralToday()): Promise<ClockableRoute[]> {
-  const routes = await listRoutes(500)
-  return selectClockable(routes, staffId, day)
+  const bookingEnabled = isEnabled('BOOKING_ASSIGNMENT_ENABLED')
+  const [routes, bookings] = await Promise.all([
+    listRoutes(500),
+    bookingEnabled ? listBookings(500) : Promise.resolve<Booking[]>([]),
+  ])
+  return mergeClockable(routes, bookings, staffId, day, bookingEnabled)
 }
 
 // When no explicit route is named, pick the sensible one to act on: a shift already

@@ -50,7 +50,11 @@ const LIST: Capability[] = [
   cap({ id: 'workforce', displayName: 'Workforce', description: 'Crew / contractor roster.', domain: 'Workforce', status: 'full', kind: 'core', requiredPermissions: ['crew:manage'], supportedRoles: ['admin', 'manager', 'crew'] }),
   cap({ id: 'availability', displayName: 'Availability', description: 'Crew weekly availability.', domain: 'Workforce', status: 'full', kind: 'core', dependencies: ['workforce'], requiredPermissions: ['availability:view'], supportedRoles: ['admin', 'manager', 'crew'] }),
   cap({ id: 'time-off', displayName: 'Time Off', description: 'Time-off requests + approval.', domain: 'Workforce', status: 'full', kind: 'core', dependencies: ['workforce'], requiredPermissions: ['timeoff:view'], supportedRoles: ['admin', 'manager', 'crew'], aiActions: [{ id: 'timeoff.approve', level: 3 }] }),
-  cap({ id: 'time-tracking', displayName: 'Time Tracking', description: 'Clock in/out (per assignee).', domain: 'Workforce', status: 'partial', kind: 'core', dependencies: ['routes', 'workforce'], supportedRoles: ['admin', 'manager', 'crew'] }),
+  // Wave C: both lanes clock in/out through the shared applyPunch (route lock + booking
+  // lock) and roll up into a time:view admin timesheet. Route lane is fully live; the
+  // booking lane's PRODUCTION availability stays controlled by BOOKING_ASSIGNMENT_ENABLED
+  // (off ⇒ routes-only, byte-identical), so no requiredFlags is asserted on the capability.
+  cap({ id: 'time-tracking', displayName: 'Time Tracking', description: 'Clock in/out + admin timesheets (route + booking lanes).', domain: 'Workforce', status: 'full', kind: 'core', dependencies: ['routes', 'workforce', 'bookings'], requiredPermissions: ['time:view'], supportedRoles: ['admin', 'manager', 'crew'] }),
   // Capture (crew clock UI) + admin review (map pin / accuracy / location-off) both ship; the
   // remaining gap to "full" is automated geofence/on-site determination + compliance reporting.
   cap({ id: 'gps-verification', displayName: 'GPS Verification', description: 'Location capture + admin review at clock events.', domain: 'Compliance', status: 'partial', kind: 'optional', dependencies: ['time-tracking'], supportedRoles: ['admin', 'manager', 'crew'] }),

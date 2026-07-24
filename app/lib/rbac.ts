@@ -71,6 +71,8 @@ export type Permission =
   | 'audit:view'
   | 'accounts:suspend'     // suspend / reactivate accounts
   | 'reports:view'         // operational reports
+  | 'time:view'            // view crew timesheets / hours worked (admin timesheet)
+  | 'time:manage'          // correct/annotate time entries (reserved; correction UI deferred, see Wave C)
   // ── Crew self-service (portal) ──
   | 'self:view'            // view own portal data
   | 'self:availability'    // submit own availability (Phase B)
@@ -96,6 +98,7 @@ const ADMIN: Permission[] = [
   'invoices:manage', 'profitability:view',
   'claims:manage', 'claims:create', 'claimguard:use',
   'settings:manage', 'integrations:manage', 'audit:view', 'accounts:suspend', 'reports:view',
+  'time:view', 'time:manage',
 ]
 
 // Manager = operational only. Explicitly excludes: roles:manage, settings:manage,
@@ -112,6 +115,7 @@ const MANAGER: Permission[] = [
   'pay:adjust:submit',       // submit adjustments for admin approval — not configure/approve
   'claims:manage', 'claims:create', 'claimguard:use',
   'reports:view',
+  'time:view',            // managers may view authorized tenant timesheets
 ]
 
 // Crew = own data only. All crew permissions are self-scoped; the server further
