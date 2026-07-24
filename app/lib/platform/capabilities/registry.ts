@@ -51,7 +51,12 @@ const LIST: Capability[] = [
   cap({ id: 'availability', displayName: 'Availability', description: 'Crew weekly availability.', domain: 'Workforce', status: 'full', kind: 'core', dependencies: ['workforce'], requiredPermissions: ['availability:view'], supportedRoles: ['admin', 'manager', 'crew'] }),
   cap({ id: 'time-off', displayName: 'Time Off', description: 'Time-off requests + approval.', domain: 'Workforce', status: 'full', kind: 'core', dependencies: ['workforce'], requiredPermissions: ['timeoff:view'], supportedRoles: ['admin', 'manager', 'crew'], aiActions: [{ id: 'timeoff.approve', level: 3 }] }),
   cap({ id: 'time-tracking', displayName: 'Time Tracking', description: 'Clock in/out (per assignee).', domain: 'Workforce', status: 'partial', kind: 'core', dependencies: ['routes', 'workforce'], supportedRoles: ['admin', 'manager', 'crew'] }),
-  cap({ id: 'gps-verification', displayName: 'GPS Verification', description: 'Location capture at clock events.', domain: 'Compliance', status: 'backend-only', kind: 'optional', dependencies: ['time-tracking'], supportedRoles: ['admin', 'manager', 'crew'] }),
+  // Wave I: capture + admin review still ship; adds a deterministic geofence engine that
+  // verifies clock-ins against a route's stored destination coords (additive reportLat/Lng;
+  // NO geocoding — missing coords → 'expected_unavailable', never a false positive), an
+  // explicit accuracy policy, a tenant-safe compliance API/UI (routes:view), and a shared
+  // ClockStrip badge. GPS is operational evidence, not proof of misconduct or a payroll input.
+  cap({ id: 'gps-verification', displayName: 'GPS Verification', description: 'On-site geofence verification of clock events.', domain: 'Compliance', status: 'full', kind: 'optional', dependencies: ['time-tracking', 'routes'], requiredPermissions: ['routes:view'], supportedRoles: ['admin', 'manager', 'crew'] }),
   cap({ id: 'compliance-photos', displayName: 'Compliance Photos', description: 'Uniform + completion evidence.', domain: 'Compliance', status: 'full', kind: 'optional', dependencies: ['workforce'], supportedRoles: ['admin', 'manager', 'crew'] }),
 
   // ── Equipment / fleet ──

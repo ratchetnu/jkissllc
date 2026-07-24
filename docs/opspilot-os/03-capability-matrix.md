@@ -32,7 +32,7 @@
 | 14 | Availability (crew) | **Full** | `app/lib/crew-availability.ts` | Weekly self-submit; feeds Crew Score |
 | 15 | Time-off | **Full** | `app/lib/timeoff.ts` | Approve doesn't auto-unassign (by design) |
 | 16 | Clock in/out | **Full** | `app/api/route/[token]/route.ts:116-149` | Per-assignee; **no timesheet aggregation** |
-| 17 | GPS collection | **Backend-only** | `app/api/route/[token]/route.ts:129,137` | Collected & stored; **no verification/geofence** |
+| 17 | GPS collection | **Full** | `app/lib/timeclock/geofence.ts`, `app/admin/operations/gps-compliance` | _(Wave I 2026-07-24)_ Deterministic geofence verification (150 m threshold + accuracy bands) derived from stored captures; additive route `reportLat/Lng` (no geocoding → missing = unverifiable, **never a false positive**); tenant-safe compliance API/UI (`routes:view`) + shared ClockStrip badge. Operational evidence, not misconduct/payroll proof |
 | 18 | Photo uploads | **Full** | `app/lib/uniform.ts`, `app/api/careers/upload/route.ts` | Uniform + completion + applicant docs |
 | 19 | Equipment inventory | **Full (basic)** | `app/lib/equipment.ts` | Roster only |
 | 20 | Equipment assignment | **Partial** | `app/lib/routes.ts:123-124` | Snapshot `equipmentId`; no double-book check; `equipment:assign` perm **declared-unused** |

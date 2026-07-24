@@ -4,6 +4,7 @@ import { use, useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { MapPin, Clock, CalendarDays, Truck, User, FileText, ChevronLeft, Send, CheckCircle2, XCircle, Link2, Plus, X, Lock, ShieldAlert } from 'lucide-react'
+import { verifyLocation, type VerifyStatus } from '../../../lib/timeclock/geofence'
 import OperationsShell from '../OperationsShell'
 import { invalidateOps } from '../useOps'
 import { statusOf, Avatar, scoreColor, fmtLongDay, fmtTs, mapsUrl, money, moneyOrDash, profitColor, MoneyInput, centsToInput, looksLikeMoney, osLabel, ClaimChip } from '../ui'
@@ -257,7 +258,7 @@ function Detail({ token }: { token: string }) {
                     </div>
                   )}
                 </div>
-                <ClockStrip a={a} />
+                <ClockStrip a={a} expected={{ lat: (op as { reportLat?: number }).reportLat, lng: (op as { reportLng?: number }).reportLng }} />
                 </div>
               )
             })}
@@ -359,11 +360,13 @@ function RouteMoney({ op, onPatch, busy, isAdmin }: { op: Op; onPatch: (b: Recor
   // useState only runs at mount, so a crew member added AFTER the card mounted would
   // otherwise have no `pays` entry — and Save maps over the live assignees, sending
   // that member's auto-resolved pay as a blank "clear" and silently wiping it.
+  /* eslint-disable react-hooks/set-state-in-effect -- pre-existing: sync the edit form from `op` when not actively editing */
   useEffect(() => {
     if (editing) return
     setPrice(centsToInput(op.financials?.businessPriceCents))
     setPays(Object.fromEntries((op.assignees ?? []).map(a => [a.staffId, centsToInput(a.payCents)])))
   }, [op, editing])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const frozen = op.status === 'completed' || op.status === 'cancelled'
   const crew = (op.assignees ?? []).filter(a => !a.declinedAt)
@@ -515,8 +518,25 @@ const dur = (a: number, b: number) => {
 // above, and it's obvious whether they were on-site. "Location off" means the
 // crew member clocked in but their phone withheld GPS: a fact worth seeing, not a
 // silent gap.
-function ClockStrip({ a }: { a: Assignee }) {
+// Derived GPS verification label (shared verifyLocation — never re-implemented here).
+const VERIFY_META: Record<VerifyStatus, { label: string; color: string }> = {
+  verified_on_site: { label: 'GPS verified', color: '#86efac' },
+  outside_geofence: { label: 'Off site', color: '#fca5a5' },
+  low_accuracy: { label: 'Low accuracy', color: '#fcd34d' },
+  location_unavailable: { label: 'GPS unavailable', color: 'var(--muted)' },
+  expected_unavailable: { label: 'GPS unverified', color: 'var(--muted)' },
+  stale: { label: 'Stale fix', color: 'var(--muted)' },
+  invalid_coordinates: { label: 'Bad GPS', color: '#fcd34d' },
+}
+
+function ClockStrip({ a, expected }: { a: Assignee; expected?: { lat?: number; lng?: number } }) {
   if (!a.clockInAt && !a.clockOutAt) return null
+  // eslint-disable-next-line react-hooks/purity -- display-only "now" for a non-critical staleness badge
+  const nowRef = Date.now()
+  const v = a.clockInAt != null
+    ? verifyLocation({ lat: a.clockInLat, lng: a.clockInLng, accuracy: a.clockInAccuracy, locationDenied: a.clockInLocationDenied, at: a.clockInAt }, expected ?? {}, nowRef)
+    : null
+  const vm = v ? VERIFY_META[v.status] : null
   const punch = (label: string, at: number, lat?: number, lng?: number, acc?: number) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12.5 }}>
       <span style={{ fontWeight: 800, color: 'var(--muted)', width: 30 }}>{label}</span>
@@ -537,6 +557,7 @@ function ClockStrip({ a }: { a: Assignee }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 10.5, fontWeight: 800, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)' }}>
         <Clock size={12} /> Timeclock
         {a.clockInAt && a.clockOutAt && <span style={{ color: '#86efac', letterSpacing: 0, textTransform: 'none' }}>· {dur(a.clockInAt, a.clockOutAt)} on site</span>}
+        {vm && <span style={{ color: vm.color, letterSpacing: 0, textTransform: 'none', fontWeight: 700 }}>· {vm.label}{v && v.distanceM != null ? ` (${v.distanceM}m)` : ''}</span>}
       </div>
       {a.clockInAt && punch('IN', a.clockInAt, a.clockInLat, a.clockInLng, a.clockInAccuracy)}
       {a.clockOutAt && punch('OUT', a.clockOutAt, a.clockOutLat, a.clockOutLng, a.clockOutAccuracy)}

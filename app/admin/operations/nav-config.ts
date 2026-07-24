@@ -47,6 +47,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/admin/operations/businesses', label: 'Businesses', group: 'business' },
   { href: '/admin/operations/equipment', label: 'Equipment', group: 'business' },
   { href: '/admin/operations/claims', label: 'Claims', group: 'business' },
+  { href: '/admin/operations/gps-compliance', label: 'GPS Compliance', group: 'business' },
   // ── More menu — Finance ──
   { href: '/admin/operations/pay-statements', label: 'Pay', group: 'finance' },
   { href: '/admin/operations/settings', label: 'Settings', group: 'finance', adminOnly: true },
