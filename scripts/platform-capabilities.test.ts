@@ -46,8 +46,8 @@ test('dependency example resolves (memberships → organizations, roles)', () =>
 // ── Verified-reality corrections (Wave A) — pin them so the registry cannot silently
 // drift back to the pre-audit descriptions. Each assertion mirrors an audited fact. ──
 
-test('gps-verification is partial: capture + admin-review UI ship; geofence verification is the remaining gap', () => {
-  assert.equal(CAPABILITY_REGISTRY['gps-verification'].status, 'partial')
+test('gps-verification is full: capture + admin review + automated geofence verification (Wave I closed the gap)', () => {
+  assert.equal(CAPABILITY_REGISTRY['gps-verification'].status, 'full')
 })
 
 test('reporting and analytics declare the permissions their routes actually enforce', () => {

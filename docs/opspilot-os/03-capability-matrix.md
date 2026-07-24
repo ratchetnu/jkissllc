@@ -32,7 +32,7 @@
 | 14 | Availability (crew) | **Full** | `app/lib/crew-availability.ts` | Weekly self-submit; feeds Crew Score |
 | 15 | Time-off | **Full** | `app/lib/timeoff.ts` | Approve doesn't auto-unassign (by design) |
 | 16 | Clock in/out | **Full** | `app/lib/crew-timeclock.ts`, `app/lib/timesheets.ts`, `app/api/portal/clock`, `app/admin/operations/timesheets` | _(Wave C 2026-07-24)_ Per-assignee, both lanes (routes always; bookings behind `BOOKING_ASSIGNMENT_ENABLED`) via shared `applyPunch`; admin timesheet + hours rollups gated `time:view`; corrections deferred (safe immutable-original model pending) |
-| 17 | GPS collection | **Backend-only** | `app/api/route/[token]/route.ts:129,137` | Collected & stored; **no verification/geofence** |
+| 17 | GPS collection | **Full** | `app/lib/timeclock/geofence.ts`, `app/admin/operations/gps-compliance` | _(Wave I 2026-07-24)_ Deterministic geofence verification (150 m threshold + accuracy bands) derived from stored captures; additive route `reportLat/Lng` (no geocoding → missing = unverifiable, **never a false positive**); tenant-safe compliance API/UI (`routes:view`) + shared ClockStrip badge. Operational evidence, not misconduct/payroll proof |
 | 18 | Photo uploads | **Full** | `app/lib/uniform.ts`, `app/api/careers/upload/route.ts` | Uniform + completion + applicant docs |
 | 19 | Equipment inventory | **Full (basic)** | `app/lib/equipment.ts` | Roster only |
 | 20 | Equipment assignment | **Full** | `app/lib/fleet/*`, `app/admin/operations/fleet` | _(Wave H 2026-07-24)_ Additive maintenance model + deterministic status engine + authorized maintenance UI/API; route PATCH now assigns `equipmentId` (out-of-service refused, overdue/inspection warns); `maintenance.flag` has a real narrow internal-only idempotent executor. `equipment:assign` now enforced; `equipment:view`/`fleet:maintenance` added |
@@ -66,8 +66,8 @@
 
 ## Status roll-up
 
-- _(Updated 2026-07-24)_ **Full: 26** · **Partial: 11** · **Backend-only: 1** ·
-  **Duplicated: 0** · **Absent: 8** · (Invoicing consolidated + Permissions viewer added; enforcement drift tracked below).
+- _(Updated 2026-07-24, Waves B–I merged)_ **Full: 29** · **Partial: 9** · **Backend-only: 0** ·
+  **Duplicated: 0** · **Absent: 8** · (Invoicing consolidated; Permissions/Audit viewers; Reporting + Analytics surfaces; Fleet maintenance; GPS geofence verification. Enforcement drift still tracked below).
   Three capabilities moved **Absent → Partial** as the platform scaffolding
   landed: **#3 Organizations/tenancy** (context wired), **#42 Monitoring**
   (observability substrate scaffolded but dormant), **#46 Tenant isolation**

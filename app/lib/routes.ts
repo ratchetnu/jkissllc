@@ -118,6 +118,11 @@ export type RouteRecord = {
   contactPerson?: string
   contactPhone?: string
   reportAddress: string
+  // Optional stored destination coordinates for GPS on-site verification (Wave I).
+  // Additive: absent on legacy routes → geofence verification derives 'expected_unavailable'
+  // (never a false positive). Populated by manual entry; NO geocoding in the request path.
+  reportLat?: number
+  reportLng?: number
   reportTime: string            // free text, e.g. "7:00 AM"
   routeDate: string             // YYYY-MM-DD
   description?: string

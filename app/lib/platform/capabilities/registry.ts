@@ -59,9 +59,12 @@ const LIST: Capability[] = [
   // booking lane's PRODUCTION availability stays controlled by BOOKING_ASSIGNMENT_ENABLED
   // (off ⇒ routes-only, byte-identical), so no requiredFlags is asserted on the capability.
   cap({ id: 'time-tracking', displayName: 'Time Tracking', description: 'Clock in/out + admin timesheets (route + booking lanes).', domain: 'Workforce', status: 'full', kind: 'core', dependencies: ['routes', 'workforce', 'bookings'], requiredPermissions: ['time:view'], supportedRoles: ['admin', 'manager', 'crew'] }),
-  // Capture (crew clock UI) + admin review (map pin / accuracy / location-off) both ship; the
-  // remaining gap to "full" is automated geofence/on-site determination + compliance reporting.
-  cap({ id: 'gps-verification', displayName: 'GPS Verification', description: 'Location capture + admin review at clock events.', domain: 'Compliance', status: 'partial', kind: 'optional', dependencies: ['time-tracking'], supportedRoles: ['admin', 'manager', 'crew'] }),
+  // Wave I: capture + admin review still ship; adds a deterministic geofence engine that
+  // verifies clock-ins against a route's stored destination coords (additive reportLat/Lng;
+  // NO geocoding — missing coords → 'expected_unavailable', never a false positive), an
+  // explicit accuracy policy, a tenant-safe compliance API/UI (routes:view), and a shared
+  // ClockStrip badge. GPS is operational evidence, not proof of misconduct or a payroll input.
+  cap({ id: 'gps-verification', displayName: 'GPS Verification', description: 'On-site geofence verification of clock events.', domain: 'Compliance', status: 'full', kind: 'optional', dependencies: ['time-tracking', 'routes'], requiredPermissions: ['routes:view'], supportedRoles: ['admin', 'manager', 'crew'] }),
   cap({ id: 'compliance-photos', displayName: 'Compliance Photos', description: 'Uniform + completion evidence.', domain: 'Compliance', status: 'full', kind: 'optional', dependencies: ['workforce'], supportedRoles: ['admin', 'manager', 'crew'] }),
 
   // ── Equipment / fleet ──
