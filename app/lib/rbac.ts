@@ -26,6 +26,8 @@ export type Permission =
   | 'recurring:manage'
   | 'equipment:manage'
   | 'equipment:assign'
+  | 'equipment:view'       // read-only equipment + fleet-maintenance status
+  | 'fleet:maintenance'    // record service / schedule / inspection / out-&-return-to-service
   // ── Crew directory ──
   | 'crew:manage'          // create/edit/deactivate crew records
   | 'crew:view'            // see the crew directory + operational detail
@@ -88,7 +90,7 @@ export type Permission =
 // auditable and a new permission is a deliberate grant, never an accidental one.
 const ADMIN: Permission[] = [
   'businesses:manage', 'routes:manage', 'routes:view', 'recurring:manage',
-  'equipment:manage', 'equipment:assign',
+  'equipment:manage', 'equipment:assign', 'equipment:view', 'fleet:maintenance',
   'crew:manage', 'crew:view', 'crew:assign', 'crew:score:view',
   'availability:view', 'timeoff:view', 'timeoff:approve',
   'applicants:review', 'applicants:decide',
@@ -107,7 +109,7 @@ const ADMIN: Permission[] = [
 // accounts:suspend — matching the spec's "Managers should NOT" list.
 const MANAGER: Permission[] = [
   'businesses:manage', 'routes:manage', 'routes:view', 'recurring:manage',
-  'equipment:manage', 'equipment:assign',
+  'equipment:manage', 'equipment:assign', 'equipment:view', 'fleet:maintenance',
   'crew:view', 'crew:assign', 'crew:score:view',
   'availability:view', 'timeoff:view', 'timeoff:approve',   // managers run the schedule + approve time off
   'applicants:review',
@@ -163,7 +165,7 @@ export const roleLabel: Record<Role, string> = {
 // are always computed through `can()` — the same primitive the guards use — so the
 // viewer cannot disagree with runtime enforcement.
 export const PERMISSION_DOMAINS: ReadonlyArray<{ domain: string; permissions: readonly Permission[] }> = [
-  { domain: 'Business & operations', permissions: ['businesses:manage', 'routes:manage', 'routes:view', 'recurring:manage', 'equipment:manage', 'equipment:assign'] },
+  { domain: 'Business & operations', permissions: ['businesses:manage', 'routes:manage', 'routes:view', 'recurring:manage', 'equipment:manage', 'equipment:assign', 'equipment:view', 'fleet:maintenance'] },
   { domain: 'Crew directory', permissions: ['crew:manage', 'crew:view', 'crew:assign', 'crew:score:view'] },
   { domain: 'Availability & time off', permissions: ['availability:view', 'timeoff:view', 'timeoff:approve', 'time:view', 'time:manage'] },
   { domain: 'Applicants', permissions: ['applicants:review', 'applicants:decide'] },

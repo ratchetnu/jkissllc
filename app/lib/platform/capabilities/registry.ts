@@ -66,7 +66,12 @@ const LIST: Capability[] = [
 
   // ── Equipment / fleet ──
   cap({ id: 'equipment', displayName: 'Equipment', description: 'Equipment inventory.', domain: 'Equipment', status: 'full', kind: 'optional', requiredPermissions: ['equipment:manage'] }),
-  cap({ id: 'fleet', displayName: 'Fleet', description: 'Vehicle/asset assignment + maintenance.', domain: 'Equipment', status: 'partial', kind: 'industry-specific', dependencies: ['equipment', 'routes'], requiredPermissions: ['equipment:assign'], aiActions: [{ id: 'maintenance.flag', level: 1 }] }),
+  // Wave H: additive maintenance model on Equipment + deterministic status engine +
+  // authorized maintenance API/UI + route equipmentId assignment (out-of-service refused)
+  // + a REAL narrow maintenance.flag executor (internal flags only, idempotent, tenant-
+  // scoped, no external send — deliberately NOT a general workflow engine, so `automations`
+  // stays partial).
+  cap({ id: 'fleet', displayName: 'Fleet', description: 'Vehicle/asset assignment + maintenance.', domain: 'Equipment', status: 'full', kind: 'industry-specific', dependencies: ['equipment', 'routes'], requiredPermissions: ['equipment:assign', 'equipment:view', 'fleet:maintenance'], aiActions: [{ id: 'maintenance.flag', level: 1 }] }),
 
   // ── Comms ──
   cap({ id: 'messaging', displayName: 'Messaging', description: 'Customer + crew messaging.', domain: 'Comms', status: 'full', kind: 'core', requiredPermissions: ['messages:send'], supportedRoles: ['admin', 'manager', 'crew'], aiActions: [{ id: 'message.draft', level: 2 }] }),
