@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { getStripe, stripeConfigured } from '../../../../lib/stripe'
-import { getInvoiceByToken, saveInvoice, subtotalCents } from '../../../../lib/route-invoices'
+import { getInvoiceByToken, recordStripeInvoicePayment } from '../../../../lib/route-invoices'
 import { siteUrl } from '../../../../lib/booking-emails'
 import { resolveTenantFromResource } from '../../../../lib/platform/tenancy/tenant-resolve'
 import { runWithTenant } from '../../../../lib/platform/tenancy/context'
@@ -26,14 +26,12 @@ export const GET = withTenantRoute(async (req: NextRequest, { params }: { params
       // false → the mark-paid write runs exactly as today. Invoice has no tenantId
       // field yet; the cast lets the resolver read it once bindings exist.
       const resolution = inv ? resolveTenantFromResource(inv as { tenantId?: string | null }, { kind: 'invoice', correlationId: token }) : null
-      if (inv && resolution && inv.status !== 'void' && session.metadata?.invoiceToken === token && session.payment_status === 'paid' && inv.status !== 'paid') {
+      // Guard that this session belongs to THIS invoice URL, then apply the SAME
+      // idempotent transition the webhook backstop uses (recordStripeInvoicePayment):
+      // it no-ops on void / already-paid / unpaid / replayed sessions.
+      if (inv && resolution && session.metadata?.invoiceToken === token) {
         await runWithTenant({ tenantId: resolution.tenantId }, async () => {
-          inv.amountPaidCents = subtotalCents(inv)
-          inv.status = 'paid'
-          inv.paidAt = Date.now()
-          inv.paidMethod = 'card'
-          inv.stripeSessionId = session.id
-          await saveInvoice(inv)
+          await recordStripeInvoicePayment(session)
         })
       }
     } catch (err) {

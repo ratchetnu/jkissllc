@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import type Stripe from 'stripe'
 import { getStripe, stripeConfigured } from '../../../lib/stripe'
 import { recordStripeSessionPayment } from '../../../lib/record-payment'
+import { recordStripeInvoicePayment } from '../../../lib/route-invoices'
 import { alert } from '../../../lib/alerts'
 import { resolveTenantFromStripe } from '../../../lib/platform/tenancy/tenant-resolve'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
@@ -51,7 +52,15 @@ export async function POST(req: NextRequest) {
         await withBackgroundTenant('webhook', async () => {
           // Re-fetch to be sure payment_status is current.
           const full = await getStripe().checkout.sessions.retrieve(session.id)
-          await recordStripeSessionPayment(full)
+          // Dispatch by lane: a B2B route-invoice session carries invoiceToken and is
+          // marked paid via the idempotent invoice recorder (this webhook is its durable
+          // backstop — previously only the success-URL return path marked it, so closing
+          // the tab could leave a paid invoice unmarked); everything else is a booking.
+          if (full.metadata?.invoiceToken) {
+            await recordStripeInvoicePayment(full)
+          } else {
+            await recordStripeSessionPayment(full)
+          }
         }, resolution.tenantId)
       }
     }

@@ -3,10 +3,12 @@
 // line amounts are seeded from it as a suggestion but are fully editable. Each
 // billed route is stamped with invoiceId so it can't be double-billed; voiding or
 // deleting the invoice frees its routes again.
+import type Stripe from 'stripe'
 import { redis } from './redis'
 import { listRoutes } from './routes'
 import { mutateRoute } from './route-mutex'
 import { parsePayCents } from './route-pay'
+import { generateInvoiceToken, INVOICE_TOKEN_RE, nextSequentialNumber, planInvoicePayment } from './invoicing/shared'
 
 export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'void'
 
@@ -49,10 +51,11 @@ const KEY = (t: string) => `rt:inv:${t}`
 const KEY_NUM = (n: string) => `rt:inv:num:${n}`
 const KEY_INDEX = 'rt:inv:index'
 const KEY_COUNTER = 'rt:inv:counter'
-const TOKEN_RE = /^[a-f0-9]{16,}$/i
 
+// Kept as a stable export (now delegates to the shared generator) so existing
+// callers and the on-disk token shape are unchanged.
 export function generateToken(): string {
-  return (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '')
+  return generateInvoiceToken()
 }
 // `JK-RI-`, not `JK-INV-`. Booking invoices (lib/bookings.nextInvoiceNumber) mint
 // `JK-INV-` off a DIFFERENT counter, so both used to hand out the same human-facing
@@ -64,12 +67,11 @@ export function generateToken(): string {
 //
 // No Redis fallback here on purpose — see the note in lib/bookings.ts.
 export async function nextInvoiceNumber(): Promise<string> {
-  const n = await redis.incr(KEY_COUNTER)
-  return `JK-RI-${1000 + n}`
+  return nextSequentialNumber('JK-RI-', KEY_COUNTER)
 }
 
 export async function getInvoiceByToken(token: string): Promise<RouteInvoice | null> {
-  if (!token || !TOKEN_RE.test(token)) return null
+  if (!token || !INVOICE_TOKEN_RE.test(token)) return null
   const raw = await redis.get(KEY(token))
   if (!raw) return null
   try {
@@ -124,12 +126,46 @@ export async function deleteInvoice(token: string): Promise<void> {
 
 // Completed, not-yet-billed routes for a business in a date window — what an
 // invoice would draw from. Used for both the preview and the actual generate.
+// Pure predicate: a route is billable to a client iff it is completed, not yet
+// billed, matches the normalized client name, and falls inside the date window.
+// Extracted so the selection rule is unit-tested without a live store.
+export function isBillableRoute(
+  route: { status: string; invoiceId?: string; businessName: string; routeDate: string },
+  businessNameLower: string, start: string, end: string,
+): boolean {
+  return route.status === 'completed' && !route.invoiceId &&
+    route.businessName.trim().toLowerCase() === businessNameLower &&
+    route.routeDate >= start && route.routeDate <= end
+}
+
 export async function uninvoicedRoutes(businessName: string, start: string, end: string) {
   const target = businessName.trim().toLowerCase()
   return (await listRoutes(2000))
-    .filter(r => r.status === 'completed' && !r.invoiceId &&
-      r.businessName.trim().toLowerCase() === target && r.routeDate >= start && r.routeDate <= end)
+    .filter(r => isBillableRoute(r, target, start, end))
     .sort((a, b) => a.routeDate.localeCompare(b.routeDate) || a.routeNumber.localeCompare(b.routeNumber))
+}
+
+// Mark a route invoice paid from its completed Stripe Checkout Session — the SAME
+// idempotent transition the success-URL return path applies, exposed so the Stripe
+// webhook can act as the durable backstop. A route invoice paid at Stripe can no
+// longer stay unmarked if the customer closes the tab before the redirect.
+// Idempotent by construction (planInvoicePayment): replay / double-delivery is a
+// no-op and never re-credits amountPaidCents. Callers MUST run inside an
+// established tenant scope (same contract as lib/record-payment.ts).
+export async function recordStripeInvoicePayment(session: Stripe.Checkout.Session): Promise<RouteInvoice | null> {
+  const token = session.metadata?.invoiceToken
+  if (!token) return null
+  const inv = await getInvoiceByToken(token)
+  if (!inv) return null
+  const patch = planInvoicePayment(
+    { status: inv.status, subtotalCents: subtotalCents(inv), stripeSessionId: inv.stripeSessionId },
+    { id: session.id, payment_status: session.payment_status },
+    Date.now(),
+  )
+  if (!patch) return inv
+  Object.assign(inv, patch)
+  await saveInvoice(inv)
+  return inv
 }
 
 // Create a draft invoice from a business's uninvoiced completed routes in a

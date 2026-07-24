@@ -66,7 +66,14 @@ const LIST: Capability[] = [
   cap({ id: 'documents', displayName: 'Documents', description: 'File storage + encrypted identity docs.', domain: 'Documents', status: 'full', kind: 'core' }),
 
   // ── Money ──
-  cap({ id: 'invoicing', displayName: 'Invoicing', description: 'Booking + route invoices.', domain: 'Invoicing', status: 'duplicated', kind: 'core', requiredPermissions: ['invoices:manage'], aiActions: [{ id: 'invoice.draft', level: 3 }] }),
+  // Two legitimate lanes, consolidated (Wave B) onto shared plumbing (lib/invoicing/*)
+  // + one InvoiceLike contract WITHOUT merging their entities/keyspaces/counters. Authz
+  // is split by lane and both are enforced: the B2B route-invoice surface requires
+  // invoices:manage (admin-only); the B2C booking-invoice surface is governed as part of
+  // `bookings` via requireStaffSession (admin+manager). requiredPermissions names the
+  // invoice-native permission. Stripe recording is unified + idempotent, so a paid route
+  // invoice can no longer stay unmarked (webhook backstop).
+  cap({ id: 'invoicing', displayName: 'Invoicing', description: 'Booking + route invoices.', domain: 'Invoicing', status: 'full', kind: 'core', dependencies: ['bookings', 'routes', 'payments'], requiredPermissions: ['invoices:manage'], aiActions: [{ id: 'invoice.draft', level: 3 }] }),
   cap({ id: 'payments', displayName: 'Payments', description: 'Stripe + Zelle + manual.', domain: 'Payments', status: 'full', kind: 'core' }),
   cap({ id: 'contractor-compensation', displayName: 'Contractor Compensation', description: 'Pay resolution + statements.', domain: 'Compensation', status: 'full', kind: 'core', requiredPermissions: ['pay:generate'] }),
   cap({ id: 'expenses', displayName: 'Expenses', description: 'Expense ledger.', domain: 'Compensation', status: 'planned', kind: 'core', enabledForJkiss: false }),
