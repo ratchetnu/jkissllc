@@ -7,7 +7,7 @@ import { COMPANY } from '../../../lib/company'
 import { getStripe, stripeConfigured, grossUp } from '../../../lib/stripe'
 import { siteUrl } from '../../../lib/booking-emails'
 import { rateLimit } from '../../../lib/rate-limit'
-import { resolveTenantFromResource } from '../../../lib/platform/tenancy/tenant-resolve'
+import { resolveTenantFromResource, tenantIdForOutboundMetadata } from '../../../lib/platform/tenancy/tenant-resolve'
 import { runWithTenant } from '../../../lib/platform/tenancy/context'
 
 export const runtime = 'nodejs'
@@ -86,7 +86,13 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
       customer_email: inv.clientEmail || undefined,
       success_url: `${base}/api/invoice/${inv.token}/stripe-return?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${base}/invoice/${inv.token}?pay=cancelled`,
-      metadata: { invoiceToken: inv.token, invoiceNumber: inv.invoiceNumber, netCents: String(net), feeCents: String(feeCents) },
+      metadata: {
+        invoiceToken: inv.token, invoiceNumber: inv.invoiceNumber, netCents: String(net), feeCents: String(feeCents),
+        // Stamp the originating tenant so the (session-less) webhook backstop can
+        // resolve this route-invoice session via resolveTenantFromStripe — matching
+        // the booking pay route. Returns 'jkiss' while TENANCY_ENABLED=false.
+        tenantId: tenantIdForOutboundMetadata(),
+      },
     })
     return NextResponse.json({ url: session.url })
   } catch (err) {
