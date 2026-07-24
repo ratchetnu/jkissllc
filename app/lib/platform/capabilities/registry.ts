@@ -30,7 +30,11 @@ const LIST: Capability[] = [
   cap({ id: 'organizations', displayName: 'Organizations', description: 'Tenant/organization records.', domain: 'Identity & Tenancy', status: 'planned', kind: 'core', dependencies: ['identity'], requiredFlags: ['TENANCY_ENABLED'], enabledForJkiss: false }),
   cap({ id: 'memberships', displayName: 'Memberships', description: 'User↔tenant↔role association.', domain: 'Identity & Tenancy', status: 'planned', kind: 'core', dependencies: ['identity', 'organizations', 'roles'], requiredFlags: ['TENANCY_ENABLED'], enabledForJkiss: false }),
   cap({ id: 'roles', displayName: 'Roles', description: 'Role definitions (admin/manager/crew).', domain: 'Identity & Tenancy', status: 'full', kind: 'core', dependencies: ['identity'] }),
-  cap({ id: 'permissions', displayName: 'Permissions', description: 'RBAC permission matrix.', domain: 'Identity & Tenancy', status: 'partial', kind: 'core', dependencies: ['roles'], requiredPermissions: ['roles:manage'] }),
+  // Wave D/E: enforcement was already full (the can() chokepoint); this adds the read-only
+  // matrix VIEWER (/admin/operations/permissions, permissions:view) sourced from the SAME
+  // rbac primitive so it can't drift, and role-assignment activity is now audited. The
+  // matrix stays static/in-code — deliberately NOT tenant-configurable.
+  cap({ id: 'permissions', displayName: 'Permissions', description: 'RBAC permission matrix + read-only viewer.', domain: 'Identity & Tenancy', status: 'full', kind: 'core', dependencies: ['roles', 'audit-logs'], requiredPermissions: ['roles:manage', 'permissions:view'] }),
 
   // ── CRM ──
   cap({ id: 'customers', displayName: 'Customers', description: 'First-class customer records.', domain: 'CRM', status: 'planned', kind: 'core', dependencies: ['identity'], enabledForJkiss: false }),
@@ -88,7 +92,12 @@ const LIST: Capability[] = [
   cap({ id: 'automations', displayName: 'Automations', description: 'Reminders + workflow automation.', domain: 'Automation', status: 'partial', kind: 'core', dependencies: ['workforce', 'routes', 'notifications', 'messaging'], requiredPermissions: ['reminders:manage'], aiActions: [{ id: 'reminder.draft', level: 2 }] }),
   cap({ id: 'ai-intelligence', displayName: 'AI Intelligence', description: 'Governed AI service (runAiTask).', domain: 'AI', status: 'full', kind: 'core', requiredPermissions: ['ai:use'], aiActions: [{ id: 'ops.command', level: 0 }, { id: 'ops.insights', level: 1 }] }),
   cap({ id: 'approvals', displayName: 'Approvals', description: 'Human-approved AI actions.', domain: 'Automation', status: 'planned', kind: 'core', dependencies: ['ai-intelligence', 'audit-logs'], requiredFlags: ['APPROVAL_QUEUE_ENABLED'], enabledForJkiss: false }),
-  cap({ id: 'audit-logs', displayName: 'Audit Logs', description: 'Attributed audit trail.', domain: 'Governance', status: 'partial', kind: 'core', dependencies: ['identity'], requiredPermissions: ['audit:view'] }),
+  // Wave D/E: tenant-stamped, attributed trail (actor/role/action/target/outcome/
+  // correlation) now covers administrative identity/security events (user create/update/
+  // role-change/suspend/reactivate/delete) — successes AND denied attempts — not just
+  // comms; read-only viewer at /admin/operations/audit (audit:view). Legacy records
+  // (no tenantId/outcome) remain readable.
+  cap({ id: 'audit-logs', displayName: 'Audit Logs', description: 'Attributed, tenant-scoped audit trail + viewer.', domain: 'Governance', status: 'full', kind: 'core', dependencies: ['identity'], requiredPermissions: ['audit:view'] }),
 
   // ── Surfaces ──
   cap({ id: 'customer-portal', displayName: 'Customer Portal', description: 'Booking/track/client portals.', domain: 'Surfaces', status: 'full', kind: 'core', supportedRoles: [] }),

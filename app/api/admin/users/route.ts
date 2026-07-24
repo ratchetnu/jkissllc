@@ -5,6 +5,7 @@ import { createUser, listUsers, toSafeUser } from '../../../lib/users'
 import { getStaff } from '../../../lib/staff'
 import { isRole } from '../../../lib/rbac'
 import { passwordPolicyError } from '../../../lib/password'
+import { auditAdmin } from '../../../lib/audit'
 
 // Team & Access — manage the manager and crew logins. Admin-only end to end
 // (users:manage). Passwords are hashed in createUser; the hash never leaves here.
@@ -50,6 +51,12 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
       password,
       staffId: role === 'crew' ? staffId : undefined,
       invitedBy: who.sub,
+    })
+    // Post-commit, fail-open audit — never the password, only role + safe context.
+    await auditAdmin(who, 'user.created', {
+      entity: 'user', entityId: user.id,
+      summary: `Created ${role} login ${user.email}`,
+      meta: { role, staffId: role === 'crew' ? staffId : undefined },
     })
     return NextResponse.json({ ok: true, user: toSafeUser(user) })
   } catch (err) {
