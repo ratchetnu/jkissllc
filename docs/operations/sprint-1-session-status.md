@@ -6,6 +6,17 @@
 
 ---
 
+## 📌 PAYROLL REKEY RECONCILIATION (2026-07-24, owner-run · **supersedes the SHA + release state below**)
+
+**Recorded after the fact. No dispatch, no flag change, no Production data or environment change was made to record this.** Where the 2026-07-23 section below disagrees on the `main` SHA, **this section wins.**
+
+- **`main` advanced:** J KISS `2dc6f6e` → **`3bb3b13`**. Merged since: **PR #61** (docs state reconciliation), **PR #62** (stable-ID payroll rekey), **PR #63** (payroll rekey Production dry-run endpoint).
+- **Stable-ID payroll rekey shipped (PR #62):** crew pay is keyed to a **stable business ID** so a business rename can no longer silently erase it. Migration at `scripts/tenant-migration/payroll-rekey.ts`, planner `payroll-lib.ts`.
+- **Production data run — COMPLETE (owner-run):** dry run returned verdict **SAFE TO APPLY**; the **apply completed successfully**. Outcome: **2 stable business IDs added · 0 conflicts · 0 skips · 0 staff updates · 0 legacy keys deleted** (additive only).
+- **Flag / temporary tooling:** `OPERION_PAYROLL_REKEY_DRYRUN` is **absent from Production** (window closed). **Pending cleanup on `main`** (do not remove in a state-only edit): the dry-run route `app/api/admin/tenant-migration/payroll-plan/route.ts`, report helper `app/lib/tenant-migration/payroll-plan-report.ts`, endpoint test `scripts/payroll-plan-endpoint.test.ts`, and code-default flag `OPERION_PAYROLL_REKEY_DRYRUN: false` in `app/lib/platform/flags.ts`. With the flag off/absent the route is inert (404 before auth) — hygiene, not a live exposure. Full detail in `OPERION_CURRENT_STATE.md` §0.1.
+
+---
+
 ## 📌 CANARY IDENTITY CORRECTION + RELEASE STATE (2026-07-23, owner-verified live · **reconciled against merged `main` 2026-07-23**)
 
 **Recorded at owner request. No dispatch, no idempotency change, no flag change, no UPD-B registration.**
@@ -708,3 +719,4 @@ After S1 lands #47 and #52, both sessions rebase onto the new `main` — a no-op
 | When | Who | What |
 |---|---|---|
 | 2026-07-22 | coordinator | Audit complete; ownership map published; all sessions gated on B-1. |
+| 2026-07-24 | reconciliation | `main` → `3bb3b13` (PRs #61/#62/#63 merged). Stable-ID payroll rekey shipped and **run in Production**: dry run SAFE TO APPLY, apply complete, 2 stable IDs added / 0 conflicts / 0 skips / 0 staff updates / 0 legacy keys deleted. `OPERION_PAYROLL_REKEY_DRYRUN` absent from Production; temporary payroll-plan route/report/test/flag remain on `main` pending cleanup. See top section + `OPERION_CURRENT_STATE.md` §0.1. |

@@ -22,10 +22,49 @@
 
 ---
 
-## 0. RECONCILIATION WITH MERGED `main` (2026-07-23) — read this first
+## 0.1 RECONCILIATION — payroll rekey shipped + run in Production (2026-07-24) — read this first
+
+The repository has moved again since §0. Where §0 or §1–§13 disagree with this section, **this
+section wins.**
+
+**Merged state (repo-verified, read-only):** J KISS `main` advanced `2dc6f6e` → **`3bb3b13`**.
+
+| PR | Repo | State | What |
+|---|---|---|---|
+| **#61** docs/operion-state-reconciliation | J KISS | ✅ MERGED | docs-only state reconciliation published to `main` |
+| **#62** stable-ID payroll rekey | J KISS | ✅ MERGED | keys crew pay to a **stable business ID** so a business rename can no longer silently erase crew pay |
+| **#63** payroll rekey Production dry-run | J KISS | ✅ MERGED | owner-only, read-only, plan-only in-Production endpoint to run the rekey plan against the live KV |
+
+**Stable-ID payroll rekey — shipped.** The correctness fix (PR #62) and the owner-only Production
+dry-run endpoint (PR #63) are both on `main`. Migration code lives at
+`scripts/tenant-migration/payroll-rekey.ts` with planner `scripts/tenant-migration/payroll-lib.ts`.
+
+**Production data run — COMPLETE (owner-run).**
+- Dry run returned verdict **SAFE TO APPLY**.
+- The **apply completed successfully**.
+- Outcome: **2 stable business IDs added · 0 conflicts · 0 skips · 0 staff updates · 0 legacy keys deleted.** (Additive only — nothing legacy was removed.)
+
+**Flag / temporary-tooling status.**
+- `OPERION_PAYROLL_REKEY_DRYRUN` is **absent from Production** (the dry-run window is closed; the
+  flag was removed from the Production environment after the run).
+- **Pending cleanup on `main`:** the temporary dry-run **route**
+  (`app/api/admin/tenant-migration/payroll-plan/route.ts`), the **report helper**
+  (`app/lib/tenant-migration/payroll-plan-report.ts`), the **endpoint test**
+  (`scripts/payroll-plan-endpoint.test.ts`), and the **code-default flag**
+  (`OPERION_PAYROLL_REKEY_DRYRUN: false` in `app/lib/platform/flags.ts`) still remain. With the
+  flag off/absent the route is inert (returns 404 before any auth), so this is hygiene, not a live
+  exposure — but it is outstanding and should be removed in a separate PR.
+
+> No flag, environment value, Production data, or code was changed to record any of the above; this
+> is a documentation-only reconciliation of a run that already happened.
+
+---
+
+## 0. RECONCILIATION WITH MERGED `main` (2026-07-23)
 
 This document was audited at `main` = `ee577c2`. The repository has moved. Where §1–§13 disagree
-with this section, **this section wins**. Canonical companion:
+with this section, **this section wins** (but see §0.1 above, which supersedes this section on the
+`main` SHA and the payroll rekey). Canonical companion:
 `docs/operations/sprint-1-session-status.md` → *"CANARY IDENTITY CORRECTION + RELEASE STATE"*.
 
 **Merged state (repo-verified, read-only):** J KISS `main` = **`2dc6f6e`** · Supercharged `main` =
@@ -197,7 +236,7 @@ These were driven by a real incident (issue #48) and each is verified against th
 
 ### 2.4 Platform infrastructure (merged, flag-off)
 
-AI telemetry + cost accounting · AI pipeline observability (per-stage latency) · AI latency Phase 2 (critic dedup, event-driven recovery, due-job index) · AI image optimization · calibrated customer progress UX · product-sync ledger (16 registry entries) · Release Center with approval + publish + rollback + history.
+AI telemetry + cost accounting · AI pipeline observability (per-stage latency) · AI latency Phase 2 (critic dedup, event-driven recovery, due-job index) · AI image optimization · calibrated customer progress UX · product-sync ledger (16 registry entries) · Release Center with approval + publish + rollback + history · **stable-ID payroll rekey** (PR #62 — keys crew pay to a stable business ID so a rename can't orphan it; run in Production 2026-07-24, see §0.1).
 
 ---
 
@@ -347,7 +386,7 @@ Key namespaces: `bk:*` bookings · `rt:*` routes · `paystmt:*` pay statements �
 
 **Isolation is verified and structural.** Preview holds `BLOB_STORE_ID` and *no* write token; Production holds a write token whose embedded store id is `WK8DoJzb2Q1lu5sv` and *no* `BLOB_STORE_ID`. A Preview deployment therefore cannot mint a token for the production store.
 
-**Migrations:** none pending. There is no migration framework; records carry `recordVersion` and readers backfill defaults (`normalize()` in `app/lib/bookings.ts`). `docs/operations/07-migration-safety-checklist.md` governs any change to persisted shapes.
+**Migrations:** the ordinary record path has no schema-migration framework — records carry `recordVersion` and readers backfill defaults (`normalize()` in `app/lib/bookings.ts`). Separately, one **key-space tenant migration** exists: the **stable-ID payroll rekey** (`scripts/tenant-migration/payroll-rekey.ts`), **run in Production 2026-07-24** (additive: 2 stable business IDs added, 0 legacy keys deleted — see §0.1). No other migration is pending. `docs/operations/07-migration-safety-checklist.md` governs any change to persisted shapes.
 
 ---
 
