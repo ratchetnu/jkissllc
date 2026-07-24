@@ -38,15 +38,15 @@ const LIST: Capability[] = [
 
   // ── CRM ──
   cap({ id: 'customers', displayName: 'Customers', description: 'First-class customer records.', domain: 'CRM', status: 'planned', kind: 'core', dependencies: ['identity'], enabledForJkiss: false }),
-  cap({ id: 'leads', displayName: 'Leads', description: 'Lead intake and pipeline.', domain: 'CRM', status: 'partial', kind: 'core', dependencies: ['identity'] }),
+  cap({ id: 'leads', displayName: 'Leads', description: 'Lead intake and pipeline.', domain: 'CRM', status: 'partial', kind: 'core', dependencies: ['identity', 'bookings'] }),
 
   // ── Sales & pricing ──
-  cap({ id: 'quotes', displayName: 'Quotes', description: 'Estimates and quote lifecycle.', domain: 'Sales', status: 'partial', kind: 'core', dependencies: ['pricing'], aiActions: [{ id: 'quote.draft', level: 2 }] }),
+  cap({ id: 'quotes', displayName: 'Quotes', description: 'Estimates and quote lifecycle.', domain: 'Sales', status: 'partial', kind: 'core', dependencies: ['pricing', 'bookings', 'ai-intelligence'], aiActions: [{ id: 'quote.draft', level: 2 }] }),
   cap({ id: 'pricing', displayName: 'Pricing', description: 'Dynamic pricing + calibration.', domain: 'Pricing', status: 'full', kind: 'core', aiActions: [{ id: 'price.estimate', level: 0 }] }),
 
   // ── Jobs & scheduling ──
   cap({ id: 'bookings', displayName: 'Bookings', description: 'Retail booking lifecycle.', domain: 'Sales/Booking', status: 'full', kind: 'core', dependencies: ['pricing'] }),
-  cap({ id: 'jobs', displayName: 'Jobs', description: 'Unified job concept (target).', domain: 'Jobs', status: 'partial', kind: 'core', dependencies: ['bookings', 'routes'] }),
+  cap({ id: 'jobs', displayName: 'Jobs', description: 'Unified job concept (target).', domain: 'Jobs', status: 'partial', kind: 'core', dependencies: ['bookings', 'routes', 'workforce', 'equipment'] }),
   cap({ id: 'routes', displayName: 'Routes', description: 'Contractor dispatch operations.', domain: 'Dispatch/Routes', status: 'full', kind: 'core', requiredPermissions: ['routes:manage'] }),
   cap({ id: 'scheduling', displayName: 'Scheduling', description: 'Capacity, blackout, availability calendar.', domain: 'Scheduling', status: 'full', kind: 'core', dependencies: ['bookings'] }),
 
@@ -54,13 +54,19 @@ const LIST: Capability[] = [
   cap({ id: 'workforce', displayName: 'Workforce', description: 'Crew / contractor roster.', domain: 'Workforce', status: 'full', kind: 'core', requiredPermissions: ['crew:manage'], supportedRoles: ['admin', 'manager', 'crew'] }),
   cap({ id: 'availability', displayName: 'Availability', description: 'Crew weekly availability.', domain: 'Workforce', status: 'full', kind: 'core', dependencies: ['workforce'], requiredPermissions: ['availability:view'], supportedRoles: ['admin', 'manager', 'crew'] }),
   cap({ id: 'time-off', displayName: 'Time Off', description: 'Time-off requests + approval.', domain: 'Workforce', status: 'full', kind: 'core', dependencies: ['workforce'], requiredPermissions: ['timeoff:view'], supportedRoles: ['admin', 'manager', 'crew'], aiActions: [{ id: 'timeoff.approve', level: 3 }] }),
-  cap({ id: 'time-tracking', displayName: 'Time Tracking', description: 'Clock in/out (per assignee).', domain: 'Workforce', status: 'partial', kind: 'core', dependencies: ['routes', 'workforce'], supportedRoles: ['admin', 'manager', 'crew'] }),
-  cap({ id: 'gps-verification', displayName: 'GPS Verification', description: 'Location capture at clock events.', domain: 'Compliance', status: 'backend-only', kind: 'optional', dependencies: ['time-tracking'], supportedRoles: ['admin', 'manager', 'crew'] }),
+  // Wave C: both lanes clock in/out through the shared applyPunch (route lock + booking
+  // lock) and roll up into a time:view admin timesheet. Route lane is fully live; the
+  // booking lane's PRODUCTION availability stays controlled by BOOKING_ASSIGNMENT_ENABLED
+  // (off ⇒ routes-only, byte-identical), so no requiredFlags is asserted on the capability.
+  cap({ id: 'time-tracking', displayName: 'Time Tracking', description: 'Clock in/out + admin timesheets (route + booking lanes).', domain: 'Workforce', status: 'full', kind: 'core', dependencies: ['routes', 'workforce', 'bookings'], requiredPermissions: ['time:view'], supportedRoles: ['admin', 'manager', 'crew'] }),
+  // Capture (crew clock UI) + admin review (map pin / accuracy / location-off) both ship; the
+  // remaining gap to "full" is automated geofence/on-site determination + compliance reporting.
+  cap({ id: 'gps-verification', displayName: 'GPS Verification', description: 'Location capture + admin review at clock events.', domain: 'Compliance', status: 'partial', kind: 'optional', dependencies: ['time-tracking'], supportedRoles: ['admin', 'manager', 'crew'] }),
   cap({ id: 'compliance-photos', displayName: 'Compliance Photos', description: 'Uniform + completion evidence.', domain: 'Compliance', status: 'full', kind: 'optional', dependencies: ['workforce'], supportedRoles: ['admin', 'manager', 'crew'] }),
 
   // ── Equipment / fleet ──
   cap({ id: 'equipment', displayName: 'Equipment', description: 'Equipment inventory.', domain: 'Equipment', status: 'full', kind: 'optional', requiredPermissions: ['equipment:manage'] }),
-  cap({ id: 'fleet', displayName: 'Fleet', description: 'Vehicle/asset assignment + maintenance.', domain: 'Equipment', status: 'partial', kind: 'industry-specific', dependencies: ['equipment'], requiredPermissions: ['equipment:assign'], aiActions: [{ id: 'maintenance.flag', level: 1 }] }),
+  cap({ id: 'fleet', displayName: 'Fleet', description: 'Vehicle/asset assignment + maintenance.', domain: 'Equipment', status: 'partial', kind: 'industry-specific', dependencies: ['equipment', 'routes'], requiredPermissions: ['equipment:assign'], aiActions: [{ id: 'maintenance.flag', level: 1 }] }),
 
   // ── Comms ──
   cap({ id: 'messaging', displayName: 'Messaging', description: 'Customer + crew messaging.', domain: 'Comms', status: 'full', kind: 'core', requiredPermissions: ['messages:send'], supportedRoles: ['admin', 'manager', 'crew'], aiActions: [{ id: 'message.draft', level: 2 }] }),
@@ -68,15 +74,22 @@ const LIST: Capability[] = [
   cap({ id: 'documents', displayName: 'Documents', description: 'File storage + encrypted identity docs.', domain: 'Documents', status: 'full', kind: 'core' }),
 
   // ── Money ──
-  cap({ id: 'invoicing', displayName: 'Invoicing', description: 'Booking + route invoices.', domain: 'Invoicing', status: 'duplicated', kind: 'core', requiredPermissions: ['invoices:manage'], aiActions: [{ id: 'invoice.draft', level: 3 }] }),
+  // Two legitimate lanes, consolidated (Wave B) onto shared plumbing (lib/invoicing/*)
+  // + one InvoiceLike contract WITHOUT merging their entities/keyspaces/counters. Authz
+  // is split by lane and both are enforced: the B2B route-invoice surface requires
+  // invoices:manage (admin-only); the B2C booking-invoice surface is governed as part of
+  // `bookings` via requireStaffSession (admin+manager). requiredPermissions names the
+  // invoice-native permission. Stripe recording is unified + idempotent, so a paid route
+  // invoice can no longer stay unmarked (webhook backstop).
+  cap({ id: 'invoicing', displayName: 'Invoicing', description: 'Booking + route invoices.', domain: 'Invoicing', status: 'full', kind: 'core', dependencies: ['bookings', 'routes', 'payments'], requiredPermissions: ['invoices:manage'], aiActions: [{ id: 'invoice.draft', level: 3 }] }),
   cap({ id: 'payments', displayName: 'Payments', description: 'Stripe + Zelle + manual.', domain: 'Payments', status: 'full', kind: 'core' }),
   cap({ id: 'contractor-compensation', displayName: 'Contractor Compensation', description: 'Pay resolution + statements.', domain: 'Compensation', status: 'full', kind: 'core', requiredPermissions: ['pay:generate'] }),
   cap({ id: 'expenses', displayName: 'Expenses', description: 'Expense ledger.', domain: 'Compensation', status: 'planned', kind: 'core', enabledForJkiss: false }),
-  cap({ id: 'reporting', displayName: 'Reporting', description: 'Operational + financial reports.', domain: 'Analytics', status: 'partial', kind: 'core', requiredPermissions: ['reports:view'], aiActions: [{ id: 'insights.brief', level: 1 }] }),
-  cap({ id: 'analytics', displayName: 'Analytics', description: 'Site + operational analytics.', domain: 'Analytics', status: 'partial', kind: 'core' }),
+  cap({ id: 'reporting', displayName: 'Reporting', description: 'Operational + financial reports.', domain: 'Analytics', status: 'partial', kind: 'core', dependencies: ['bookings', 'payments', 'ai-intelligence'], requiredPermissions: ['reports:view', 'claims:manage'], aiActions: [{ id: 'insights.brief', level: 1 }] }),
+  cap({ id: 'analytics', displayName: 'Analytics', description: 'Site + operational analytics.', domain: 'Analytics', status: 'partial', kind: 'core', dependencies: ['ai-intelligence'], requiredPermissions: ['reports:view', 'ai:analytics', 'comms:analytics'] }),
 
   // ── Automation & AI ──
-  cap({ id: 'automations', displayName: 'Automations', description: 'Reminders + workflow automation.', domain: 'Automation', status: 'partial', kind: 'core', requiredPermissions: ['reminders:manage'], aiActions: [{ id: 'reminder.draft', level: 2 }] }),
+  cap({ id: 'automations', displayName: 'Automations', description: 'Reminders + workflow automation.', domain: 'Automation', status: 'partial', kind: 'core', dependencies: ['workforce', 'routes', 'notifications', 'messaging'], requiredPermissions: ['reminders:manage'], aiActions: [{ id: 'reminder.draft', level: 2 }] }),
   cap({ id: 'ai-intelligence', displayName: 'AI Intelligence', description: 'Governed AI service (runAiTask).', domain: 'AI', status: 'full', kind: 'core', requiredPermissions: ['ai:use'], aiActions: [{ id: 'ops.command', level: 0 }, { id: 'ops.insights', level: 1 }] }),
   cap({ id: 'approvals', displayName: 'Approvals', description: 'Human-approved AI actions.', domain: 'Automation', status: 'planned', kind: 'core', dependencies: ['ai-intelligence', 'audit-logs'], requiredFlags: ['APPROVAL_QUEUE_ENABLED'], enabledForJkiss: false }),
   // Wave D/E: tenant-stamped, attributed trail (actor/role/action/target/outcome/

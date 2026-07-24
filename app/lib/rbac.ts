@@ -72,6 +72,8 @@ export type Permission =
   | 'permissions:view'     // read-only RBAC matrix viewer
   | 'accounts:suspend'     // suspend / reactivate accounts
   | 'reports:view'         // operational reports
+  | 'time:view'            // view crew timesheets / hours worked (admin timesheet)
+  | 'time:manage'          // correct/annotate time entries (reserved; correction UI deferred, see Wave C)
   // ── Crew self-service (portal) ──
   | 'self:view'            // view own portal data
   | 'self:availability'    // submit own availability (Phase B)
@@ -97,6 +99,7 @@ const ADMIN: Permission[] = [
   'invoices:manage', 'profitability:view',
   'claims:manage', 'claims:create', 'claimguard:use',
   'settings:manage', 'integrations:manage', 'audit:view', 'permissions:view', 'accounts:suspend', 'reports:view',
+  'time:view', 'time:manage',
 ]
 
 // Manager = operational only. Explicitly excludes: roles:manage, settings:manage,
@@ -114,6 +117,7 @@ const MANAGER: Permission[] = [
   'claims:manage', 'claims:create', 'claimguard:use',
   'reports:view',
   'permissions:view',   // read-only matrix viewer (NOT audit:view — that stays admin-only)
+  'time:view',            // managers may view authorized tenant timesheets
 ]
 
 // Crew = own data only. All crew permissions are self-scoped; the server further
@@ -161,7 +165,7 @@ export const roleLabel: Record<Role, string> = {
 export const PERMISSION_DOMAINS: ReadonlyArray<{ domain: string; permissions: readonly Permission[] }> = [
   { domain: 'Business & operations', permissions: ['businesses:manage', 'routes:manage', 'routes:view', 'recurring:manage', 'equipment:manage', 'equipment:assign'] },
   { domain: 'Crew directory', permissions: ['crew:manage', 'crew:view', 'crew:assign', 'crew:score:view'] },
-  { domain: 'Availability & time off', permissions: ['availability:view', 'timeoff:view', 'timeoff:approve'] },
+  { domain: 'Availability & time off', permissions: ['availability:view', 'timeoff:view', 'timeoff:approve', 'time:view', 'time:manage'] },
   { domain: 'Applicants', permissions: ['applicants:review', 'applicants:decide'] },
   { domain: 'AI', permissions: ['ai:use', 'ai:analytics', 'ai:prompts:manage'] },
   { domain: 'Communications', permissions: ['messages:send', 'reminders:view', 'reminders:manage', 'dispatch:send', 'comms:analytics'] },

@@ -51,6 +51,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/admin/operations/claims', label: 'Claims', group: 'business' },
   // ── More menu — Finance ──
   { href: '/admin/operations/pay-statements', label: 'Pay', group: 'finance' },
+  { href: '/admin/operations/timesheets', label: 'Timesheets', group: 'finance' },
   { href: '/admin/operations/settings', label: 'Settings', group: 'finance', adminOnly: true },
   // ── More menu — Release ──
   { href: '/admin/operations/release', label: 'Release Center', group: 'release', adminOnly: true },
