@@ -120,13 +120,6 @@ export type FeatureFlag =
   // existing static "Analyzing your photos" view (byte-identical to today), no
   // calibration/metric reads or writes. Changes NO backend behaviour and NO price.
   | 'OPERION_PROGRESS_UX'
-  // TEMPORARY — owner-only, read-only Production dry-run of the stable-id payroll
-  // rekey plan (scripts/tenant-migration/payroll-rekey.ts `plan`), executed inside
-  // the Vercel runtime so the sensitive KV token never leaves the platform. OFF by
-  // default: the endpoint returns 404 and is byte-identical-inert. Enables NO writes
-  // (the surface has no apply path). Remove this flag + the route once the dry-run
-  // report is captured.
-  | 'OPERION_PAYROLL_REKEY_DRYRUN'
 
 export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   TENANCY_ENABLED: false,
@@ -206,8 +199,6 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   // Progress display — OFF everywhere by default. OFF = today's static analyzing
   // view; ON = the calibrated six-stage progress UI. Presentational only.
   OPERION_PROGRESS_UX: false,
-  // TEMPORARY owner-only Production payroll dry-run surface. OFF ⇒ route 404s, inert.
-  OPERION_PAYROLL_REKEY_DRYRUN: false,
 }
 
 export const ALL_FLAGS = Object.keys(FLAG_DEFAULTS) as FeatureFlag[]
