@@ -15,7 +15,7 @@
 import type { ModelMessage } from 'ai'
 import { runAiTask } from './service'
 import { updateAiCall } from './telemetry'
-import { timeStage, markStage } from '../observability/pipeline-trace'
+import { timeStage, markStage, markStageFailure } from '../observability/pipeline-trace'
 import { isAllowedPhotoUrl } from '../photo-url'
 import { resolveAiPhotoUrls } from './photo-optimize'
 import { imageOptimizationEnabled } from './image-optimize-config'
@@ -97,18 +97,22 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
     imageCount: photos.length,
   })
 
-  // Observability: the provider (AI Gateway) round-trip latency — the model call only,
-  // separate from our surrounding preprocessing/normalization work. Present on success;
-  // absent on some provider failures (markStage no-ops on undefined).
-  markStage('provider', (res as { latencyMs?: number }).latencyMs)
-
   if (!res.ok) {
+    // Observability: emit the provider (AI Gateway) sub-stage as FAILED on the fast-
+    // fail path — the round-trip couldn't execute — so the trace stays structurally
+    // complete (duration + failure reason + retryable). Recording only; the caller's
+    // retry/review flow below is unchanged.
+    markStageFailure('provider', res.latencyMs, res.errorClass, res.retryable)
     // Provider error / budget / invalid — preserve the booking as review-required.
     return {
       analysis: reviewFallbackAnalysis(ctx, [`Automated analysis was unavailable (${res.outcome}). A team member will review your photos.`]),
       ok: false, callId: res.callId, outcome: res.outcome,
     }
   }
+
+  // Observability: the provider (AI Gateway) round-trip latency on success — the model
+  // call only, separate from our surrounding preprocessing/normalization work.
+  markStage('provider', res.latencyMs)
 
   // runAiTask ran without the flat schema (the shape is nested), so parse here and
   // hand the raw object to the robust normalizer.
