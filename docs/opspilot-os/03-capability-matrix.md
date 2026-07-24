@@ -31,7 +31,7 @@
 | 13 | Route confirmation | **Full** | `app/lib/routes.ts:344-361`, `app/api/route/[token]/route.ts` | Link + verbal; disclaimer captured |
 | 14 | Availability (crew) | **Full** | `app/lib/crew-availability.ts` | Weekly self-submit; feeds Crew Score |
 | 15 | Time-off | **Full** | `app/lib/timeoff.ts` | Approve doesn't auto-unassign (by design) |
-| 16 | Clock in/out | **Full** | `app/api/route/[token]/route.ts:116-149` | Per-assignee; **no timesheet aggregation** |
+| 16 | Clock in/out | **Full** | `app/lib/crew-timeclock.ts`, `app/lib/timesheets.ts`, `app/api/portal/clock`, `app/admin/operations/timesheets` | _(Wave C 2026-07-24)_ Per-assignee, both lanes (routes always; bookings behind `BOOKING_ASSIGNMENT_ENABLED`) via shared `applyPunch`; admin timesheet + hours rollups gated `time:view`; corrections deferred (safe immutable-original model pending) |
 | 17 | GPS collection | **Backend-only** | `app/api/route/[token]/route.ts:129,137` | Collected & stored; **no verification/geofence** |
 | 18 | Photo uploads | **Full** | `app/lib/uniform.ts`, `app/api/careers/upload/route.ts` | Uniform + completion + applicant docs |
 | 19 | Equipment inventory | **Full (basic)** | `app/lib/equipment.ts` | Roster only |
