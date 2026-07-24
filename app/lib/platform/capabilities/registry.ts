@@ -86,7 +86,11 @@ const LIST: Capability[] = [
   cap({ id: 'contractor-compensation', displayName: 'Contractor Compensation', description: 'Pay resolution + statements.', domain: 'Compensation', status: 'full', kind: 'core', requiredPermissions: ['pay:generate'] }),
   cap({ id: 'expenses', displayName: 'Expenses', description: 'Expense ledger.', domain: 'Compensation', status: 'planned', kind: 'core', enabledForJkiss: false }),
   cap({ id: 'reporting', displayName: 'Reporting', description: 'Operational + financial reports.', domain: 'Analytics', status: 'partial', kind: 'core', dependencies: ['bookings', 'payments', 'ai-intelligence'], requiredPermissions: ['reports:view', 'claims:manage'], aiActions: [{ id: 'insights.brief', level: 1 }] }),
-  cap({ id: 'analytics', displayName: 'Analytics', description: 'Site + operational analytics.', domain: 'Analytics', status: 'partial', kind: 'core', dependencies: ['ai-intelligence'], requiredPermissions: ['reports:view', 'ai:analytics', 'comms:analytics'] }),
+  // Wave F: the one un-wrapped analytics route (ai/analytics) is now tenant-wrapped;
+  // comms analytics has a UI; the previously WRITE-ONLY quote funnel is surfaced (reader
+  // + UI). Spans several guards — reports:view (site + funnel), ai:analytics (AI Control
+  // Center), comms:analytics — listed here to match the real route permissions.
+  cap({ id: 'analytics', displayName: 'Analytics', description: 'Site + operational analytics + quote funnel.', domain: 'Analytics', status: 'full', kind: 'core', dependencies: ['ai-intelligence', 'messaging'], requiredPermissions: ['reports:view', 'ai:analytics', 'comms:analytics'] }),
 
   // ── Automation & AI ──
   cap({ id: 'automations', displayName: 'Automations', description: 'Reminders + workflow automation.', domain: 'Automation', status: 'partial', kind: 'core', dependencies: ['workforce', 'routes', 'notifications', 'messaging'], requiredPermissions: ['reminders:manage'], aiActions: [{ id: 'reminder.draft', level: 2 }] }),
