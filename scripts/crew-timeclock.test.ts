@@ -109,7 +109,7 @@ test('selectClockable returns only today\'s confirmed assignments for the staff 
 
 test('pickActiveClockable prefers an open shift, then a not-started one', () => {
   const mk = (assigneeToken: string, phase: ClockableRoute['phase']): ClockableRoute =>
-    ({ assigneeToken, phase, routeToken: 'r', routeNumber: 'n', businessName: 'b', reportAddress: '', reportTime: '', routeDate: '', role: null, status: 'confirmed', clockInAt: null, clockOutAt: null })
+    ({ type: 'route', assigneeToken, phase, routeToken: 'r', routeNumber: 'n', businessName: 'b', reportAddress: '', reportTime: '', routeDate: '', role: null, status: 'confirmed', clockInAt: null, clockOutAt: null })
   assert.equal(pickActiveClockable([mk('a', 'not_started'), mk('b', 'clocked_in')])?.assigneeToken, 'b')
   assert.equal(pickActiveClockable([mk('a', 'clocked_out'), mk('b', 'not_started')])?.assigneeToken, 'b')
   assert.equal(pickActiveClockable([]), null)

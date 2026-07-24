@@ -40,8 +40,11 @@ export const NAV_ITEMS: NavItem[] = [
   // adding a crew login meant a detour through an unrelated screen. It belongs beside
   // Crew: same subject, different half — the roster vs. who can sign in.
   { href: '/admin/operations/users', label: 'Team & Access', group: 'team', adminOnly: true },
+  { href: '/admin/operations/permissions', label: 'Permissions', group: 'team' },
+  { href: '/admin/operations/audit', label: 'Audit Log', group: 'team', adminOnly: true },
   // ── More menu — Communication ──
   { href: '/admin/operations/communications', label: 'Communications', group: 'comms' },
+  { href: '/admin/operations/analytics', label: 'Analytics', group: 'comms' },
   { href: '/admin/operations/ai', label: 'AI Command Center', group: 'comms', adminOnly: true, ownerOnly: true },
   // ── More menu — Business ──
   { href: '/admin/operations/businesses', label: 'Businesses', group: 'business' },
@@ -50,6 +53,8 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/admin/operations/claims', label: 'Claims', group: 'business' },
   // ── More menu — Finance ──
   { href: '/admin/operations/pay-statements', label: 'Pay', group: 'finance' },
+  { href: '/admin/operations/timesheets', label: 'Timesheets', group: 'finance' },
+  { href: '/admin/operations/reports', label: 'Reports', group: 'finance' },
   { href: '/admin/operations/settings', label: 'Settings', group: 'finance', adminOnly: true },
   // ── More menu — Release ──
   { href: '/admin/operations/release', label: 'Release Center', group: 'release', adminOnly: true },
