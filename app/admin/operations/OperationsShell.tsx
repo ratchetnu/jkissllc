@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useState, useEffect, useRef } from 'react'
 import { useAdminSession } from '../useAdminSession'
-import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, ShieldCheck, Settings, LogOut, Search, Plus, Zap, Rocket, MoreHorizontal, X, Sparkles, Mail, CalendarDays, LayoutGrid, Bell, ChevronDown, CircleDollarSign, Layers, RefreshCw } from 'lucide-react'
+import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, ShieldCheck, Settings, LogOut, Search, Plus, Zap, Rocket, MoreHorizontal, X, Sparkles, Mail, CalendarDays, LayoutGrid, Bell, ChevronDown, CircleDollarSign, Layers, RefreshCw, KeyRound } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import CommandPalette from './CommandPalette'
 import LastLogin from './LastLogin'
@@ -23,6 +23,9 @@ const ICONS: Record<string, LucideIcon> = {
   '/admin/operations/messages': MessageSquare,
   '/admin/operations/employees': Users,
   '/admin/operations/users': ShieldCheck,
+  // Permissions sat on the `Home` fallback, so the Team group showed two identical
+  // house icons. It reads as "keys to the building", next to Team & Access's badge.
+  '/admin/operations/permissions': KeyRound,
   '/admin/operations/book-now': Zap,
   '/admin/operations/communications': Mail,
   '/admin/operations/ai': Sparkles,
@@ -287,9 +290,11 @@ export default function OperationsShell({ children }: { children: React.ReactNod
       {/* ── Mobile bottom bar — 4 destinations + raised Book Now centre + More ────── */}
       <nav aria-label="Primary" className="os-glass" data-dock="mobile"
         style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', padding: '8px 6px calc(8px + env(safe-area-inset-bottom))', borderLeft: 'none', borderRight: 'none', borderBottom: 'none' }}>
-        {/* left zone — equal flex so the raised Book Now stays dead-centre */}
+        {/* left zone — TWO destinations, matching the two on the right, so the four read as
+            an even rhythm around the raised Book Now. (It used to take three here against
+            two on the right, which made the left items 90px wide and the right ones 135px.) */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'space-around', alignItems: 'flex-end' }}>
-        {mobPrimary.slice(0, 3).map(n => {
+        {mobPrimary.slice(0, 2).map(n => {
           const Icon = iconFor(n.href); const active = n.href === activeHref
           return (
             <Link key={n.href} href={n.href} aria-label={n.label} aria-current={active ? 'page' : undefined} className={`os-dock-item${active ? ' is-active' : ''}`}
@@ -310,9 +315,9 @@ export default function OperationsShell({ children }: { children: React.ReactNod
             <span style={{ fontSize: 10.5, fontWeight: 700, color: activeHref === BOOK_NOW_HREF ? 'var(--text)' : 'var(--muted)' }}>Book Now</span>
           </Link>
         )}
-        {/* right zone — equal flex; remaining destinations + More */}
+        {/* right zone — the remaining TWO destinations, mirroring the left zone */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'space-around', alignItems: 'flex-end' }}>
-        {mobPrimary.slice(3).map(n => {
+        {mobPrimary.slice(2).map(n => {
           const Icon = iconFor(n.href); const active = n.href === activeHref
           return (
             <Link key={n.href} href={n.href} aria-label={n.label} aria-current={active ? 'page' : undefined} className={`os-dock-item${active ? ' is-active' : ''}`}
@@ -322,13 +327,16 @@ export default function OperationsShell({ children }: { children: React.ReactNod
             </Link>
           )
         })}
+        </div>
+        {/* More sits OUTSIDE the two destination zones, at the trailing edge — it opens a
+            sheet rather than going anywhere, so it shouldn't compete for rhythm with the
+            four destinations or push Book Now off the centre between them. */}
         <button type="button" aria-label="More" aria-expanded={moreOpen} onClick={() => setMoreOpen(v => !v)}
           className={`os-dock-item os-tap${(moreOpen || activeInMobileMore) ? ' is-active' : ''}`}
-          style={{ flex: 1, display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '6px 2px', borderRadius: 14, border: 'none', cursor: 'pointer', background: 'transparent', color: (moreOpen || activeInMobileMore) ? 'var(--text)' : 'var(--muted)', minWidth: 0 }}>
+          style={{ flexShrink: 0, width: 58, display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '6px 2px', borderRadius: 14, border: 'none', cursor: 'pointer', background: 'transparent', color: (moreOpen || activeInMobileMore) ? 'var(--text)' : 'var(--muted)' }}>
           <MoreHorizontal size={22} strokeWidth={2} />
           <span style={{ fontSize: 10.5, fontWeight: 700 }}>More</span>
         </button>
-        </div>
       </nav>
 
       {/* ── Mobile More sheet — grouped, role-filtered, safe-area padded ──────────── */}
