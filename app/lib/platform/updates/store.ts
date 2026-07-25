@@ -6,7 +6,7 @@
 import { redis } from '../../redis'
 import type {
   PlatformBusiness, PlatformUpdate, UpdateCompatibility, PlatformRelease, DeploymentRecord,
-  BaselineAdoptionRecord,
+  BaselineAdoptionRecord, ReleasePackage,
 } from './types'
 
 const K_BIZ = 'platform:business:'
@@ -23,6 +23,10 @@ const K_DEP_CTR = 'platform:deployment:counter'
 const K_BASELINE = 'platform:baseline-adoption:'
 const K_BASELINE_IDX = 'platform:baseline-adoption:index'
 const K_BASELINE_CTR = 'platform:baseline-adoption:counter'
+const K_PACKAGE = 'platform:release-package:'
+const K_PACKAGE_IDX = 'platform:release-package:index'
+const K_PACKAGE_CTR = 'platform:release-package:counter'
+const K_PACKAGE_VERSION = 'platform:release-package-version:'
 
 function parse<T>(raw: string | null): T | null { if (!raw) return null; try { return JSON.parse(raw) as T } catch { return null } }
 async function loadMany<T>(prefix: string, ids: string[]): Promise<T[]> {
@@ -74,6 +78,73 @@ export async function saveRelease(r: PlatformRelease): Promise<void> {
 }
 export async function listReleases(limit = 100): Promise<PlatformRelease[]> {
   return loadMany(K_REL, await redis.zrevrange(K_REL_IDX, 0, Math.max(0, limit - 1)))
+}
+
+// ── Authored release packages ───────────────────────────────────────────────
+export async function nextReleasePackageId(): Promise<string> {
+  return `RPK-${1000 + (await redis.incr(K_PACKAGE_CTR))}`
+}
+export async function getReleasePackage(id: string): Promise<ReleasePackage | null> {
+  return parse(await redis.get(K_PACKAGE + id))
+}
+export async function listReleasePackages(limit = 200): Promise<ReleasePackage[]> {
+  return loadMany(K_PACKAGE, await redis.zrevrange(K_PACKAGE_IDX, 0, Math.max(0, limit - 1)))
+}
+export async function saveReleasePackage(record: ReleasePackage): Promise<void> {
+  await redis.set(K_PACKAGE + record.id, JSON.stringify(record))
+  await redis.zadd(K_PACKAGE_IDX, record.updatedAt, record.id)
+}
+
+export type ReadyPackageWrite = 'saved' | 'stale_package' | 'stale_business' | 'duplicate'
+
+/**
+ * Atomically reserves product+channel+version and marks the package Ready.
+ * The business timestamp check prevents a baseline changing between policy
+ * evaluation and persistence.
+ */
+export async function saveReadyReleasePackage(
+  record: ReleasePackage,
+  expectedPackageUpdatedAt: number,
+  expectedBusinessUpdatedAt: number,
+): Promise<ReadyPackageWrite> {
+  // SemVer build metadata does not affect precedence. Reserve the precedence
+  // identity so concurrent 1.3.0+build.1 / 1.3.0+build.2 proposals still collide.
+  const versionIdentity = record.proposedVersion.split('+', 1)[0]
+  const reservation = `${K_PACKAGE_VERSION}${record.targetProduct}:${record.channel}:${versionIdentity}`
+  const script = `
+    local package = redis.call('GET', KEYS[1])
+    if not package then return -1 end
+    local decodedPackage = cjson.decode(package)
+    if tonumber(decodedPackage.updatedAt) ~= tonumber(ARGV[3]) then return -1 end
+    local business = redis.call('GET', KEYS[4])
+    if not business then return -2 end
+    local decodedBusiness = cjson.decode(business)
+    if tonumber(decodedBusiness.updatedAt) ~= tonumber(ARGV[4]) then return -2 end
+    local holder = redis.call('GET', KEYS[3])
+    if holder and holder ~= ARGV[2] then
+      local holderPackage = redis.call('GET', ARGV[6] .. holder)
+      if holderPackage then
+        local decodedHolder = cjson.decode(holderPackage)
+        if decodedHolder.status ~= 'cancelled' and decodedHolder.status ~= 'superseded' then return -3 end
+      end
+    end
+    if not holder or holder ~= ARGV[2] then redis.call('SET', KEYS[3], ARGV[2]) end
+    redis.call('SET', KEYS[1], ARGV[1])
+    redis.call('ZADD', KEYS[2], ARGV[5], ARGV[2])
+    return 1
+  `
+  const result = await redis.eval(
+    script,
+    [K_PACKAGE + record.id, K_PACKAGE_IDX, reservation, K_BIZ + record.targetProduct],
+    [
+      JSON.stringify(record), record.id, String(expectedPackageUpdatedAt),
+      String(expectedBusinessUpdatedAt), String(record.updatedAt), K_PACKAGE,
+    ],
+  )
+  if (result === 1 || result === '1') return 'saved'
+  if (result === -2 || result === '-2') return 'stale_business'
+  if (result === -3 || result === '-3') return 'duplicate'
+  return 'stale_package'
 }
 
 // ── Deployments ──────────────────────────────────────────────────────────────
