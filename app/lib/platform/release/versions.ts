@@ -48,6 +48,49 @@ export function classifyReleaseType(from: string | undefined, to: string | undef
 }
 
 /** True when `installed` is strictly older than `latest` (both semver). */
+// ── Canonical version state ──────────────────────────────────────────────────
+// ONE derivation of "where does this product stand?", so a card, a badge, and an
+// activity line cannot disagree.
+//
+// The rule that matters: **a system cannot truthfully claim it is behind when its own
+// installed baseline is unknown.** The Release Center used to do exactly that — it
+// trusted a platform-sync `updateAvailable` flag while `currentBaselineVersion` was
+// empty, so Supercharged read "Current version —" beside "A newer version (0.1.0) is
+// available." Unknown now fails CLOSED to `version_unknown`; only a KNOWN installed
+// version that is genuinely older yields `update_available`.
+export type VersionStateKind =
+  | 'current'           // installed known, and level with latest
+  | 'update_available'  // installed known, and genuinely behind latest
+  | 'version_unknown'   // set up, but no installed baseline has ever been observed
+  | 'not_installed'     // never set up on this product
+  | 'incompatible'      // known, but not eligible to move
+
+export type VersionState = {
+  kind: VersionStateKind
+  installed?: string
+  latest?: string
+  /** True ONLY for `update_available`. Never inferred from an unknown baseline. */
+  updateAvailable: boolean
+}
+
+export function deriveVersionState(input: {
+  installed?: string | null
+  latest?: string | null
+  initialized?: boolean
+  incompatible?: boolean
+}): VersionState {
+  const installed = input.installed?.trim() || undefined
+  const latest = input.latest?.trim() || undefined
+  const at = (kind: VersionStateKind): VersionState => ({ kind, installed, latest, updateAvailable: kind === 'update_available' })
+
+  if (input.incompatible) return at('incompatible')
+  if (input.initialized === false) return at('not_installed')
+  // The fix: no installed baseline ⇒ we do not know, and we do not guess.
+  if (!installed) return at('version_unknown')
+  if (!latest) return at('current')
+  return at(isBehind(installed, latest) ? 'update_available' : 'current')
+}
+
 export function isBehind(installed: string | undefined, latest: string | undefined): boolean {
   if (!installed || !latest) return false
   return compareVersions(normalizeVersion(installed), normalizeVersion(latest)) < 0

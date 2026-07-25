@@ -16,6 +16,7 @@ export type ReleaseStatus =
   | 'not_initialized'
   | 'up_to_date'
   | 'update_available'
+  | 'version_unknown'
   | 'updating'
   | 'preview_ready'
   | 'ready_to_publish'
@@ -48,6 +49,7 @@ export const STATUS_LABEL: Record<ReleaseStatus, string> = {
   not_initialized: 'Not set up',
   up_to_date: 'Up to date',
   update_available: 'Update available',
+  version_unknown: 'Version unknown',
   updating: 'Updating…',
   preview_ready: 'Preview ready',
   ready_to_publish: 'Ready to publish',
@@ -89,6 +91,10 @@ export function statusTone(s: ReleaseStatus): StatusTone {
     case 'publish_failed': case 'rollback_failed': return 'critical'
     case 'rolled_back': return 'attention'
     case 'not_initialized': return 'neutral'
+    // Neutral, deliberately: an unknown baseline is not an alert and MUST NOT borrow the
+    // attention styling that "Update available" uses — that styling is what made the false
+    // claim look authoritative.
+    case 'version_unknown': return 'neutral'
   }
 }
 
@@ -108,6 +114,9 @@ export type ReleaseSignals = {
   latestVersion?: string
   health: 'healthy' | 'degraded' | 'down' | 'unknown'
   updateAvailable: boolean
+  /** False when no installed baseline has ever been observed. Absent = treated as known,
+   *  so every existing caller behaves exactly as before. */
+  versionKnown?: boolean
   job: JobPhase
   previewVerified: boolean
   verificationFailed: boolean
@@ -165,6 +174,9 @@ export function resolveReleaseState(s: ReleaseSignals): ReleaseState {
   if (s.blocking.length > 0) return out('action_required', 'resolve')
   if (s.health === 'down') return out('action_required', 'resolve')
   if (s.updateAvailable) return out('update_available', 'update')
+  // Set up, but no installed version has ever been observed — say so rather than implying
+  // the product is level ("Up to date"). The action stays a check, never an update.
+  if (s.versionKnown === false) return out('version_unknown', 'check')
   if (s.driftReasons.length > 0) return out('action_required', 'resolve')
   return out('up_to_date', 'check')
 }
