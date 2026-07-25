@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useState, useEffect, useRef } from 'react'
 import { useAdminSession } from '../useAdminSession'
-import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, ShieldCheck, Settings, LogOut, Search, Plus, Zap, Rocket, MoreHorizontal, X, Sparkles, Mail, CalendarDays, LayoutGrid, Bell, ChevronDown, CircleDollarSign, Layers, RefreshCw } from 'lucide-react'
+import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, ShieldCheck, Settings, LogOut, Search, Plus, Zap, Rocket, MoreHorizontal, X, Sparkles, Mail, CalendarDays, LayoutGrid, Bell, ChevronDown, CircleDollarSign, Layers, RefreshCw, KeyRound } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import CommandPalette from './CommandPalette'
 import LastLogin from './LastLogin'
@@ -23,6 +23,9 @@ const ICONS: Record<string, LucideIcon> = {
   '/admin/operations/messages': MessageSquare,
   '/admin/operations/employees': Users,
   '/admin/operations/users': ShieldCheck,
+  // Permissions sat on the `Home` fallback, so the Team group showed two identical
+  // house icons. It reads as "keys to the building", next to Team & Access's badge.
+  '/admin/operations/permissions': KeyRound,
   '/admin/operations/book-now': Zap,
   '/admin/operations/communications': Mail,
   '/admin/operations/ai': Sparkles,
