@@ -1,3 +1,5 @@
+import { APPROVED_STATUSES } from './preflight'
+
 // ── Operion one-click deploy view model (PURE) ───────────────────────────────
 // Turns raw automation-job state into the owner-facing "Deploy Preview" experience: the ONE
 // primary action, the friendly 6-stage progress, and the retry classification (which
@@ -33,6 +35,52 @@ export function isOwnerRetryable(status: string, category?: string | null): bool
   if (!FAILED.has(status)) return false
   if (category === 'commit_drift' || category === 'merge_conflict') return false
   return !category || OWNER_RETRYABLE.has(category)
+}
+
+// ── Canonical retry eligibility ──────────────────────────────────────────────
+// ONE answer to "may this be retried?", shared by the dispatcher (retryPreview), the
+// Retry button, and its copy. They used to disagree: three different job-status sets
+// existed and NONE consulted the update's own status, so an archived update could be
+// re-dispatched forever from the Release Center — which is how UPD-1004 reached a fifth
+// attempt. A retry IS a dispatch, so it must clear the same approval bar as the first one.
+//
+// Pure. Fails CLOSED: an unknown update status is not retryable, so a caller that forgets
+// to pass one hides the button rather than firing an ineligible job.
+export const MAX_OWNER_RETRIES = 5
+
+export type RetryBlockReason = 'job_not_retryable' | 'update_not_retryable' | 'retry_limit_reached'
+export type RetryEligibility = { ok: true } | { ok: false; reason: RetryBlockReason; detail: string }
+
+export function retryEligibility(input: {
+  jobStatus: string
+  failureCategory?: string | null
+  updateStatus?: string | null
+  attemptCount?: number
+}): RetryEligibility {
+  if (!isOwnerRetryable(input.jobStatus, input.failureCategory)) {
+    return { ok: false, reason: 'job_not_retryable', detail: `job is ${input.jobStatus}, not retryable` }
+  }
+  // The gate that was missing. `archived` is absent from APPROVED_STATUSES, so a terminal
+  // update can no longer be re-fired no matter how retryable its job looks.
+  if (!input.updateStatus || !APPROVED_STATUSES.includes(input.updateStatus)) {
+    return { ok: false, reason: 'update_not_retryable', detail: `update status is "${input.updateStatus ?? 'unknown'}"` }
+  }
+  // Owner retries were unbounded — only the reconciler's auto-retry had a ceiling, and it
+  // never applied here because apply_failed is not a transient category.
+  if ((input.attemptCount ?? 0) >= MAX_OWNER_RETRIES) {
+    return { ok: false, reason: 'retry_limit_reached', detail: `retry limit reached (${input.attemptCount}/${MAX_OWNER_RETRIES})` }
+  }
+  return { ok: true }
+}
+
+/** Owner-facing sentence for a blocked retry — never a raw reason code. */
+export function retryBlockedMessage(e: RetryEligibility): string | null {
+  if (e.ok) return null
+  switch (e.reason) {
+    case 'update_not_retryable': return 'This update is archived and can no longer be retried.'
+    case 'retry_limit_reached': return 'This update has reached its retry limit. It needs attention before it can run again.'
+    default: return 'This needs your attention before it can update.'
+  }
 }
 
 const ACTIVE = new Set(['queued', 'creating_branch', 'dispatched', 'running', 'applying', 'preview_deploying'])

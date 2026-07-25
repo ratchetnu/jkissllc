@@ -13,7 +13,7 @@ import { canPromote, canAutoRollback } from './promotion'
 import { isProductionApprovalTransition } from './machine'
 import { getAutomationProvider, type UpdateAutomationProvider } from './provider'
 import { getPreviewProvider } from './vercel-provider'
-import { artifactsComplete, isAlreadyDeployed } from './deploy-view'
+import { artifactsComplete, isAlreadyDeployed, retryEligibility } from './deploy-view'
 import { getBusiness, getUpdate, getCompatMap, listDeployments } from '../updates/store'
 import { evaluateRequiredUpdates, describeRequiredUpdates, type RequiredUpdateVerdict } from '../updates/policy'
 import { buildCommitTransferManifest } from './manifest-builder'
@@ -220,7 +220,7 @@ export async function preparePreview(input: {
   }, { onBusy: () => ({ ok: false, preflight, reason: 'target_locked' }), token: `${business.id}:${now()}` })
 }
 
-export type ApproveResult = { ok: boolean; job?: UpdateAutomationJob; reason?: string }
+export type ApproveResult = { ok: boolean; job?: UpdateAutomationJob; reason?: string; detail?: string }
 
 /** OWNER-ONLY (route enforces). Approve a verified preview for production. Never promotes
  *  automatically without this; blocked if flags/config off or the approved commit drifted. */
@@ -313,20 +313,32 @@ export async function advancePromotion(input: { jobId: string; env?: Record<stri
   }, { onBusy: () => ({ ok: false, reason: 'target_locked' }), token: `${job.businessId}:${now()}` })
 }
 
-const RETRYABLE = new Set(['failed', 'build_failed', 'tests_failed', 'preview_failed', 'blocked'])
-/** Re-dispatch a failed job's workflow (same manifest/branch). Owner-only via the route. */
+/** Re-dispatch a failed job's workflow (same manifest/branch). Owner-only via the route.
+ *  Eligibility is `retryEligibility()` in deploy-view — the SAME helper the Retry button and
+ *  its copy use, so the UI can never offer a retry the dispatcher will refuse (or hide one it
+ *  would allow). The local RETRYABLE set that used to live here was one of three disagreeing
+ *  job-status sets and is gone. */
 export async function retryPreview(input: { jobId: string; env?: Record<string, string | undefined> }): Promise<ApproveResult> {
   const env = input.env ?? process.env
   const job = await store.getJob(input.jobId)
   if (!job) return { ok: false, reason: 'no_job' }
-  if (!RETRYABLE.has(job.status)) return { ok: false, reason: `job is ${job.status}, not retryable` }
   const [business, update] = await Promise.all([getBusiness(job.businessId), getUpdate(job.updateId)])
   const repoRef = business ? businessRepoRef(business) : null
   if (!business || !update || !repoRef || !business.githubInstallationId || !business.automationWorkflowFile) return { ok: false, reason: 'target not configured' }
+  // A retry IS a dispatch, so it clears the same bar as the first one — including the
+  // update's own status. This check previously did not exist here, which let an ARCHIVED
+  // update be re-fired indefinitely from the Release Center (UPD-1004 reached attempt 5).
+  // Blocked here means: no dispatch, no branch, no attemptCount increment, nothing written.
+  const eligible = retryEligibility({ jobStatus: job.status, failureCategory: job.failureCategory, updateStatus: update.status, attemptCount: job.attemptCount })
+  if (!eligible.ok) return { ok: false, reason: eligible.reason, detail: eligible.detail }
   if (!(flag('OPERION_PREVIEW_AUTOMATION_ENABLED', env) && flag('OPERION_GITHUB_ACTIONS_ENABLED', env))) return { ok: false, reason: 'preview automation not enabled' }
   return store.withBusinessLock<ApproveResult>(job.businessId, async () => {
     const j = await store.getJob(input.jobId)
-    if (!j || !RETRYABLE.has(j.status)) return { ok: false, reason: 'job changed' }
+    // Re-evaluated inside the lock against the freshly-read job — the status or attempt
+    // count may have moved while we waited.
+    if (!j) return { ok: false, reason: 'job changed' }
+    const still = retryEligibility({ jobStatus: j.status, failureCategory: j.failureCategory, updateStatus: update.status, attemptCount: j.attemptCount })
+    if (!still.ok) return { ok: false, reason: still.reason, detail: still.detail }
     const provider = getAutomationProvider(env)
     const res = await provider.dispatchWorkflow(business.githubInstallationId!, repoRef, business.automationWorkflowFile!, business.defaultBranch, { deploymentRequestId: j.id, updateId: update.key, targetBranch: j.workBranch!, executionStrategy: j.strategy })
     if (!res.ok) { j.status = 'blocked'; j.failureCategory = 'provider_error'; j.failureSummary = res.error; j.updatedAt = now(); await store.saveJob(j); return { ok: false, job: j, reason: res.error } }
