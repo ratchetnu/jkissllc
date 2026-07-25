@@ -219,6 +219,44 @@ export type PlatformRelease = {
   approvedAt?: number
 }
 
+// ── Authored release packages ────────────────────────────────────────────────
+// A package is the reviewed proposal that precedes the legacy PlatformRelease
+// rollout record. Drafts may be incomplete; only the server-side readiness
+// transition may mark one ready_for_approval.
+export type ReleasePackageStatus =
+  | 'draft' | 'blocked' | 'ready_for_approval' | 'cancelled' | 'superseded'
+
+export type ReleasePackagePolicySnapshot = {
+  previousVersion: string
+  baselineSource: BaselineSource
+  businessUpdatedAt: number
+  versionReason: string
+  duplicateReason: string
+  evaluatedAt: number
+}
+
+export type ReleasePackage = {
+  recordVersion: 1
+  id: string
+  targetProduct: string
+  proposedVersion: string
+  channel: Exclude<ReleaseChannel, 'custom'>
+  classification: import('../release/semver-policy').ChangeClassification
+  breakingChange: boolean
+  migration: import('../release/semver-policy').MigrationClassification
+  updateKeys: string[]
+  name?: string
+  releaseNotes?: string
+  status: ReleasePackageStatus
+  blockingReasons: string[]
+  policySnapshot?: ReleasePackagePolicySnapshot
+  createdBy: string
+  createdAt: number
+  updatedAt: number
+  readyBy?: string
+  readyAt?: number
+}
+
 // ── Deployment records ───────────────────────────────────────────────────────
 export type DeploymentStatus = 'requested' | 'in_progress' | 'deployed' | 'failed' | 'rolled_back' | 'cancelled'
 export type VerificationStatus = 'pending' | 'passed' | 'failed' | 'waived'

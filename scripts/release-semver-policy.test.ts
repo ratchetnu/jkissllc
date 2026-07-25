@@ -201,11 +201,13 @@ test('PR #84 installed-version behaviour is UNCHANGED by this increment', () => 
   assert.equal(deriveVersionState({ installed: '0.1.0', latest: '0.1.0', initialized: true }).kind, 'current')
 })
 
-test('strict version authorship is confined to finalization and evidence-based adoption', () => {
-  const hits = execSync('grep -rl "semver-policy" app 2>/dev/null || true', { encoding: 'utf8' })
+test('strict version authorship is confined to finalization, adoption, and release-package policy', () => {
+  const hits = execSync("rg -l 'evaluateVersionBump\\(|parseSemanticVersion\\(' app --glob '*.ts' 2>/dev/null || true", { encoding: 'utf8' })
     .trim().split('\n').filter(Boolean).sort()
   assert.deepEqual(hits, [
     'app/lib/platform/automation/finalize.ts',
     'app/lib/platform/release/baseline-adoption.ts',
+    'app/lib/platform/release/release-package.ts',
+    'app/lib/platform/release/semver-policy.ts',
   ])
 })
