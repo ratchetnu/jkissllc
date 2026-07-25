@@ -22,6 +22,108 @@
 
 ---
 
+## 0.2 RECONCILIATION — Waves A–I shipped to Production; Stripe webhook fixed (2026-07-25) — read this first
+
+The repository moved substantially again after §0.1. Where §0.1, §0, or §1–§13 disagree with this
+section, **this section wins.**
+
+**Merged state (repo-verified):** J KISS `main` advanced `3bb3b13` → **`e0ced9a`**, and
+Production is deployed and serving it.
+
+| PR | State | What |
+|---|---|---|
+| **#64**, **#66** | ✅ MERGED | removed the temporary payroll-rekey dry-run route, helper, endpoint test, and flag |
+| **#65** | ✅ MERGED | payroll rekey docs reconciliation |
+| **#67** | ✅ MERGED | centred Book Now in the mobile bottom bar |
+| **#68–#75** | ✅ MERGED | **Operion capability Waves A–I** — capability-registry truth-up, invoicing consolidation + webhook gap, time-tracking (both lanes) + admin timesheets, tenant-safe audit trail + permission viewer, analytics hygiene, reporting + safe CSV export, fleet maintenance, automated GPS on-site verification |
+| **#76** | ✅ MERGED | readiness checks split out for Twilio and the Stripe webhook backstop |
+| **#77** | ✅ MERGED | Permissions UI redesign (progressive disclosure; UI-only, no authorization change) |
+| **#78** | open at time of writing | `.vercelignore` for `.claude/` |
+
+**§0.1's "pending cleanup" is DONE.** All four payroll dry-run artifacts (route, report helper,
+endpoint test, flag default) are gone from `main`. §0.1 still lists them as outstanding — it is
+wrong on that point.
+
+**Production is live and healthy.** `/api/health` reports `healthy` with eight components, all
+`ok`: `kv`, `storage`, `ai_provider`, `scheduled_worker`, `payments`, `payments_webhook`,
+`email`, `sms`. Verified authenticated, and the response carries no secret value.
+
+### Defects fixed since §0.1
+
+- **§4 P1 #1 `BLOB_STORE_ID` absent in Production — FIXED 2026-07-25.** Set to
+  `store_WK8DoJzb2Q1lu5sv` (`jkiss-invoice-photos`, confirmed authoritatively via
+  `vercel blob list-stores`, not from this document). This also closes **§4 P1 #2**
+  (cross-store photo URLs), exactly as §4 predicted. Note the blast radius was narrower than
+  §4 implies: `photoPolicy().requireStore` is tied to `enabled()`, so the strict check only
+  binds once `BOOKING_ASSIGNMENT_ENABLED` is on.
+- **NEW, not previously recorded: `STRIPE_WEBHOOK_SECRET` was missing from Production.**
+  `POST /api/webhooks/stripe` returned **503** on every call, so the durable backstop PR #69
+  added — the one that stops a customer closing the tab from leaving a paid route-invoice
+  unmarked — was **inert from the moment it shipped**. Fixed 2026-07-25: the Stripe endpoint was
+  created and the secret set; verified enforcing (no signature → 400, forged → 400). Payments
+  were never lost or double-charged, because the success-URL path records idempotently per
+  `stripeSessionId` (`record-payment.ts:39`).
+- **Readiness under-reported.** `configChecks()` checked no Twilio variable at all and probed
+  only `STRIPE_SECRET_KEY`, so it reported `payments: ok` for the entire period the webhook was
+  dead. PR #76 splits `payments_webhook` and `sms` into their own fail-closed components, with
+  `sms` asserted by the send path's own predicate so the two cannot drift.
+
+### §11 blockers — current status
+
+- Blocker **2** (PR #47) and blocker **4** (PR #52): both **merged**; no longer blocking.
+- Blocker **1** (`BLOB_STORE_ID`): **fixed**, see above.
+- Blockers **5–7** (UPD-1004 stays rejected; Supercharged has never completed a full Operion
+  Preview E2E; transfer audit-trail gap): **unchanged**.
+- Process blockers **8–10**: unchanged. `.claude/` is ~227 MB and not gitignored (PR #78).
+
+### Corrections to specific sections
+
+- **§5 Open PRs is entirely stale.** #52, #47 merged; #33, #29 closed. As of this writing the
+  only open J KISS PR is **#78**.
+- **§7 Deployment status needs a caveat: a green merge to `main` does not guarantee a
+  Production deployment.** PR #77 merged with CI green and Vercel's PR checks green, and Vercel
+  created **no** Production deployment — nothing queued, no error, and the last
+  `environment=Production` GitHub Deployment record stayed on the prior commit. A later merge
+  (#76) deployed normally, so this was a one-off, not a broken integration. **Verify by reading
+  the live build id (`/api/health`), never by assuming the merge shipped.** The safe forced
+  path is `vercel redeploy <deployment-url> --target production` — it rebuilds server-side with
+  no local upload. Do **not** run `vercel --prod` from this repo until #78 lands.
+- **§10 Test status:** `npm test` on `main` is now **2050 / 2050**, TypeScript clean, production
+  build clean. `npm run lint` exits non-zero on a clean tree — ~3.8k of its errors come from
+  untracked `.claude/worktrees/*/.next/` build artifacts the flat config doesn't ignore, and the
+  ~49 real ones are pre-existing in files untouched by recent work. Lint the changed files
+  explicitly; do not read the top-line exit code as a regression signal.
+
+### New findings worth carrying forward
+
+- **Preview can never exercise real provider delivery**, for two independent reasons: no Stripe,
+  Twilio, or Resend credentials are scoped to Preview, **and** `resolveSendMode()`
+  (`app/lib/comms/policy.ts`) hard-returns `'test' | 'off'` whenever `VERCEL_ENV !== 'production'`.
+  Any plan of the form "validate email/SMS in Preview first" is unsatisfiable as written; adding
+  credentials to Preview would not change it.
+- **Preview is behind Vercel Deployment Protection**, and the app's own admin session is
+  **host-scoped** — so every push to a branch produces a new preview host needing a fresh
+  sign-in. Use the stable git-branch alias
+  (`jkissllc-git-<branch-slug>-…vercel.app`, found via `vercel inspect`) and the session survives
+  later pushes.
+- **Stripe account (audited read-only, 2026-07-25):** ONE account holds J KISS **and**
+  ClaimGuard. Exactly two live endpoints, each scoped to precisely the two events its handler
+  consumes. Zero test-mode endpoints. A third endpoint pointing at `howardwealthplanning.com`
+  (a separate business with its own Stripe account) was a stray with **zero deliveries ever** and
+  has been deleted. Fan-out hazard to remember: Stripe delivers an event to *every* endpoint in
+  the account subscribed to it, so a stray sharing an event type starts collecting failures the
+  moment real payments begin.
+- **The Stripe handler returns 200 even when its internal recording throws** (deliberate, to
+  avoid retry storms — the return path reconciles). A green delivery in Stripe's log is therefore
+  **not** proof a payment recorded; check the booking or invoice record.
+- **No real `checkout.session.completed` has ever been delivered.** The webhook path is
+  configured and signature-verified but has never carried a live payment.
+
+> No flag was changed and no Production data was mutated in producing this section. The only
+> Production environment change was adding `BLOB_STORE_ID`, recorded above.
+
+---
+
 ## 0.1 RECONCILIATION — payroll rekey shipped + run in Production (2026-07-24) — read this first
 
 The repository has moved again since §0. Where §0 or §1–§13 disagree with this section, **this
