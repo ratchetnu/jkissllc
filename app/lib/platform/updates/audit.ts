@@ -45,6 +45,8 @@ export type PlatformAuditAction =
   | 'publish.completed'
   | 'publish.failed'
   | 'deployment.promoted'
+  // Evidence-based adoption of a pre-Operion installed baseline.
+  | 'baseline.adopted'
   // Controlled owner rollback (Increment 3B.6). Restores the prior production deployment.
   | 'rollback.started'
   | 'rollback.completed'

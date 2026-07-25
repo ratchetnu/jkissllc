@@ -20,6 +20,7 @@ export type BusinessReleaseView = ReleaseState & {
   id: string
   name: string
   edition: string
+  baselineSource: 'installed_by_release' | 'adopted' | 'unknown'
   detail: {
     updateSummary: string
     previewStatus: string
@@ -204,6 +205,9 @@ export async function buildBusinessReleaseViews(): Promise<BusinessReleaseView[]
 
     views.push({
       ...rs, id: p.id, name: p.displayName, edition,
+      baselineSource: biz?.baselineSource === 'installed_by_release' || biz?.baselineSource === 'adopted'
+        ? biz.baselineSource
+        : 'unknown',
       detail: {
         updateSummary,
         previewStatus: previewStatus(job),

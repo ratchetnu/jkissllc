@@ -92,8 +92,9 @@ test('business provenance always sets commit + timestamps; version only from a r
   assert.equal(noRel.healthStatus, 'healthy')
 
   const withRel = deriveBusinessProvenance({ facts, releaseVersion: 'v1.4.0' })
-  assert.equal(withRel.currentVersion, 'v1.4.0')
-  assert.equal(withRel.latestVerifiedVersion, 'v1.4.0')
+  assert.equal(withRel.currentVersion, '1.4.0')
+  assert.equal(withRel.latestVerifiedVersion, '1.4.0')
+  assert.equal(withRel.baselineSource, 'installed_by_release')
 })
 
 // ── full plan (the live Supercharged case) ────────────────────────────────────

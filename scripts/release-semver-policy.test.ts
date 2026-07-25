@@ -201,9 +201,11 @@ test('PR #84 installed-version behaviour is UNCHANGED by this increment', () => 
   assert.equal(deriveVersionState({ installed: '0.1.0', latest: '0.1.0', initialized: true }).kind, 'current')
 })
 
-test('this increment adds no write path — the module is pure and has no callers yet', () => {
-  // Guard against accidental wiring: nothing in app/ may import this module until the
-  // later increments deliberately do so.
-  const hits = execSync('grep -rl "semver-policy" app 2>/dev/null || true', { encoding: 'utf8' }).trim()
-  assert.equal(hits, '', `semver-policy must have no app/ callers yet, found: ${hits}`)
+test('strict version authorship is confined to finalization and evidence-based adoption', () => {
+  const hits = execSync('grep -rl "semver-policy" app 2>/dev/null || true', { encoding: 'utf8' })
+    .trim().split('\n').filter(Boolean).sort()
+  assert.deepEqual(hits, [
+    'app/lib/platform/automation/finalize.ts',
+    'app/lib/platform/release/baseline-adoption.ts',
+  ])
 })

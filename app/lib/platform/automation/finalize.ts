@@ -12,6 +12,7 @@
 
 import type { DeploymentRecord, DeploymentStatus, VerificationStatus, CheckStatus, UpdateStatus, ReleaseStatus } from '../updates/types'
 import type { PlatformAuditAction } from '../updates/audit'
+import { parseSemanticVersion } from '../release/semver-policy'
 
 // ── Facts extracted from a verified job ──────────────────────────────────────
 export type JobFacts = {
@@ -128,6 +129,7 @@ export type BusinessProvenancePatch = {
   latestVerifiedCommit?: string
   currentVersion?: string
   latestVerifiedVersion?: string
+  baselineSource?: 'installed_by_release'
   lastDeploymentAt: number
   lastVerificationAt: number
   healthStatus: 'healthy'
@@ -151,8 +153,11 @@ export function deriveBusinessProvenance(input: {
     patch.latestVerifiedCommit = input.facts.commit
   }
   if (input.releaseVersion) {
-    patch.currentVersion = input.releaseVersion
-    patch.latestVerifiedVersion = input.releaseVersion
+    const version = parseSemanticVersion(input.releaseVersion)
+    if (!version.ok) throw new Error(`verified release has invalid semantic version: ${input.releaseVersion}`)
+    patch.currentVersion = version.normalized
+    patch.latestVerifiedVersion = version.normalized
+    patch.baselineSource = 'installed_by_release'
   }
   return patch
 }
