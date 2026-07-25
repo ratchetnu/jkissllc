@@ -22,6 +22,74 @@
 
 ---
 
+## 0.3 RECONCILIATION — the Preview E2E pipeline is proven and healthy; no update is currently *eligible* (2026-07-25) — read this first
+
+Where §0.2, §0.1, §0, or §1–§13 disagree with this section, **this section wins.**
+
+**Nothing was dispatched, no job was created, no flag, credential, provider, payload, or
+compatibility classification was touched in producing this section.** Every statement below
+comes from a **read-only** preflight evaluation (`evaluateOnly: true`, which returns before
+`preparePreview`) run against the **Production** control plane, plus the live update registry.
+
+### The pipeline is NOT infrastructure-blocked — it is proven
+
+Statements anywhere in this document implying the automated Preview E2E has never run, or is
+blocked on infrastructure, are **wrong**:
+
+- **UPD-1007 completed the Preview E2E successfully.** Job `AUTO-4273c3ce` — tests, build and
+  lint all passed → Preview `dpl_CwBMYUAWgXsDv78vn9BWuDas3WY4` → Supercharged **PR #3**,
+  workflow run **`29697932299`** = `completed`/`success`, PR **closed, never merged**.
+  Production promotion was *intentionally* not requested. That is what a clean Preview
+  verification looks like from the target side — not an unfinished step.
+- **UPD-1003, UPD-1005, UPD-1006 are `fully_deployed`.**
+- **Live readiness (Production, 2026-07-25):** `safeToEnablePreview: true`,
+  `safeToEnableProduction: true`. Supercharged passes **all 12** business/rollback checks.
+  Stages `provider_access`, `preview_automation`, `controlled_production` all `ready`;
+  `advanced_automation` `disabled` **by design** (AI adaptation and automatic rollback are off).
+
+### What IS true: no substantive update is presently *eligible*
+
+Read-only preflight, UPD-1001 × Supercharged — **21 of 22 gates pass**. The single blocking
+failure:
+
+```
+FAIL  deterministic_transfer — this update requires a manual port or code
+      reconciliation and cannot use deterministic commit transfer
+```
+
+Notably **`transfer_ready` PASSES** — the GitHub-side closure/drift check, precisely where
+UPD-1004 died with 19 closure and 7 drift failures, is clean for UPD-1001. The blocker is the
+update's portability, not the machinery.
+
+| Update | Status | Eligible for deterministic transfer? |
+|---|---|---|
+| **UPD-1001** Booking-detail workspace redesign | `approved` | **No** — `update.manualPortRequired = true` **and** `compat.manualPortRequired = true` (compat `compatible_with_changes`) |
+| **UPD-1002** Independent V2 shadow infrastructure | `queued` | **No** — compat status **`already_present`** (nothing to transfer); also fails `update_approved` and `env_approved` |
+| **UPD-1004** Tenant-safe boundaries | `archived` | **No** — terminal failure; **do not retry or requeue** |
+| **UPD-1007** deterministic preview canary v2 | `archived` | Already ran — the successful canary above |
+| UPD-1003 · UPD-1005 · UPD-1006 | `fully_deployed` | Already shipped |
+
+**Conclusion: there is currently no eligible cargo, not a broken pipeline.** UPD-1007 proved the
+machinery with a single-file payload; a *substantive* update has never been eligible to run it.
+That is a different and much narrower problem than "the E2E has never run".
+
+### Do not force it
+
+`manualPortRequired` **must not be overridden** to make an update pass
+`deterministic_transfer`. That flag is an engineering judgment that the code does not port
+cleanly, and overriding it is the exact shape of decision that produced UPD-1004's 19 closure +
+7 drift failures. If the assessment is believed stale, the supported remedy is a **fresh
+compatibility assessment with evidence** — never a bypass. Equally: **do not register a
+throwaway update purely to exercise the pipeline**; UPD-1007 already provides that evidence.
+
+### Next substantive E2E
+
+It should happen **when a real, portable J KISS change is packaged for Supercharged** — one that
+genuinely carries no manual-port requirement — and not before. Until such a change exists, the
+correct state is "pipeline proven, awaiting eligible cargo," and no action is outstanding.
+
+---
+
 ## 0.2 RECONCILIATION — Waves A–I shipped to Production; Stripe webhook fixed (2026-07-25) — read this first
 
 The repository moved substantially again after §0.1. Where §0.1, §0, or §1–§13 disagree with this
@@ -72,8 +140,10 @@ wrong on that point.
 
 - Blocker **2** (PR #47) and blocker **4** (PR #52): both **merged**; no longer blocking.
 - Blocker **1** (`BLOB_STORE_ID`): **fixed**, see above.
-- Blockers **5–7** (UPD-1004 stays rejected; Supercharged has never completed a full Operion
-  Preview E2E; transfer audit-trail gap): **unchanged**.
+- Blocker **6** ("Supercharged has never completed a full Operion Preview E2E"): **WRONG — see
+  §0.3.** An earlier revision of this section listed it as "unchanged"; that was an error, and
+  the correction had already existed in `sprint-1-session-status.md` for two days.
+- Blockers **5** and **7** (UPD-1004 stays rejected; transfer audit-trail gap): **unchanged**.
 - Process blockers **8–10**: unchanged. `.claude/` is ~227 MB and not gitignored (PR #78).
 
 ### Corrections to specific sections
@@ -588,7 +658,7 @@ Commands: `npm test` · `npm run test:ai:regression` · `npm run test:ai` · `np
 
 4. **PR #52 unmerged** — required-updates + pre-dispatch transfer gates.
 5. **`UPD-1004` must remain rejected** and must not be retried. It needs splitting into ordered prerequisite updates (issue #48 §8): Book Now intake → telemetry (already present on SC) → tenancy-only.
-6. **Supercharged has never completed a full Operion Preview E2E run.** Every transfer to date failed or was manual.
+6. ~~**Supercharged has never completed a full Operion Preview E2E run.** Every transfer to date failed or was manual.~~ — **OBSOLETE, and it was never accurate as written. See §0.3.** UPD-1007 completed the Preview E2E successfully (workflow run `29697932299` = `success`, Supercharged PR #3, closed unmerged, promotion intentionally not requested). UPD-1003, UPD-1005 and UPD-1006 are `fully_deployed`. The pipeline is **not** infrastructure-blocked; what is missing is an *eligible substantive update*, which is a different problem.
 7. **Audit trail gap** (§4 #7) — reconstructing a failed transfer currently requires git archaeology.
 
 ### Process blockers
