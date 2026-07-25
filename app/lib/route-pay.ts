@@ -70,6 +70,20 @@ export function parsePayCents(pay?: string): number | null {
   return Number.isFinite(n) ? Math.round(n * 100) : null
 }
 
+// A pay-snapshot amount may only enter payable totals when it is a finite, non-negative
+// number of cents. The routes lane already flows through parsePayCents (null or a ≥0
+// rounded int), so this is byte-identical there; it hardens the bookings lane, whose
+// frozen snapshot `payCents` is read directly (`a.payCents ?? …`) and — from malformed
+// data — could be negative, NaN, or Infinity. `??` only guards null/undefined, so those
+// would otherwise be summed straight into gross (a negative silently shrinks it; NaN/
+// Infinity poisons the crew member's whole statement AND the grand totals). A rejected
+// amount collapses to null → surfaced as UNPRICED (visible in the pay review, excluded
+// from the issued statement), never silently folded into payable pay. Earning lines are
+// never negative by design: claim recovery is a separate deduction, not a negative line.
+export function payableCents(amount: number | null | undefined): number | null {
+  return typeof amount === 'number' && Number.isFinite(amount) && amount >= 0 ? amount : null
+}
+
 export function fmtMoney(cents: number): string {
   return (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 }
@@ -134,20 +148,23 @@ export async function computePay(startIn: string, endIn: string): Promise<PaySum
   }) => {
     const id = input.staffId || 'unassigned'
     const cp = contractor(id, input.staffName || '')
+    // Guard the snapshot amount before it can reach any payable total: a negative or
+    // non-finite snapshot collapses to null (unpriced) rather than silently entering gross.
+    const amountCents = payableCents(input.amountCents)
     cp.routes.push({
       source: includeBookings ? input.source : undefined,
       routeNumber: input.number,
       routeDate: input.date,
       businessName: input.businessName,
-      amountCents: input.amountCents,
+      amountCents,
       payRateRaw: input.payRateRaw,
       hasProof: input.hasProof,
       completedBy: input.completedBy,
       workedMinutes: includeBookings ? input.workedMinutes : undefined,
     })
     cp.count++
-    if (input.amountCents == null) { cp.unpricedCount++; unpriced++ }
-    else cp.grossCents += input.amountCents
+    if (amountCents == null) { cp.unpricedCount++; unpriced++ }
+    else cp.grossCents += amountCents
   }
 
   for (const r of routes) {

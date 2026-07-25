@@ -36,7 +36,7 @@ globalThis.fetch = (async (_url: string, init: { body: string }) => {
   return { json: async () => ({ result }) }
 }) as unknown as typeof fetch
 
-import { computePay } from '../app/lib/route-pay'
+import { computePay, payableCents } from '../app/lib/route-pay'
 import { effectiveServiceDate, saveBooking, type Booking } from '../app/lib/bookings'
 import { saveRoute, generateToken, type RouteRecord } from '../app/lib/routes'
 import { saveStaff } from '../app/lib/staff'
@@ -215,4 +215,63 @@ test('archived/test bookings are excluded and legacy display pay remains a safe 
   assert.equal(pay.bookingCount, 1)
   assert.equal(pay.contractors.find(c => c.staffId === 'marcus')!.grossCents, 17500)
   assert.equal(pay.contractors.find(c => c.staffId === 'helper')!.grossCents, 18000)
+})
+
+// ── Malformed / negative snapshot amounts never enter payable totals ──────────
+// The bookings lane reads the frozen snapshot payCents directly. A negative value
+// round-trips JSON storage (NaN/Infinity would collapse to null on serialize), so a
+// negative payCents is the reachable defect: without the guard it silently shrinks
+// gross. It must instead fall to UNPRICED — visible, but out of payable pay.
+test('payableCents rejects negative and non-finite snapshot amounts, keeps valid ones', () => {
+  assert.equal(payableCents(22500), 22500, 'a valid amount passes through unchanged')
+  assert.equal(payableCents(0), 0, 'a genuine $0 line is priced, not unpriced')
+  assert.equal(payableCents(-5000), null, 'a negative amount is rejected')
+  assert.equal(payableCents(Number.NaN), null, 'NaN is rejected (never poisons gross)')
+  assert.equal(payableCents(Number.POSITIVE_INFINITY), null, 'Infinity is rejected')
+  assert.equal(payableCents(null), null)
+  assert.equal(payableCents(undefined), null)
+})
+
+test('a negative booking snapshot amount is excluded from gross and surfaced as unpriced', async () => {
+  await seed()
+  await saveBooking(baseBooking({
+    jobCompletedAt: Date.UTC(2026, 6, 8, 18),
+    assignees: [
+      { staffId: 'marcus', name: 'Marcus', token: generateToken(), payCents: -5000, pay: '-$50.00' },
+      { staffId: 'helper', name: 'Helper', token: generateToken(), payCents: 22500, pay: '$225.00' },
+    ],
+  }))
+
+  const pay = await computePay('2026-07-06', '2026-07-12')
+  const marcus = pay.contractors.find(c => c.staffId === 'marcus')!
+  // Route pay stands; the malformed booking line neither reduces nor inflates gross.
+  assert.equal(marcus.grossCents, 17500, 'a negative snapshot never subtracts from gross')
+  assert.equal(marcus.unpricedCount, 1, 'the malformed booking line is surfaced as unpriced')
+  const badLine = marcus.routes.find(r => r.source === 'booking')!
+  assert.equal(badLine.amountCents, null, 'the malformed amount is nulled, not carried into a payable line')
+  // A valid crew member on the same booking is unaffected.
+  assert.equal(pay.contractors.find(c => c.staffId === 'helper')!.grossCents, 22500)
+  // Grand totals stay finite and correct — no NaN/negative poisoning across the summary.
+  assert.equal(pay.grandGrossCents, 40000)
+  assert.equal(Number.isFinite(pay.grandGrossCents), true)
+  assert.equal(Number.isFinite(pay.grandNetCents), true)
+})
+
+// ── Historical snapshot is immutable: pay is the frozen assignee amount, never a
+// live re-resolution from current staff/business settings. ────────────────────
+test('booking pay uses the frozen snapshot amount even after current staff settings change', async () => {
+  await seed()
+  await saveBooking(baseBooking({
+    jobCompletedAt: Date.UTC(2026, 6, 8, 18),
+    assignees: [{ staffId: 'marcus', name: 'Marcus', role: 'Driver', token: generateToken(), payCents: 22500, pay: '$225.00' }],
+  }))
+  const before = (await computePay('2026-07-06', '2026-07-12')).contractors.find(c => c.staffId === 'marcus')!
+  assert.equal(before.grossCents, 40000, 'route 17500 + snapshot booking 22500')
+
+  // Change the CURRENT staff record after the fact (rename + a would-be new rate).
+  await saveStaff({ id: 'marcus', name: 'Marcus Renamed', phone: '+15550001', role: 'Driver', active: true, createdAt: 1, updatedAt: 2 })
+
+  const after = (await computePay('2026-07-06', '2026-07-12')).contractors.find(c => c.staffId === 'marcus')!
+  assert.equal(after.grossCents, 40000, 'the historical booking amount is unchanged by a later settings change')
+  assert.equal(after.name, 'Marcus Renamed', 'display name reflects the current roster; the AMOUNT does not')
 })
