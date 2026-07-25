@@ -15,6 +15,7 @@
 import { redis } from './redis'
 import { buildId } from './alerts'
 import { twilioConfigured } from './sms'
+import { completionUploadReadiness } from './job-assignment'
 
 export type ComponentStatus = 'ok' | 'degraded' | 'down'
 export type HealthComponent = { name: string; status: ComponentStatus; critical: boolean; detail: string }
@@ -35,6 +36,13 @@ export function configChecks(env: Env): HealthComponent[] {
   const has = (...keys: string[]) => keys.some(k => !!env[k])
   return [
     { name: 'storage', critical: false, status: has('BLOB_READ_WRITE_TOKEN') ? 'ok' : 'degraded', detail: has('BLOB_READ_WRITE_TOKEN') ? 'Blob configured' : 'Blob token not set — photo uploads disabled' },
+    // Holding a Blob token and being able to accept COMPLETION PROOF are different
+    // capabilities. Minting a completion-upload token additionally requires the store
+    // binding (`BLOB_STORE_ID`); without it the crew upload route fails closed with
+    // `blob_store_not_configured` and the field just sees "Upload failed", while
+    // `storage` above still reads ok. Asserted with the SAME predicate the upload route
+    // calls, so readiness cannot drift from what actually gates the upload.
+    { name: 'completion_uploads', critical: false, status: completionUploadReadiness(env.BLOB_STORE_ID).ready ? 'ok' : 'degraded', detail: completionUploadReadiness(env.BLOB_STORE_ID).ready ? 'Completion-photo uploads configured' : 'BLOB_STORE_ID not set — crew completion uploads fail closed (blob_store_not_configured)' },
     // The Vercel AI Gateway authenticates via auto-injected OIDC when deployed on
     // Vercel (no static key needed), so `VERCEL` presence is a valid "configured".
     { name: 'ai_provider', critical: false, status: has('AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN', 'VERCEL') ? 'ok' : 'degraded', detail: has('AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN', 'VERCEL') ? 'AI gateway configured' : 'AI gateway not configured — analysis falls back to manual review' },
