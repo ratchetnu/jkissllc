@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePlatformOwner, getPrincipal } from '../../../../_lib/session'
 import { isEnabled } from '../../../../../../lib/platform/flags'
-import { getBusiness, listUpdates, getCompatMap } from '../../../../../../lib/platform/updates/store'
+import { getBusiness, listUpdates, getCompatMap, getUpdate } from '../../../../../../lib/platform/updates/store'
 import { updateReleaseEligible } from '../../../../../../lib/platform/updates/policy'
 import { activeJobForBusiness, listJobs } from '../../../../../../lib/platform/automation/store'
 import { preparePreview, retryPreview } from '../../../../../../lib/platform/automation/orchestrator'
@@ -43,9 +43,16 @@ export const GET = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
   // Only surfaced when the job is in a failed/attention state; a healthy job carries none.
   const FAILED = new Set(['failed', 'build_failed', 'blocked', 'rollback_required'])
   const failureReason = FAILED.has(job.status) ? (job.failureSummary ?? null) : null
+  // The job alone cannot answer "may this be retried?" — the UPDATE's status decides, and
+  // an archived one is terminal. Load it so the Retry affordance is judged by the same
+  // policy the dispatcher enforces.
+  const jobUpdate = await getUpdate(job.updateId)
   return NextResponse.json({
     ok: true, hasJob: true, updatesEnabled,
-    progress: mapJobToProgress(job.status, { failureSummary: job.failureSummary, hasJob: true }),
+    progress: mapJobToProgress(job.status, {
+      failureSummary: job.failureSummary, hasJob: true,
+      updateStatus: jobUpdate?.status ?? null, failureCategory: job.failureCategory, attemptCount: job.attemptCount,
+    }),
     previewUrl: job.previewUrl ?? null,
     failureReason,
   })

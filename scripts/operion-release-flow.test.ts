@@ -63,10 +63,19 @@ test('progress: five calm steps, driven by real job status; production states ne
   assert.equal(mapJobToProgress('preview_ready', { hasJob: true }).step, 3)
   const ready = mapJobToProgress('awaiting_owner_review', { hasJob: true })
   assert.equal(ready.step, 4); assert.equal(ready.previewReady, true); assert.equal(ready.running, false)
-  const failed = mapJobToProgress('build_failed', { hasJob: true })
+  // Retry is offered only when the UPDATE is still dispatch-eligible, so the status must be
+  // supplied. Omitting it fails closed — see the archived-update coverage in
+  // operion-retry-policy.test.ts.
+  const failed = mapJobToProgress('build_failed', { hasJob: true, updateStatus: 'approved' })
   assert.equal(failed.blocked, true); assert.equal(failed.canRetry, true)
-  const blocked = mapJobToProgress('blocked', { hasJob: true })
-  assert.equal(blocked.blocked, true); assert.equal(blocked.canRetry, false)
+  // `blocked` is what retryPreview itself sets on a provider_error, and the dispatcher has
+  // always accepted it — only the UI's narrower set hid the button, so the owner could not
+  // reach a retry the system permitted. Unifying on one policy corrects that direction too.
+  const blocked = mapJobToProgress('blocked', { hasJob: true, updateStatus: 'approved', failureCategory: 'provider_error' })
+  assert.equal(blocked.blocked, true); assert.equal(blocked.canRetry, true)
+  // …but the update's status still governs: archived stays terminal.
+  const blockedArchived = mapJobToProgress('blocked', { hasJob: true, updateStatus: 'archived', failureCategory: 'provider_error' })
+  assert.equal(blockedArchived.canRetry, false)
 })
 
 test('progress: messages carry no internal jargon', () => {
