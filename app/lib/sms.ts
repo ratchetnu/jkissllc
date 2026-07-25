@@ -27,6 +27,24 @@ export function isSmsSuppressed(): boolean {
   return smsSuppression.getStore() === true
 }
 
+type TwilioEnv = Record<string, string | undefined>
+
+// Exactly what a real Twilio send needs, as a PURE env predicate. Extracted so the
+// health readiness check can assert the same rule this module actually sends by —
+// otherwise readiness drifts from the send path and reports "ok" for a Twilio that
+// can't send. Presence only: no value is returned, logged, or compared.
+export function twilioConfigured(env: TwilioEnv): boolean {
+  const auth = !!(
+    (env.TWILIO_API_KEY_SID && env.TWILIO_API_KEY_SECRET) ||
+    (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN)
+  )
+  return !!(
+    env.TWILIO_ACCOUNT_SID &&
+    auth &&
+    (env.TWILIO_FROM || env.TWILIO_MESSAGING_SERVICE_SID)
+  )
+}
+
 function authPair(): { user: string; pass: string } | null {
   if (process.env.TWILIO_API_KEY_SID && process.env.TWILIO_API_KEY_SECRET) {
     return { user: process.env.TWILIO_API_KEY_SID, pass: process.env.TWILIO_API_KEY_SECRET }
@@ -38,11 +56,7 @@ function authPair(): { user: string; pass: string } | null {
 }
 
 export function smsConfigured(): boolean {
-  return !!(
-    process.env.TWILIO_ACCOUNT_SID &&
-    authPair() &&
-    (process.env.TWILIO_FROM || process.env.TWILIO_MESSAGING_SERVICE_SID)
-  )
+  return twilioConfigured(process.env)
 }
 
 // Best-effort E.164 for US numbers. Returns null if it can't form a plausible

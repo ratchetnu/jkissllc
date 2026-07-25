@@ -14,6 +14,7 @@
 
 import { redis } from './redis'
 import { buildId } from './alerts'
+import { twilioConfigured } from './sms'
 
 export type ComponentStatus = 'ok' | 'degraded' | 'down'
 export type HealthComponent = { name: string; status: ComponentStatus; critical: boolean; detail: string }
@@ -39,8 +40,31 @@ export function configChecks(env: Env): HealthComponent[] {
     { name: 'ai_provider', critical: false, status: has('AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN', 'VERCEL') ? 'ok' : 'degraded', detail: has('AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN', 'VERCEL') ? 'AI gateway configured' : 'AI gateway not configured — analysis falls back to manual review' },
     { name: 'scheduled_worker', critical: false, status: has('CRON_SECRET') ? 'ok' : 'degraded', detail: has('CRON_SECRET') ? 'Cron secret set' : 'CRON_SECRET not set — durable worker + cron disabled' },
     { name: 'payments', critical: false, status: has('STRIPE_SECRET_KEY') ? 'ok' : 'degraded', detail: has('STRIPE_SECRET_KEY') ? 'Stripe configured' : 'Stripe not configured — card payments disabled' },
+    // Taking a card and CONFIRMING it are separate capabilities on the same provider.
+    // Stripe can be fully able to charge while STRIPE_WEBHOOK_SECRET is unset — and then
+    // /api/webhooks/stripe fails closed (503), so the durable backstop that marks a paid
+    // route-invoice never runs and confirmation rests solely on the success-URL return
+    // path. Reported separately so a working checkout can never mask a dead backstop.
+    { name: 'payments_webhook', critical: false, status: webhookStatus(has), detail: webhookDetail(has) },
     { name: 'email', critical: false, status: has('RESEND_API_KEY') ? 'ok' : 'degraded', detail: has('RESEND_API_KEY') ? 'Email configured' : 'Email not configured — notifications limited' },
+    // Twilio is asserted with the SAME predicate sms.ts sends by, not a single-key
+    // proxy: an account SID alone (no auth pair, or no from/messaging-service) cannot
+    // send, and must not read as configured.
+    { name: 'sms', critical: false, status: twilioConfigured(env) ? 'ok' : 'degraded', detail: twilioConfigured(env) ? 'Twilio configured' : 'Twilio not fully configured — SMS disabled' },
   ]
+}
+
+type Has = (...keys: string[]) => boolean
+
+/** Fail-closed: anything short of "Stripe key AND webhook secret present" is degraded. */
+function webhookStatus(has: Has): ComponentStatus {
+  return has('STRIPE_SECRET_KEY') && has('STRIPE_WEBHOOK_SECRET') ? 'ok' : 'degraded'
+}
+
+function webhookDetail(has: Has): string {
+  if (!has('STRIPE_SECRET_KEY')) return 'Stripe not configured — payment webhook backstop inactive'
+  if (!has('STRIPE_WEBHOOK_SECRET')) return 'STRIPE_WEBHOOK_SECRET not set — webhook fails closed; payment confirmation relies on the return path alone'
+  return 'Stripe webhook backstop configured'
 }
 
 export type HealthDeps = {
