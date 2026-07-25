@@ -2,7 +2,8 @@
 // no write path. These pin the rules a release version must satisfy BEFORE any package,
 // baseline, or installation record exists.
 import assert from 'node:assert/strict'
-import { execSync } from 'node:child_process'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import test from 'node:test'
 
 import {
@@ -201,9 +202,17 @@ test('PR #84 installed-version behaviour is UNCHANGED by this increment', () => 
   assert.equal(deriveVersionState({ installed: '0.1.0', latest: '0.1.0', initialized: true }).kind, 'current')
 })
 
+function typescriptFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name)
+    return entry.isDirectory() ? typescriptFiles(path) : entry.isFile() && path.endsWith('.ts') ? [path] : []
+  })
+}
+
 test('strict version authorship is confined to finalization, adoption, and release-package policy', () => {
-  const hits = execSync("rg -l 'evaluateVersionBump\\(|parseSemanticVersion\\(' app --glob '*.ts' 2>/dev/null || true", { encoding: 'utf8' })
-    .trim().split('\n').filter(Boolean).sort()
+  const hits = typescriptFiles('app')
+    .filter((path) => /evaluateVersionBump\(|parseSemanticVersion\(/.test(readFileSync(path, 'utf8')))
+    .sort()
   assert.deepEqual(hits, [
     'app/lib/platform/automation/finalize.ts',
     'app/lib/platform/release/baseline-adoption.ts',
