@@ -11,7 +11,7 @@ import { listProducts, getLatest, listHistory } from '../sync/store'
 import { listBusinesses } from '../updates/store'
 import { listJobs } from '../automation/store'
 import { resolveReleaseState, type JobPhase, type ReleaseSignals, type ReleaseState } from './state'
-import { isBehind } from './versions'
+import { isBehind, deriveVersionState } from './versions'
 import type { SyncProduct, ReconciliationRecord } from '../sync/types'
 import type { PlatformBusiness } from '../updates/types'
 import type { UpdateAutomationJob } from '../automation/types'
@@ -95,8 +95,17 @@ function blockers(rec: ReconciliationRecord | null): string[] {
   return out
 }
 
+/** Keep the newest entry of each run of identical labels (records arrive newest-first). */
+export function dedupeConsecutive<T extends { label: string }>(rows: T[]): T[] {
+  return rows.filter((r, i) => i === 0 || r.label !== rows[i - 1].label)
+}
+
 function historyLabel(rec: ReconciliationRecord): string {
   if (rec.failed) return 'Check didn’t complete'
+  // A check cannot have found this product "behind" if it never learned what the product is
+  // running. Reporting the honest state stops the activity list filling with a claim the
+  // card itself no longer makes.
+  if (rec.platformSync.applicable && rec.platformSync.updateAvailable && !rec.platformSync.currentBaselineVersion?.trim()) return 'Version unknown'
   if (rec.platformSync.applicable && rec.platformSync.updateAvailable) return 'Update available'
   if (rec.deployment.applicable && !rec.deployment.upToDate && rec.deployment.gitConnected) return 'New build ready'
   return 'Up to date'
@@ -143,7 +152,18 @@ export async function buildBusinessReleaseViews(): Promise<BusinessReleaseView[]
 
     const installedVersion = biz?.currentVersion || ps?.currentBaselineVersion
     const latestVersion = ps?.latestBaselineVersion || biz?.latestVerifiedVersion || installedVersion
-    const updateAvailable = ps?.applicable ? ps.updateAvailable : isBehind(installedVersion, latestVersion)
+    // ONE derivation for the badge, the summary line, and the activity label. Critically it
+    // never accepts a sync `updateAvailable` while the installed baseline is unknown — that
+    // combination is what produced "Current version — / A newer version (0.1.0) is available".
+    const vstate = deriveVersionState({
+      installed: installedVersion,
+      latest: latestVersion,
+      initialized: isInitialized(p, biz),
+    })
+    const updateAvailable = vstate.kind === 'update_available'
+      ? true
+      : vstate.kind === 'version_unknown' ? false
+      : (ps?.applicable ? ps.updateAvailable : isBehind(installedVersion, latestVersion))
     const health: ReleaseSignals['health'] = dep?.health
       ?? (biz?.healthStatus === 'healthy' ? 'healthy' : biz?.healthStatus === 'down' ? 'down' : biz?.healthStatus === 'degraded' ? 'degraded' : 'unknown')
     const attention = attentionNotes(rec)
@@ -152,6 +172,7 @@ export async function buildBusinessReleaseViews(): Promise<BusinessReleaseView[]
     const signals: ReleaseSignals = {
       initialized: isInitialized(p, biz),
       installedVersion, latestVersion, health, updateAvailable,
+      versionKnown: vstate.kind !== 'version_unknown',
       job: currentPhase,
       previewVerified: false,
       verificationFailed: currentPhase === 'failed',
@@ -169,6 +190,7 @@ export async function buildBusinessReleaseViews(): Promise<BusinessReleaseView[]
     const updateSummary =
       rs.status === 'not_initialized' ? 'This business isn’t set up yet.'
       : rs.status === 'action_required' ? (attention[0] || blocking[0] || 'Something needs your attention.')
+      : vstate.kind === 'version_unknown' ? 'Not yet deployed through Operion.'
       : updateAvailable ? (rs.latestVersion !== '—' ? `A newer version (${rs.latestVersion}) is available.` : 'A newer version is available.')
       : rs.status === 'ready_to_publish' ? 'A verified preview is ready to publish.'
       : rs.status === 'updating' ? 'An update is in progress.'
@@ -186,7 +208,10 @@ export async function buildBusinessReleaseViews(): Promise<BusinessReleaseView[]
         updateSummary,
         previewStatus: previewStatus(job),
         validationSummary,
-        history: history.map(h => ({ at: h.checkedAt, label: historyLabel(h) })),
+        // Collapse consecutive identical outcomes. The reconcile cron runs every 15 minutes
+        // and writes a record each time, so an unchanged state used to render as five
+        // identical rows — noise that read like five separate events.
+        history: dedupeConsecutive(history.map(h => ({ at: h.checkedAt, label: historyLabel(h) }))),
         attention: [...blocking, ...attention],
         lastCheckedAt: rec?.checkedAt,
         connection,
