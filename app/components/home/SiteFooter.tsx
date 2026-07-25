@@ -1,5 +1,6 @@
 import PoweredByBand from '../opspilot/PoweredByBand';
 import { COMPANY, CREDENTIALS_DOT } from '../../lib/company';
+import SitesByNuCredit from './SitesByNuCredit';
 
 // Root-relative, not bare hashes: this footer now renders on /about and /opspilot
 // too, where "#services" would scroll to nothing. "/#services" works from anywhere.
@@ -43,6 +44,9 @@ export default function SiteFooter({ platformBand = true }: { platformBand?: boo
               <a key={label} href={href} className="transition hover:text-white">{label}</a>
             ))}
           </div>
+        </div>
+        <div style={{ marginBottom: 28 }}>
+          <SitesByNuCredit />
         </div>
         <div className="pt-8 text-xs flex flex-col md:flex-row items-center justify-between gap-3" style={{ borderTop: '1px solid var(--line)', color: 'rgba(255,255,255,.55)' }}>
           <p>© {new Date().getFullYear()} {COMPANY.legalName}. All rights reserved.</p>
