@@ -12,6 +12,7 @@ import { listBusinesses } from '../updates/store'
 import { listJobs } from '../automation/store'
 import { resolveReleaseState, type JobPhase, type ReleaseSignals, type ReleaseState } from './state'
 import { isBehind, deriveVersionState } from './versions'
+import { deriveBaselineState, baselineStateLabel, type BaselineState } from './baseline-adoption'
 import type { SyncProduct, ReconciliationRecord } from '../sync/types'
 import type { PlatformBusiness } from '../updates/types'
 import type { UpdateAutomationJob } from '../automation/types'
@@ -28,6 +29,7 @@ export type BusinessReleaseView = ReleaseState & {
     attention: string[]           // human, jargon-free — only when there's a problem
     lastCheckedAt?: number
     connection: 'Connected' | 'Not connected' | 'Not applicable'
+    baseline?: { state: BaselineState; label: string }
   }
 }
 
@@ -151,6 +153,10 @@ export async function buildBusinessReleaseViews(): Promise<BusinessReleaseView[]
     const dep = rec?.deployment
 
     const installedVersion = biz?.currentVersion || ps?.currentBaselineVersion
+    const baselineState = deriveBaselineState({
+      currentVersion: biz?.currentVersion,
+      baselineSource: biz?.baselineSource,
+    })
     const latestVersion = ps?.latestBaselineVersion || biz?.latestVerifiedVersion || installedVersion
     // ONE derivation for the badge, the summary line, and the activity label. Critically it
     // never accepts a sync `updateAvailable` while the installed baseline is unknown — that
@@ -215,6 +221,7 @@ export async function buildBusinessReleaseViews(): Promise<BusinessReleaseView[]
         attention: [...blocking, ...attention],
         lastCheckedAt: rec?.checkedAt,
         connection,
+        baseline: { state: baselineState, label: baselineStateLabel(baselineState) },
       },
     })
   }

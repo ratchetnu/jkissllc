@@ -33,6 +33,8 @@ export type PlatformAuditAction =
   | 'reconcile.external_deployment_matched'
   | 'reconcile.ambiguous_match'
   | 'status.manual_correction'
+  | 'baseline_adoption.completed'
+  | 'baseline_adoption.rejected'
   // Owner pre-publish approval gate (Increment 3B.3). Records intent only — no publish.
   | 'approval.created'
   | 'approval.rejected'

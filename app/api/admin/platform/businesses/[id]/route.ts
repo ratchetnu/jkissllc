@@ -57,7 +57,9 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
   if (typeof f.updatesPaused === 'boolean') next.updatesPaused = f.updatesPaused
   if (typeof f.manualApprovalRequired === 'boolean') next.manualApprovalRequired = f.manualApprovalRequired
   if (typeof f.autoDeployAllowed === 'boolean') next.autoDeployAllowed = f.autoDeployAllowed // inert in Phase 1 (no auto-deploy exists)
-  for (const k of ['name', 'industry', 'edition', 'defaultBranch', 'deployProject', 'productionUrl', 'healthEndpoint', 'currentVersion', 'currentCommit', 'latestVerifiedVersion', 'notes'] as const) {
+  // Installed version/commit provenance is deliberately NOT editable here. It may change
+  // only through verified finalization or the approved baseline-adoption boundary.
+  for (const k of ['name', 'industry', 'edition', 'defaultBranch', 'deployProject', 'productionUrl', 'healthEndpoint', 'notes'] as const) {
     if (typeof f[k] === 'string') (next as Record<string, unknown>)[k] = s(f[k], 400)
   }
   // Repository identity is canonicalized on save: accept only "owner/name" (a GitHub URL is

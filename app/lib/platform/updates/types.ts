@@ -16,6 +16,7 @@ export type UpdatePolicy = 'manual' | 'owner_approval' | 'scheduled_manual' | 's
 export type BusinessStatus = 'active' | 'onboarding' | 'paused' | 'archived'
 export type BusinessRole = 'source' | 'target' | 'source_and_target'
 export type HealthStatus = 'unknown' | 'healthy' | 'degraded' | 'down'
+export type BaselineSource = 'installed_by_release' | 'adopted' | 'unknown'
 
 // Controlled automation modes (no unrestricted autonomous production mode exists).
 export type AutomationMode =
@@ -47,6 +48,8 @@ export type PlatformBusiness = {
   currentCommit?: string
   latestVerifiedVersion?: string
   latestVerifiedCommit?: string    // commit of the last VERIFIED production deployment (set by reconciliation)
+  /** Provenance of currentVersion. Absent legacy values are read as unknown. */
+  baselineSource?: BaselineSource
   releaseChannel: ReleaseChannel
   updatePolicy: UpdatePolicy
   updatesPaused: boolean

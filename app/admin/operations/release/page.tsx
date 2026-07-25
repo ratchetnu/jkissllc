@@ -9,6 +9,7 @@ import { PublishReviewDrawer } from './PublishReviewDrawer'
 import { ReleaseHistoryPanel } from './ReleaseHistoryPanel'
 import { ActivationReadinessPanel } from './ActivationReadinessPanel'
 import { sandboxHealth, SANDBOX_HEALTH_LABEL, SANDBOX_HEALTH_TONE } from '../../../lib/platform/sandbox/health'
+import { baselineStateLabel, type BaselineState } from '../../../lib/platform/release/baseline-adoption'
 
 // ── Release Center ───────────────────────────────────────────────────────────
 // The build/flags snapshot and activation-readiness views are read-only. Deliberate
@@ -109,6 +110,7 @@ type BizView = {
     updateSummary: string; previewStatus: string; validationSummary: string
     history: { at: number; label: string }[]; attention: string[]
     lastCheckedAt?: number; connection: string
+    baseline?: { state: BaselineState; label: string }
   }
 }
 
@@ -149,6 +151,7 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
   const [reviewOpen, setReviewOpen] = useState(false)
   const ivRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const t = TONE[b.tone]
+  const baselineState = b.detail.baseline?.state ?? 'unknown'
   const emphatic = b.action === 'update' || b.action === 'publish' || b.action === 'resolve' || b.action === 'retry' || b.action === 'set_up'
 
   const stop = () => { if (ivRef.current) { clearInterval(ivRef.current); ivRef.current = null } }
@@ -229,7 +232,16 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
           <p style={{ fontSize: 13, color: 'var(--text)', margin: note ? 0 : '12px 0 0', lineHeight: 1.5 }}>{b.detail.updateSummary}</p>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <div><div style={{ ...osLabel, marginBottom: 4 }}>Current version</div><div className="tabular-nums" style={{ fontSize: 14, fontWeight: 700 }}>{b.installedVersion}</div></div>
+            <div>
+              <div style={{ ...osLabel, marginBottom: 4 }}>Current version</div>
+              <div className="tabular-nums" style={{ fontSize: 14, fontWeight: 700 }}>{b.installedVersion}</div>
+              <div style={{ marginTop: 5 }}>
+                <Chip
+                  fg={baselineState === 'verified' ? '#86efac' : baselineState === 'adopted' ? '#93c5fd' : '#94a3b8'}
+                  bg={baselineState === 'verified' ? 'rgba(34,197,94,.16)' : baselineState === 'adopted' ? 'rgba(59,130,246,.15)' : 'rgba(255,255,255,.06)'}
+                >{baselineStateLabel(baselineState)}</Chip>
+              </div>
+            </div>
             <div><div style={{ ...osLabel, marginBottom: 4 }}>Latest version</div><div className="tabular-nums" style={{ fontSize: 14, fontWeight: 700 }}>{b.latestVersion}</div></div>
           </div>
 

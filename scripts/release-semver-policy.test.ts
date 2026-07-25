@@ -201,9 +201,10 @@ test('PR #84 installed-version behaviour is UNCHANGED by this increment', () => 
   assert.equal(deriveVersionState({ installed: '0.1.0', latest: '0.1.0', initialized: true }).kind, 'current')
 })
 
-test('this increment adds no write path — the module is pure and has no callers yet', () => {
-  // Guard against accidental wiring: nothing in app/ may import this module until the
-  // later increments deliberately do so.
-  const hits = execSync('grep -rl "semver-policy" app 2>/dev/null || true', { encoding: 'utf8' }).trim()
-  assert.equal(hits, '', `semver-policy must have no app/ callers yet, found: ${hits}`)
+test('Increment 2 gives the strict authoring policy exactly one application consumer', () => {
+  // Baseline adoption is the deliberate first integration point. Keep the importer list
+  // closed so unrelated read/display/history code cannot quietly adopt strict semantics.
+  const hits = execSync('grep -rl "semver-policy" app 2>/dev/null || true', { encoding: 'utf8' })
+    .trim().split('\n').filter(Boolean).sort()
+  assert.deepEqual(hits, ['app/lib/platform/release/baseline-adoption.ts'])
 })
