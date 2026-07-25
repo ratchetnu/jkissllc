@@ -125,6 +125,9 @@ function fakeStore(seed?: Partial<{ businesses: PlatformBusiness[]; products: Sy
         const ua = rec?.platformSync?.updateAvailable ?? false
         return {
           id: p.id, name: p.displayName, edition: biz?.edition ?? 'Business',
+          baselineSource: biz?.baselineSource === 'installed_by_release' || biz?.baselineSource === 'adopted'
+            ? biz.baselineSource
+            : 'unknown' as const,
           status: ua ? 'update_available' : 'up_to_date', statusLabel: ua ? 'Update available' : 'Up to date',
           tone: 'attention' as const, action: ua ? 'update' : 'check', actionLabel: ua ? 'Update' : 'Check for Updates',
           installedVersion: biz?.currentVersion ?? '—', latestVersion: rec?.platformSync?.latestBaselineVersion ?? '—',

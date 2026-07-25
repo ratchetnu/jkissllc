@@ -25,6 +25,7 @@ export type AutomationMode =
   | 'approved_production'      // owner explicitly approves a verified preview → merge+deploy
   | 'fully_manual'             // Operion only records external work
 export type ConfigurationStatus = 'not_configured' | 'incomplete' | 'validating' | 'ready' | 'error'
+export type BaselineSource = 'installed_by_release' | 'adopted' | 'unknown'
 
 export type PlatformBusiness = {
   recordVersion: number
@@ -44,6 +45,9 @@ export type PlatformBusiness = {
   productionUrl?: string
   healthEndpoint?: string
   currentVersion?: string
+  /** Provenance for currentVersion. Absent legacy records are treated as unknown. */
+  baselineSource?: BaselineSource
+  baselineAdoptionId?: string
   currentCommit?: string
   latestVerifiedVersion?: string
   latestVerifiedCommit?: string    // commit of the last VERIFIED production deployment (set by reconciliation)
@@ -250,6 +254,79 @@ export type DeploymentRecord = {
   createdAt: number
   updatedAt: number
   verifiedAt?: number
+}
+
+// ── Evidence-based baseline adoption ────────────────────────────────────────
+export type BaselineSchemaEvidence = {
+  state: 'verified' | 'not_applicable' | 'unknown'
+  schemaVersion?: string
+  lastMigrationId?: string
+  evidence?: string
+}
+export type BaselineFlagEvidence = {
+  assessed: boolean
+  flags: Record<string, boolean>
+}
+export type BaselineVerificationEvidence = {
+  kind: 'production_deployment' | 'health_check' | 'smoke_test' | 'owner_attestation'
+  reference: string
+  verifiedAt?: number
+}
+export type BaselineCapabilityEvidence = { id: string; evidence: string }
+export type BaselineAdoptionInput = {
+  targetProduct: string
+  proposedVersion: string
+  deployedCommit: string
+  capabilityManifestHash: string
+  capabilities: BaselineCapabilityEvidence[]
+  schemaMigrationState: BaselineSchemaEvidence
+  relevantFlagState: BaselineFlagEvidence
+  verificationEvidence: BaselineVerificationEvidence[]
+}
+export type BaselineRollbackSnapshot = {
+  currentVersion?: string
+  baselineSource: BaselineSource
+  baselineAdoptionId?: string
+  currentCommit?: string
+  latestVerifiedVersion?: string
+  latestVerifiedCommit?: string
+  businessUpdatedAt: number
+}
+export type BaselineAdoptionVerdict = 'safe_to_adopt' | 'needs_review' | 'insufficient_evidence'
+export type BaselineAdoptionDryRun = {
+  targetProduct: string
+  proposedVersion?: string
+  deployedCommit?: string
+  capabilityManifestHash?: string
+  matchedCapabilities: BaselineCapabilityEvidence[]
+  schemaMigrationState: BaselineSchemaEvidence
+  relevantFlagState: BaselineFlagEvidence
+  verificationEvidence: BaselineVerificationEvidence[]
+  missingEvidence: string[]
+  conflicts: string[]
+  recordsThatWouldChange: string[]
+  rollbackSnapshot: BaselineRollbackSnapshot
+  baselineSource: 'adopted'
+  verdict: BaselineAdoptionVerdict
+  evidenceHash: string
+  approvalToken?: string
+}
+export type BaselineOwnerApproval = {
+  approvedBy: string
+  approvedAt: number
+  evidenceHash: string
+  confirmationPhrase: string
+}
+export type BaselineAdoptionRecord = BaselineAdoptionInput & {
+  recordVersion: 1
+  id: string
+  proposedVersion: string
+  capabilityManifestHash: string
+  baselineSource: 'adopted'
+  adoptedBy: string
+  adoptedAt: number
+  ownerApproval: BaselineOwnerApproval
+  rollbackSnapshot: BaselineRollbackSnapshot
 }
 
 // Statuses that count an update as still "pending" (owner must not forget it).

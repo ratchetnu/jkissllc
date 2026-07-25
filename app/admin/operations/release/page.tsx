@@ -8,6 +8,7 @@ import { Tabs } from '../../../components/ui'
 import { PublishReviewDrawer } from './PublishReviewDrawer'
 import { ReleaseHistoryPanel } from './ReleaseHistoryPanel'
 import { ActivationReadinessPanel } from './ActivationReadinessPanel'
+import { BaselineAdoptionPanel } from './BaselineAdoptionPanel'
 import { sandboxHealth, SANDBOX_HEALTH_LABEL, SANDBOX_HEALTH_TONE } from '../../../lib/platform/sandbox/health'
 
 // ── Release Center ───────────────────────────────────────────────────────────
@@ -103,6 +104,7 @@ function Bullets({ items }: { items: string[] }) {
 type BizTone = 'ok' | 'attention' | 'busy' | 'critical' | 'neutral'
 type BizView = {
   id: string; name: string; edition: string
+  baselineSource: 'installed_by_release' | 'adopted' | 'unknown'
   status: string; statusLabel: string; tone: BizTone; action: string; actionLabel: string
   installedVersion: string; latestVersion: string; lastUpdatedAt?: number
   detail: {
@@ -200,6 +202,9 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
         <div style={{ minWidth: 0, flex: '1 1 190px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 15, fontWeight: 700, overflowWrap: 'anywhere' }}>{b.name}</span>
+            {b.baselineSource === 'adopted' && <Chip fg="#93c5fd" bg="rgba(59,130,246,.15)">Verified starting point</Chip>}
+            {b.baselineSource === 'installed_by_release' && <Chip fg="#86efac" bg="rgba(34,197,94,.16)">Installed by Operion</Chip>}
+            {b.baselineSource === 'unknown' && <Chip fg="#fcd34d" bg="rgba(245,158,11,.15)">Starting version needed</Chip>}
           </div>
           <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3 }}>
             Current version <span className="tabular-nums" style={{ color: 'var(--text)', fontWeight: 600 }}>{b.installedVersion}</span>
@@ -274,6 +279,13 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
               </ul>
             </div>
           )}
+
+          <BaselineAdoptionPanel
+            businessId={b.id}
+            businessName={b.name}
+            baselineSource={b.baselineSource}
+            onAdopted={() => window.location.reload()}
+          />
 
           {b.detail.history.length > 0 && (
             <div>

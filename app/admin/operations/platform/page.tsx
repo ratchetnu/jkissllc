@@ -637,7 +637,7 @@ function BusinessDetail({ id, onChanged, onOpenUpdate }: { id: string; onChanged
     const b = j.business
     setF({
       releaseChannel: b.releaseChannel, updatePolicy: b.updatePolicy, updatesPaused: b.updatesPaused, manualApprovalRequired: b.manualApprovalRequired,
-      healthStatus: b.healthStatus, currentCommit: b.currentCommit ?? '', currentVersion: b.currentVersion ?? '', repoName: b.repoName ?? '', notes: b.notes ?? '',
+      healthStatus: b.healthStatus, currentCommit: b.currentCommit ?? '', repoName: b.repoName ?? '', notes: b.notes ?? '',
       automationMode: b.automationMode ?? 'manual_prompt', healthEndpoint: b.healthEndpoint ?? '/api/health',
       previewDeploymentProvider: b.previewDeploymentProvider ?? '', previewProjectId: b.previewProjectId ?? '', previewRepoId: b.previewRepoId ?? '',
       productionProjectId: b.productionProjectId ?? '', automationWorkflowFile: b.automationWorkflowFile ?? '',
@@ -844,7 +844,7 @@ function BusinessDetail({ id, onChanged, onOpenUpdate }: { id: string; onChanged
               <input style={field} placeholder="ratchetnu/supercharged" value={String(f.repoName ?? '')} onChange={e => set('repoName', e.target.value)} />
               {(() => { const raw = String(f.repoName ?? '').trim(); if (!raw) return <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>Format: <code>owner/name</code> — a GitHub URL is accepted and normalized.</p>; const ref = parseRepoName(raw); return ref ? <p style={{ fontSize: 11, color: '#34d399', marginTop: 3 }}>✓ {ref.owner}/{ref.name}</p> : <p style={{ fontSize: 11, color: '#f87171', marginTop: 3 }}>✗ needs owner/name (e.g. ratchetnu/supercharged) — rejected on save.</p> })()}
             </div>
-            <div><p style={{ ...lab, marginBottom: 6 }}>Status</p><div style={grid}>{Sel('healthStatus', 'Health', ['unknown', 'healthy', 'degraded', 'down'])}{Txt('currentVersion', 'Current version')}{Txt('currentCommit', 'Current commit')}</div>
+            <div><p style={{ ...lab, marginBottom: 6 }}>Status</p><div style={grid}>{Sel('healthStatus', 'Health', ['unknown', 'healthy', 'degraded', 'down'])}{Txt('currentCommit', 'Current commit')}</div>
               <div style={{ display: 'flex', gap: 16, marginTop: 8, flexWrap: 'wrap' }}>{Chk('updatesPaused', 'Updates paused')}{Chk('manualApprovalRequired', 'Manual approval required')}</div></div>
             <div><p style={{ ...lab, marginBottom: 6 }}>Notes</p><input style={field} value={String(f.notes ?? '')} onChange={e => set('notes', e.target.value)} /></div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

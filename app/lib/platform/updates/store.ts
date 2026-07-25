@@ -4,7 +4,10 @@
 // intentionally global platform-owner data, independent of any tenant.
 
 import { redis } from '../../redis'
-import type { PlatformBusiness, PlatformUpdate, UpdateCompatibility, PlatformRelease, DeploymentRecord } from './types'
+import type {
+  PlatformBusiness, PlatformUpdate, UpdateCompatibility, PlatformRelease, DeploymentRecord,
+  BaselineAdoptionRecord,
+} from './types'
 
 const K_BIZ = 'platform:business:'
 const K_BIZ_IDX = 'platform:business:index'
@@ -17,6 +20,9 @@ const K_REL_IDX = 'platform:release:index'
 const K_DEP = 'platform:deployment:'
 const K_DEP_IDX = 'platform:deployment:index'
 const K_DEP_CTR = 'platform:deployment:counter'
+const K_BASELINE = 'platform:baseline-adoption:'
+const K_BASELINE_IDX = 'platform:baseline-adoption:index'
+const K_BASELINE_CTR = 'platform:baseline-adoption:counter'
 
 function parse<T>(raw: string | null): T | null { if (!raw) return null; try { return JSON.parse(raw) as T } catch { return null } }
 async function loadMany<T>(prefix: string, ids: string[]): Promise<T[]> {
@@ -82,4 +88,44 @@ export async function listDeployments(limit = 200): Promise<DeploymentRecord[]> 
 }
 export async function listDeploymentsForUpdate(updateKey: string): Promise<DeploymentRecord[]> {
   return (await listDeployments(500)).filter((d) => d.updateKeys.includes(updateKey))
+}
+
+// ── Baseline adoptions ──────────────────────────────────────────────────────
+export async function nextBaselineAdoptionId(): Promise<string> {
+  return `BADOPT-${1000 + (await redis.incr(K_BASELINE_CTR))}`
+}
+export async function getBaselineAdoption(id: string): Promise<BaselineAdoptionRecord | null> {
+  return parse(await redis.get(K_BASELINE + id))
+}
+export async function listBaselineAdoptionsForBusiness(businessId: string, limit = 50): Promise<BaselineAdoptionRecord[]> {
+  const records = await loadMany<BaselineAdoptionRecord>(
+    K_BASELINE,
+    await redis.zrevrange(K_BASELINE_IDX, 0, Math.max(0, Math.min(500, limit * 10) - 1)),
+  )
+  return records.filter((record) => record.targetProduct === businessId).slice(0, limit)
+}
+
+/** The adoption record and business provenance become visible in one Redis transaction. */
+export async function saveBaselineAdoption(
+  record: BaselineAdoptionRecord,
+  business: PlatformBusiness,
+  expectedBusinessUpdatedAt: number,
+): Promise<boolean> {
+  const script = `
+    local current = redis.call('GET', KEYS[3])
+    if not current then return 0 end
+    local decoded = cjson.decode(current)
+    if tonumber(decoded.updatedAt) ~= tonumber(ARGV[6]) then return 0 end
+    redis.call('SET', KEYS[1], ARGV[1])
+    redis.call('ZADD', KEYS[2], ARGV[2], ARGV[3])
+    redis.call('SET', KEYS[3], ARGV[4])
+    redis.call('ZADD', KEYS[4], ARGV[2], ARGV[5])
+    return 1
+  `
+  const result = await redis.eval(
+    script,
+    [K_BASELINE + record.id, K_BASELINE_IDX, K_BIZ + business.id, K_BIZ_IDX],
+    [JSON.stringify(record), String(record.adoptedAt), record.id, JSON.stringify(business), business.id, String(expectedBusinessUpdatedAt)],
+  )
+  return result === 1 || result === '1'
 }

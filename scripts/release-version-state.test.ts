@@ -112,6 +112,7 @@ test('a verified deployment WITH a release version writes both version fields', 
   })
   assert.equal(p.currentVersion, '0.1.0')
   assert.equal(p.latestVerifiedVersion, '0.1.0')
+  assert.equal(p.baselineSource, 'installed_by_release')
   assert.equal(p.currentCommit, 'abc1234')
 })
 
