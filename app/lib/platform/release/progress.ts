@@ -64,7 +64,11 @@ export function mapJobToProgress(
     case 'approved_for_production': case 'merging': case 'production_deploying': case 'verifying':
       return at(4, 'Finishing up…', { previewReady: true })
     case 'cancelled': case 'rolled_back': case 'rolling_back':
-      return { step: 0, stepLabel: UPDATE_STEPS[0], message: 'The last update was stopped. You can start again.', done: 0, running: false, previewReady: false, blocked: false, canRetry: true }
+      // `canRetry: false` — a cancelled/rolled-back job is NOT retryable: the dispatcher
+      // refuses it (`cancelled` is not in the FAILED set), so advertising Retry produced a
+      // button that always failed. The way forward is a NEW update, which is what the
+      // message says and what the card's primary action already offers.
+      return { step: 0, stepLabel: UPDATE_STEPS[0], message: 'The last update was stopped. You can start again.', done: 0, running: false, previewReady: false, blocked: false, canRetry: false }
     default:
       if (FAILED.has(status)) {
         const eligible = retryEligibility({

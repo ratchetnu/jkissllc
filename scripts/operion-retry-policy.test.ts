@@ -148,6 +148,19 @@ test('the UI and the dispatcher read the SAME approval list (no duplicated polic
   assert.equal(mapJobToProgress('failed', { hasJob: true, updateStatus: 'archived', failureCategory: 'apply_failed', attemptCount: 4 }).canRetry, false)
 })
 
+test('a cancelled job offers no Retry — the dispatcher refuses it, so the button must not appear', () => {
+  // Found in Preview browser validation: this branch hardcoded canRetry:true and never
+  // consulted the policy, so a cancelled job showed a Retry button that always failed
+  // with job_not_retryable. The way forward is a NEW update, not a retry.
+  for (const status of ['cancelled', 'rolled_back', 'rolling_back']) {
+    const p = mapJobToProgress(status, { hasJob: true, updateStatus: 'approved', failureCategory: 'cancelled' })
+    assert.equal(p.canRetry, false, `${status} must not offer Retry`)
+    assert.equal(retryEligibility({ jobStatus: status, failureCategory: 'cancelled', updateStatus: 'approved', attemptCount: 0 }).ok, false)
+  }
+  // The message still points at the real way forward.
+  assert.match(mapJobToProgress('cancelled', { hasJob: true, updateStatus: 'approved' }).message, /start again/i)
+})
+
 // ── The dispatcher itself (not just the pure helper) ─────────────────────────
 
 test('retryPreview REFUSES an archived update: no dispatch, and attemptCount is unchanged', async () => {
