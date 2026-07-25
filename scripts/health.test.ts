@@ -6,6 +6,7 @@ import test from 'node:test'
 
 import { summarize, configChecks, runHealthChecks, projectHealth, httpStatusFor } from '../app/lib/health'
 import { twilioConfigured } from '../app/lib/sms'
+import { completionUploadReadiness } from '../app/lib/job-assignment'
 
 const FULL_ENV = {
   BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_SECRETVALUE_do_not_leak',
@@ -17,6 +18,7 @@ const FULL_ENV = {
   TWILIO_ACCOUNT_SID: 'ACSECRETVALUE_do_not_leak',
   TWILIO_AUTH_TOKEN: 'twtok_SECRETVALUE_do_not_leak',
   TWILIO_FROM: '+15555550123',
+  BLOB_STORE_ID: 'store_FAKEIDdoNotLeak',
 }
 
 test('ai_provider is "ok" via Vercel OIDC even without a static AI key (no false degraded)', () => {
@@ -78,6 +80,31 @@ test('twilioConfigured is the SAME predicate the send path uses (cannot drift)',
   assert.equal(twilioConfigured(FULL_ENV), true)
   assert.equal(twilioConfigured({}), false)
   assert.equal(twilioConfigured({ TWILIO_ACCOUNT_SID: 'ACx' }), false)
+})
+
+test('completion_uploads is its own capability: a Blob token with no store binding is NOT ok', () => {
+  const noStore = configChecks({ ...FULL_ENV, BLOB_STORE_ID: undefined })
+  // The Blob token is still there, so plain storage stays ok…
+  assert.equal(noStore.find(c => c.name === 'storage')?.status, 'ok')
+  // …but crew completion proof cannot be accepted, and readiness must say so.
+  // This is the case that read `storage: ok` while uploads failed closed in the field.
+  const cu = noStore.find(c => c.name === 'completion_uploads')
+  assert.equal(cu?.status, 'degraded')
+  assert.match(cu?.detail ?? '', /BLOB_STORE_ID/)
+  assert.equal(configChecks(FULL_ENV).find(c => c.name === 'completion_uploads')?.status, 'ok')
+  // Whitespace-only is not a binding (mirrors the upload route's trim()).
+  assert.equal(configChecks({ ...FULL_ENV, BLOB_STORE_ID: '   ' }).find(c => c.name === 'completion_uploads')?.status, 'degraded')
+})
+
+test('completion_uploads uses the SAME predicate the upload route calls (cannot drift)', () => {
+  assert.equal(completionUploadReadiness('store_x').ready, true)
+  assert.equal(completionUploadReadiness(undefined).ready, false)
+  assert.equal(completionUploadReadiness('  ').ready, false)
+})
+
+test('the store id is a config identifier, but readiness still never returns it', () => {
+  const det = configChecks(FULL_ENV).find(c => c.name === 'completion_uploads')?.detail ?? ''
+  assert.ok(!det.includes('store_FAKEIDdoNotLeak'), 'detail must name the variable, never the value')
 })
 
 test('email/sms/payments stay separated by provider — one outage does not mask another', () => {
