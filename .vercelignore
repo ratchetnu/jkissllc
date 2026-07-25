@@ -1,0 +1,11 @@
+# Files excluded from a Vercel CLI deploy upload (`vercel deploy`).
+#
+# Git-based deploys are unaffected — they only ever see tracked files. This exists
+# for the CLI path, which uploads the working directory and therefore picks up
+# UNTRACKED local state unless told otherwise.
+#
+# `.claude/` holds agent worktrees, each with its own node_modules and .next build
+# output — ~227 MB at the time of writing, none of it part of the app. It is not in
+# .gitignore (agent sessions read it), so without this file a `vercel deploy` from a
+# working tree uploads the whole thing.
+.claude/
