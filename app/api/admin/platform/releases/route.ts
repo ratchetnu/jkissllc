@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { getPrincipal, requirePlatformOwner } from '../../_lib/session'
 import {
-  getBusiness, getUpdate, listReleasePackages, nextReleasePackageId, saveReleasePackage,
+  getBusiness, getUpdate, listBusinesses, listReleasePackages, listUpdates,
+  nextReleasePackageId, saveReleasePackage,
 } from '../../../../lib/platform/updates/store'
 import { recordPlatformAudit } from '../../../../lib/platform/updates/audit'
+import { updateReleaseEligible } from '../../../../lib/platform/updates/policy'
 import type { ReleasePackage } from '../../../../lib/platform/updates/types'
 import type { ChangeClassification, MigrationClassification } from '../../../../lib/platform/release/semver-policy'
 import type { ReleaseChannel } from '../../../../lib/platform/release/versions'
@@ -23,7 +25,35 @@ const text = (v: unknown, max: number): string | undefined =>
 export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePlatformOwner(req)
   if (who instanceof NextResponse) return who
-  return NextResponse.json({ packages: await listReleasePackages() })
+  const [packages, businesses, updates] = await Promise.all([
+    listReleasePackages(),
+    listBusinesses(),
+    listUpdates(),
+  ])
+  return NextResponse.json({
+    packages,
+    products: businesses
+      .filter((business) => business.status !== 'archived')
+      .map((business) => ({
+        id: business.id,
+        name: business.name,
+        currentVersion: business.currentVersion ?? null,
+        baselineSource: business.baselineSource ?? 'unknown',
+      })),
+    updates: updates.map((update) => {
+      const readiness = updateReleaseEligible(update)
+      return {
+        key: update.key,
+        title: update.title,
+        summary: update.summary,
+        status: update.status,
+        breakingChange: update.breakingChange,
+        migrationRequired: update.migrationRequired,
+        eligible: readiness.eligible,
+        reasons: readiness.reasons,
+      }
+    }),
+  })
 })
 
 export const POST = withTenantRoute(async (req: NextRequest) => {

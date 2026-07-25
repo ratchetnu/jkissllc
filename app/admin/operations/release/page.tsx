@@ -9,6 +9,7 @@ import { PublishReviewDrawer } from './PublishReviewDrawer'
 import { ReleaseHistoryPanel } from './ReleaseHistoryPanel'
 import { ActivationReadinessPanel } from './ActivationReadinessPanel'
 import { BaselineAdoptionPanel } from './BaselineAdoptionPanel'
+import { ReleasePackageBuilder } from './ReleasePackageBuilder'
 import { sandboxHealth, SANDBOX_HEALTH_LABEL, SANDBOX_HEALTH_TONE } from '../../../lib/platform/sandbox/health'
 
 // ── Release Center ───────────────────────────────────────────────────────────
@@ -508,7 +509,7 @@ function ReleaseCenter() {
 
   const activeTab = snap?.ownerAccess ? tab : 'system'
   const tabs = snap?.ownerAccess
-    ? [{ id: 'updates', label: 'Updates' }, { id: 'readiness', label: 'Ready Check' }, { id: 'history', label: 'History' }, { id: 'system', label: 'System Details' }]
+    ? [{ id: 'updates', label: 'Updates' }, { id: 'packages', label: 'Build Release' }, { id: 'readiness', label: 'Ready Check' }, { id: 'history', label: 'History' }, { id: 'system', label: 'System Details' }]
     : [{ id: 'system', label: 'System Details' }]
 
   return (
@@ -552,6 +553,8 @@ function ReleaseCenter() {
           </div>
 
           {activeTab === 'updates' && <Businesses refreshNonce={refreshNonce} />}
+
+          {activeTab === 'packages' && <ReleasePackageBuilder />}
 
           {activeTab === 'readiness' && (
             <Section title="Ready Check" icon={ShieldCheck}>
