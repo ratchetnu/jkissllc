@@ -325,6 +325,31 @@ The Routes lane and the Bookings lane were never joined; a customer booking coul
 - **Attributed audit ledger** for all nine assignment actions — no GPS, no tokens, no customer data in metadata
 - Customer-facing data minimised: `customerView` strips `assignees` entirely
 
+**Booking pay reaches the pay statement (verified 2026-07-25).** The deterministic
+engine (`route-pay.computePay`) already aggregates BOTH lanes: completed route crew-pay
+snapshots and eligible booking crew-pay snapshots (`a.payCents` — the frozen snapshot,
+never a live re-resolution), each line tagged `source: 'route' | 'booking'`. The admin
+issue path (`buildSnapshot` in `app/api/admin/pay-statements`) copies every priced line
+of both lanes into the immutable `PayStatement`; deductions from the claims ledger are
+applied exactly once (`applyDeductions`), and `pay-statement-view.reconcile()` enforces
+gross = Σ lines and net = gross − deductions. **Hardening added:** `payableCents()` now
+gates every earning amount before it can touch a payable total — a negative, `NaN`, or
+`Infinity` snapshot (reachable on the bookings lane, which reads `payCents` directly)
+collapses to *unpriced* (visible in the pay review, excluded from the issued statement)
+instead of silently entering — or poisoning — gross. Routes are byte-identical (they
+already flow through `parsePayCents`, which yields `null` or a ≥0 integer).
+
+**Historical safety:** an issued `PayStatement` is an immutable snapshot — never
+recomputed after issue. Re-generation is **not** an in-place edit: the exact crew+period
+is duplicate-guarded (`findByPeriod`), so a corrected statement requires an explicit
+**void** first, which frees the period. Void is the audit/version model; nothing
+overwrites an issued statement.
+
+**Not deployed / not overstated:** this whole path is gated by `BOOKING_ASSIGNMENT_ENABLED`,
+which is **OFF in Production** — so route-only payroll behaviour is unchanged in prod and
+booking pay does not yet appear on live statements. Flag-off, the change is inert; when the
+owner enables it in Preview the booking lines and the amount guard take effect.
+
 ### 2.3 Operion transfer safety (merged 2026-07-22)
 
 | PR | Gate | What it prevents |
