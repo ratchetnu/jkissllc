@@ -91,8 +91,10 @@ test('role summaries are DERIVED from the projection, not hand-written claims', 
   assert.equal(admin.areas, 1)
   const crew = s.find(x => x.id === 'crew')!
   assert.equal(crew.granted, 1)
-  assert.equal(roleScopeLabel(crew), '1 of 3 · 1 area')
-  assert.equal(roleScopeLabel(admin), '2 of 3 · 1 area')
+  // The granted count is the card headline, so the scope line stays short enough for
+  // three cards to sit side by side on a phone.
+  assert.equal(roleScopeLabel(crew), 'of 3 · 1 area')
+  assert.equal(roleScopeLabel(admin), 'of 3 · 1 area')
 })
 
 test('summaries agree with can() for the real matrix (viewer cannot over- or under-state a role)', () => {

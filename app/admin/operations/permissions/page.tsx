@@ -163,7 +163,9 @@ function PermissionsView() {
       {!loading && state === 'ok' && data && (
         <>
           {/* ── Role summary cards ── */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginBottom: 20 }}>
+          {/* Exactly three roles — a fixed 3-up grid, never auto-fit: auto-fit drops to two
+              columns on a phone and leaves the third card orphaned off to one side. */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10, marginBottom: 20 }}>
             {summaries.map(s => {
               const selected = mode === 'role' && s.id === activeRole
               return (

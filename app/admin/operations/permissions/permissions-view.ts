@@ -137,7 +137,9 @@ export function roleSummaries(data: MatrixData): RoleSummary[] {
   })
 }
 
-/** "12 of 54 · 4 areas" */
+/** "of 54 · 4 areas" — the granted count is the card's headline number, so the scope
+ *  line carries only what that number is OUT OF. Kept short so three role cards sit
+ *  side by side on a phone without wrapping. */
 export function roleScopeLabel(s: RoleSummary): string {
-  return `${s.granted} of ${s.total} · ${s.areas} ${s.areas === 1 ? 'area' : 'areas'}`
+  return `of ${s.total} · ${s.areas} ${s.areas === 1 ? 'area' : 'areas'}`
 }
