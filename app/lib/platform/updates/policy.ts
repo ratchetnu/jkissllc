@@ -113,6 +113,7 @@ export function updateReleaseEligible(u: PlatformUpdate): { eligible: boolean; r
   if (!['approved', 'ready_to_release', 'ready_for_review'].includes(u.status)) reasons.push('not approved/ready')
   if (u.validation.tests !== 'passed') reasons.push('tests not passed')
   if (u.validation.build !== 'passed') reasons.push('build not passed')
+  if (u.manualPortRequired) reasons.push('manual port required')
   if (u.breakingChange && u.validation.ownerVerification !== 'passed') reasons.push('breaking change needs owner verification')
   if (u.migrationRequired && !u.rollbackSupported) reasons.push('migration without rollback plan')
   return { eligible: reasons.length === 0, reasons }

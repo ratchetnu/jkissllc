@@ -2,7 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { evaluateReleasePackageReadiness, type ReleasePackageDraft } from '../app/lib/platform/release/release-package'
-import type { PlatformBusiness, PlatformUpdate, ReleasePackage } from '../app/lib/platform/updates/types'
+import type {
+  PlatformBusiness, PlatformUpdate, ReleasePackage, UpdateCompatibility,
+} from '../app/lib/platform/updates/types'
 
 const now = 1_800_000_000_000
 const business: PlatformBusiness = {
@@ -30,9 +32,15 @@ const draft: ReleasePackageDraft = {
   classification: 'capability', breakingChange: false, migration: 'none',
   updateKeys: ['UPD-2001'],
 }
+const compatibility: UpdateCompatibility = {
+  recordVersion: 1, updateKey: update.key, businessId: business.id,
+  status: 'compatible', createdAt: now - 1000, updatedAt: now - 500,
+}
 const ready = (overrides: Partial<Parameters<typeof evaluateReleasePackageReadiness>[0]> = {}) =>
   evaluateReleasePackageReadiness({
-    draft, business, updates: [update], existingPackages: [], now, ...overrides,
+    draft, business, updates: [update],
+    compatibilityByUpdate: { [update.key]: compatibility },
+    existingPackages: [], now, ...overrides,
   })
 
 test('valid package receives a normalized version and evidence snapshot', () => {
@@ -93,6 +101,43 @@ test('missing, duplicate, or ineligible updates block readiness', () => {
   assert.equal(ready({ updates: [] }).ok, false)
   const failed = { ...update, validation: { ...update.validation, tests: 'failed' as const } }
   assert.match(ready({ updates: [failed] }).blockers.join(' '), /tests not passed/)
+})
+
+test('manual ports and target-incompatible updates cannot become ready', () => {
+  const manual = ready({ updates: [{ ...update, manualPortRequired: true }] })
+  assert.equal(manual.ok, false)
+  assert.match(manual.blockers.join(' '), /manual port required/)
+
+  const incompatible = ready({
+    compatibilityByUpdate: {
+      [update.key]: { ...compatibility, status: 'incompatible' },
+    },
+  })
+  assert.equal(incompatible.ok, false)
+  assert.match(incompatible.blockers.join(' '), /not transferable/)
+
+  const missing = ready({ compatibilityByUpdate: {} })
+  assert.equal(missing.ok, false)
+  assert.match(missing.blockers.join(' '), /no assessed compatibility/)
+})
+
+test('readiness re-derives breaking and migration risk from current update records', () => {
+  const breaking = ready({
+    draft: { ...draft, proposedVersion: '1.3.0', breakingChange: false },
+    updates: [{ ...update, breakingChange: true }],
+  })
+  assert.equal(breaking.ok, false)
+  assert.equal(breaking.versionPolicy.reason, 'breaking_change_requires_major')
+
+  const migration = ready({
+    draft: {
+      ...draft, proposedVersion: '1.2.1', classification: 'fix',
+      migration: 'none',
+    },
+    updates: [{ ...update, migrationRequired: true }],
+  })
+  assert.equal(migration.ok, false)
+  assert.match(migration.blockers.join(' '), /declares no data change/)
 })
 
 test('routes enforce owner auth and readiness is persisted through the atomic store gate', () => {

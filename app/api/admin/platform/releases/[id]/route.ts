@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../../lib/platform/tenancy/with-tenant-route'
 import { getPrincipal, requirePlatformOwner } from '../../../_lib/session'
 import {
-  getBusiness, getReleasePackage, listReleasePackages, listUpdates, saveReadyReleasePackage,
+  getBusiness, getCompatMap, getReleasePackage, listReleasePackages, listUpdates,
+  saveReadyReleasePackage,
 } from '../../../../../lib/platform/updates/store'
 import { recordPlatformAudit } from '../../../../../lib/platform/updates/audit'
 import { evaluateReleasePackageReadiness } from '../../../../../lib/platform/release/release-package'
@@ -36,16 +37,21 @@ export const PATCH = withTenantRoute(async (
     return NextResponse.json({ error: `cannot mark ${record.status} ready` }, { status: 409 })
   }
 
-  const [business, updates, packages] = await Promise.all([
+  const [business, updates, packages, compatibilityMaps] = await Promise.all([
     getBusiness(record.targetProduct),
     listUpdates(500),
     listReleasePackages(500),
+    Promise.all(record.updateKeys.map((key) => getCompatMap(key))),
   ])
+  const compatibilityByUpdate = Object.fromEntries(
+    record.updateKeys.map((key, index) => [key, compatibilityMaps[index][record.targetProduct]]),
+  )
   const now = Date.now()
   const readiness = evaluateReleasePackageReadiness({
     draft: record,
     business,
     updates,
+    compatibilityByUpdate,
     existingPackages: packages.filter((p) => p.id !== record.id),
     now,
   })

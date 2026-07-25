@@ -121,8 +121,14 @@ export async function saveReadyReleasePackage(
     local decodedBusiness = cjson.decode(business)
     if tonumber(decodedBusiness.updatedAt) ~= tonumber(ARGV[4]) then return -2 end
     local holder = redis.call('GET', KEYS[3])
-    if holder and holder ~= ARGV[2] then return -3 end
-    if not holder then redis.call('SET', KEYS[3], ARGV[2]) end
+    if holder and holder ~= ARGV[2] then
+      local holderPackage = redis.call('GET', ARGV[6] .. holder)
+      if holderPackage then
+        local decodedHolder = cjson.decode(holderPackage)
+        if decodedHolder.status ~= 'cancelled' and decodedHolder.status ~= 'superseded' then return -3 end
+      end
+    end
+    if not holder or holder ~= ARGV[2] then redis.call('SET', KEYS[3], ARGV[2]) end
     redis.call('SET', KEYS[1], ARGV[1])
     redis.call('ZADD', KEYS[2], ARGV[5], ARGV[2])
     return 1
@@ -130,7 +136,10 @@ export async function saveReadyReleasePackage(
   const result = await redis.eval(
     script,
     [K_PACKAGE + record.id, K_PACKAGE_IDX, reservation, K_BIZ + record.targetProduct],
-    [JSON.stringify(record), record.id, String(expectedPackageUpdatedAt), String(expectedBusinessUpdatedAt), String(record.updatedAt)],
+    [
+      JSON.stringify(record), record.id, String(expectedPackageUpdatedAt),
+      String(expectedBusinessUpdatedAt), String(record.updatedAt), K_PACKAGE,
+    ],
   )
   if (result === 1 || result === '1') return 'saved'
   if (result === -2 || result === '-2') return 'stale_business'
