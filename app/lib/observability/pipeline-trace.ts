@@ -60,7 +60,23 @@ export function isSubStage(stage: PipelineStage): boolean {
 
 // One stage may run more than once in a job (e.g. several saveBooking writes). We keep
 // the accumulated total, an occurrence count, and the worst single occurrence.
-export type StageStat = { totalMs: number; count: number; maxMs: number }
+//
+// Failure annotation (OPTIONAL + additive): when a stage records a fast-fail — the
+// step could not execute, e.g. the provider was unavailable — the recorder marks it
+// `status: 'failed'` with a coarse `failureReason` and the `retryable` flag, so a
+// trace stays structurally complete even when a stage didn't run. Older trace records
+// simply lack these fields (undefined) → backward-compatible with the read layer.
+export type StageStat = {
+  totalMs: number
+  count: number
+  maxMs: number
+  status?: 'failed'
+  failureReason?: string
+  retryable?: boolean
+}
+
+// Optional failure metadata a recorder may attach to a stage occurrence.
+export type StageFailure = { status?: 'failed'; failureReason?: string; retryable?: boolean }
 
 export type TraceSeed = {
   requestId: string        // correlates to the analysis id (e.g. `srv-<token>-<attempt>`)
@@ -121,13 +137,20 @@ export class Trace {
 
   clock(): number { return this.now() }
 
-  /** Accumulate a stage measurement. Negative/NaN durations are clamped to 0. */
-  add(stage: PipelineStage, ms: number): void {
+  /** Accumulate a stage measurement. Negative/NaN durations are clamped to 0. An
+   *  optional `fail` annotation marks the stage as a failed occurrence (status /
+   *  reason / retryable) — recording only, it never affects control flow. */
+  add(stage: PipelineStage, ms: number, fail?: StageFailure): void {
     const d = Number.isFinite(ms) && ms > 0 ? ms : 0
     const s = this.stages.get(stage) ?? { totalMs: 0, count: 0, maxMs: 0 }
     s.totalMs += d
     s.count += 1
     if (d > s.maxMs) s.maxMs = d
+    if (fail) {
+      if (fail.status) s.status = fail.status
+      if (fail.failureReason) s.failureReason = fail.failureReason
+      if (typeof fail.retryable === 'boolean') s.retryable = fail.retryable
+    }
     this.stages.set(stage, s)
   }
 
@@ -224,6 +247,16 @@ export function timeStage<T>(stage: PipelineStage, fn: () => Promise<T>): Promis
 export function markStage(stage: PipelineStage, ms: number | undefined): void {
   if (ms == null) return
   activeTrace()?.add(stage, ms)
+}
+
+/** Record a stage that FAILED to execute (a fast-fail path — e.g. the provider was
+ *  unavailable) so the trace stays structurally complete: the stage is emitted with
+ *  its duration plus status='failed', a coarse failure reason, and the retryable flag.
+ *  Purely observational — records only, never affects retry behaviour or flow. Emits
+ *  even when the duration is 0/unknown (an instant fail is still a real occurrence).
+ *  No-op when no trace is active. */
+export function markStageFailure(stage: PipelineStage, ms: number | undefined, failureReason?: string, retryable?: boolean): void {
+  activeTrace()?.add(stage, ms ?? 0, { status: 'failed', failureReason, retryable })
 }
 
 /** Stamp the terminal status/outcome onto the active trace. No-op when none active. */
