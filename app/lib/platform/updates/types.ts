@@ -343,6 +343,15 @@ export type BaselineRollbackSnapshot = {
   businessUpdatedAt: number
 }
 export type BaselineAdoptionVerdict = 'safe_to_adopt' | 'needs_review' | 'insufficient_evidence'
+/** How the deployed commit was proven. Live provider evidence outranks the stored record,
+ *  which only advances when an Operion job finalizes and therefore goes stale for any
+ *  product deployed outside the pipeline. */
+export type BaselineCommitVerification = {
+  source: 'live_production' | 'recorded_baseline'
+  /** The commit the provider reports live Production is serving (when readable). */
+  liveCommit?: string
+  liveDeploymentId?: string
+}
 export type BaselineAdoptionDryRun = {
   targetProduct: string
   proposedVersion?: string
@@ -357,6 +366,7 @@ export type BaselineAdoptionDryRun = {
   recordsThatWouldChange: string[]
   rollbackSnapshot: BaselineRollbackSnapshot
   baselineSource: 'adopted'
+  commitVerification: BaselineCommitVerification
   verdict: BaselineAdoptionVerdict
   evidenceHash: string
   approvalToken?: string
@@ -377,6 +387,7 @@ export type BaselineAdoptionRecord = BaselineAdoptionInput & {
   adoptedAt: number
   ownerApproval: BaselineOwnerApproval
   rollbackSnapshot: BaselineRollbackSnapshot
+  commitVerification: BaselineCommitVerification
 }
 
 // Statuses that count an update as still "pending" (owner must not forget it).

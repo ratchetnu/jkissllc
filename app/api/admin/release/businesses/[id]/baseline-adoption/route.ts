@@ -11,6 +11,7 @@ import {
   dryRunBaselineAdoption,
 } from '../../../../../../lib/platform/release/baseline-adoption'
 import { adoptBaseline } from '../../../../../../lib/platform/release/baseline-adoption-service'
+import { readCurrentProductionDeployment } from '../../../../../../lib/platform/release/production-deployment'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -60,12 +61,17 @@ export const POST = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
     return NextResponse.json({ error: 'Baseline adoption is unavailable because owner approval signing is not configured.' }, { status: 503 })
   }
 
+  // Read-only provider lookup. Authoritative over the stored commit, which only advances on
+  // Operion job finalization and is therefore stale for anything deployed outside the pipeline.
+  const liveProduction = await readCurrentProductionDeployment(business).catch(() => null)
+
   if (action === 'dry_run') {
     const dryRun = dryRunBaselineAdoption({
       business,
       evidence,
       now: Date.now(),
       approvalSecret: secret,
+      liveProduction,
     })
     return NextResponse.json({ ok: dryRun.verdict === 'safe_to_adopt', dryRun })
   }
@@ -81,6 +87,7 @@ export const POST = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
     actor,
     now: Date.now(),
     approvalSecret: secret,
+    liveProduction,
   })
   if (!result.ok) return NextResponse.json({ ok: false, error: result.reason, dryRun: result.dryRun }, { status: 409 })
   return NextResponse.json({ ok: true, baseline: {

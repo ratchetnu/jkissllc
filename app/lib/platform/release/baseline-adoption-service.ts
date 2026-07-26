@@ -12,6 +12,7 @@ import {
   dryRunBaselineAdoption,
   normalizeBaselineAdoptionInput,
   verifyBaselineApprovalToken,
+  type LiveProductionEvidence,
 } from './baseline-adoption'
 import {
   nextBaselineAdoptionId,
@@ -43,12 +44,16 @@ export async function adoptBaseline(input: {
   actor: string
   now: number
   approvalSecret: string
+  /** Re-read server-side at write time; the receipt is bound to it, so Production moving
+   *  between the dry run and the adopt invalidates the approval instead of being ignored. */
+  liveProduction?: LiveProductionEvidence | null
   deps?: BaselineAdoptionDependencies
 }): Promise<AdoptBaselineResult> {
   const dryRun = dryRunBaselineAdoption({
     business: input.business,
     evidence: input.evidence,
     now: input.now,
+    liveProduction: input.liveProduction,
   })
   if (dryRun.verdict !== 'safe_to_adopt' || !dryRun.proposedVersion) {
     return { ok: false, reason: 'baseline evidence is no longer safe to adopt', dryRun }
@@ -84,12 +89,19 @@ export async function adoptBaseline(input: {
       confirmationPhrase: phrase,
     },
     rollbackSnapshot: dryRun.rollbackSnapshot,
+    commitVerification: dryRun.commitVerification,
   }
+  const provenCommit = dryRun.commitVerification.source === 'live_production'
+    ? adoption.deployedCommit
+    : undefined
   const business: PlatformBusiness = {
     ...input.business,
     currentVersion: dryRun.proposedVersion,
     baselineSource: 'adopted',
     baselineAdoptionId: id,
+    // Only advance the stored commit on provider-proven evidence. Without it the record keeps
+    // whatever it had, rather than being advanced on the strength of an unverified claim.
+    ...(provenCommit ? { currentCommit: provenCommit, latestVerifiedCommit: provenCommit } : {}),
     updatedAt: input.now,
   }
 
@@ -110,6 +122,8 @@ export async function adoptBaseline(input: {
       adoptionId: adoption.id,
       evidenceHash: adoption.ownerApproval.evidenceHash,
       capabilityManifestHash: adoption.capabilityManifestHash,
+      commitVerifiedBy: adoption.commitVerification.source,
+      liveDeploymentId: adoption.commitVerification.liveDeploymentId,
     },
   })
   return { ok: true, business, adoption }
