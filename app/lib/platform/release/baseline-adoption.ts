@@ -13,11 +13,27 @@ import type {
   BaselineSchemaEvidence,
   BaselineVerificationEvidence,
   PlatformBusiness,
+  BaselineCommitVerification,
 } from '../updates/types'
 import { channelSupportsPrerelease, parseSemanticVersion } from './semver-policy'
 
 const HASH = /^(?:sha256:)?([a-f0-9]{64})$/i
 const COMMIT = /^[a-f0-9]{7,64}$/i
+/** Live production evidence read from the deployment provider (server-side only). */
+export type LiveProductionEvidence = {
+  deploymentId?: string
+  commit?: string
+  deployedAt?: number
+}
+
+/** Git abbreviations vary (7..40 chars), so compare on the shorter shared prefix.
+ *  Both sides are already constrained to >=7 hex chars by COMMIT. */
+export const sameCommit = (a: string | undefined, b: string | undefined): boolean => {
+  if (!a || !b) return false
+  const x = a.toLowerCase(), y = b.toLowerCase()
+  return x.startsWith(y) || y.startsWith(x)
+}
+
 const MAX_CAPABILITIES = 100
 const MAX_FLAGS = 100
 const MAX_EVIDENCE = 30
@@ -152,8 +168,17 @@ export function normalizeBaselineAdoptionInput(raw: unknown, targetProduct: stri
   }
 }
 
-export function baselineEvidenceHash(input: BaselineAdoptionInput, rollback: BaselineRollbackSnapshot): string {
-  return createHash('sha256').update(stable({ input, rollback })).digest('hex')
+export function baselineEvidenceHash(
+  input: BaselineAdoptionInput,
+  rollback: BaselineRollbackSnapshot,
+  liveProduction?: { commit: string; deploymentId: string },
+): string {
+  // Bind both the artifact and its concrete deployment. A redeploy may change environment,
+  // build output, or configuration without changing the Git commit, so commit-only binding
+  // would allow a receipt minted for one Production state to be spent against another.
+  // Omitted when live provider evidence is not required, preserving the legacy hash shape.
+  const payload = liveProduction ? { input, rollback, liveProduction } : { input, rollback }
+  return createHash('sha256').update(stable(payload)).digest('hex')
 }
 
 export function createBaselineApprovalToken(claims: ApprovalClaims, secret: string): string {
@@ -184,6 +209,8 @@ export function dryRunBaselineAdoption(input: {
   evidence: unknown
   now: number
   approvalSecret?: string
+  /** Read server-side from the deployment provider; never client-supplied. */
+  liveProduction?: LiveProductionEvidence | null
 }): BaselineAdoptionDryRun {
   const evidence = normalizeBaselineAdoptionInput(input.evidence, input.business.id)
   const rollbackSnapshot = rollbackSnapshotFor(input.business)
@@ -200,12 +227,38 @@ export function dryRunBaselineAdoption(input: {
     conflicts.push(`the ${input.business.releaseChannel} channel does not accept a prerelease baseline`)
   }
 
+  const liveCommit = input.liveProduction?.commit?.trim().toLowerCase()
+  const liveDeploymentId = input.liveProduction?.deploymentId?.trim()
+  // Derive this from the trusted business record rather than a caller-supplied switch. Any
+  // mapped provider is authoritative, and an outage must not reopen record-only adoption.
+  const liveProductionRequired = Boolean(
+    input.business.productionProjectId || input.business.deployProject,
+  )
+  const liveUsable = !!liveCommit && COMMIT.test(liveCommit) && !!liveDeploymentId
+  const commitVerification: BaselineCommitVerification = liveUsable
+    ? { source: 'live_production', liveCommit, liveDeploymentId }
+    : liveProductionRequired
+      ? { source: 'live_production_unavailable' }
+      : { source: 'recorded_baseline' }
+
   if (!evidence.deployedCommit) missingEvidence.push('deployed commit')
   else if (!COMMIT.test(evidence.deployedCommit)) conflicts.push('deployed commit is not a valid commit identifier')
-  else {
+  else if (liveUsable) {
+    // The provider is authoritative. The stored commit only advances when an Operion job
+    // finalizes, so it is stale for anything deployed outside the pipeline and must never be
+    // the thing we prove against when live evidence is readable.
+    if (!sameCommit(evidence.deployedCommit, liveCommit)) {
+      const recorded = [input.business.currentCommit, input.business.latestVerifiedCommit].filter(Boolean)
+      conflicts.push(recorded.some((c) => sameCommit(evidence.deployedCommit, c))
+        ? `the recorded production commit is behind live Production, which is serving ${liveCommit!.slice(0, 12)}`
+        : `deployed commit does not match live Production, which is serving ${liveCommit!.slice(0, 12)}`)
+    }
+  } else if (liveProductionRequired) {
+    missingEvidence.push('live production deployment and commit from provider')
+  } else {
     const known = [input.business.currentCommit, input.business.latestVerifiedCommit].filter(Boolean)
     if (!known.length) missingEvidence.push('a recorded production commit to compare')
-    else if (!known.includes(evidence.deployedCommit)) conflicts.push('deployed commit does not match the recorded production commit')
+    else if (!known.some((c) => sameCommit(evidence.deployedCommit, c))) conflicts.push('deployed commit does not match the recorded production commit')
   }
 
   if (!HASH.test(evidence.capabilityManifestHash)) missingEvidence.push('capability manifest SHA-256')
@@ -229,7 +282,11 @@ export function dryRunBaselineAdoption(input: {
     : conflicts.length ? 'needs_review' : 'safe_to_adopt'
   const normalizedVersion = proposed.ok ? proposed.normalized : undefined
   const normalizedEvidence = { ...evidence, proposedVersion: normalizedVersion ?? evidence.proposedVersion }
-  const evidenceHash = baselineEvidenceHash(normalizedEvidence, rollbackSnapshot)
+  const evidenceHash = baselineEvidenceHash(
+    normalizedEvidence,
+    rollbackSnapshot,
+    liveUsable ? { commit: liveCommit, deploymentId: liveDeploymentId } : undefined,
+  )
   const approvalToken = verdict === 'safe_to_adopt' && input.approvalSecret
     ? createBaselineApprovalToken({
         v: 1,
@@ -252,12 +309,13 @@ export function dryRunBaselineAdoption(input: {
     missingEvidence,
     conflicts,
     recordsThatWouldChange: [
-      `platform:business:${input.business.id} (currentVersion, baselineSource, baselineAdoptionId)`,
+      `platform:business:${input.business.id} (currentVersion, baselineSource, baselineAdoptionId${liveUsable ? ', currentCommit, latestVerifiedCommit' : ''})`,
       `platform:baseline-adoption:<new record>`,
       'platform:audit:<new event>',
     ],
     rollbackSnapshot,
     baselineSource: 'adopted',
+    commitVerification,
     verdict,
     evidenceHash,
     approvalToken,

@@ -343,6 +343,14 @@ export type BaselineRollbackSnapshot = {
   businessUpdatedAt: number
 }
 export type BaselineAdoptionVerdict = 'safe_to_adopt' | 'needs_review' | 'insufficient_evidence'
+/** How the deployed commit was proven. A mapped provider is authoritative and required;
+ *  the stored record is used only when the business has no provider mapping. */
+export type BaselineCommitVerification = {
+  source: 'live_production' | 'recorded_baseline' | 'live_production_unavailable'
+  /** The commit the provider reports live Production is serving (when readable). */
+  liveCommit?: string
+  liveDeploymentId?: string
+}
 export type BaselineAdoptionDryRun = {
   targetProduct: string
   proposedVersion?: string
@@ -357,6 +365,7 @@ export type BaselineAdoptionDryRun = {
   recordsThatWouldChange: string[]
   rollbackSnapshot: BaselineRollbackSnapshot
   baselineSource: 'adopted'
+  commitVerification: BaselineCommitVerification
   verdict: BaselineAdoptionVerdict
   evidenceHash: string
   approvalToken?: string
@@ -377,6 +386,7 @@ export type BaselineAdoptionRecord = BaselineAdoptionInput & {
   adoptedAt: number
   ownerApproval: BaselineOwnerApproval
   rollbackSnapshot: BaselineRollbackSnapshot
+  commitVerification: BaselineCommitVerification
 }
 
 // Statuses that count an update as still "pending" (owner must not forget it).
