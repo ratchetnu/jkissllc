@@ -50,6 +50,7 @@ export type PlatformAuditAction =
   | 'release_package.created'
   | 'release_package.ready'
   | 'release_package.approved'
+  | 'release_package.rollout_created'
   // Controlled owner rollback (Increment 3B.6). Restores the prior production deployment.
   | 'rollback.started'
   | 'rollback.completed'

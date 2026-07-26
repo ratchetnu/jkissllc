@@ -2,14 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../../lib/platform/tenancy/with-tenant-route'
 import { getPrincipal, requirePlatformOwner } from '../../../_lib/session'
 import {
-  getBusiness, getCompatMap, getReleasePackage, getUpdate, listReleasePackages,
-  saveApprovedReleasePackage, saveReadyReleasePackage,
+  getBusiness, getCompatMap, getRelease, getReleasePackage, getUpdate, listReleasePackages,
+  nextReleaseId, saveApprovedReleasePackage, saveReadyReleasePackage,
+  saveRolloutForApprovedPackage,
 } from '../../../../../lib/platform/updates/store'
 import { recordPlatformAudit } from '../../../../../lib/platform/updates/audit'
 import {
   evaluateReleasePackageReadiness, releasePackageApprovalPhrase,
 } from '../../../../../lib/platform/release/release-package'
-import type { ReleasePackage } from '../../../../../lib/platform/updates/types'
+import type { PlatformRelease, ReleasePackage } from '../../../../../lib/platform/updates/types'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -43,9 +44,11 @@ export const GET = withTenantRoute(async (
   const who = await requirePlatformOwner(req)
   if (who instanceof NextResponse) return who
   const record = await getReleasePackage((await params).id)
+  const rollout = record?.rolloutId ? await getRelease(record.rolloutId) : null
   return record
     ? NextResponse.json({
       package: record,
+      rollout,
       approval: record.status === 'ready_for_approval'
         ? { requiredPhrase: releasePackageApprovalPhrase(record) }
         : null,
@@ -62,8 +65,73 @@ export const PATCH = withTenantRoute(async (
   const record = await getReleasePackage((await params).id)
   if (!record) return NextResponse.json({ error: 'not_found' }, { status: 404 })
   const body = await req.json().catch(() => ({}))
-  if (body.action !== 'mark-ready' && body.action !== 'approve') {
+  if (body.action !== 'mark-ready' && body.action !== 'approve' && body.action !== 'create-rollout') {
     return NextResponse.json({ error: 'unknown action' }, { status: 400 })
+  }
+
+  if (body.action === 'create-rollout') {
+    if (record.rolloutId) {
+      const rollout = await getRelease(record.rolloutId)
+      return rollout
+        ? NextResponse.json({ ok: true, idempotent: true, package: record, rollout })
+        : NextResponse.json({ error: 'package references a missing rollout record' }, { status: 409 })
+    }
+    if (record.status !== 'approved' || !record.approvedBy || !record.approvedAt || !record.approvalSnapshot) {
+      return NextResponse.json({ error: `cannot create a rollout from ${record.status} package` }, { status: 409 })
+    }
+
+    const actor = (await getPrincipal(req))?.sub || 'owner'
+    const now = Date.now()
+    const rolloutId = await nextReleaseId()
+    const rollout: PlatformRelease & { id: string; packageId: string; targetProduct: string } = {
+      recordVersion: 1,
+      id: rolloutId,
+      packageId: record.id,
+      targetProduct: record.targetProduct,
+      version: record.proposedVersion,
+      name: record.name,
+      releaseNotes: record.releaseNotes,
+      channel: record.channel,
+      status: 'approved',
+      updateKeys: [...record.updateKeys],
+      targetBusinessIds: [record.targetProduct],
+      createdBy: record.createdBy,
+      approvedBy: record.approvedBy,
+      createdAt: now,
+      updatedAt: now,
+      approvedAt: record.approvedAt,
+    }
+    const linkedPackage = {
+      ...record,
+      rolloutId,
+      rolloutCreatedAt: now,
+      updatedAt: now,
+    }
+    const result = await saveRolloutForApprovedPackage(rollout, linkedPackage, record.updatedAt)
+    if (result === 'already_created' || result === 'stale_package') {
+      const current = await getReleasePackage(record.id)
+      const existing = current?.rolloutId ? await getRelease(current.rolloutId) : null
+      if (current && existing) {
+        return NextResponse.json({ ok: true, idempotent: true, package: current, rollout: existing })
+      }
+    }
+    if (result !== 'saved') {
+      const status = result === 'invalid_status' ? 409 : 412
+      return NextResponse.json({ error: result }, { status })
+    }
+    await recordPlatformAudit({
+      actor, actorType: 'owner', source: 'release-package-api', action: 'release_package.rollout_created',
+      businessId: record.targetProduct, releaseVersion: record.proposedVersion,
+      priorStatus: record.status, newStatus: rollout.status,
+      summary: `${rollout.id} created for ${record.targetProduct} from approved package ${record.id}; no deployment was started`,
+      meta: { packageId: record.id, rolloutId: rollout.id },
+    })
+    return NextResponse.json({
+      ok: true,
+      idempotent: false,
+      package: linkedPackage,
+      rollout,
+    }, { status: 201 })
   }
 
   if (body.action === 'approve') {

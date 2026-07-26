@@ -39,6 +39,36 @@ globalThis.fetch = (async (_url: string, init: { body?: string }) => {
     const keyCount = Number(args[1])
     const keys = args.slice(2, 2 + keyCount)
     const argv = args.slice(2 + keyCount)
+    if (keyCount === 2) {
+      const [packageKey, packageIndex] = keys
+      const [payload, updatedAt, packageId] = argv
+      const current = values.get(packageKey)
+      if (current && (JSON.parse(current).status === 'approved' || JSON.parse(current).rolloutId)) result = -1
+      else {
+        values.set(packageKey, payload)
+        index(packageIndex).set(packageId, Number(updatedAt))
+        result = 1
+      }
+      return { ok: true, status: 200, json: async () => ({ result }) }
+    }
+    if (keyCount === 4 && keys[2].startsWith('platform:release:')) {
+      const [packageKey, packageIndex, releaseKey, releaseIndex] = keys
+      const [releasePayload, updatedAt, releaseId, packagePayload, expectedPackageAt, packageId] = argv
+      const current = values.get(packageKey)
+      if (!current) result = -1
+      else if (JSON.parse(current).rolloutId) result = 2
+      else if (Number(JSON.parse(current).updatedAt) !== Number(expectedPackageAt)) result = -1
+      else if (JSON.parse(current).status !== 'approved') result = -2
+      else if (values.has(releaseKey)) result = -3
+      else {
+        values.set(releaseKey, releasePayload)
+        index(releaseIndex).set(releaseId, Number(updatedAt))
+        values.set(packageKey, packagePayload)
+        index(packageIndex).set(packageId, Number(updatedAt))
+        result = 1
+      }
+      return { ok: true, status: 200, json: async () => ({ result }) }
+    }
     const [packageKey, packageIndex, businessKey, ...evidenceKeys] = keys
     const [
       payload, packageId, expectedPackageAt, expectedBusinessAt, updatedAt,
@@ -106,11 +136,11 @@ const packageRecord: ReleasePackage = {
   createdBy: 'owner', createdAt: now, updatedAt: now, readyBy: 'owner', readyAt: now,
 }
 
-const request = (token: string | undefined, phrase: string) => {
+const request = (token: string | undefined, phrase: string, action = 'approve') => {
   const req = new NextRequest('http://localhost/api/admin/platform/releases/RPK-3001', {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ action: 'approve', phrase }),
+    body: JSON.stringify({ action, phrase }),
   })
   if (token) req.cookies.set('jk_admin_session', token)
   return req
@@ -129,8 +159,10 @@ test('owner approval is confirmed, revalidated, persisted once, and never starts
 
   const params = { params: Promise.resolve({ id: packageRecord.id }) }
   assert.equal((await PATCH(request(undefined, 'APPROVE RPK-3001 1.3.0'), params)).status, 401)
+  assert.equal((await PATCH(request(undefined, '', 'create-rollout'), params)).status, 401)
 
   const token = await createSessionToken()
+  assert.equal((await PATCH(request(token, '', 'create-rollout'), params)).status, 409)
   const wrong = await PATCH(request(token, 'APPROVE SOMETHING ELSE'), params)
   assert.equal(wrong.status, 400)
   assert.equal(JSON.parse(values.get(`platform:release-package:${packageRecord.id}`)!).status, 'ready_for_approval')
@@ -158,4 +190,22 @@ test('owner approval is confirmed, revalidated, persisted once, and never starts
 
   assert.equal([...values.keys()].some((key) => key.startsWith('platform:release:')), false)
   assert.equal([...values.keys()].some((key) => key.includes('deployment')), false)
+
+  const rolloutResponse = await PATCH(request(token, '', 'create-rollout'), params)
+  assert.equal(rolloutResponse.status, 201)
+  const rolloutBody = await rolloutResponse.json()
+  assert.equal(rolloutBody.idempotent, false)
+  assert.match(rolloutBody.rollout.id, /^REL-/)
+  assert.equal(rolloutBody.rollout.packageId, packageRecord.id)
+  assert.equal(rolloutBody.rollout.targetProduct, business.id)
+  assert.deepEqual(rolloutBody.rollout.targetBusinessIds, [business.id])
+  assert.equal(rolloutBody.rollout.status, 'approved')
+  assert.equal(rolloutBody.package.rolloutId, rolloutBody.rollout.id)
+  assert.equal([...values.keys()].some((key) => key.includes('deployment')), false)
+
+  const rolloutAuditCount = counters.get('platform:audit:counter')
+  const repeatedRollout = await PATCH(request(token, '', 'create-rollout'), params)
+  assert.equal(repeatedRollout.status, 200)
+  assert.equal((await repeatedRollout.json()).idempotent, true)
+  assert.equal(counters.get('platform:audit:counter'), rolloutAuditCount)
 })

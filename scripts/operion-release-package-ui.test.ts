@@ -23,7 +23,7 @@ test('the browser consumes server readiness and does not reproduce release polic
   assert.match(route, /reasons: readiness\.reasons/)
 })
 
-test('Increment 4 cannot approve, publish, or deploy a release', () => {
+test('the package workspace cannot approve, publish, or deploy a release', () => {
   assert.doesNotMatch(component, /action: ['"](?:approve|publish|deploy)['"]/)
   assert.doesNotMatch(component, /\/publish|\/deploy|\/approve/)
   assert.doesNotMatch(component, /ready_for_approval['"]\s*[,}]\s*method/)
@@ -32,7 +32,10 @@ test('Increment 4 cannot approve, publish, or deploy a release', () => {
 test('the builder safely renders packages approved through the separate API stage', () => {
   assert.match(component, /approved: \{ label: 'Approved'/)
   assert.match(component, /Package approved and sealed/)
-  assert.match(component, /No rollout or publication has started/)
+  assert.match(component, /Create rollout plan/)
+  assert.match(component, /action: 'create-rollout'/)
+  assert.match(component, /No site changes have started/)
+  assert.doesNotMatch(component, /action: ['"](?:publish|deploy|promote)['"]/)
 })
 
 test('the package builder includes accessible names and a responsive single-column boundary', () => {
