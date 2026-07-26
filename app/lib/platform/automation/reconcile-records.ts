@@ -269,11 +269,32 @@ export async function reconcileJobRecords(input: {
 
 /** Sweep completed-but-unfinalized jobs (the reconciler fallback for a lost inline call).
  *  Bounded + idempotent; returns one summary per job it touched. */
-export async function reconcileCompletedJobs(input: { actor?: string; source?: string; limit?: number } = {}): Promise<ReconcileSummary[]> {
-  const jobs = (await listJobs(input.limit ?? 200)).filter((j) => j.status === 'completed' && !j.recordsFinalizedAt)
+export async function reconcileJobsIndependently(
+  jobs: UpdateAutomationJob[],
+  reconcile: (job: UpdateAutomationJob) => Promise<ReconcileSummary>,
+): Promise<ReconcileSummary[]> {
   const out: ReconcileSummary[] = []
   for (const job of jobs) {
-    out.push(await reconcileJobRecords({ job, actor: input.actor ?? 'system', actorType: 'system', source: input.source ?? 'reconciler' }))
+    try {
+      out.push(await reconcile(job))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      const knownReleaseFailure = /^RELEASE_RECONCILIATION_(STALE_RELEASE|INVALID_CHANGE)$/.test(message)
+      out.push({
+        ok: false,
+        jobId: job.id,
+        action: 'skipped',
+        reason: knownReleaseFailure ? message.toLowerCase() : 'reconciliation_failed',
+        auditIds: [],
+      })
+    }
   }
   return out
+}
+
+export async function reconcileCompletedJobs(input: { actor?: string; source?: string; limit?: number } = {}): Promise<ReconcileSummary[]> {
+  const jobs = (await listJobs(input.limit ?? 200)).filter((j) => j.status === 'completed' && !j.recordsFinalizedAt)
+  return reconcileJobsIndependently(jobs, (job) =>
+    reconcileJobRecords({ job, actor: input.actor ?? 'system', actorType: 'system', source: input.source ?? 'reconciler' }),
+  )
 }
