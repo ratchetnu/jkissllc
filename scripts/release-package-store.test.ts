@@ -1,8 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import type { PlatformBusiness, ReleasePackage } from '../app/lib/platform/updates/types'
+import type {
+  PlatformBusiness, PlatformUpdate, ReleasePackage, UpdateCompatibility,
+} from '../app/lib/platform/updates/types'
 import {
-  saveBusiness, saveReleasePackage, saveReadyReleasePackage,
+  saveApprovedReleasePackage, saveBusiness, saveCompat, saveReleasePackage,
+  saveReadyReleasePackage, saveUpdate,
 } from '../app/lib/platform/updates/store'
 
 process.env.KV_REST_API_URL = 'http://fake-release-package-store.local'
@@ -23,24 +26,57 @@ globalThis.fetch = (async (_url: string, init: { body?: string }) => {
     const keyCount = Number(args[1])
     const keys = args.slice(2, 2 + keyCount)
     const argv = args.slice(2 + keyCount)
-    const [packageKey, packageIndex, reservationKey, businessKey] = keys
-    const [payload, packageId, expectedPackageAt, expectedBusinessAt, updatedAt, packagePrefix] = argv
-    const currentPackage = values.get(packageKey)
-    const business = values.get(businessKey)
-    if (!currentPackage || Number(JSON.parse(currentPackage).updatedAt) !== Number(expectedPackageAt)) result = -1
-    else if (!business || Number(JSON.parse(business).updatedAt) !== Number(expectedBusinessAt)) result = -2
-    else {
-      const holder = values.get(reservationKey)
-      const holderRecord = holder ? values.get(`${packagePrefix}${holder}`) : null
-      const holderActive = holderRecord
-        ? !['cancelled', 'superseded'].includes(JSON.parse(holderRecord).status)
-        : false
-      if (holder && holder !== packageId && holderActive) result = -3
+    if (keyCount === 4) {
+      const [packageKey, packageIndex, reservationKey, businessKey] = keys
+      const [payload, packageId, expectedPackageAt, expectedBusinessAt, updatedAt, packagePrefix] = argv
+      const currentPackage = values.get(packageKey)
+      const business = values.get(businessKey)
+      if (!currentPackage || Number(JSON.parse(currentPackage).updatedAt) !== Number(expectedPackageAt)) result = -1
+      else if (!business || Number(JSON.parse(business).updatedAt) !== Number(expectedBusinessAt)) result = -2
       else {
-        values.set(reservationKey, packageId)
-        values.set(packageKey, payload)
-        index(packageIndex).set(packageId, Number(updatedAt))
+        const holder = values.get(reservationKey)
+        const holderRecord = holder ? values.get(`${packagePrefix}${holder}`) : null
+        const holderActive = holderRecord
+          ? !['cancelled', 'superseded'].includes(JSON.parse(holderRecord).status)
+          : false
+        if (holder && holder !== packageId && holderActive) result = -3
+        else {
+          values.set(reservationKey, packageId)
+          values.set(packageKey, payload)
+          index(packageIndex).set(packageId, Number(updatedAt))
+          result = 1
+        }
+      }
+    } else {
+      const [packageKey, packageIndex, businessKey, ...evidenceKeys] = keys
+      const [
+        payload, packageId, expectedPackageAt, expectedBusinessAt, updatedAt,
+        businessId, rawCount, ...evidenceArgs
+      ] = argv
+      const currentPackage = values.get(packageKey)
+      const business = values.get(businessKey)
+      if (!currentPackage || Number(JSON.parse(currentPackage).updatedAt) !== Number(expectedPackageAt)) result = -1
+      else if (JSON.parse(currentPackage).status !== 'ready_for_approval') result = -5
+      else if (!business || Number(JSON.parse(business).updatedAt) !== Number(expectedBusinessAt)) result = -2
+      else {
         result = 1
+        for (let i = 0; i < Number(rawCount); i += 1) {
+          const update = values.get(evidenceKeys[i * 2])
+          const compatMap = values.get(evidenceKeys[(i * 2) + 1])
+          const compatibility = compatMap ? JSON.parse(compatMap)[businessId] : null
+          if (!update || Number(JSON.parse(update).updatedAt) !== Number(evidenceArgs[i * 2])) {
+            result = -3
+            break
+          }
+          if (!compatibility || Number(compatibility.updatedAt) !== Number(evidenceArgs[(i * 2) + 1])) {
+            result = -4
+            break
+          }
+        }
+        if (result === 1) {
+          values.set(packageKey, payload)
+          index(packageIndex).set(packageId, Number(updatedAt))
+        }
       }
     }
   }
@@ -61,6 +97,28 @@ const packageRecord = (id: string, status: ReleasePackage['status'] = 'draft'): 
   migration: 'none', updateKeys: ['UPD-2001'], status, blockingReasons: [],
   createdBy: 'owner', createdAt: now, updatedAt: now,
 })
+const update: PlatformUpdate = {
+  recordVersion: 1, key: 'UPD-2001', title: 'Crew workflow', summary: 'Crew workflow',
+  type: 'feature', scope: 'platform_core', severity: 'medium', priority: 'normal',
+  status: 'approved', breakingChange: false, migrationRequired: false,
+  environmentChangeRequired: false, secretRequired: false, featureFlagRequired: false,
+  manualPortRequired: false, rollbackSupported: true,
+  validation: {
+    typecheck: 'passed', lint: 'passed', tests: 'passed', build: 'passed',
+    securityReview: 'passed', accessibilityReview: 'passed', e2e: 'passed',
+    smokeTest: 'passed', ownerVerification: 'passed',
+  },
+  createdAt: now - 1000, updatedAt: now,
+}
+const compatibility: UpdateCompatibility = {
+  recordVersion: 1, updateKey: update.key, businessId: business.id,
+  status: 'compatible', createdAt: now - 1000, updatedAt: now,
+}
+const evidence = [{
+  updateKey: update.key,
+  updateUpdatedAt: update.updatedAt,
+  compatibilityUpdatedAt: compatibility.updatedAt,
+}]
 
 test('atomic ready write allows one concurrent winner for a product/channel/version', async () => {
   values.clear(); indexes.clear()
@@ -95,4 +153,65 @@ test('a cancelled package releases its version reservation for a later package',
     await saveReadyReleasePackage({ ...replacement, status: 'ready_for_approval', updatedAt: now + 1 }, now, business.updatedAt),
     'saved',
   )
+})
+
+test('approval seals a ready package only while all evaluated evidence is unchanged', async () => {
+  values.clear(); indexes.clear()
+  await saveBusiness(business)
+  await saveUpdate(update)
+  await saveCompat(compatibility)
+  const record = packageRecord('RPK-2201', 'ready_for_approval')
+  await saveReleasePackage(record)
+
+  assert.equal(
+    await saveApprovedReleasePackage(
+      { ...record, status: 'approved', approvedBy: 'owner', approvedAt: now + 1, updatedAt: now + 1 },
+      record.updatedAt,
+      business.updatedAt,
+      evidence,
+    ),
+    'saved',
+  )
+  assert.equal(JSON.parse(values.get(`platform:release-package:${record.id}`)!).status, 'approved')
+})
+
+test('approval fails closed on package status and update or compatibility drift', async () => {
+  values.clear(); indexes.clear()
+  await saveBusiness(business)
+  await saveUpdate(update)
+  await saveCompat(compatibility)
+
+  const draftRecord = packageRecord('RPK-2301', 'draft')
+  await saveReleasePackage(draftRecord)
+  assert.equal(
+    await saveApprovedReleasePackage(
+      { ...draftRecord, status: 'approved', updatedAt: now + 1 },
+      draftRecord.updatedAt,
+      business.updatedAt,
+      evidence,
+    ),
+    'invalid_status',
+  )
+
+  const readyRecord = packageRecord('RPK-2302', 'ready_for_approval')
+  await saveReleasePackage(readyRecord)
+  assert.equal(
+    await saveApprovedReleasePackage(
+      { ...readyRecord, status: 'approved', updatedAt: now + 1 },
+      readyRecord.updatedAt,
+      business.updatedAt,
+      [{ ...evidence[0], updateUpdatedAt: update.updatedAt - 1 }],
+    ),
+    'stale_update',
+  )
+  assert.equal(
+    await saveApprovedReleasePackage(
+      { ...readyRecord, status: 'approved', updatedAt: now + 1 },
+      readyRecord.updatedAt,
+      business.updatedAt,
+      [{ ...evidence[0], compatibilityUpdatedAt: compatibility.updatedAt - 1 }],
+    ),
+    'stale_compatibility',
+  )
+  assert.equal(JSON.parse(values.get(`platform:release-package:${readyRecord.id}`)!).status, 'ready_for_approval')
 })

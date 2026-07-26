@@ -224,7 +224,7 @@ export type PlatformRelease = {
 // rollout record. Drafts may be incomplete; only the server-side readiness
 // transition may mark one ready_for_approval.
 export type ReleasePackageStatus =
-  | 'draft' | 'blocked' | 'ready_for_approval' | 'cancelled' | 'superseded'
+  | 'draft' | 'blocked' | 'ready_for_approval' | 'approved' | 'cancelled' | 'superseded'
 
 export type ReleasePackagePolicySnapshot = {
   previousVersion: string
@@ -255,6 +255,9 @@ export type ReleasePackage = {
   updatedAt: number
   readyBy?: string
   readyAt?: number
+  approvalSnapshot?: ReleasePackagePolicySnapshot
+  approvedBy?: string
+  approvedAt?: number
 }
 
 // ── Deployment records ───────────────────────────────────────────────────────
