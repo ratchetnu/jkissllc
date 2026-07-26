@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 const component = readFileSync('app/admin/operations/release/ReleasePackageBuilder.tsx', 'utf8')
 const page = readFileSync('app/admin/operations/release/page.tsx', 'utf8')
 const route = readFileSync('app/api/admin/platform/releases/route.ts', 'utf8')
+const detailRoute = readFileSync('app/api/admin/platform/releases/[id]/route.ts', 'utf8')
 
 test('Release Center exposes the package builder as an owner workspace', () => {
   assert.match(page, /id: 'packages', label: 'Build Release'/)
@@ -36,6 +37,16 @@ test('the builder safely renders packages approved through the separate API stag
   assert.match(component, /action: 'create-rollout'/)
   assert.match(component, /No site changes have started/)
   assert.doesNotMatch(component, /action: ['"](?:publish|deploy|promote)['"]/)
+})
+
+test('execution readiness is a read-only server decision, never an execution control', () => {
+  assert.match(component, /Check execution readiness/)
+  assert.match(component, /cache: 'no-store'/)
+  assert.match(component, /This check is read-only; execution is still unavailable/)
+  assert.match(detailRoute, /evaluateRolloutExecutionReadiness/)
+  assert.match(detailRoute, /listJobs\(500\)/)
+  assert.doesNotMatch(component, /action: ['"](?:execute|publish|deploy|promote)['"]/)
+  assert.doesNotMatch(component, /\/execute|\/publish|\/deploy|\/promote/)
 })
 
 test('the package builder includes accessible names and a responsive single-column boundary', () => {

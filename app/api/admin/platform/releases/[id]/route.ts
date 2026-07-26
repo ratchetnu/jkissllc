@@ -10,6 +10,8 @@ import { recordPlatformAudit } from '../../../../../lib/platform/updates/audit'
 import {
   evaluateReleasePackageReadiness, releasePackageApprovalPhrase,
 } from '../../../../../lib/platform/release/release-package'
+import { evaluateRolloutExecutionReadiness } from '../../../../../lib/platform/release/rollout-execution-readiness'
+import { listJobs } from '../../../../../lib/platform/automation/store'
 import type { PlatformRelease, ReleasePackage } from '../../../../../lib/platform/updates/types'
 
 export const runtime = 'nodejs'
@@ -44,16 +46,26 @@ export const GET = withTenantRoute(async (
   const who = await requirePlatformOwner(req)
   if (who instanceof NextResponse) return who
   const record = await getReleasePackage((await params).id)
-  const rollout = record?.rolloutId ? await getRelease(record.rolloutId) : null
-  return record
-    ? NextResponse.json({
-      package: record,
-      rollout,
-      approval: record.status === 'ready_for_approval'
-        ? { requiredPhrase: releasePackageApprovalPhrase(record) }
-        : null,
-    })
-    : NextResponse.json({ error: 'not_found' }, { status: 404 })
+  if (!record) return NextResponse.json({ error: 'not_found' }, { status: 404 })
+  const [rollout, policy, jobs] = await Promise.all([
+    record.rolloutId ? getRelease(record.rolloutId) : null,
+    currentReadiness(record),
+    listJobs(500),
+  ])
+  const executionReadiness = evaluateRolloutExecutionReadiness({
+    packageRecord: record,
+    rollout,
+    packagePolicyBlockers: policy.readiness.blockers,
+    jobs,
+  })
+  return NextResponse.json({
+    package: record,
+    rollout,
+    executionReadiness,
+    approval: record.status === 'ready_for_approval'
+      ? { requiredPhrase: releasePackageApprovalPhrase(record) }
+      : null,
+  }, { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate', Pragma: 'no-cache' } })
 })
 
 export const PATCH = withTenantRoute(async (
