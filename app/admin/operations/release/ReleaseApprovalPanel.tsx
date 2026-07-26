@@ -41,7 +41,14 @@ function expiresInLabel(expiresAt?: number): string {
   return m < 1 ? 'expires in <1m' : `expires in ${m}m`
 }
 
-export function ReleaseApprovalPanel({ businessId }: { businessId: string }) {
+type ExpectedRelease = { releaseId: string; sourceDeploymentId: string }
+
+export function ReleaseApprovalPanel({
+  businessId, expectedRelease,
+}: {
+  businessId: string
+  expectedRelease?: ExpectedRelease
+}) {
   const [status, setStatus] = useState<ApprovalStatus | null>(null)
   const [loadState, setLoadState] = useState<'loading' | 'ok' | 'error' | 'unauthorized'>('loading')
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -75,7 +82,12 @@ export function ReleaseApprovalPanel({ businessId }: { businessId: string }) {
       const res = await fetch(`/api/admin/release/businesses/${businessId}/approval`, {
         method: 'POST', credentials: 'same-origin', cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phrase, releaseId: status.release.releaseId, sourceDeploymentId: status.release.sourceDeploymentId, targetEnvironment: status.release.targetEnvironment }),
+        body: JSON.stringify({
+          phrase,
+          releaseId: expectedRelease?.releaseId ?? status.release.releaseId,
+          sourceDeploymentId: expectedRelease?.sourceDeploymentId ?? status.release.sourceDeploymentId,
+          targetEnvironment: status.release.targetEnvironment,
+        }),
       })
       const j = await res.json().catch(() => ({}))
       if (res.ok && j?.ok) {
@@ -102,9 +114,15 @@ export function ReleaseApprovalPanel({ businessId }: { businessId: string }) {
   if (loadState === 'error' || !status) return <div role="alert" style={{ fontSize: 13, color: 'var(--status-bad-fg)' }}>Could not load approval status.</div>
 
   const a = status.approval
-  const canApprove = status.gateEnabled && !!status.business && !status.business.testOnly && status.eligible && status.previewReady
+  const expectedReleaseMatches = !expectedRelease || (
+    status.release.releaseId === expectedRelease.releaseId &&
+    status.release.sourceDeploymentId === expectedRelease.sourceDeploymentId
+  )
+  const canApprove = status.gateEnabled && !!status.business && !status.business.testOnly &&
+    status.eligible && status.previewReady && expectedReleaseMatches
   const reason = !status.gateEnabled ? 'The approval gate is not enabled in this environment.'
     : status.business?.testOnly ? 'This business is test-only — it cannot be approved for production.'
+    : !expectedReleaseMatches ? 'The active release changed after the package check. Run execution readiness again.'
     : !status.eligible ? `Not eligible — ${status.blockingCount} blocking issue(s). Resolve them (see Eligibility above) before approving.`
     : !status.previewReady ? 'The preview is not READY yet.'
     : null

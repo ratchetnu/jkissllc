@@ -6,6 +6,9 @@ const component = readFileSync('app/admin/operations/release/ReleasePackageBuild
 const page = readFileSync('app/admin/operations/release/page.tsx', 'utf8')
 const route = readFileSync('app/api/admin/platform/releases/route.ts', 'utf8')
 const detailRoute = readFileSync('app/api/admin/platform/releases/[id]/route.ts', 'utf8')
+const publishReviewDrawer = readFileSync('app/admin/operations/release/PublishReviewDrawer.tsx', 'utf8')
+const approvalPanel = readFileSync('app/admin/operations/release/ReleaseApprovalPanel.tsx', 'utf8')
+const publishPanel = readFileSync('app/admin/operations/release/ProductionPublishPanel.tsx', 'utf8')
 
 test('Release Center exposes the package builder as an owner workspace', () => {
   assert.match(page, /id: 'packages', label: 'Build Release'/)
@@ -39,14 +42,33 @@ test('the builder safely renders packages approved through the separate API stag
   assert.doesNotMatch(component, /action: ['"](?:publish|deploy|promote)['"]/)
 })
 
-test('execution readiness is a read-only server decision, never an execution control', () => {
+test('execution readiness hands off only to the existing controlled publish workflow', () => {
   assert.match(component, /Check execution readiness/)
   assert.match(component, /cache: 'no-store'/)
-  assert.match(component, /This check is read-only; execution is still unavailable/)
+  assert.match(component, /Continue to controlled publish review/)
+  assert.match(component, /Opening it does not publish/)
+  assert.match(component, /<PublishReviewDrawer/)
+  assert.match(component, /expectedRelease=/)
   assert.match(detailRoute, /evaluateRolloutExecutionReadiness/)
+  assert.match(detailRoute, /evaluateRolloutExecutionHandoff/)
+  assert.match(detailRoute, /AUTOMATION_ACTIVE/)
   assert.match(detailRoute, /listJobs\(500\)/)
   assert.doesNotMatch(component, /action: ['"](?:execute|publish|deploy|promote)['"]/)
   assert.doesNotMatch(component, /\/execute|\/publish|\/deploy|\/promote/)
+})
+
+test('the package artifact stays pinned through review, approval, and final publish confirmation', () => {
+  assert.match(publishReviewDrawer, /candidateCommit !== expectedReleaseId/)
+  assert.match(publishReviewDrawer, /deploymentId !== expectedSourceDeploymentId/)
+  assert.match(publishReviewDrawer, /Run execution readiness again/)
+  assert.match(publishReviewDrawer, /<ReleaseApprovalPanel businessId=\{businessId\} expectedRelease=\{expectedRelease\}/)
+  assert.match(publishReviewDrawer, /<ProductionPublishPanel businessId=\{businessId\} expectedRelease=\{expectedRelease\}/)
+  assert.match(approvalPanel, /releaseId: expectedRelease\?\.releaseId/)
+  assert.match(approvalPanel, /sourceDeploymentId: expectedRelease\?\.sourceDeploymentId/)
+  assert.match(publishPanel, /releaseId: expectedRelease\?\.releaseId/)
+  assert.match(publishPanel, /sourceDeploymentId: expectedRelease\?\.sourceDeploymentId/)
+  assert.match(approvalPanel, /expectedReleaseMatches/)
+  assert.match(publishPanel, /expectedReleaseMatches/)
 })
 
 test('the package builder includes accessible names and a responsive single-column boundary', () => {

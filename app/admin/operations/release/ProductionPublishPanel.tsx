@@ -43,7 +43,14 @@ function ageLabel(ms: number | undefined): string {
   return m < 1 ? 'just now' : `${m}m ago`
 }
 
-export function ProductionPublishPanel({ businessId }: { businessId: string }) {
+type ExpectedRelease = { releaseId: string; sourceDeploymentId: string }
+
+export function ProductionPublishPanel({
+  businessId, expectedRelease,
+}: {
+  businessId: string
+  expectedRelease?: ExpectedRelease
+}) {
   const [status, setStatus] = useState<PublishStatus | null>(null)
   const [load, setLoad] = useState<'loading' | 'ok' | 'error' | 'unauthorized'>('loading')
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -81,7 +88,11 @@ export function ProductionPublishPanel({ businessId }: { businessId: string }) {
     try {
       const res = await fetch(`/api/admin/release/businesses/${businessId}/publish`, {
         method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phrase, releaseId: status.release.releaseId, sourceDeploymentId: status.release.sourceDeploymentId }),
+        body: JSON.stringify({
+          phrase,
+          releaseId: expectedRelease?.releaseId ?? status.release.releaseId,
+          sourceDeploymentId: expectedRelease?.sourceDeploymentId ?? status.release.sourceDeploymentId,
+        }),
       })
       const j = await res.json().catch(() => ({}))
       if (res.ok && j?.ok) {
@@ -102,8 +113,13 @@ export function ProductionPublishPanel({ businessId }: { businessId: string }) {
   if (!status.approvalGateEnabled) return null
 
   const p = status.publish
+  const expectedReleaseMatches = !expectedRelease || (
+    status.release.releaseId === expectedRelease.releaseId &&
+    status.release.sourceDeploymentId === expectedRelease.sourceDeploymentId
+  )
   const inProgress = p.state === 'queued' || p.state === 'verifying'
-  const showButton = status.publishEnabled && status.ready && (p.state === 'idle' || p.state === 'failed') && !busy
+  const showButton = status.publishEnabled && status.ready && expectedReleaseMatches &&
+    (p.state === 'idle' || p.state === 'failed') && !busy
   const badgeTone: Tone = p.state === 'ready' ? 'good' : p.state === 'failed' ? 'bad' : p.state === 'idle' ? (status.ready ? 'good' : 'neutral') : 'info'
   // The idle badge must be truthful: "Ready to publish" only when actually publishable.
   const idleLabel = status.ready ? 'Ready to publish' : 'Not ready'
@@ -139,6 +155,11 @@ export function ProductionPublishPanel({ businessId }: { businessId: string }) {
       {/* Not-ready reason (only when the gate is enabled and something blocks) */}
       {!showButton && p.state === 'idle' && status.blocker && status.publishEnabled && (
         <div style={{ fontSize: 13, color: 'var(--muted)' }}>{status.blocker.message}</div>
+      )}
+      {!expectedReleaseMatches && p.state === 'idle' && (
+        <div role="alert" style={{ fontSize: 13, color: 'var(--status-warn-fg)' }}>
+          The active release changed after the package check. Run execution readiness again.
+        </div>
       )}
       {!status.publishEnabled && (
         <div style={{ fontSize: 13, color: 'var(--muted)' }}>Production publish is disabled in this environment (OPERION_PRODUCTION_PROMOTION_ENABLED is off).</div>
