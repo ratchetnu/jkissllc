@@ -127,6 +127,7 @@ export function ReleaseApprovalPanel({
     : !status.previewReady ? 'The preview is not READY yet.'
     : null
   const showApproveButton = canApprove && (a.state === 'none' || a.state === 'expired' || a.state === 'invalidated' || a.state === 'revoked')
+  const releaseDriftReason = status.gateEnabled && !status.business?.testOnly && !expectedReleaseMatches
 
   return (
     <section aria-label="Release approval" style={{ display: 'grid', gap: 10, borderTop: '1px solid var(--line)', paddingTop: 14 }}>
@@ -145,7 +146,14 @@ export function ReleaseApprovalPanel({
         </div>
       )}
 
-      {reason && <div style={{ fontSize: 13, color: 'var(--muted)' }}>{reason}</div>}
+      {reason && (
+        <div
+          role={releaseDriftReason ? 'alert' : undefined}
+          style={{ fontSize: 13, color: releaseDriftReason ? 'var(--status-warn-fg)' : 'var(--muted)' }}
+        >
+          {reason}
+        </div>
+      )}
       {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
