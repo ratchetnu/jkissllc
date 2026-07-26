@@ -26,12 +26,13 @@ fingerprint, and separate typed confirmations still govern approval and publish.
 ## Validation evidence
 
 - **Preview transfer canary:** UPD-1007 at `106846c0`; workflow run
-  `29697932299` completed successfully; Supercharged PR #3 contained one inert
-  canary file and was closed without merge. Production promotion was intentionally
-  not requested.
-- **Controlled rollback canary:** RBK-1003 completed and an identical repeat was
-  idempotent. Supercharged recovery PR #5 removed only the canary marker; Production
-  was realigned with `main` at `0d9156f`.
+  `29697932299` in `ratchetnu/supercharged` completed successfully; Supercharged
+  PR #3 contained one inert canary file and was closed without merge. Production
+  promotion was intentionally not requested.
+- **Controlled rollback canary:** owner-attested KV evidence records RBK-1003 as
+  completed and an identical repeat as idempotent. Supercharged recovery PR #5
+  removed only the canary marker; Production was realigned with `main` at
+  `0d9156f`.
 - **Increment 8 deployment:** PR #94 merged at `27f5e0e`; Production deployment
   `dpl_8LysMsimBPZzMaMQ38tBETMwBihx` served `/api/health` successfully. The public
   application surfaces remained healthy and the release approval/publish APIs

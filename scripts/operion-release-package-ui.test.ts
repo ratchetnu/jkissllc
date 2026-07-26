@@ -72,8 +72,9 @@ test('the package artifact stays pinned through review, approval, and final publ
 })
 
 test('release drift is announced as a warning in both controlled-publish panels', () => {
-  assert.match(approvalPanel, /role=\{!expectedReleaseMatches \? 'alert' : undefined\}/)
-  assert.match(approvalPanel, /!expectedReleaseMatches \? 'var\(--status-warn-fg\)' : 'var\(--muted\)'/)
+  assert.match(approvalPanel, /const releaseDriftReason = status\.gateEnabled && !status\.business\?\.testOnly && !expectedReleaseMatches/)
+  assert.match(approvalPanel, /role=\{releaseDriftReason \? 'alert' : undefined\}/)
+  assert.match(approvalPanel, /releaseDriftReason \? 'var\(--status-warn-fg\)' : 'var\(--muted\)'/)
   assert.match(publishPanel, /role="alert"/)
   assert.match(publishPanel, /var\(--status-warn-fg\)/)
 })
