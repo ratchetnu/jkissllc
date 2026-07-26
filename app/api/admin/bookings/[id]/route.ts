@@ -32,7 +32,7 @@ import { alert } from '../../../../lib/alerts'
 import { canApproveAndSend, quoteDeliveryMode } from '../../../../lib/ai/guided-approval'
 import { handleShadowAdminAction, isShadowAdminAction } from '../../../../lib/estimation/shadow-admin'
 import { getShadowJob } from '../../../../lib/estimation/shadow-store'
-import { canTransition, nextStatusOrKeep } from '../../../../lib/booking-status'
+import { canTransition, statusAfterConfirmationLinkSent } from '../../../../lib/booking-status'
 
 export const runtime = 'nodejs'
 
@@ -180,9 +180,7 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
       const channels = await sendConfirmationLink(b)
       b.confirmationLinkSentAt = Date.now()
       b.confirmationLinkSentBy = 'admin'
-      // The former hand-rolled whitelist is now the matrix, which permits this move from
-      // every stage that list covered and refuses it once the job is closed.
-      b.status = nextStatusOrKeep(b.status, 'confirmation_link_sent')
+      b.status = statusAfterConfirmationLinkSent(b.status)
       extra = { channels }
       break
     }
@@ -418,7 +416,7 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
         const channels = delivery === 'live' ? await sendConfirmationLink(b) : { email: false, sms: false }
         b.confirmationLinkSentAt = Date.now()
         b.confirmationLinkSentBy = actor
-        b.status = nextStatusOrKeep(b.status, 'confirmation_link_sent')
+        b.status = statusAfterConfirmationLinkSent(b.status)
         if (delivery === 'simulated') {
           pushBookingEvent(b, { actor, action: 'ai.quote_simulated', result: 'sandbox — no email/SMS sent', meta: { simulated: true, approvedUsd } })
           console.info(`[approve-final] quote SIMULATED (sandbox test record — no external delivery) booking=${b.bookingNumber}`)

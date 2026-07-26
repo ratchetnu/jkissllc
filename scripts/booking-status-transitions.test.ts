@@ -8,7 +8,8 @@ import test from 'node:test'
 
 import {
   BOOKING_TRANSITIONS, TERMINAL_BOOKING_STATUSES, canTransition,
-  isTerminalBookingStatus, nextStatusOrKeep,
+  isTerminalBookingStatus, nextStatusOrKeep, statusAfterConfirmationLinkSent,
+  statusAfterCustomerView,
 } from '../app/lib/booking-status'
 import {
   BOOKING_STATUS_LABEL, CLOSED_STATUSES, recompute,
@@ -180,20 +181,27 @@ test('a confirmed booking whose payments vanish falls back rather than sticking'
 // ── Call-site behaviour preserved ────────────────────────────────────────────
 
 test('send-link reaches confirmation_link_sent from every stage the old whitelist covered', () => {
-  for (const from of ['quote_received', 'pending_payment', 'payment_received', 'booking_created'] as BookingStatus[]) {
-    assert.equal(nextStatusOrKeep(from, 'confirmation_link_sent'), 'confirmation_link_sent', from)
-  }
-  // …and is now inert once the booking is closed, instead of being written blindly.
-  for (const from of TERMINAL_BOOKING_STATUSES) {
-    assert.equal(nextStatusOrKeep(from, 'confirmation_link_sent'), from, from)
+  const allowed = new Set<BookingStatus>([
+    'quote_received', 'pending_payment', 'payment_received', 'booking_created',
+  ])
+  for (const from of ALL) {
+    assert.equal(
+      statusAfterConfirmationLinkSent(from),
+      allowed.has(from) ? 'confirmation_link_sent' : from,
+      from,
+    )
   }
 })
 
 test('customer_viewed still advances from the stages the old two-status check covered', () => {
-  for (const from of ['confirmation_link_sent', 'booking_created'] as BookingStatus[]) {
-    assert.equal(nextStatusOrKeep(from, 'customer_viewed'), 'customer_viewed', from)
+  const allowed = new Set<BookingStatus>(['confirmation_link_sent', 'booking_created'])
+  for (const from of ALL) {
+    assert.equal(
+      statusAfterCustomerView(from),
+      allowed.has(from) ? 'customer_viewed' : from,
+      from,
+    )
   }
-  assert.equal(nextStatusOrKeep('cancelled', 'customer_viewed'), 'cancelled')
 })
 
 test('a booking can always be cancelled while it is still live, never after refund', () => {

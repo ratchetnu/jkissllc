@@ -1,6 +1,6 @@
 # Operion Internal Operations Completion Roadmap
 
-**Updated:** 2026-07-26  
+**Updated:** 2026-07-26
 **Customers:** J KISS LLC and Supercharged  
 **Scope:** Daily internal operations. Enterprise tenancy, editions, subscriptions, and self-service onboarding remain deferred.
 
@@ -19,7 +19,7 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
 - Booking status transitions are governed by one authoritative matrix in
   `app/lib/booking-status.ts`; all eleven mutation sites route through `canTransition`
   and fail closed on an illegal pair.
-- Full suite: **2189/2189 passing**. AI regression: **2/2 passing**. TypeScript, ESLint on
+- Full suite: **2195/2195 passing**. AI regression: **2/2 passing**. TypeScript, ESLint on
   changed files, and the production build pass (170/170 pages).
 - `BOOKING_ASSIGNMENT_ENABLED` is **false in Production**. The whole Sprint 1 feature set is
   merged and Preview-validated but not yet serving; enabling it is a separate owner decision.

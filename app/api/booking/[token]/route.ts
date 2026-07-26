@@ -5,7 +5,7 @@ import { getCurrentPolicy, getPolicyVersion } from '../../../lib/policy'
 import { emailOpsBookingViewed } from '../../../lib/booking-emails'
 import { resolveTenantFromResource } from '../../../lib/platform/tenancy/tenant-resolve'
 import { runWithTenant } from '../../../lib/platform/tenancy/context'
-import { nextStatusOrKeep } from '../../../lib/booking-status'
+import { statusAfterCustomerView } from '../../../lib/booking-status'
 
 // GET /api/booking/[token] — customer-safe booking + the policy to display.
 // Also records the first view (chargeback evidence) without leaking internals.
@@ -33,9 +33,7 @@ export const GET = withTenantRoute(async (_req: NextRequest, { params }: { param
   // Mark first view + advance status if still in an early stage.
   if (!booking.customerViewedAt && booking.status !== 'cancelled') {
     booking.customerViewedAt = Date.now()
-    // The former two-status whitelist is now the matrix, which allows this move from
-    // every intake stage and refuses it once the booking is closed.
-    booking.status = nextStatusOrKeep(booking.status, 'customer_viewed')
+    booking.status = statusAfterCustomerView(booking.status)
     try { await saveBooking(booking); await emailOpsBookingViewed(booking) } catch { /* best-effort */ }
   }
 

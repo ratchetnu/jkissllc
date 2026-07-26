@@ -145,3 +145,26 @@ export function canTransition(from: BookingStatus, to: BookingStatus): Transitio
 export function nextStatusOrKeep(from: BookingStatus, to: BookingStatus): BookingStatus {
   return canTransition(from, to).ok ? to : from
 }
+
+// Automatic events have narrower authority than an owner's manual status edit. Keep
+// their historical source predicates explicit, then apply the global matrix as a second
+// fail-closed boundary. A customer viewing a link must never erase payment-review state,
+// and resending a link must never erase evidence that the customer already viewed it.
+const CONFIRMATION_LINK_SENT_FROM: ReadonlySet<BookingStatus> = new Set([
+  'quote_received', 'pending_payment', 'payment_received', 'booking_created',
+])
+const CUSTOMER_VIEWED_FROM: ReadonlySet<BookingStatus> = new Set([
+  'confirmation_link_sent', 'booking_created',
+])
+
+export function statusAfterConfirmationLinkSent(from: BookingStatus): BookingStatus {
+  return CONFIRMATION_LINK_SENT_FROM.has(from)
+    ? nextStatusOrKeep(from, 'confirmation_link_sent')
+    : from
+}
+
+export function statusAfterCustomerView(from: BookingStatus): BookingStatus {
+  return CUSTOMER_VIEWED_FROM.has(from)
+    ? nextStatusOrKeep(from, 'customer_viewed')
+    : from
+}
