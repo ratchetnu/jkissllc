@@ -6,6 +6,7 @@ import type { JobAssignee } from './job-assignment'
 import type { StoredAiEstimate } from './ai/estimate-store'
 import type { CustomerConfirmation } from './ai/confirmation-schema'
 import type { FinalAnalysisResult } from './ai/confirmed-analysis'
+import { nextStatusOrKeep } from './booking-status'
 
 // ── Service types ────────────────────────────────────────────────────────────
 // Reusable across every line of business J Kiss runs (and future ones).
@@ -754,18 +755,23 @@ export function recompute(b: Booking): Booking {
   // Never downgrade terminal/active workflow states. Closed states + the mid-job
   // states 'in_progress'/'continued' are human-set — payment/time changes must not
   // revert them.
+  // Every assignment routes through the transition matrix. These moves are derived from
+  // payment/time facts rather than requested by anyone, and recompute() runs on read
+  // paths, so an illegal pair keeps the current status instead of throwing.
   if (!isClosed(b) && b.status !== 'in_progress' && b.status !== 'continued') {
     if (timeVerified && paidSomething) {
-      b.status = 'confirmed'
-      if (!b.confirmedAt) b.confirmedAt = Date.now()
-      if (!b.customerConfirmedAt) b.customerConfirmedAt = b.confirmedAt
+      if (nextStatusOrKeep(b.status, 'confirmed') === 'confirmed') {
+        b.status = 'confirmed'
+        if (!b.confirmedAt) b.confirmedAt = Date.now()
+        if (!b.customerConfirmedAt) b.customerConfirmedAt = b.confirmedAt
+      }
     } else if (pendingZelleProof && !paidSomething) {
       // Proof is in, but a human must verify it before the booking is Confirmed.
-      b.status = 'pending_zelle_verification'
+      b.status = nextStatusOrKeep(b.status, 'pending_zelle_verification')
     } else if (timeVerified) {
-      b.status = 'time_verified'
+      b.status = nextStatusOrKeep(b.status, 'time_verified')
     } else if (paidSomething && rank(b.status) < rank('payment_received')) {
-      b.status = 'payment_received'
+      b.status = nextStatusOrKeep(b.status, 'payment_received')
     }
   }
   return b

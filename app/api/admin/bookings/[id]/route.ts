@@ -32,6 +32,7 @@ import { alert } from '../../../../lib/alerts'
 import { canApproveAndSend, quoteDeliveryMode } from '../../../../lib/ai/guided-approval'
 import { handleShadowAdminAction, isShadowAdminAction } from '../../../../lib/estimation/shadow-admin'
 import { getShadowJob } from '../../../../lib/estimation/shadow-store'
+import { canTransition, statusAfterConfirmationLinkSent } from '../../../../lib/booking-status'
 
 export const runtime = 'nodejs'
 
@@ -150,6 +151,12 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
       if (f.status && STATUS_SET[f.status as BookingStatus]) {
         const target = f.status as BookingStatus
         if (target !== b.status) {
+          // Single transition boundary. Fails closed: a pair the matrix does not list is
+          // refused rather than written (this path previously accepted ANY status).
+          const move = canTransition(b.status, target)
+          if (!move.ok) {
+            return NextResponse.json({ error: `Can't change status — ${move.reason}.` }, { status: 400 })
+          }
           // Guard the confirmed transition: a booking may only be marked Confirmed
           // when it's genuinely locked in (real date + priced/paid, no unresolved
           // manual review). This is the fix for silent premature confirmation.
@@ -173,9 +180,7 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
       const channels = await sendConfirmationLink(b)
       b.confirmationLinkSentAt = Date.now()
       b.confirmationLinkSentBy = 'admin'
-      if (['quote_received', 'pending_payment', 'payment_received', 'booking_created'].includes(b.status)) {
-        b.status = 'confirmation_link_sent'
-      }
+      b.status = statusAfterConfirmationLinkSent(b.status)
       extra = { channels }
       break
     }
@@ -411,7 +416,7 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
         const channels = delivery === 'live' ? await sendConfirmationLink(b) : { email: false, sms: false }
         b.confirmationLinkSentAt = Date.now()
         b.confirmationLinkSentBy = actor
-        if (['quote_received', 'pending_payment', 'payment_received', 'booking_created'].includes(b.status)) b.status = 'confirmation_link_sent'
+        b.status = statusAfterConfirmationLinkSent(b.status)
         if (delivery === 'simulated') {
           pushBookingEvent(b, { actor, action: 'ai.quote_simulated', result: 'sandbox — no email/SMS sent', meta: { simulated: true, approvedUsd } })
           console.info(`[approve-final] quote SIMULATED (sandbox test record — no external delivery) booking=${b.bookingNumber}`)
@@ -513,6 +518,8 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
       break
     }
     case 'mark-in-progress': {
+      const move = canTransition(b.status, 'in_progress')
+      if (!move.ok) return NextResponse.json({ error: `Can't mark In Progress — ${move.reason}.` }, { status: 400 })
       b.status = 'in_progress'
       break
     }
@@ -539,6 +546,8 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
         returnChangeRequest: dateChanged ? undefined : b.continuation?.returnChangeRequest,
         notes: str(body.notes, 1000),
       }
+      const move = canTransition(b.status, 'continued')
+      if (!move.ok) return NextResponse.json({ error: `Can't mark Continued — ${move.reason}.` }, { status: 400 })
       b.status = 'continued'
       const stamp = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })
       b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[${stamp}] CONTINUED — return ${b.continuation.returnDate ?? 'TBD'}${b.continuation.reason ? ` · ${b.continuation.reason}` : ''}`
@@ -561,11 +570,15 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
       if (b.invoiceAmountCents <= 0) {
         return NextResponse.json({ error: 'Set the final invoice amount before marking this job completed.' }, { status: 400 })
       }
+      const move = canTransition(b.status, 'completed')
+      if (!move.ok) return NextResponse.json({ error: `Can't mark Completed — ${move.reason}.` }, { status: 400 })
       b.status = 'completed'
       b.completedAt = Date.now()
       break
     }
     case 'cancel': {
+      const move = canTransition(b.status, 'cancelled')
+      if (!move.ok) return NextResponse.json({ error: `Can't mark Cancelled — ${move.reason}.` }, { status: 400 })
       b.status = 'cancelled'
       b.cancelledAt = Date.now()
       if (str(body.reason, 500)) b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[CANCELLED] ${str(body.reason, 500)}`
