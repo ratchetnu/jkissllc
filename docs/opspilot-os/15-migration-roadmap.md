@@ -5,7 +5,7 @@
 > objective · scope · dependencies · data/code/security/UX implications · tests ·
 > acceptance · rollback · risks · complexity · what must NOT change yet.
 >
-> _(Updated 2026-07-19: platform is now branded **Operion** (`PLATFORM.name =
+> _(Updated 2026-07-26: platform is now branded **Operion** (`PLATFORM.name =
 > 'Operion'` in `app/lib/company.ts`; public `/operion`, `/opspilot`→301). Internal
 > identifiers — `opspilot:` Redis prefix, `app/lib/platform/` paths, `docs/opspilot-os/`,
 > `/api/opspilot/*` — are preserved as **legacy identifiers** for compatibility.
@@ -29,10 +29,13 @@
 - ⏭️ **Next tenancy gate:** complete the stable-ID payroll value migration, validate
   legacy compatibility under `TENANCY_DUAL_WRITE`, and prove read/write equality before
   considering `TENANCY_ENABLED`.
-- ✅ **Release control through 3B.6: COMPLETE.** Owner approval, controlled publish,
-  production verification, release history, and controlled rollback are implemented.
-  3B.7 adds a read-only activation-readiness gate; production execution remains off until
-  that gate and a Preview canary are clean.
+- ✅ **Release control through 3B.8: COMPLETE.** Evidence-based baselines, release
+  packages, owner approval, product-safe rollout records, execution readiness, and the
+  handoff to the existing controlled publish path are implemented. The Preview canary
+  and controlled rollback/recovery proofs are complete. Live execution remains governed
+  by the owner-only activation-readiness gate and the two Production flags; their current
+  values must be confirmed in an authenticated owner session before the next real publish.
+  See `docs/operations/OPERION-RELEASE-CONTROL-CLOSEOUT.md`.
 
 Ordering follows the standard sequence, adjusted for evidence: **the four §1
 defects are already fixed**, so Phase 0 was lighter than the old roadmap assumed;

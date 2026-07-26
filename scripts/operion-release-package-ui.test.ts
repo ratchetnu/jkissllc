@@ -71,6 +71,13 @@ test('the package artifact stays pinned through review, approval, and final publ
   assert.match(publishPanel, /expectedReleaseMatches/)
 })
 
+test('release drift is announced as a warning in both controlled-publish panels', () => {
+  assert.match(approvalPanel, /role=\{!expectedReleaseMatches \? 'alert' : undefined\}/)
+  assert.match(approvalPanel, /!expectedReleaseMatches \? 'var\(--status-warn-fg\)' : 'var\(--muted\)'/)
+  assert.match(publishPanel, /role="alert"/)
+  assert.match(publishPanel, /var\(--status-warn-fg\)/)
+})
+
 test('the package builder includes accessible names and a responsive single-column boundary', () => {
   assert.match(component, /aria-label="Release customer"/)
   assert.match(component, /aria-label="Release version"/)

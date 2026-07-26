@@ -145,7 +145,14 @@ export function ReleaseApprovalPanel({
         </div>
       )}
 
-      {reason && <div style={{ fontSize: 13, color: 'var(--muted)' }}>{reason}</div>}
+      {reason && (
+        <div
+          role={!expectedReleaseMatches ? 'alert' : undefined}
+          style={{ fontSize: 13, color: !expectedReleaseMatches ? 'var(--status-warn-fg)' : 'var(--muted)' }}
+        >
+          {reason}
+        </div>
+      )}
       {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
