@@ -33,6 +33,9 @@ export type ReleasePackageReadiness = {
   snapshot?: ReleasePackagePolicySnapshot
 }
 
+export const releasePackageApprovalPhrase = (record: Pick<ReleasePackage, 'id' | 'proposedVersion'>): string =>
+  `APPROVE ${record.id} ${record.proposedVersion}`
+
 const active = (status: ReleasePackage['status']): boolean =>
   status !== 'cancelled' && status !== 'superseded'
 

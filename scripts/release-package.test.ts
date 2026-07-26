@@ -1,7 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { evaluateReleasePackageReadiness, type ReleasePackageDraft } from '../app/lib/platform/release/release-package'
+import {
+  evaluateReleasePackageReadiness, releasePackageApprovalPhrase, type ReleasePackageDraft,
+} from '../app/lib/platform/release/release-package'
 import type {
   PlatformBusiness, PlatformUpdate, ReleasePackage, UpdateCompatibility,
 } from '../app/lib/platform/updates/types'
@@ -49,6 +51,16 @@ test('valid package receives a normalized version and evidence snapshot', () => 
   assert.equal(result.normalizedVersion, '1.3.0')
   assert.equal(result.snapshot?.previousVersion, '1.2.0')
   assert.equal(result.snapshot?.baselineSource, 'adopted')
+})
+
+test('owner approval phrase binds the package id and normalized version', () => {
+  assert.equal(
+    releasePackageApprovalPhrase({
+      id: 'RPK-2042',
+      proposedVersion: '2.4.0',
+    }),
+    'APPROVE RPK-2042 2.4.0',
+  )
 })
 
 test('unknown baseline fails closed', () => {
@@ -148,7 +160,14 @@ test('routes enforce owner auth and readiness is persisted through the atomic st
   assert.match(readyRoute, /requirePlatformOwner/)
   assert.match(readyRoute, /evaluateReleasePackageReadiness/)
   assert.match(readyRoute, /saveReadyReleasePackage/)
+  assert.match(readyRoute, /releasePackageApprovalPhrase/)
+  assert.match(readyRoute, /saveApprovedReleasePackage/)
+  assert.match(readyRoute, /record\.status === 'approved'/)
+  assert.match(readyRoute, /idempotent: true/)
+  assert.doesNotMatch(readyRoute, /promoteProduction|rollbackProduction|saveRelease\(/)
   assert.match(store, /decodedBusiness\.updatedAt/)
   assert.match(store, /holder and holder ~= ARGV\[2\]/)
   assert.match(store, /proposedVersion\.split\('\+', 1\)/)
+  assert.match(store, /decodedPackage\.status ~= 'ready_for_approval'/)
+  assert.match(store, /compatibility\.updatedAt/)
 })

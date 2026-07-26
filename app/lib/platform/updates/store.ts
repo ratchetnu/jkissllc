@@ -96,6 +96,13 @@ export async function saveReleasePackage(record: ReleasePackage): Promise<void> 
 }
 
 export type ReadyPackageWrite = 'saved' | 'stale_package' | 'stale_business' | 'duplicate'
+export type PackageApprovalEvidence = {
+  updateKey: string
+  updateUpdatedAt: number
+  compatibilityUpdatedAt: number
+}
+export type ApprovedPackageWrite =
+  | 'saved' | 'stale_package' | 'stale_business' | 'stale_update' | 'stale_compatibility' | 'invalid_status'
 
 /**
  * Atomically reserves product+channel+version and marks the package Ready.
@@ -144,6 +151,81 @@ export async function saveReadyReleasePackage(
   if (result === 1 || result === '1') return 'saved'
   if (result === -2 || result === '-2') return 'stale_business'
   if (result === -3 || result === '-3') return 'duplicate'
+  return 'stale_package'
+}
+
+/**
+ * Atomically seals an approved package only while every record used by the
+ * approval policy still matches the evidence the route evaluated.
+ *
+ * This deliberately does not create a PlatformRelease or call a deployment
+ * provider. Approved packages remain immutable authored artifacts until the
+ * later rollout-record increment can give releases a product-safe identity.
+ */
+export async function saveApprovedReleasePackage(
+  record: ReleasePackage,
+  expectedPackageUpdatedAt: number,
+  expectedBusinessUpdatedAt: number,
+  evidence: PackageApprovalEvidence[],
+): Promise<ApprovedPackageWrite> {
+  const keys = [
+    K_PACKAGE + record.id,
+    K_PACKAGE_IDX,
+    K_BIZ + record.targetProduct,
+    ...evidence.flatMap((item) => [K_UPD + item.updateKey, K_COMPAT + item.updateKey]),
+  ]
+  const args = [
+    JSON.stringify(record),
+    record.id,
+    String(expectedPackageUpdatedAt),
+    String(expectedBusinessUpdatedAt),
+    String(record.updatedAt),
+    record.targetProduct,
+    String(evidence.length),
+    ...evidence.flatMap((item) => [String(item.updateUpdatedAt), String(item.compatibilityUpdatedAt)]),
+  ]
+  const script = `
+    local package = redis.call('GET', KEYS[1])
+    if not package then return -1 end
+    local decodedPackage = cjson.decode(package)
+    if tonumber(decodedPackage.updatedAt) ~= tonumber(ARGV[3]) then return -1 end
+    if decodedPackage.status ~= 'ready_for_approval' then return -5 end
+
+    local business = redis.call('GET', KEYS[3])
+    if not business then return -2 end
+    local decodedBusiness = cjson.decode(business)
+    if tonumber(decodedBusiness.updatedAt) ~= tonumber(ARGV[4]) then return -2 end
+
+    local count = tonumber(ARGV[7])
+    for i = 1, count do
+      local updateKeyIndex = 4 + ((i - 1) * 2)
+      local compatKeyIndex = updateKeyIndex + 1
+      local expectedUpdateAt = tonumber(ARGV[8 + ((i - 1) * 2)])
+      local expectedCompatAt = tonumber(ARGV[9 + ((i - 1) * 2)])
+
+      local update = redis.call('GET', KEYS[updateKeyIndex])
+      if not update then return -3 end
+      local decodedUpdate = cjson.decode(update)
+      if tonumber(decodedUpdate.updatedAt) ~= expectedUpdateAt then return -3 end
+
+      local compatMap = redis.call('GET', KEYS[compatKeyIndex])
+      if not compatMap then return -4 end
+      local decodedCompatMap = cjson.decode(compatMap)
+      local compatibility = decodedCompatMap[ARGV[6]]
+      if not compatibility then return -4 end
+      if tonumber(compatibility.updatedAt) ~= expectedCompatAt then return -4 end
+    end
+
+    redis.call('SET', KEYS[1], ARGV[1])
+    redis.call('ZADD', KEYS[2], ARGV[5], ARGV[2])
+    return 1
+  `
+  const result = await redis.eval(script, keys, args)
+  if (result === 1 || result === '1') return 'saved'
+  if (result === -2 || result === '-2') return 'stale_business'
+  if (result === -3 || result === '-3') return 'stale_update'
+  if (result === -4 || result === '-4') return 'stale_compatibility'
+  if (result === -5 || result === '-5') return 'invalid_status'
   return 'stale_package'
 }
 

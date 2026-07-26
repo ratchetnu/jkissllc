@@ -29,6 +29,12 @@ test('Increment 4 cannot approve, publish, or deploy a release', () => {
   assert.doesNotMatch(component, /ready_for_approval['"]\s*[,}]\s*method/)
 })
 
+test('the builder safely renders packages approved through the separate API stage', () => {
+  assert.match(component, /approved: \{ label: 'Approved'/)
+  assert.match(component, /Package approved and sealed/)
+  assert.match(component, /No rollout or publication has started/)
+})
+
 test('the package builder includes accessible names and a responsive single-column boundary', () => {
   assert.match(component, /aria-label="Release customer"/)
   assert.match(component, /aria-label="Release version"/)

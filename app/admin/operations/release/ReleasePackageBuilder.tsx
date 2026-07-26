@@ -8,7 +8,7 @@ import {
 import { osField, osLabel } from '../ui'
 
 type BaselineSource = 'installed_by_release' | 'adopted' | 'unknown'
-type PackageStatus = 'draft' | 'blocked' | 'ready_for_approval' | 'cancelled' | 'superseded'
+type PackageStatus = 'draft' | 'blocked' | 'ready_for_approval' | 'approved' | 'cancelled' | 'superseded'
 type ProductOption = {
   id: string
   name: string
@@ -91,6 +91,7 @@ const STATUS: Record<PackageStatus, { label: string; color: string; background: 
   draft: { label: 'Draft', color: '#93c5fd', background: 'rgba(59,130,246,.14)' },
   blocked: { label: 'Needs attention', color: '#fcd34d', background: 'rgba(245,158,11,.14)' },
   ready_for_approval: { label: 'Ready for approval', color: '#86efac', background: 'rgba(34,197,94,.14)' },
+  approved: { label: 'Approved', color: '#c4b5fd', background: 'rgba(139,92,246,.14)' },
   cancelled: { label: 'Cancelled', color: '#94a3b8', background: 'rgba(255,255,255,.06)' },
   superseded: { label: 'Replaced', color: '#94a3b8', background: 'rgba(255,255,255,.06)' },
 }
@@ -504,13 +505,17 @@ export function ReleasePackageBuilder() {
               </div>
             </div>
 
-            {activePackage.status === 'ready_for_approval' ? (
+            {activePackage.status === 'ready_for_approval' || activePackage.status === 'approved' ? (
               <div role="status" style={{ padding: 14, borderRadius: 13, border: '1px solid rgba(34,197,94,.28)', background: 'rgba(34,197,94,.07)', display: 'flex', gap: 10 }}>
                 <CheckCircle2 size={18} style={{ color: '#86efac', flexShrink: 0 }} />
                 <div>
-                  <strong style={{ display: 'block', fontSize: 13 }}>All readiness checks passed</strong>
+                  <strong style={{ display: 'block', fontSize: 13 }}>
+                    {activePackage.status === 'approved' ? 'Package approved and sealed' : 'All readiness checks passed'}
+                  </strong>
                   <span style={{ display: 'block', marginTop: 3, color: 'var(--muted)', fontSize: 11.5, lineHeight: 1.4 }}>
-                    This package can move to the separate owner-approval stage. Nothing has been published.
+                    {activePackage.status === 'approved'
+                      ? 'The owner approved this package. No rollout or publication has started.'
+                      : 'This package can move to the separate owner-approval stage. Nothing has been published.'}
                   </span>
                 </div>
               </div>
@@ -545,7 +550,7 @@ export function ReleasePackageBuilder() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           <div>
             <div style={osLabel}>Recent packages</div>
-            <p style={{ margin: '4px 0 0', color: 'var(--muted)', fontSize: 11.5 }}>Drafts and packages waiting for approval.</p>
+            <p style={{ margin: '4px 0 0', color: 'var(--muted)', fontSize: 11.5 }}>Drafts, approvals, and sealed packages.</p>
           </div>
           <button type="button" onClick={load} aria-label="Refresh release packages" style={{ ...secondary, minHeight: 34, padding: 7 }}>
             <RefreshCw size={14} />
