@@ -1,6 +1,6 @@
 # Operion Release Control — Increment 9 Closeout
 
-**Status:** implementation complete; owner activation check remains.
+**Status:** complete; Production activation evidence confirmed by the owner.
 
 **Closed:** 2026-07-26  
 **Production baseline:** J KISS `main` merge `27f5e0e`  
@@ -47,18 +47,19 @@ flag, credential, provider setting, schema, or stored release record.
 
 ## Owner activation check
 
-Before the next real Production publish, sign in as the owner at
-`/admin/operations/release` and confirm the live activation-readiness evidence:
+The owner authenticated on `www.jkissllc.com` and verified the live Ready Check:
 
-- `OPERION_APPROVAL_GATE_ENABLED` is enabled;
-- `OPERION_PRODUCTION_PROMOTION_ENABLED` is enabled;
-- the selected business has a verified Production target and rollback target;
-- the exact package reports execution-ready with one unambiguous candidate;
-- the publish panel reports **LIVE**, not **Simulated**.
+- the environment reported **Production**;
+- all seven controlled-Production checks passed;
+- `OPERION_APPROVAL_GATE_ENABLED` reported **ON**;
+- `OPERION_PRODUCTION_PROMOTION_ENABLED` reported **ON**;
+- active businesses reported verified Production and rollback paths.
 
-The unauthenticated closeout browser session reached the owner sign-in screen, so it
-could not verify these protected booleans. This is intentionally recorded as an
-owner check rather than inferred from older documentation or environment names.
+No business currently had an active publishable candidate, so the **LIVE** badge was
+not directly observable. Its two controlling Production flags were independently
+confirmed ON. The exact package must still report execution-ready with one
+unambiguous candidate at the time of a real publish; that is per-release evidence,
+not a remaining platform activation task.
 
 Advanced automation is outside this closeout. AI adaptation and automatic rollback
 may remain disabled; controlled owner-approved publishing does not require them.
@@ -77,6 +78,7 @@ may remain disabled; controlled owner-approved publishing does not require them.
 
 ## Completion verdict
 
-The release-control increment sequence is code-complete and can support the next
-owner-approved Production publish after the authenticated activation check above.
-No Production mutation is authorized or performed by this closeout.
+The release-control increment sequence and platform activation check are complete.
+Operion can support the next owner-approved Production publish after that release's
+package-specific execution-readiness check. No Production mutation is authorized or
+performed by this closeout.
