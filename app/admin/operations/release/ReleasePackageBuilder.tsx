@@ -38,6 +38,8 @@ type ReleasePackage = {
   releaseNotes?: string
   status: PackageStatus
   blockingReasons: string[]
+  rolloutId?: string
+  rolloutCreatedAt?: number
   createdAt: number
   updatedAt: number
 }
@@ -256,6 +258,32 @@ export function ReleasePackageBuilder() {
         : current)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Readiness could not be checked.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function createRollout() {
+    if (!activePackage || activePackage.status !== 'approved' || activePackage.rolloutId) return
+    setBusy(true)
+    setError('')
+    try {
+      const response = await fetch(`/api/admin/platform/releases/${activePackage.id}`, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'create-rollout' }),
+      })
+      const result = await response.json().catch(() => null)
+      if (!response.ok || !result?.package || !result?.rollout) {
+        throw new Error(result?.error || 'The rollout plan could not be created.')
+      }
+      setActivePackage(result.package)
+      setCatalog((current) => current
+        ? { ...current, packages: current.packages.map((item) => item.id === result.package.id ? result.package : item) }
+        : current)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The rollout plan could not be created.')
     } finally {
       setBusy(false)
     }
@@ -506,19 +534,31 @@ export function ReleasePackageBuilder() {
             </div>
 
             {activePackage.status === 'ready_for_approval' || activePackage.status === 'approved' ? (
-              <div role="status" style={{ padding: 14, borderRadius: 13, border: '1px solid rgba(34,197,94,.28)', background: 'rgba(34,197,94,.07)', display: 'flex', gap: 10 }}>
-                <CheckCircle2 size={18} style={{ color: '#86efac', flexShrink: 0 }} />
-                <div>
-                  <strong style={{ display: 'block', fontSize: 13 }}>
-                    {activePackage.status === 'approved' ? 'Package approved and sealed' : 'All readiness checks passed'}
-                  </strong>
-                  <span style={{ display: 'block', marginTop: 3, color: 'var(--muted)', fontSize: 11.5, lineHeight: 1.4 }}>
-                    {activePackage.status === 'approved'
-                      ? 'The owner approved this package. No rollout or publication has started.'
-                      : 'This package can move to the separate owner-approval stage. Nothing has been published.'}
-                  </span>
+              <>
+                <div role="status" style={{ padding: 14, borderRadius: 13, border: '1px solid rgba(34,197,94,.28)', background: 'rgba(34,197,94,.07)', display: 'flex', gap: 10 }}>
+                  <CheckCircle2 size={18} style={{ color: '#86efac', flexShrink: 0 }} />
+                  <div>
+                    <strong style={{ display: 'block', fontSize: 13 }}>
+                      {activePackage.rolloutId
+                        ? 'Rollout plan created'
+                        : activePackage.status === 'approved' ? 'Package approved and sealed' : 'All readiness checks passed'}
+                    </strong>
+                    <span style={{ display: 'block', marginTop: 3, color: 'var(--muted)', fontSize: 11.5, lineHeight: 1.4 }}>
+                      {activePackage.rolloutId
+                        ? `${activePackage.rolloutId} is ready for the next controlled stage. No site changes have started.`
+                        : activePackage.status === 'approved'
+                          ? 'The owner approved this package. Create an internal rollout plan when you are ready. This will not change a live site.'
+                          : 'This package can move to the separate owner-approval stage. Nothing has been published.'}
+                    </span>
+                  </div>
                 </div>
-              </div>
+                {activePackage.status === 'approved' && !activePackage.rolloutId && (
+                  <button type="button" onClick={createRollout} disabled={busy} style={{ ...primary, opacity: busy ? .65 : 1, justifySelf: 'start' }}>
+                    {busy ? <Loader2 size={15} className="animate-spin" /> : <PackageCheck size={15} />}
+                    {busy ? 'Creating…' : 'Create rollout plan'}
+                  </button>
+                )}
+              </>
             ) : (
               <>
                 {readiness && !readiness.ok && (

@@ -10,6 +10,7 @@ import {
   type JobFacts,
 } from '../app/lib/platform/automation/finalize'
 import type { DeploymentRecord } from '../app/lib/platform/updates/types'
+import { selectReleaseForJob } from '../app/lib/platform/automation/reconcile-records'
 
 const NOW = 1_700_000_000_000
 
@@ -148,4 +149,20 @@ test('resolveDeploymentMatch: unique / ambiguous / none', () => {
   // a matching commit that isn't ready must not match
   assert.equal(resolveDeploymentMatch([{ deploymentId: 'dpl_a', commit: 'dd8f658', ready: false }], 'dd8f658').kind, 'none')
   assert.equal(resolveDeploymentMatch([ready('dpl_a', 'dd8f658')], undefined).kind, 'none')
+})
+
+test('release reconciliation selects the rollout for the job product, not another product using the same update and version', () => {
+  const shared = {
+    recordVersion: 1, version: '1.3.0', channel: 'stable' as const,
+    status: 'approved' as const, updateKeys: ['UPD-1006'],
+    createdAt: NOW, updatedAt: NOW,
+  }
+  const releases = [
+    { ...shared, version: '1.2.9', targetBusinessIds: ['jkiss', 'supercharged'] },
+    { ...shared, id: 'REL-1001', targetProduct: 'jkiss', targetBusinessIds: ['jkiss'] },
+    { ...shared, id: 'REL-1002', targetProduct: 'supercharged', targetBusinessIds: ['supercharged'] },
+  ]
+  assert.equal(selectReleaseForJob(releases, 'UPD-1006', 'supercharged')?.id, 'REL-1002')
+  assert.equal(selectReleaseForJob(releases, 'UPD-1006', 'jkiss')?.id, 'REL-1001')
+  assert.equal(selectReleaseForJob(releases, 'UPD-1006', 'unknown'), null)
 })

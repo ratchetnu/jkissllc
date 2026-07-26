@@ -26,7 +26,17 @@ globalThis.fetch = (async (_url: string, init: { body?: string }) => {
     const keyCount = Number(args[1])
     const keys = args.slice(2, 2 + keyCount)
     const argv = args.slice(2 + keyCount)
-    if (keyCount === 4) {
+    if (keyCount === 2) {
+      const [packageKey, packageIndex] = keys
+      const [payload, updatedAt, packageId] = argv
+      const current = values.get(packageKey)
+      if (current && (JSON.parse(current).status === 'approved' || JSON.parse(current).rolloutId)) result = -1
+      else {
+        values.set(packageKey, payload)
+        index(packageIndex).set(packageId, Number(updatedAt))
+        result = 1
+      }
+    } else if (keyCount === 4 && keys[2].startsWith('platform:release-package-version:')) {
       const [packageKey, packageIndex, reservationKey, businessKey] = keys
       const [payload, packageId, expectedPackageAt, expectedBusinessAt, updatedAt, packagePrefix] = argv
       const currentPackage = values.get(packageKey)
@@ -46,6 +56,22 @@ globalThis.fetch = (async (_url: string, init: { body?: string }) => {
           index(packageIndex).set(packageId, Number(updatedAt))
           result = 1
         }
+      }
+    } else if (keyCount === 4 && keys[2].startsWith('platform:release:')) {
+      const [packageKey, packageIndex, releaseKey, releaseIndex] = keys
+      const [releasePayload, updatedAt, releaseId, packagePayload, expectedPackageAt, packageId] = argv
+      const currentPackage = values.get(packageKey)
+      if (!currentPackage) result = -1
+      else if (JSON.parse(currentPackage).rolloutId) result = 2
+      else if (Number(JSON.parse(currentPackage).updatedAt) !== Number(expectedPackageAt)) result = -1
+      else if (JSON.parse(currentPackage).status !== 'approved') result = -2
+      else if (values.has(releaseKey)) result = -3
+      else {
+        values.set(releaseKey, releasePayload)
+        index(releaseIndex).set(releaseId, Number(updatedAt))
+        values.set(packageKey, packagePayload)
+        index(packageIndex).set(packageId, Number(updatedAt))
+        result = 1
       }
     } else {
       const [packageKey, packageIndex, businessKey, ...evidenceKeys] = keys
@@ -214,4 +240,55 @@ test('approval fails closed on package status and update or compatibility drift'
     'stale_compatibility',
   )
   assert.equal(JSON.parse(values.get(`platform:release-package:${readyRecord.id}`)!).status, 'ready_for_approval')
+})
+
+test('approved package creates one linked product-safe rollout and preserves other products using the same version', async () => {
+  values.clear(); indexes.clear()
+  const { saveRolloutForApprovedPackage } = await import('../app/lib/platform/updates/store')
+  const firstPackage = {
+    ...packageRecord('RPK-2401', 'approved'),
+    approvalSnapshot: {
+      previousVersion: '1.2.0', baselineSource: 'adopted' as const,
+      businessUpdatedAt: now, versionReason: 'minor', duplicateReason: 'available', evaluatedAt: now,
+    },
+    approvedBy: 'owner', approvedAt: now,
+  }
+  await saveReleasePackage(firstPackage)
+  const firstRelease = {
+    recordVersion: 1, id: 'REL-2401', packageId: firstPackage.id,
+    targetProduct: 'supercharged', version: '1.3.0', channel: 'stable' as const,
+    status: 'approved' as const, updateKeys: firstPackage.updateKeys,
+    targetBusinessIds: ['supercharged'], createdAt: now + 1, updatedAt: now + 1,
+  }
+  const linked = { ...firstPackage, rolloutId: firstRelease.id, rolloutCreatedAt: now + 1, updatedAt: now + 1 }
+  assert.equal(await saveRolloutForApprovedPackage(firstRelease, linked, now), 'saved')
+  assert.equal(await saveRolloutForApprovedPackage(firstRelease, linked, now), 'already_created')
+
+  const secondPackage = { ...firstPackage, id: 'RPK-2402', targetProduct: 'jkiss' }
+  await saveReleasePackage(secondPackage)
+  const secondRelease = {
+    ...firstRelease, id: 'REL-2402', packageId: secondPackage.id,
+    targetProduct: 'jkiss', targetBusinessIds: ['jkiss'],
+  }
+  assert.equal(
+    await saveRolloutForApprovedPackage(
+      secondRelease,
+      { ...secondPackage, rolloutId: secondRelease.id, rolloutCreatedAt: now + 1, updatedAt: now + 1 },
+      now,
+    ),
+    'saved',
+  )
+  assert.equal(JSON.parse(values.get('platform:release:REL-2401')!).targetProduct, 'supercharged')
+  assert.equal(JSON.parse(values.get('platform:release:REL-2402')!).targetProduct, 'jkiss')
+})
+
+test('an approved package cannot be overwritten through the generic package writer', async () => {
+  values.clear(); indexes.clear()
+  const approved = packageRecord('RPK-2501', 'approved')
+  await saveReleasePackage(approved)
+  await assert.rejects(
+    saveReleasePackage({ ...approved, status: 'cancelled', updatedAt: now + 1 }),
+    /APPROVED_RELEASE_PACKAGE_IMMUTABLE/,
+  )
+  assert.equal(JSON.parse(values.get(`platform:release-package:${approved.id}`)!).status, 'approved')
 })

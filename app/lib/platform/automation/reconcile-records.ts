@@ -72,6 +72,22 @@ function releaseTargetStates(release: PlatformRelease, deployments: DeploymentRe
   })
 }
 
+/** Product-safe association: an update may appear in separate rollouts for
+ * different managed businesses, so update membership alone is insufficient. */
+export function selectReleaseForJob(
+  releases: PlatformRelease[],
+  updateId: string,
+  businessId: string,
+): PlatformRelease | null {
+  const applicable = releases.filter((release) =>
+    release.updateKeys.includes(updateId) &&
+    release.targetBusinessIds.includes(businessId),
+  )
+  return applicable.find((release) => release.targetProduct === businessId)
+    ?? applicable.find((release) => !release.targetProduct)
+    ?? null
+}
+
 function jobFacts(job: UpdateAutomationJob): JobFacts {
   return {
     id: job.id, updateId: job.updateId, businessId: job.businessId, status: job.status,
@@ -124,7 +140,7 @@ export async function reconcileJobRecords(input: {
   const verified = uniq([...verifiedTargetsFromDeployments(job.updateId, deployments), job.businessId])
 
   // Release association (optional).
-  const releaseForUpdate = releases.find((r) => r.updateKeys.includes(job.updateId)) ?? null
+  const releaseForUpdate = selectReleaseForJob(releases, job.updateId, job.businessId)
   const release = releaseForUpdate ? { version: releaseForUpdate.version, status: releaseForUpdate.status } : null
   const releaseTargets = releaseForUpdate ? releaseTargetStates(releaseForUpdate, deployments, job.businessId) : null
 

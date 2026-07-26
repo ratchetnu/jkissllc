@@ -204,6 +204,12 @@ export type ReleaseStatus =
 
 export type PlatformRelease = {
   recordVersion: number
+  /** Stable product-safe identity. Legacy records omit this and remain keyed by version. */
+  id?: string
+  /** Approved authored package that produced this rollout record. */
+  packageId?: string
+  /** Single managed product this rollout belongs to. */
+  targetProduct?: string
   version: string                  // 'v1.4.0'
   name?: string
   description?: string
@@ -258,6 +264,9 @@ export type ReleasePackage = {
   approvalSnapshot?: ReleasePackagePolicySnapshot
   approvedBy?: string
   approvedAt?: number
+  /** Internal rollout record created from this approved package. No deployment is implied. */
+  rolloutId?: string
+  rolloutCreatedAt?: number
 }
 
 // ── Deployment records ───────────────────────────────────────────────────────
