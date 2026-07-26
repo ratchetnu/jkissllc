@@ -16,7 +16,7 @@ import { finalizationPlan, type JobFacts, type ReleaseTargetState } from './fina
 import {
   getBusiness, saveBusiness, getUpdate, saveUpdate,
   listDeployments, saveDeployment, nextDeploymentId,
-  saveRelease, listReleases, listCompat,
+  updateRelease, listReleases, listCompat,
 } from '../updates/store'
 import { getJob, saveJob, listJobs } from './store'
 import { recordPlatformAudit, type PlatformAuditAction } from '../updates/audit'
@@ -242,7 +242,8 @@ export async function reconcileJobRecords(input: {
     releaseStatus = { version: plan.release.version, from: plan.release.from, to: plan.release.to }
     if (plan.release.from !== plan.release.to) {
       const nextRel: PlatformRelease = { ...releaseForUpdate, status: plan.release.to, updatedAt: now() }
-      await saveRelease(nextRel)
+      const releaseWrite = await updateRelease(releaseForUpdate, nextRel)
+      if (releaseWrite !== 'saved') throw new Error(`RELEASE_RECONCILIATION_${releaseWrite.toUpperCase()}`)
       await audit({
         action: plan.release.to === 'completed' ? 'promotion.release_completed' : 'promotion.release_partially_completed',
         priorStatus: plan.release.from, newStatus: plan.release.to, releaseVersion: plan.release.version,

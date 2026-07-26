@@ -75,10 +75,61 @@ export async function listCompat(updateKey: string): Promise<UpdateCompatibility
 const releaseStorageId = (record: Pick<PlatformRelease, 'id' | 'version'>): string => record.id ?? record.version
 export async function nextReleaseId(): Promise<string> { return `REL-${1000 + (await redis.incr(K_REL_CTR))}` }
 export async function getRelease(idOrVersion: string): Promise<PlatformRelease | null> { return parse(await redis.get(K_REL + idOrVersion)) }
+
+/** Create-only release writer. Existing legacy or REL-* records are never overwritten. */
 export async function saveRelease(r: PlatformRelease): Promise<void> {
   const id = releaseStorageId(r)
-  await redis.set(K_REL + id, JSON.stringify(r))
-  await redis.zadd(K_REL_IDX, r.updatedAt, id)
+  const script = `
+    if redis.call('EXISTS', KEYS[1]) == 1 then return -1 end
+    redis.call('SET', KEYS[1], ARGV[1])
+    redis.call('ZADD', KEYS[2], ARGV[2], ARGV[3])
+    return 1
+  `
+  const result = await redis.eval(
+    script,
+    [K_REL + id, K_REL_IDX],
+    [JSON.stringify(r), String(r.updatedAt), id],
+  )
+  if (result !== 1 && result !== '1') throw new Error('RELEASE_ALREADY_EXISTS')
+}
+
+export type ReleaseUpdateWrite = 'saved' | 'stale_release' | 'invalid_change'
+
+function immutableReleaseFields(record: PlatformRelease): Omit<PlatformRelease, 'status' | 'updatedAt'> {
+  const copy = { ...record }
+  delete (copy as Partial<PlatformRelease>).status
+  delete (copy as Partial<PlatformRelease>).updatedAt
+  return copy as Omit<PlatformRelease, 'status' | 'updatedAt'>
+}
+
+/**
+ * Guarded status update for reconciliation. A rollout's identity and authored
+ * contents are immutable; only status and updatedAt may change. The byte-level
+ * CAS prevents a stale reconciler from overwriting a newer status.
+ */
+export async function updateRelease(
+  current: PlatformRelease,
+  next: PlatformRelease,
+): Promise<ReleaseUpdateWrite> {
+  const currentImmutable = immutableReleaseFields(current)
+  const nextImmutable = immutableReleaseFields(next)
+  if (JSON.stringify(currentImmutable) !== JSON.stringify(nextImmutable)) return 'invalid_change'
+
+  const id = releaseStorageId(current)
+  if (releaseStorageId(next) !== id) return 'invalid_change'
+  const script = `
+    local stored = redis.call('GET', KEYS[1])
+    if not stored or stored ~= ARGV[1] then return -1 end
+    redis.call('SET', KEYS[1], ARGV[2])
+    redis.call('ZADD', KEYS[2], ARGV[3], ARGV[4])
+    return 1
+  `
+  const result = await redis.eval(
+    script,
+    [K_REL + id, K_REL_IDX],
+    [JSON.stringify(current), JSON.stringify(next), String(next.updatedAt), id],
+  )
+  return result === 1 || result === '1' ? 'saved' : 'stale_release'
 }
 export async function listReleases(limit = 100): Promise<PlatformRelease[]> {
   return loadMany(K_REL, await redis.zrevrange(K_REL_IDX, 0, Math.max(0, limit - 1)))
