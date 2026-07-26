@@ -53,6 +53,16 @@ type Readiness = {
   blockers: string[]
   normalizedVersion?: string
 }
+type ExecutionReadiness = {
+  ready: boolean
+  blockers: { code: string; message: string; updateKey?: string }[]
+  candidate?: {
+    targetCommit: string
+    sourceDeploymentId: string
+    jobIds: string[]
+    updateKeys: string[]
+  }
+}
 
 const surface: React.CSSProperties = {
   border: '1px solid var(--line)',
@@ -152,6 +162,7 @@ export function ReleasePackageBuilder() {
   const [releaseNotes, setReleaseNotes] = useState('')
   const [activePackage, setActivePackage] = useState<ReleasePackage | null>(null)
   const [readiness, setReadiness] = useState<Readiness | null>(null)
+  const [executionReadiness, setExecutionReadiness] = useState<ExecutionReadiness | null>(null)
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
@@ -196,6 +207,7 @@ export function ReleasePackageBuilder() {
     setReleaseNotes('')
     setActivePackage(null)
     setReadiness(null)
+    setExecutionReadiness(null)
     setError('')
   }
 
@@ -223,12 +235,36 @@ export function ReleasePackageBuilder() {
       const result = await response.json().catch(() => null)
       if (!response.ok || !result?.package) throw new Error(result?.error || 'The draft could not be saved.')
       setActivePackage(result.package)
+      setExecutionReadiness(null)
       setCatalog((current) => current
         ? { ...current, packages: [result.package, ...current.packages] }
         : current)
       setReadiness(null)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The draft could not be saved.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function checkExecutionReadiness() {
+    if (!activePackage?.rolloutId) return
+    setBusy(true)
+    setError('')
+    setExecutionReadiness(null)
+    try {
+      const response = await fetch(`/api/admin/platform/releases/${activePackage.id}`, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      })
+      const result = await response.json().catch(() => null)
+      if (!response.ok || !result?.executionReadiness) {
+        throw new Error(result?.error || 'Execution readiness could not be checked.')
+      }
+      setActivePackage(result.package)
+      setExecutionReadiness(result.executionReadiness)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Execution readiness could not be checked.')
     } finally {
       setBusy(false)
     }
@@ -558,6 +594,32 @@ export function ReleasePackageBuilder() {
                     {busy ? 'Creating…' : 'Create rollout plan'}
                   </button>
                 )}
+                {activePackage.rolloutId && (
+                  <>
+                    <button type="button" onClick={checkExecutionReadiness} disabled={busy} style={{ ...secondary, opacity: busy ? .65 : 1, justifySelf: 'start' }}>
+                      {busy ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />}
+                      {busy ? 'Checking…' : 'Check execution readiness'}
+                    </button>
+                    {executionReadiness?.ready && executionReadiness.candidate && (
+                      <div role="status" style={{ padding: 14, borderRadius: 13, border: '1px solid rgba(34,197,94,.28)', background: 'rgba(34,197,94,.07)' }}>
+                        <strong style={{ display: 'block', fontSize: 13 }}>Verified Preview artifact found</strong>
+                        <span style={{ display: 'block', marginTop: 4, color: 'var(--muted)', fontSize: 11.5, lineHeight: 1.45 }}>
+                          Commit {executionReadiness.candidate.targetCommit.slice(0, 10)} · deployment {executionReadiness.candidate.sourceDeploymentId}. This check is read-only; execution is still unavailable.
+                        </span>
+                      </div>
+                    )}
+                    {executionReadiness && !executionReadiness.ready && (
+                      <div role="alert" style={{ padding: 14, borderRadius: 13, border: '1px solid rgba(245,158,11,.3)', background: 'rgba(245,158,11,.07)' }}>
+                        <strong style={{ display: 'block', color: '#fcd34d', fontSize: 13 }}>Execution is not ready</strong>
+                        <ul style={{ margin: '8px 0 0', paddingLeft: 20, display: 'grid', gap: 5 }}>
+                          {executionReadiness.blockers.map((blocker) => (
+                            <li key={`${blocker.code}:${blocker.updateKey ?? ''}`} style={{ fontSize: 12, lineHeight: 1.4 }}>{blocker.message}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </>
+                )}
               </>
             ) : (
               <>
@@ -604,7 +666,7 @@ export function ReleasePackageBuilder() {
             </div>
           )}
           {catalog.packages.slice(0, 8).map((item) => (
-            <button key={item.id} type="button" onClick={() => { setActivePackage(item); setReadiness(null); setError('') }}
+            <button key={item.id} type="button" onClick={() => { setActivePackage(item); setReadiness(null); setExecutionReadiness(null); setError('') }}
               style={{
                 width: '100%', display: 'grid', gap: 6, padding: 11, borderRadius: 11, textAlign: 'left',
                 color: 'var(--text)', background: activePackage?.id === item.id ? 'rgba(59,130,246,.08)' : 'transparent',

@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server'
 import type {
   PlatformBusiness, PlatformUpdate, ReleasePackage, UpdateCompatibility,
 } from '../app/lib/platform/updates/types'
+import type { UpdateAutomationJob } from '../app/lib/platform/automation/types'
 
 process.env.KV_REST_API_URL = 'http://fake-release-package-approval.local'
 process.env.KV_REST_API_TOKEN = 'test-token'
@@ -146,12 +147,19 @@ const request = (token: string | undefined, phrase: string, action = 'approve') 
   return req
 }
 
+const readRequest = (token: string | undefined) => {
+  const req = new NextRequest('http://localhost/api/admin/platform/releases/RPK-3001')
+  if (token) req.cookies.set('jk_admin_session', token)
+  return req
+}
+
 test('owner approval is confirmed, revalidated, persisted once, and never starts a rollout', async () => {
   const {
     saveBusiness, saveCompat, saveReleasePackage, saveUpdate,
   } = await import('../app/lib/platform/updates/store')
   const { createSessionToken } = await import('../app/api/admin/_lib/session')
-  const { PATCH } = await import('../app/api/admin/platform/releases/[id]/route')
+  const { GET, PATCH } = await import('../app/api/admin/platform/releases/[id]/route')
+  const { saveJob } = await import('../app/lib/platform/automation/store')
   await saveBusiness(business)
   await saveUpdate(update)
   await saveCompat(compatibility)
@@ -208,4 +216,40 @@ test('owner approval is confirmed, revalidated, persisted once, and never starts
   assert.equal(repeatedRollout.status, 200)
   assert.equal((await repeatedRollout.json()).idempotent, true)
   assert.equal(counters.get('platform:audit:counter'), rolloutAuditCount)
+
+  assert.equal((await GET(readRequest(undefined), params)).status, 401)
+  const blockedReadiness = await GET(readRequest(token), params)
+  assert.equal(blockedReadiness.status, 200)
+  const blockedBody = await blockedReadiness.json()
+  assert.equal(blockedBody.executionReadiness.ready, false)
+  assert.deepEqual(
+    blockedBody.executionReadiness.blockers.map((blocker: { code: string }) => blocker.code),
+    ['UPDATE_CANDIDATE_MISSING'],
+  )
+
+  const candidate: UpdateAutomationJob = {
+    jobVersion: 1,
+    id: 'AUTO-3001',
+    businessId: business.id,
+    updateId: update.key,
+    mode: 'live',
+    status: 'awaiting_owner_review',
+    strategy: 'commit_transfer',
+    attemptCount: 1,
+    currentStep: 'owner_review',
+    idempotencyKey: 'RPK-3001-readiness',
+    targetCommit: 'abc1234',
+    previewDeploymentId: 'dpl_preview_3001',
+    createdAt: now,
+    updatedAt: now,
+  }
+  await saveJob(candidate)
+  const readyReadiness = await GET(readRequest(token), params)
+  assert.equal(readyReadiness.status, 200)
+  const readyBody = await readyReadiness.json()
+  assert.equal(readyBody.executionReadiness.ready, true)
+  assert.equal(readyBody.executionReadiness.candidate.targetCommit, candidate.targetCommit)
+  assert.equal(readyBody.executionReadiness.candidate.sourceDeploymentId, candidate.previewDeploymentId)
+  assert.equal(readyReadiness.headers.get('cache-control'), 'no-store, no-cache, must-revalidate')
+  assert.equal(counters.get('platform:audit:counter'), rolloutAuditCount, 'readiness checks write no audit event')
 })
