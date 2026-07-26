@@ -29,7 +29,24 @@ export type RolloutExecutionReadiness =
   | { ready: true; blockers: []; candidate: RolloutExecutionCandidate }
   | { ready: false; blockers: RolloutExecutionBlocker[] }
 
-type CandidateJob = Pick<
+export type RolloutExecutionHandoff =
+  | {
+      ready: true
+      blocker: null
+      businessId: string
+      jobId: string
+      releaseId: string
+      sourceDeploymentId: string
+    }
+  | {
+      ready: false
+      blocker: {
+        code: 'EXECUTION_NOT_READY' | 'PUBLISH_CONTEXT_MISSING' | 'PUBLISH_CONTEXT_MISMATCH'
+        message: string
+      }
+    }
+
+export type CandidateJob = Pick<
   UpdateAutomationJob,
   'id' | 'businessId' | 'updateId' | 'status' | 'targetCommit' | 'previewDeploymentId' | 'updatedAt'
 >
@@ -139,5 +156,64 @@ export function evaluateRolloutExecutionReadiness(input: {
       jobIds: selected.map((job) => job.id),
       updateKeys: [...pkg.updateKeys],
     },
+  }
+}
+
+/**
+ * Connects package evidence to the existing controlled publish workflow without
+ * creating a second executor. The publish workflow selects one active job for a
+ * customer; this handoff opens only when that exact job is one of the package's
+ * verified candidates and still points at the same Preview artifact.
+ */
+export function evaluateRolloutExecutionHandoff(input: {
+  readiness: RolloutExecutionReadiness
+  publishContextJob: CandidateJob | null
+}): RolloutExecutionHandoff {
+  if (!input.readiness.ready) {
+    return {
+      ready: false,
+      blocker: {
+        code: 'EXECUTION_NOT_READY',
+        message: 'Resolve the execution-readiness blockers before opening controlled publish.',
+      },
+    }
+  }
+
+  const candidate = input.readiness.candidate
+  const job = input.publishContextJob
+  if (!job) {
+    return {
+      ready: false,
+      blocker: {
+        code: 'PUBLISH_CONTEXT_MISSING',
+        message: 'No current verified job is available for this customer’s controlled publish workflow.',
+      },
+    }
+  }
+
+  const exactMatch =
+    job.businessId === candidate.targetProduct &&
+    candidate.jobIds.includes(job.id) &&
+    job.status === 'awaiting_owner_review' &&
+    job.targetCommit === candidate.targetCommit &&
+    job.previewDeploymentId === candidate.sourceDeploymentId
+
+  if (!exactMatch) {
+    return {
+      ready: false,
+      blocker: {
+        code: 'PUBLISH_CONTEXT_MISMATCH',
+        message: 'Another job currently owns this customer’s publish workflow. Resolve it before continuing.',
+      },
+    }
+  }
+
+  return {
+    ready: true,
+    blocker: null,
+    businessId: candidate.targetProduct,
+    jobId: job.id,
+    releaseId: candidate.targetCommit,
+    sourceDeploymentId: candidate.sourceDeploymentId,
   }
 }

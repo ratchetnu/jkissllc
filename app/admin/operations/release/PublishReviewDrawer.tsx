@@ -281,10 +281,22 @@ type State =
   | { kind: 'loading' } | { kind: 'unauthorized' } | { kind: 'error'; message: string }
   | { kind: 'data'; review: PublishReview; warnings: string[] }
 
-export function PublishReviewDrawer({ businessId, businessName, open, onClose }: { businessId: string; businessName?: string; open: boolean; onClose: () => void }) {
+type ExpectedRelease = { releaseId: string; sourceDeploymentId: string }
+
+export function PublishReviewDrawer({
+  businessId, businessName, expectedRelease, open, onClose,
+}: {
+  businessId: string
+  businessName?: string
+  expectedRelease?: ExpectedRelease
+  open: boolean
+  onClose: () => void
+}) {
   const [state, setState] = useState<State>({ kind: 'loading' })
   const [nonce, setNonce] = useState(0)
   const abortRef = useRef<AbortController | null>(null)
+  const expectedReleaseId = expectedRelease?.releaseId
+  const expectedSourceDeploymentId = expectedRelease?.sourceDeploymentId
 
   // `.then` chain (not sync setState) so the effect never setStates synchronously.
   const load = useCallback((signal: AbortSignal) => {
@@ -294,13 +306,20 @@ export function PublishReviewDrawer({ businessId, businessName, open, onClose }:
         if (!r.ok) { setState({ kind: 'error', message: 'Could not load the release review.' }); return }
         const j = await r.json()
         if (!j?.review) { setState({ kind: 'error', message: j?.refusal?.message ?? 'No review data available.' }); return }
+        if (expectedReleaseId && expectedSourceDeploymentId && (
+          j.review.version?.candidateCommit !== expectedReleaseId ||
+          j.review.preview?.deploymentId !== expectedSourceDeploymentId
+        )) {
+          setState({ kind: 'error', message: 'The active release changed after the package check. Run execution readiness again.' })
+          return
+        }
         setState({ kind: 'data', review: j.review, warnings: j.warnings ?? [] })
       })
       .catch((e: { name?: string }) => {
         if (e?.name === 'AbortError') return
         setState({ kind: 'error', message: 'Could not load the release review.' }) // sanitized — never a raw provider error
       })
-  }, [businessId])
+  }, [businessId, expectedReleaseId, expectedSourceDeploymentId])
 
   useEffect(() => {
     if (!open) return
@@ -326,10 +345,10 @@ export function PublishReviewDrawer({ businessId, businessName, open, onClose }:
         {state.kind === 'data' && <PublishReviewContent review={state.review} warnings={state.warnings} />}
         {/* Separate, explicit approval workflow (owner-only, its own GET/POST). The review
             above stays READ-ONLY; approval is never a side effect of loading/refreshing it. */}
-        {state.kind === 'data' && <ReleaseApprovalPanel businessId={businessId} />}
+        {state.kind === 'data' && <ReleaseApprovalPanel businessId={businessId} expectedRelease={expectedRelease} />}
         {/* Controlled publish (3B.4) — consumes an active approval, promotes once. Renders its
             own controls; only appears when the approval + flags make the release publishable. */}
-        {state.kind === 'data' && <ProductionPublishPanel businessId={businessId} />}
+        {state.kind === 'data' && <ProductionPublishPanel businessId={businessId} expectedRelease={expectedRelease} />}
       </div>
     </Drawer>
   )

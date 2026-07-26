@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { evaluateRolloutExecutionReadiness } from '../app/lib/platform/release/rollout-execution-readiness'
+import {
+  evaluateRolloutExecutionHandoff, evaluateRolloutExecutionReadiness,
+} from '../app/lib/platform/release/rollout-execution-readiness'
 import type { PlatformRelease, ReleasePackage } from '../app/lib/platform/updates/types'
 import type { UpdateAutomationJob } from '../app/lib/platform/automation/types'
 
@@ -197,5 +199,66 @@ test('equally recent evidence for the same artifact remains deterministic', () =
     assert.equal(result.candidate.jobIds[0], 'AUTO-A')
     assert.equal(result.candidate.targetCommit, 'abc1234')
     assert.equal(result.candidate.sourceDeploymentId, 'dpl_preview')
+  }
+})
+
+test('controlled publish opens only for the exact verified candidate job', () => {
+  const readiness = evaluateRolloutExecutionReadiness({
+    packageRecord,
+    rollout,
+    packagePolicyBlockers: [],
+    jobs: [job('AUTO-1', 'UPD-1'), job('AUTO-2', 'UPD-2')],
+  })
+  assert.equal(readiness.ready, true)
+
+  const handoff = evaluateRolloutExecutionHandoff({
+    readiness,
+    publishContextJob: job('AUTO-1', 'UPD-1'),
+  })
+  assert.deepEqual(handoff, {
+    ready: true,
+    blocker: null,
+    businessId: 'supercharged',
+    jobId: 'AUTO-1',
+    releaseId: 'abc1234',
+    sourceDeploymentId: 'dpl_preview',
+  })
+})
+
+test('controlled publish fails closed when readiness or the customer publish context does not match', () => {
+  const ready = evaluateRolloutExecutionReadiness({
+    packageRecord,
+    rollout,
+    packagePolicyBlockers: [],
+    jobs: [job('AUTO-1', 'UPD-1'), job('AUTO-2', 'UPD-2')],
+  })
+  const blocked = evaluateRolloutExecutionReadiness({
+    packageRecord,
+    rollout,
+    packagePolicyBlockers: [],
+    jobs: [],
+  })
+
+  assert.equal(evaluateRolloutExecutionHandoff({
+    readiness: blocked,
+    publishContextJob: null,
+  }).blocker?.code, 'EXECUTION_NOT_READY')
+  assert.equal(evaluateRolloutExecutionHandoff({
+    readiness: ready,
+    publishContextJob: null,
+  }).blocker?.code, 'PUBLISH_CONTEXT_MISSING')
+
+  const mismatches = [
+    job('AUTO-OTHER', 'UPD-1'),
+    { ...job('AUTO-1', 'UPD-1'), businessId: 'jkiss' },
+    { ...job('AUTO-1', 'UPD-1'), status: 'preview_ready' as const },
+    { ...job('AUTO-1', 'UPD-1'), targetCommit: 'different' },
+    { ...job('AUTO-1', 'UPD-1'), previewDeploymentId: 'dpl_other' },
+  ]
+  for (const publishContextJob of mismatches) {
+    assert.equal(evaluateRolloutExecutionHandoff({
+      readiness: ready,
+      publishContextJob,
+    }).blocker?.code, 'PUBLISH_CONTEXT_MISMATCH')
   }
 })

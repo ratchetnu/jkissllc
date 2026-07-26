@@ -10,8 +10,11 @@ import { recordPlatformAudit } from '../../../../../lib/platform/updates/audit'
 import {
   evaluateReleasePackageReadiness, releasePackageApprovalPhrase,
 } from '../../../../../lib/platform/release/release-package'
-import { evaluateRolloutExecutionReadiness } from '../../../../../lib/platform/release/rollout-execution-readiness'
+import {
+  evaluateRolloutExecutionHandoff, evaluateRolloutExecutionReadiness,
+} from '../../../../../lib/platform/release/rollout-execution-readiness'
 import { listJobs } from '../../../../../lib/platform/automation/store'
+import { AUTOMATION_ACTIVE } from '../../../../../lib/platform/automation/types'
 import type { PlatformRelease, ReleasePackage } from '../../../../../lib/platform/updates/types'
 
 export const runtime = 'nodejs'
@@ -58,10 +61,18 @@ export const GET = withTenantRoute(async (
     packagePolicyBlockers: policy.readiness.blockers,
     jobs,
   })
+  const publishContextJob = jobs.find((job) =>
+    job.businessId === record.targetProduct && AUTOMATION_ACTIVE.includes(job.status),
+  ) ?? null
+  const executionHandoff = evaluateRolloutExecutionHandoff({
+    readiness: executionReadiness,
+    publishContextJob,
+  })
   return NextResponse.json({
     package: record,
     rollout,
     executionReadiness,
+    executionHandoff,
     approval: record.status === 'ready_for_approval'
       ? { requiredPhrase: releasePackageApprovalPhrase(record) }
       : null,

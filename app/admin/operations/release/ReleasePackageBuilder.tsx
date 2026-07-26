@@ -6,6 +6,7 @@ import {
   Loader2, PackageCheck, Plus, RefreshCw, ShieldCheck,
 } from 'lucide-react'
 import { osField, osLabel } from '../ui'
+import { PublishReviewDrawer } from './PublishReviewDrawer'
 
 type BaselineSource = 'installed_by_release' | 'adopted' | 'unknown'
 type PackageStatus = 'draft' | 'blocked' | 'ready_for_approval' | 'approved' | 'cancelled' | 'superseded'
@@ -57,11 +58,20 @@ type ExecutionReadiness = {
   ready: boolean
   blockers: { code: string; message: string; updateKey?: string }[]
   candidate?: {
+    targetProduct: string
     targetCommit: string
     sourceDeploymentId: string
     jobIds: string[]
     updateKeys: string[]
   }
+}
+type ExecutionHandoff = {
+  ready: boolean
+  blocker: { code: string; message: string } | null
+  businessId?: string
+  jobId?: string
+  releaseId?: string
+  sourceDeploymentId?: string
 }
 
 const surface: React.CSSProperties = {
@@ -163,6 +173,8 @@ export function ReleasePackageBuilder() {
   const [activePackage, setActivePackage] = useState<ReleasePackage | null>(null)
   const [readiness, setReadiness] = useState<Readiness | null>(null)
   const [executionReadiness, setExecutionReadiness] = useState<ExecutionReadiness | null>(null)
+  const [executionHandoff, setExecutionHandoff] = useState<ExecutionHandoff | null>(null)
+  const [publishReviewOpen, setPublishReviewOpen] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
@@ -208,6 +220,8 @@ export function ReleasePackageBuilder() {
     setActivePackage(null)
     setReadiness(null)
     setExecutionReadiness(null)
+    setExecutionHandoff(null)
+    setPublishReviewOpen(false)
     setError('')
   }
 
@@ -236,6 +250,7 @@ export function ReleasePackageBuilder() {
       if (!response.ok || !result?.package) throw new Error(result?.error || 'The draft could not be saved.')
       setActivePackage(result.package)
       setExecutionReadiness(null)
+      setExecutionHandoff(null)
       setCatalog((current) => current
         ? { ...current, packages: [result.package, ...current.packages] }
         : current)
@@ -252,6 +267,8 @@ export function ReleasePackageBuilder() {
     setBusy(true)
     setError('')
     setExecutionReadiness(null)
+    setExecutionHandoff(null)
+    setPublishReviewOpen(false)
     try {
       const response = await fetch(`/api/admin/platform/releases/${activePackage.id}`, {
         credentials: 'same-origin',
@@ -263,6 +280,7 @@ export function ReleasePackageBuilder() {
       }
       setActivePackage(result.package)
       setExecutionReadiness(result.executionReadiness)
+      setExecutionHandoff(result.executionHandoff ?? null)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Execution readiness could not be checked.')
     } finally {
@@ -289,6 +307,8 @@ export function ReleasePackageBuilder() {
         throw new Error(result?.error || 'Readiness could not be checked.')
       }
       setActivePackage(result.package)
+      setExecutionReadiness(null)
+      setExecutionHandoff(null)
       setCatalog((current) => current
         ? { ...current, packages: current.packages.map((item) => item.id === result.package.id ? result.package : item) }
         : current)
@@ -315,6 +335,8 @@ export function ReleasePackageBuilder() {
         throw new Error(result?.error || 'The rollout plan could not be created.')
       }
       setActivePackage(result.package)
+      setExecutionReadiness(null)
+      setExecutionHandoff(null)
       setCatalog((current) => current
         ? { ...current, packages: current.packages.map((item) => item.id === result.package.id ? result.package : item) }
         : current)
@@ -604,8 +626,29 @@ export function ReleasePackageBuilder() {
                       <div role="status" style={{ padding: 14, borderRadius: 13, border: '1px solid rgba(34,197,94,.28)', background: 'rgba(34,197,94,.07)' }}>
                         <strong style={{ display: 'block', fontSize: 13 }}>Verified Preview artifact found</strong>
                         <span style={{ display: 'block', marginTop: 4, color: 'var(--muted)', fontSize: 11.5, lineHeight: 1.45 }}>
-                          Commit {executionReadiness.candidate.targetCommit.slice(0, 10)} · deployment {executionReadiness.candidate.sourceDeploymentId}. This check is read-only; execution is still unavailable.
+                          Commit {executionReadiness.candidate.targetCommit.slice(0, 10)} · deployment {executionReadiness.candidate.sourceDeploymentId}. The package evidence matches the current controlled-publish candidate.
                         </span>
+                      </div>
+                    )}
+                    {executionReadiness?.ready && executionHandoff?.ready && executionHandoff.businessId && (
+                      <div style={{ display: 'grid', gap: 7, justifyItems: 'start' }}>
+                        <button
+                          type="button"
+                          onClick={() => setPublishReviewOpen(true)}
+                          style={primary}
+                        >
+                          <ShieldCheck size={15} />
+                          Continue to controlled publish review
+                        </button>
+                        <span style={{ color: 'var(--muted)', fontSize: 11.5, lineHeight: 1.45 }}>
+                          This opens Operion’s existing owner approval and typed Production confirmation workflow. Opening it does not publish.
+                        </span>
+                      </div>
+                    )}
+                    {executionReadiness?.ready && executionHandoff && !executionHandoff.ready && (
+                      <div role="alert" style={{ padding: 14, borderRadius: 13, border: '1px solid rgba(245,158,11,.3)', background: 'rgba(245,158,11,.07)' }}>
+                        <strong style={{ display: 'block', color: '#fcd34d', fontSize: 13 }}>Controlled publish is unavailable</strong>
+                        <span style={{ display: 'block', marginTop: 4, fontSize: 12, lineHeight: 1.4 }}>{executionHandoff.blocker?.message}</span>
                       </div>
                     )}
                     {executionReadiness && !executionReadiness.ready && (
@@ -666,7 +709,14 @@ export function ReleasePackageBuilder() {
             </div>
           )}
           {catalog.packages.slice(0, 8).map((item) => (
-            <button key={item.id} type="button" onClick={() => { setActivePackage(item); setReadiness(null); setExecutionReadiness(null); setError('') }}
+            <button key={item.id} type="button" onClick={() => {
+              setActivePackage(item)
+              setReadiness(null)
+              setExecutionReadiness(null)
+              setExecutionHandoff(null)
+              setPublishReviewOpen(false)
+              setError('')
+            }}
               style={{
                 width: '100%', display: 'grid', gap: 6, padding: 11, borderRadius: 11, textAlign: 'left',
                 color: 'var(--text)', background: activePackage?.id === item.id ? 'rgba(59,130,246,.08)' : 'transparent',
@@ -689,6 +739,19 @@ export function ReleasePackageBuilder() {
           </button>
         )}
       </aside>
+
+      {executionHandoff?.ready && executionHandoff.businessId && (
+        <PublishReviewDrawer
+          businessId={executionHandoff.businessId}
+          businessName={catalog.products.find((item) => item.id === executionHandoff.businessId)?.name}
+          expectedRelease={{
+            releaseId: executionHandoff.releaseId!,
+            sourceDeploymentId: executionHandoff.sourceDeploymentId!,
+          }}
+          open={publishReviewOpen}
+          onClose={() => setPublishReviewOpen(false)}
+        />
+      )}
 
       <style>{`
         @media (max-width: 780px) {

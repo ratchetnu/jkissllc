@@ -250,6 +250,30 @@ test('owner approval is confirmed, revalidated, persisted once, and never starts
   assert.equal(readyBody.executionReadiness.ready, true)
   assert.equal(readyBody.executionReadiness.candidate.targetCommit, candidate.targetCommit)
   assert.equal(readyBody.executionReadiness.candidate.sourceDeploymentId, candidate.previewDeploymentId)
+  assert.deepEqual(readyBody.executionHandoff, {
+    ready: true,
+    blocker: null,
+    businessId: business.id,
+    jobId: candidate.id,
+    releaseId: candidate.targetCommit,
+    sourceDeploymentId: candidate.previewDeploymentId,
+  })
+
+  await saveJob({
+    ...candidate,
+    id: 'AUTO-OTHER-ACTIVE',
+    updateId: 'UPD-OTHER',
+    idempotencyKey: 'other-active-job',
+    targetCommit: 'different',
+    previewDeploymentId: 'dpl_other',
+    updatedAt: now + 1,
+  })
+  const mismatchedHandoff = await GET(readRequest(token), params)
+  assert.equal(mismatchedHandoff.status, 200)
+  const mismatchedBody = await mismatchedHandoff.json()
+  assert.equal(mismatchedBody.executionReadiness.ready, true, 'package evidence remains valid')
+  assert.equal(mismatchedBody.executionHandoff.ready, false)
+  assert.equal(mismatchedBody.executionHandoff.blocker.code, 'PUBLISH_CONTEXT_MISMATCH')
   assert.equal(readyReadiness.headers.get('cache-control'), 'no-store, no-cache, must-revalidate')
   assert.equal(counters.get('platform:audit:counter'), rolloutAuditCount, 'readiness checks write no audit event')
 })
