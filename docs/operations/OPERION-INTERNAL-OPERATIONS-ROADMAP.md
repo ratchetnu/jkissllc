@@ -21,8 +21,11 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
   and fail closed on an illegal pair.
 - Full suite: **2195/2195 passing**. AI regression: **2/2 passing**. TypeScript, ESLint on
   changed files, and the production build pass (170/170 pages).
-- `BOOKING_ASSIGNMENT_ENABLED` is **false in Production**. The whole Sprint 1 feature set is
-  merged and Preview-validated but not yet serving; enabling it is a separate owner decision.
+- `BOOKING_ASSIGNMENT_ENABLED` is **enabled in Production** (2026-07-26) and verified reading
+  ON in the running app via Release Center → System Details → Feature controls. Sprint 1 is
+  serving. Rollback is removing the Production env var and redeploying.
+- Closure reversal: a closed booking can be recovered through an explicit, audited `reopen`
+  action with its own UI control, so a mis-clicked Mark complete / Cancel is not permanent.
 
 ## Sprint 0 — Foundation cleanup
 
@@ -92,8 +95,10 @@ active funnel; `refunded` is absorbing. The matrix was derived from an audit of 
 pre-existing call sites, so every workflow that previously worked still does — what changed
 is that anything outside them is now refused rather than silently written.
 
-**Remaining before this sprint is in service:** enable `BOOKING_ASSIGNMENT_ENABLED` in
-Production. That is an owner decision and is deliberately not part of the closeout.
+**In service since 2026-07-26.** The flag is enabled in Production and was verified on a real
+booking: the Lead/Helper assignment controls render, and the reopen control appears on a closed
+record. Production currently holds very little booking data, so the feature is live but has not
+yet been exercised by a real job end to end — the next confirmed booking is the true test.
 
 **Verification:** assignment and conflict tests; authorization tests; duplicate-action idempotency; real mobile crew flow; mixed route/booking pay statement fixture; Preview data inspection.
 
@@ -213,8 +218,13 @@ Sprint 1 is code-complete. The two previously listed actions are done: the pay-s
 connection shipped, and Supercharged's Preview Redis was separated in Sprint 0 (recorded in
 the baseline above).
 
-The next decision is **activation, not construction** — `BOOKING_ASSIGNMENT_ENABLED` is off
-in Production, so none of Sprint 1 is serving yet. Turning it on is worth more than starting
-Sprint 2, which would add a second unshipped layer on top of the first.
+Activation is done: Sprint 1 is enabled and verified in Production.
 
-Sprint 2 (dispatch dashboard) remains the next build item once assignment is live.
+The open question is now **usage, not construction**. Production holds one completed booking
+and two unprocessed requests, so the operational surfaces built so far have almost no live data
+flowing through them. Sprint 2 (dispatch dashboard) is a view over bookings, routes, crew and
+conflicts — with the current data it would render largely empty.
+
+Recommended: run real work through Sprint 1 first and let the gaps surface, rather than
+building Sprint 2 ahead of demand. That is the same judgement applied to the Operion release
+control plane, which is complete and deliberately dormant.
