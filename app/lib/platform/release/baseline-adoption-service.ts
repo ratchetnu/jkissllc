@@ -73,6 +73,9 @@ export async function adoptBaseline(input: {
   const evidence = normalizeBaselineAdoptionInput(input.evidence, input.business.id)
   const deps = input.deps ?? DEFAULT_DEPS
   const id = await deps.nextId()
+  const provenCommit = dryRun.commitVerification.source === 'live_production'
+    ? dryRun.commitVerification.liveCommit
+    : undefined
   const adoption: BaselineAdoptionRecord = {
     recordVersion: 1,
     id,
@@ -90,10 +93,9 @@ export async function adoptBaseline(input: {
     },
     rollbackSnapshot: dryRun.rollbackSnapshot,
     commitVerification: dryRun.commitVerification,
+    // Preserve the provider's canonical commit, not a user-entered abbreviation.
+    deployedCommit: provenCommit ?? evidence.deployedCommit,
   }
-  const provenCommit = dryRun.commitVerification.source === 'live_production'
-    ? adoption.deployedCommit
-    : undefined
   const business: PlatformBusiness = {
     ...input.business,
     currentVersion: dryRun.proposedVersion,

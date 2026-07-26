@@ -44,8 +44,12 @@ const evidence = (patch: Record<string, unknown> = {}) => ({
 
 const dry = (o: Partial<Parameters<typeof dryRunBaselineAdoption>[0]> = {}) =>
   dryRunBaselineAdoption({
-    business: business(), evidence: evidence(), now: NOW, approvalSecret: SECRET,
-    liveProduction: { deploymentId: 'dpl_live', commit: LIVE }, ...o,
+    business: business({ deployProject: 'supercharged' }),
+    evidence: evidence(),
+    now: NOW,
+    approvalSecret: SECRET,
+    liveProduction: { deploymentId: 'dpl_live', commit: LIVE },
+    ...o,
   })
 
 test('the live production commit is authoritative — a stale stored commit no longer blocks it', () => {
@@ -73,22 +77,39 @@ test('a commit matching neither the record nor live Production is refused', () =
   assert.equal(r.approvalToken, undefined)
 })
 
-test('without live evidence the pre-Increment-10 behaviour is unchanged', () => {
-  const ok = dry({ liveProduction: null, evidence: evidence({ deployedCommit: RECORDED }) })
+test('businesses without a mapped provider retain record-only adoption', () => {
+  const ok = dry({
+    business: business(),
+    liveProduction: null,
+    evidence: evidence({ deployedCommit: RECORDED }),
+  })
   assert.equal(ok.verdict, 'safe_to_adopt')
   assert.equal(ok.commitVerification.source, 'recorded_baseline')
   assert.equal(ok.commitVerification.liveCommit, undefined)
 
-  const bad = dry({ liveProduction: null })   // deployedCommit = LIVE, record = RECORDED
+  const bad = dry({ business: business(), liveProduction: null })
   assert.equal(bad.verdict, 'needs_review')
   assert.match(bad.conflicts.join(' '), /does not match the recorded production commit/)
 })
 
-test('an unusable live commit falls back to the record rather than failing open', () => {
-  for (const commit of [undefined, '', 'nothex!!', 'abc']) {
-    const r = dry({ liveProduction: { commit }, evidence: evidence({ deployedCommit: RECORDED }) })
-    assert.equal(r.commitVerification.source, 'recorded_baseline', `commit=${String(commit)}`)
-    assert.equal(r.verdict, 'safe_to_adopt')
+test('a mapped provider outage or incomplete response fails closed', () => {
+  const unavailable = [
+    null,
+    {},
+    { deploymentId: 'dpl_live' },
+    { commit: LIVE },
+    { deploymentId: 'dpl_live', commit: '' },
+    { deploymentId: 'dpl_live', commit: 'nothex!!' },
+  ]
+  for (const liveProduction of unavailable) {
+    const r = dry({
+      liveProduction,
+      evidence: evidence({ deployedCommit: RECORDED }),
+    })
+    assert.equal(r.commitVerification.source, 'live_production_unavailable')
+    assert.equal(r.verdict, 'insufficient_evidence')
+    assert.equal(r.approvalToken, undefined)
+    assert.match(r.missingEvidence.join(' '), /live production deployment and commit from provider/)
   }
 })
 
@@ -102,31 +123,39 @@ test('commit comparison tolerates git abbreviations in either direction', () => 
   assert.equal(short.verdict, 'safe_to_adopt')
 })
 
-test('the receipt is bound to the live commit, so a Production move invalidates it', () => {
+test('the receipt is bound to both live commit and deployment identity', () => {
   const first = dry()
   const moved = dry({ liveProduction: { deploymentId: 'dpl_next', commit: 'a'.repeat(40) },
                       evidence: evidence({ deployedCommit: 'a'.repeat(40) }) })
   assert.notEqual(first.evidenceHash, moved.evidenceHash, 'hash must change when Production moves')
+  const redeployed = dry({ liveProduction: { deploymentId: 'dpl_rebuilt', commit: LIVE } })
+  assert.notEqual(
+    first.evidenceHash,
+    redeployed.evidenceHash,
+    'hash must change when the deployment changes even if its commit does not',
+  )
 
-  // Absent live evidence the hash keeps its legacy shape: passing `liveProduction: null`,
-  // omitting it entirely, and calling the two-argument hash all agree — so existing receipts
-  // and any stored evidenceHash are unaffected by this increment.
+  // A business without a mapped provider keeps the legacy hash shape.
   const ev = evidence({ deployedCommit: RECORDED })
   const omitted = dryRunBaselineAdoption({ business: business(), evidence: ev, now: NOW })
-  const explicitNull = dryRunBaselineAdoption({ business: business(), evidence: ev, now: NOW, liveProduction: null })
-  const noCommit = dryRunBaselineAdoption({ business: business(), evidence: ev, now: NOW, liveProduction: { deploymentId: 'dpl_x' } })
+  const explicitNull = dryRunBaselineAdoption({
+    business: business(),
+    evidence: ev,
+    now: NOW,
+    liveProduction: null,
+  })
   assert.equal(omitted.evidenceHash, explicitNull.evidenceHash)
-  assert.equal(omitted.evidenceHash, noCommit.evidenceHash, 'a live read with no commit must not perturb the hash')
   assert.equal(typeof baselineEvidenceHash, 'function')
 })
 
-test('adopt writes the proven commit and records how it was verified', async () => {
-  const target = business()
-  const run = dry()
+test('adopt writes the provider full commit even when the owner supplied an abbreviation', async () => {
+  const target = business({ deployProject: 'supercharged' })
+  const abbreviatedEvidence = evidence({ deployedCommit: LIVE.slice(0, 7) })
+  const run = dry({ evidence: abbreviatedEvidence })
   let savedBusiness: PlatformBusiness | undefined
   let savedAdoption: BaselineAdoptionRecord | undefined
   const result = await adoptBaseline({
-    business: target, evidence: evidence(), approvalToken: run.approvalToken!,
+    business: target, evidence: abbreviatedEvidence, approvalToken: run.approvalToken!,
     confirmationPhrase: baselineConfirmationPhrase('supercharged'),
     actor: 'owner', now: NOW, approvalSecret: SECRET,
     liveProduction: { deploymentId: 'dpl_live', commit: LIVE },
@@ -141,6 +170,7 @@ test('adopt writes the proven commit and records how it was verified', async () 
   assert.equal(savedBusiness?.baselineSource, 'adopted')
   assert.equal(savedBusiness?.currentCommit, LIVE, 'the stale stored commit is refreshed to the proven one')
   assert.equal(savedBusiness?.latestVerifiedCommit, LIVE)
+  assert.equal(savedAdoption?.deployedCommit, LIVE)
   assert.equal(savedAdoption?.commitVerification.source, 'live_production')
   assert.equal(savedAdoption?.commitVerification.liveDeploymentId, 'dpl_live')
 })
@@ -164,7 +194,7 @@ test('adopt does NOT advance the stored commit on record-only evidence', async (
 })
 
 test('a receipt from before a Production move cannot be spent after it', async () => {
-  const target = business()
+  const target = business({ deployProject: 'supercharged' })
   const run = dry()                       // receipt bound to LIVE
   const result = await adoptBaseline({
     business: target, evidence: evidence(), approvalToken: run.approvalToken!,
@@ -175,4 +205,26 @@ test('a receipt from before a Production move cannot be spent after it', async (
   })
   assert.equal(result.ok, false)
   if (!result.ok) assert.match(result.reason, /no longer safe to adopt|receipt/)
+})
+
+test('a receipt cannot be spent after a same-commit Production redeploy', async () => {
+  const target = business({ deployProject: 'supercharged' })
+  const run = dry()
+  const result = await adoptBaseline({
+    business: target,
+    evidence: evidence(),
+    approvalToken: run.approvalToken!,
+    confirmationPhrase: baselineConfirmationPhrase('supercharged'),
+    actor: 'owner',
+    now: NOW,
+    approvalSecret: SECRET,
+    liveProduction: { deploymentId: 'dpl_rebuilt', commit: LIVE },
+    deps: {
+      nextId: async () => 'BAS-1004',
+      save: async () => true,
+      audit: async () => undefined as never,
+    },
+  })
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.match(result.reason, /receipt/)
 })
