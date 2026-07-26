@@ -577,10 +577,10 @@ export default function StartYourCarrierPage() {
             <div className="label mb-4">Start Here — Know Your Vehicle</div>
             <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Box Truck vs. All Other CMVs</h2>
             <p className="text-base mb-3" style={{ color: 'var(--muted)' }}>
-              Your requirements depend on what you're driving. Box trucks under 26,000 lbs GVWR have a lighter compliance load than larger vehicles. The 26,001 lb line is the most important number in your business — check your door jamb sticker to confirm your truck's GVWR before you do anything else.
+              Your requirements depend on what you&apos;re driving. Box trucks under 26,000 lbs GVWR have a lighter compliance load than larger vehicles. The 26,001 lb line is the most important number in your business — check your door jamb sticker to confirm your truck&apos;s GVWR before you do anything else.
             </p>
             <p className="text-sm mb-10" style={{ color: 'rgba(255,255,255,.4)' }}>
-              GVWR = Gross Vehicle Weight Rating. It's the manufacturer's maximum operating weight, printed on the door jamb sticker. It does not change based on what you're carrying.
+              GVWR = Gross Vehicle Weight Rating. It&apos;s the manufacturer&apos;s maximum operating weight, printed on the door jamb sticker. It does not change based on what you&apos;re carrying.
             </p>
           </FadeUp>
 
@@ -659,13 +659,13 @@ export default function StartYourCarrierPage() {
               <div className="p-5 rounded-2xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
                 <p className="text-sm font-bold text-white mb-1">Broker Insurance Expectations vs. Federal Minimums</p>
                 <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
-                  Federal minimum for non-hazardous interstate freight is <strong style={{ color: '#fff' }}>$750,000 CSL</strong> — for all three vehicle types. Most load boards and freight brokers require <strong style={{ color: '#fff' }}>$1,000,000 liability</strong> on your COI before they'll assign loads. Budget for $1M from day one regardless of truck size.
+                  Federal minimum for non-hazardous interstate freight is <strong style={{ color: '#fff' }}>$750,000 CSL</strong> — for all three vehicle types. Most load boards and freight brokers require <strong style={{ color: '#fff' }}>$1,000,000 liability</strong> on your COI before they&apos;ll assign loads. Budget for $1M from day one regardless of truck size.
                 </p>
               </div>
               <div className="p-5 rounded-2xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
                 <p className="text-sm font-bold text-white mb-1">DOT Medical Card — Non-CDL Box Truck Drivers</p>
                 <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
-                  No CDL doesn't mean no DOT medical card. Drivers operating vehicles over <strong style={{ color: '#fff' }}>10,001 lbs GVWR in interstate commerce</strong> must carry a valid DOT medical examiner's certificate — even without a CDL. Renewed every 24 months minimum.
+                  No CDL doesn&apos;t mean no DOT medical card. Drivers operating vehicles over <strong style={{ color: '#fff' }}>10,001 lbs GVWR in interstate commerce</strong> must carry a valid DOT medical examiner&apos;s certificate — even without a CDL. Renewed every 24 months minimum.
                 </p>
               </div>
             </div>
@@ -682,7 +682,7 @@ export default function StartYourCarrierPage() {
               Full CDL Compliance — <span style={{ color: 'var(--red)' }}>Class A Required</span>
             </h2>
             <p className="text-base mb-10" style={{ color: 'var(--muted)' }}>
-              Operating a semi or combination vehicle comes with the full weight of FMCSA compliance. There are no IFTA exemptions, no IRP exemptions, and most OTR routes don't qualify for the short-haul ELD exception. Know what you're getting into before you register.
+              Operating a semi or combination vehicle comes with the full weight of FMCSA compliance. There are no IFTA exemptions, no IRP exemptions, and most OTR routes don&apos;t qualify for the short-haul ELD exception. Know what you&apos;re getting into before you register.
             </p>
           </FadeUp>
 
@@ -936,7 +936,7 @@ export default function StartYourCarrierPage() {
             <p className="text-base mb-3" style={{ color: 'var(--muted)' }}>
               {activeTab === 'box-truck'
                 ? <span>Total startup cost for a box truck owner-operator runs <strong style={{ color: '#fff' }}>$20,000–$65,000</strong> depending on whether you buy or lease your truck. The compliance costs alone (authority, insurance deposit, UCR) run $2,500–$3,500 before you touch a load. Trucks under 26K lbs skip IRP plates and IFTA entirely.</span>
-                : <span>Total startup cost for a semi owner-operator runs <strong style={{ color: '#fff' }}>$70,000–$200,000+</strong> depending on tractor/trailer purchase vs. lease. Compliance costs (authority, insurance deposit, IRP, IFTA, UCR) run $4,000–$6,000 before your first load. A Class A CDL is required — budget for CDL school if you don't already have one.</span>}
+                : <span>Total startup cost for a semi owner-operator runs <strong style={{ color: '#fff' }}>$70,000–$200,000+</strong> depending on tractor/trailer purchase vs. lease. Compliance costs (authority, insurance deposit, IRP, IFTA, UCR) run $4,000–$6,000 before your first load. A Class A CDL is required — budget for CDL school if you don&apos;t already have one.</span>}
             </p>
             <p className="text-xs mb-10" style={{ color: 'rgba(255,255,255,.35)' }}>
               Figures are estimates as of 2026. Truck prices vary widely by age, condition, and market. Insurance premiums vary by driving record and coverage level.
@@ -991,7 +991,7 @@ export default function StartYourCarrierPage() {
             <div className="label mb-4">Step-by-Step Startup</div>
             <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Getting Your Authority: 12 Steps</h2>
             <p className="text-base mb-6" style={{ color: 'var(--muted)' }}>
-              Follow these in order. Steps 3–5 must happen in parallel — your authority won't activate until FMCSA has both your insurance filing and your BOC-3 on file.
+              Follow these in order. Steps 3–5 must happen in parallel — your authority won&apos;t activate until FMCSA has both your insurance filing and your BOC-3 on file.
             </p>
             {activeTab === 'semi' && (
               <div className="flex items-start gap-3 p-4 rounded-xl mb-10" style={{ background: 'rgba(250,204,21,.07)', border: '1px solid rgba(250,204,21,.2)' }}>
@@ -1052,7 +1052,7 @@ export default function StartYourCarrierPage() {
             <div className="label mb-4">How Long Does It Take?</div>
             <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Authority Activation Timeline</h2>
             <p className="text-base mb-10" style={{ color: 'var(--muted)' }}>
-              Most carriers see their authority go "Active" within <strong style={{ color: '#fff' }}>3 to 6 weeks</strong> from the date of application. The 21-day protest period is mandatory — there is no way to skip it. The most common reason for delays is missing insurance or BOC-3 filings.
+              Most carriers see their authority go &quot;Active&quot; within <strong style={{ color: '#fff' }}>3 to 6 weeks</strong> from the date of application. The 21-day protest period is mandatory — there is no way to skip it. The most common reason for delays is missing insurance or BOC-3 filings.
             </p>
           </FadeUp>
           <div className="relative">
@@ -1084,7 +1084,7 @@ export default function StartYourCarrierPage() {
               <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
                 Monitor your application at{' '}
                 <a href="https://safer.fmcsa.dot.gov" target="_blank" rel="noopener noreferrer" style={{ color: '#ff6680' }}>safer.fmcsa.dot.gov</a>
-                {' '}using your USDOT number. Status will show as <strong style={{ color: '#fff' }}>"Pending"</strong> until all three conditions are met: BOC-3 on file, insurance on file, and protest period complete. If it's been over 30 days and still Pending, call FMCSA at 1-800-832-5660.
+                {' '}using your USDOT number. Status will show as <strong style={{ color: '#fff' }}>&quot;Pending&quot;</strong> until all three conditions are met: BOC-3 on file, insurance on file, and protest period complete. If it&apos;s been over 30 days and still Pending, call FMCSA at 1-800-832-5660.
               </p>
             </div>
           </FadeUp>
@@ -1152,7 +1152,7 @@ export default function StartYourCarrierPage() {
           </div>
           <FadeUp delay={300}>
             <p className="mt-8 text-sm" style={{ color: 'rgba(255,255,255,.4)' }}>
-              CSL = Combined Single Limit. Your insurer files Form MCS-90 directly with FMCSA. Coverage must be active before your operating authority goes "Active."
+              CSL = Combined Single Limit. Your insurer files Form MCS-90 directly with FMCSA. Coverage must be active before your operating authority goes &quot;Active.&quot;
             </p>
           </FadeUp>
         </div>
@@ -1197,7 +1197,7 @@ export default function StartYourCarrierPage() {
             <div className="label mb-4">Tax Planning</div>
             <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Taxes for Owner-Operators</h2>
             <p className="text-base mb-10" style={{ color: 'var(--muted)' }}>
-              As an owner-operator, you are self-employed. Nobody withholds taxes for you. Most new carriers get blindsided by their first tax bill. Here's what you need to know before you earn your first dollar.
+              As an owner-operator, you are self-employed. Nobody withholds taxes for you. Most new carriers get blindsided by their first tax bill. Here&apos;s what you need to know before you earn your first dollar.
             </p>
           </FadeUp>
           <div className="grid sm:grid-cols-2 gap-6 mb-8">
@@ -1369,7 +1369,7 @@ export default function StartYourCarrierPage() {
             <div className="label mb-4">Industry Terms</div>
             <h2 className="text-3xl font-black text-white mb-4" style={{ letterSpacing: '-0.04em' }}>Glossary</h2>
             <p className="text-base mb-10 leading-relaxed" style={{ color: 'var(--muted)' }}>
-              Every acronym and term you'll encounter when starting and running a motor carrier business.
+              Every acronym and term you&apos;ll encounter when starting and running a motor carrier business.
             </p>
           </FadeUp>
           <div className="grid sm:grid-cols-2 gap-4">
