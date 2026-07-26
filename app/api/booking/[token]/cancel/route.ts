@@ -6,6 +6,7 @@ import { rateLimit } from '../../../../lib/rate-limit'
 import { notifyCancelledByCustomer } from '../../../../lib/notify'
 import { resolveTenantFromResource } from '../../../../lib/platform/tenancy/tenant-resolve'
 import { runWithTenant } from '../../../../lib/platform/tenancy/context'
+import { canTransition } from '../../../../lib/booking-status'
 
 // POST /api/booking/[token]/cancel — customer self-cancels, applying the policy's
 // refund tier by how much notice they gave. Requires an explicit confirm flag.
@@ -40,6 +41,8 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
 
   const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 500) : ''
   const stamp = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })
+  const move = canTransition(b.status, 'cancelled')
+  if (!move.ok) return NextResponse.json({ error: move.reason }, { status: 409 })
   b.status = 'cancelled'
   b.cancelledAt = now
   b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[${stamp}] CANCELLED by customer · ${tier.tier} (${tier.depositRefundPct}% deposit refundable)${reason ? ` · ${reason}` : ''}`

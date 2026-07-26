@@ -1,6 +1,6 @@
 # Operion Internal Operations Completion Roadmap
 
-**Updated:** 2026-07-21  
+**Updated:** 2026-07-26  
 **Customers:** J KISS LLC and Supercharged  
 **Scope:** Daily internal operations. Enterprise tenancy, editions, subscriptions, and self-service onboarding remain deferred.
 
@@ -16,7 +16,13 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
 - A dedicated `supercharged-preview-blob` exists and is connected to Supercharged Preview under `SC_PREVIEW_` variables. Existing Supercharged upload code still uses its legacy Blob token until the parity sprint migrates it.
 - Preview crew uploads use presigned, put-only Blob tokens bound to the configured store ID.
 - J KISS Production configuration and deployment were not changed during Sprint 0.
-- Full suite: **1742/1742 passing**. AI regression: **2/2 passing**. TypeScript, focused lint, and production-mode build pass.
+- Booking status transitions are governed by one authoritative matrix in
+  `app/lib/booking-status.ts`; all eleven mutation sites route through `canTransition`
+  and fail closed on an illegal pair.
+- Full suite: **2189/2189 passing**. AI regression: **2/2 passing**. TypeScript, ESLint on
+  changed files, and the production build pass (170/170 pages).
+- `BOOKING_ASSIGNMENT_ENABLED` is **false in Production**. The whole Sprint 1 feature set is
+  merged and Preview-validated but not yet serving; enabling it is a separate owner decision.
 
 ## Sprint 0 — Foundation cleanup
 
@@ -64,7 +70,30 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
 
 **Dependencies:** Sprint 0; existing staff, equipment, schedule, and finance records.
 
-**Work remaining:** add a documented booking status-transition matrix; connect booking crew pay snapshots to pay-statement generation; rerun the complete assignment/accept/clock/photo/complete workflow with fresh non-test-like Preview fixtures; preserve legacy booking reads.
+**Status:** Complete (code); awaiting Production activation.
+
+**Completed work:**
+
+- Booking crew pay snapshots feed pay-statement generation — `pay-statements.ts` carries
+  `source: 'route' | 'booking'`, covered by `scripts/booking-pay-integration.test.ts`.
+- The assignment → accept → clock → photo → complete workflow was rerun on isolated
+  Preview; it surfaced and fixed a customer-visible stale-crew-name defect.
+- Legacy booking reads are preserved: an unrecognised stored status is neither coerced
+  nor rewritten, and `recompute()` still returns money fields for such records.
+- A single authoritative status-transition matrix now governs every booking status
+  change (see below).
+
+**Booking status transition matrix:** `app/lib/booking-status.ts` exports
+`BOOKING_TRANSITIONS` (the adjacency map over all 17 statuses), `canTransition()` — the one
+validation boundary — and `nextStatusOrKeep()` for the fact-derived automatic paths. Of the
+289 status pairs, 129 are allowed, 143 are refused, and 17 are idempotent same-status
+no-ops. Terminal statuses may only move between closure outcomes and never back into the
+active funnel; `refunded` is absorbing. The matrix was derived from an audit of the
+pre-existing call sites, so every workflow that previously worked still does — what changed
+is that anything outside them is now refused rather than silently written.
+
+**Remaining before this sprint is in service:** enable `BOOKING_ASSIGNMENT_ENABLED` in
+Production. That is an owner decision and is deliberately not part of the closeout.
 
 **Verification:** assignment and conflict tests; authorization tests; duplicate-action idempotency; real mobile crew flow; mixed route/booking pay statement fixture; Preview data inspection.
 
@@ -180,4 +209,12 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
 
 ## Immediate next action
 
-Complete Sprint 1 by defining and testing the booking status-transition matrix, then connect booking assignment pay snapshots to the existing pay-statement system. In parallel, replace Supercharged's shared `OperionPreview` Redis binding with its own Preview-only resource before syncing any additional Operion modules.
+Sprint 1 is code-complete. The two previously listed actions are done: the pay-snapshot
+connection shipped, and Supercharged's Preview Redis was separated in Sprint 0 (recorded in
+the baseline above).
+
+The next decision is **activation, not construction** — `BOOKING_ASSIGNMENT_ENABLED` is off
+in Production, so none of Sprint 1 is serving yet. Turning it on is worth more than starting
+Sprint 2, which would add a second unshipped layer on top of the first.
+
+Sprint 2 (dispatch dashboard) remains the next build item once assignment is live.

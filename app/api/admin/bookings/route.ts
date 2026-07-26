@@ -8,6 +8,7 @@ import {
 import { emailOpsBookingCreated } from '../../../lib/booking-emails'
 import { sendConfirmationLink } from '../../../lib/notify'
 import { str, strList, num } from '../../../lib/validators'
+import { nextStatusOrKeep } from '../../../lib/booking-status'
 
 export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireStaffSession(req)
@@ -94,7 +95,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
         linkChannels = await sendConfirmationLink(booking)
         booking.confirmationLinkSentAt = Date.now()
         booking.confirmationLinkSentBy = 'admin (auto)'
-        booking.status = 'confirmation_link_sent'
+        booking.status = nextStatusOrKeep(booking.status, 'confirmation_link_sent')
         await saveBooking(booking)
       } catch (e) {
         console.error('[admin/bookings POST] auto send-link failed', e)
