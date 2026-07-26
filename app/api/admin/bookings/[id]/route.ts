@@ -597,6 +597,13 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
       }
       const check = canReopen(b.status, target)
       if (!check.ok) return NextResponse.json({ error: `Can't reopen — ${check.reason}.` }, { status: 400 })
+      // Reopening must not become a way around the confirmed precondition. Without this,
+      // an unpriced, undated manual-review record could be reopened straight to Confirmed —
+      // exactly the silent premature confirmation canMarkConfirmed exists to prevent.
+      if (target === 'confirmed') {
+        const guard = canMarkConfirmed(b)
+        if (!guard.ok) return NextResponse.json({ error: `Can't reopen as Confirmed — ${guard.reason}.` }, { status: 400 })
+      }
       // A reopened booking must not keep claiming it is finished.
       for (const field of closureFieldsToClear(b.status)) {
         if (field === 'completedAt') delete b.completedAt

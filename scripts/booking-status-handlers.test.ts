@@ -165,7 +165,14 @@ test('reopen recovers a mis-clicked Mark complete and clears completedAt', async
 })
 
 test('reopen recovers a mis-clicked Cancel and clears cancelledAt', async () => {
-  await seed('cancelled', { cancelledAt: 1_700_000_000_000 })
+  // A booking that was confirmed before being cancelled by mistake: it has a real date and
+  // money on file, so it satisfies the confirmed precondition on the way back.
+  await seed('cancelled', {
+    cancelledAt: 1_700_000_000_000,
+    selectedDate: '2026-08-01',
+    selectedWindow: '8am–10am',
+    amountPaidCents: 10_000,
+  })
   assert.equal((await getBookingByToken(TOKEN))?.cancelledAt, 1_700_000_000_000)
   const response = await adminPatch({ action: 'reopen', status: 'confirmed' })
   assert.equal(response.status, 200)
@@ -200,4 +207,28 @@ test('the ordinary status control still refuses to reopen a closed booking', asy
   const response = await adminPatch({ action: 'status', fields: { status: 'in_progress' } })
   assert.equal(response.status, 400)
   assert.equal((await getBookingByToken(TOKEN))?.status, 'completed')
+})
+
+test('reopen cannot bypass the confirmed precondition', async () => {
+  // An unresolved manual review with no date, price or payment: the status action refuses
+  // to confirm it, and reopen must refuse for the same reason rather than routing around it.
+  await seed('cancelled', {
+    cancelledAt: 1_700_000_000_000,
+    invoiceAmountCents: 0,
+    amountPaidCents: 0,
+    availableDates: [],
+    aiEstimate: { decision: 'manual_review' } as never,
+  })
+  const response = await adminPatch({ action: 'reopen', status: 'confirmed' })
+  assert.equal(response.status, 400)
+  const saved = await getBookingByToken(TOKEN)
+  assert.equal(saved?.status, 'cancelled', 'nothing may be written when the guard refuses')
+  assert.equal(saved?.cancelledAt, 1_700_000_000_000, 'the closure stamp must survive a refused reopen')
+})
+
+test('reopen to a non-confirmed target is unaffected by the confirmed guard', async () => {
+  await seed('cancelled', { cancelledAt: 1_700_000_000_000, aiEstimate: { decision: 'manual_review' } as never })
+  const response = await adminPatch({ action: 'reopen', status: 'booking_created' })
+  assert.equal(response.status, 200)
+  assert.equal((await getBookingByToken(TOKEN))?.status, 'booking_created')
 })
