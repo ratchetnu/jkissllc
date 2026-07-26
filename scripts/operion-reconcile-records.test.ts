@@ -10,7 +10,11 @@ import {
   type JobFacts,
 } from '../app/lib/platform/automation/finalize'
 import type { DeploymentRecord } from '../app/lib/platform/updates/types'
-import { selectReleaseForJob } from '../app/lib/platform/automation/reconcile-records'
+import {
+  reconcileJobsIndependently,
+  selectReleaseForJob,
+} from '../app/lib/platform/automation/reconcile-records'
+import type { UpdateAutomationJob } from '../app/lib/platform/automation/types'
 
 const NOW = 1_700_000_000_000
 
@@ -165,4 +169,52 @@ test('release reconciliation selects the rollout for the job product, not anothe
   assert.equal(selectReleaseForJob(releases, 'UPD-1006', 'supercharged')?.id, 'REL-1002')
   assert.equal(selectReleaseForJob(releases, 'UPD-1006', 'jkiss')?.id, 'REL-1001')
   assert.equal(selectReleaseForJob(releases, 'UPD-1006', 'unknown'), null)
+})
+
+test('the completed-job sweep isolates a refused release write and continues with later jobs', async () => {
+  const jobs = [
+    { id: 'AUTO-BLOCKED' },
+    { id: 'AUTO-HEALTHY' },
+  ] as UpdateAutomationJob[]
+  const attempted: string[] = []
+
+  const results = await reconcileJobsIndependently(jobs, async (job) => {
+    attempted.push(job.id)
+    if (job.id === 'AUTO-BLOCKED') throw new Error('RELEASE_RECONCILIATION_STALE_RELEASE')
+    return { ok: true, jobId: job.id, action: 'finalized', auditIds: [] }
+  })
+
+  assert.deepEqual(attempted, ['AUTO-BLOCKED', 'AUTO-HEALTHY'])
+  assert.deepEqual(results, [
+    {
+      ok: false,
+      jobId: 'AUTO-BLOCKED',
+      action: 'skipped',
+      reason: 'release_reconciliation_stale_release',
+      auditIds: [],
+    },
+    { ok: true, jobId: 'AUTO-HEALTHY', action: 'finalized', auditIds: [] },
+  ])
+})
+
+test('the completed-job sweep does not expose unexpected exception details', async () => {
+  const jobs = [{ id: 'AUTO-SECRET' }] as UpdateAutomationJob[]
+  const logged: unknown[][] = []
+  const originalError = console.error
+  console.error = (...args: unknown[]) => { logged.push(args) }
+  let results
+  try {
+    results = await reconcileJobsIndependently(jobs, async () => {
+      throw new Error('provider token secret-value')
+    })
+  } finally {
+    console.error = originalError
+  }
+
+  assert.equal(results[0]?.reason, 'reconciliation_failed')
+  assert.deepEqual(logged, [[
+    '[operion-reconcile] unexpected job failure',
+    { jobId: 'AUTO-SECRET', errorType: 'Error' },
+  ]])
+  assert.doesNotMatch(JSON.stringify(logged), /secret-value/)
 })
