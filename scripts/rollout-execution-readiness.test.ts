@@ -163,3 +163,39 @@ test('newest verified candidate is selected deterministically for each update', 
   assert.equal(result.ready, true)
   if (result.ready) assert.equal(result.candidate.jobIds[0], 'AUTO-NEW')
 })
+
+test('equally recent candidates for different artifacts fail closed regardless of input order', () => {
+  const packageOne = { ...packageRecord, updateKeys: ['UPD-1'] }
+  const rolloutOne = { ...rollout, updateKeys: ['UPD-1'] }
+  const candidateA = job('AUTO-A', 'UPD-1', 'commit-a', 'dpl_a')
+  const candidateB = job('AUTO-B', 'UPD-1', 'commit-b', 'dpl_b')
+
+  for (const jobs of [[candidateA, candidateB], [candidateB, candidateA]]) {
+    const result = evaluateRolloutExecutionReadiness({
+      packageRecord: packageOne,
+      rollout: rolloutOne,
+      packagePolicyBlockers: [],
+      jobs,
+    })
+    assert.equal(result.ready, false)
+    if (!result.ready) assert.deepEqual(
+      result.blockers.map((item) => item.code),
+      ['CANDIDATE_AMBIGUOUS'],
+    )
+  }
+})
+
+test('equally recent evidence for the same artifact remains deterministic', () => {
+  const result = evaluateRolloutExecutionReadiness({
+    packageRecord: { ...packageRecord, updateKeys: ['UPD-1'] },
+    rollout: { ...rollout, updateKeys: ['UPD-1'] },
+    packagePolicyBlockers: [],
+    jobs: [job('AUTO-B', 'UPD-1'), job('AUTO-A', 'UPD-1')],
+  })
+  assert.equal(result.ready, true)
+  if (result.ready) {
+    assert.equal(result.candidate.jobIds[0], 'AUTO-A')
+    assert.equal(result.candidate.targetCommit, 'abc1234')
+    assert.equal(result.candidate.sourceDeploymentId, 'dpl_preview')
+  }
+})

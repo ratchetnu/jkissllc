@@ -8,6 +8,7 @@ export type RolloutExecutionBlockerCode =
   | 'ROLLOUT_IDENTITY_MISMATCH'
   | 'ROLLOUT_NOT_APPROVED'
   | 'UPDATE_CANDIDATE_MISSING'
+  | 'CANDIDATE_AMBIGUOUS'
   | 'CANDIDATE_ARTIFACT_MISMATCH'
 
 export type RolloutExecutionBlocker = {
@@ -87,24 +88,35 @@ export function evaluateRolloutExecutionReadiness(input: {
     })
   }
   for (const updateKey of pkg.updateKeys) {
-    const candidate = input.jobs
-      .filter((job) =>
+    const qualified = input.jobs.filter((job) =>
         job.businessId === pkg.targetProduct &&
         job.updateId === updateKey &&
         job.status === 'awaiting_owner_review' &&
         !!job.targetCommit &&
         !!job.previewDeploymentId,
       )
-      .sort((left, right) => right.updatedAt - left.updatedAt)[0]
-    if (!candidate) {
+    if (qualified.length === 0) {
       blockers.push({
         code: 'UPDATE_CANDIDATE_MISSING',
         updateKey,
         message: `${updateKey} has no verified Preview candidate for this customer.`,
       })
-    } else {
-      selected.push(candidate)
+      continue
     }
+
+    const newestAt = Math.max(...qualified.map((job) => job.updatedAt))
+    const newest = qualified.filter((job) => job.updatedAt === newestAt)
+    const newestArtifacts = new Set(newest.map((job) => `${job.targetCommit}\n${job.previewDeploymentId}`))
+    if (newestArtifacts.size > 1) {
+      blockers.push({
+        code: 'CANDIDATE_AMBIGUOUS',
+        updateKey,
+        message: `${updateKey} has equally recent Preview candidates for different artifacts.`,
+      })
+      continue
+    }
+
+    selected.push([...newest].sort((left, right) => left.id.localeCompare(right.id))[0])
   }
 
   const artifactKeys = new Set(selected.map((job) => `${job.targetCommit}\n${job.previewDeploymentId}`))
