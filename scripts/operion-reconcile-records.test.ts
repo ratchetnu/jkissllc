@@ -199,9 +199,22 @@ test('the completed-job sweep isolates a refused release write and continues wit
 
 test('the completed-job sweep does not expose unexpected exception details', async () => {
   const jobs = [{ id: 'AUTO-SECRET' }] as UpdateAutomationJob[]
-  const results = await reconcileJobsIndependently(jobs, async () => {
-    throw new Error('provider token secret-value')
-  })
+  const logged: unknown[][] = []
+  const originalError = console.error
+  console.error = (...args: unknown[]) => { logged.push(args) }
+  let results
+  try {
+    results = await reconcileJobsIndependently(jobs, async () => {
+      throw new Error('provider token secret-value')
+    })
+  } finally {
+    console.error = originalError
+  }
 
   assert.equal(results[0]?.reason, 'reconciliation_failed')
+  assert.deepEqual(logged, [[
+    '[operion-reconcile] unexpected job failure',
+    { jobId: 'AUTO-SECRET', errorType: 'Error' },
+  ]])
+  assert.doesNotMatch(JSON.stringify(logged), /secret-value/)
 })

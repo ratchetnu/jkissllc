@@ -280,6 +280,12 @@ export async function reconcileJobsIndependently(
     } catch (error) {
       const message = error instanceof Error ? error.message : ''
       const knownReleaseFailure = /^RELEASE_RECONCILIATION_(STALE_RELEASE|INVALID_CHANGE)$/.test(message)
+      if (!knownReleaseFailure) {
+        console.error('[operion-reconcile] unexpected job failure', {
+          jobId: job.id,
+          errorType: error instanceof Error ? error.name : typeof error,
+        })
+      }
       out.push({
         ok: false,
         jobId: job.id,
