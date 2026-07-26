@@ -32,7 +32,10 @@ import { alert } from '../../../../lib/alerts'
 import { canApproveAndSend, quoteDeliveryMode } from '../../../../lib/ai/guided-approval'
 import { handleShadowAdminAction, isShadowAdminAction } from '../../../../lib/estimation/shadow-admin'
 import { getShadowJob } from '../../../../lib/estimation/shadow-store'
-import { canTransition, statusAfterConfirmationLinkSent } from '../../../../lib/booking-status'
+import {
+  canTransition, statusAfterConfirmationLinkSent,
+  canReopen, closureFieldsToClear, REOPEN_TARGETS,
+} from '../../../../lib/booking-status'
 
 export const runtime = 'nodejs'
 
@@ -582,6 +585,40 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
       b.status = 'cancelled'
       b.cancelledAt = Date.now()
       if (str(body.reason, 500)) b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[CANCELLED] ${str(body.reason, 500)}`
+      break
+    }
+    // Explicit closure reversal. The transition matrix keeps terminal statuses closed for
+    // ordinary edits; this is the deliberate, audited way back from a mis-clicked
+    // `Mark complete` or `Cancel`. Owner-only, and every use leaves an event.
+    case 'reopen': {
+      const target = str(body.status, 40) as BookingStatus | undefined
+      if (!target) {
+        return NextResponse.json({ error: `Choose the status to reopen into: ${REOPEN_TARGETS.join(', ')}.` }, { status: 400 })
+      }
+      const check = canReopen(b.status, target)
+      if (!check.ok) return NextResponse.json({ error: `Can't reopen — ${check.reason}.` }, { status: 400 })
+      // Reopening must not become a way around the confirmed precondition. Without this,
+      // an unpriced, undated manual-review record could be reopened straight to Confirmed —
+      // exactly the silent premature confirmation canMarkConfirmed exists to prevent.
+      if (target === 'confirmed') {
+        const guard = canMarkConfirmed(b)
+        if (!guard.ok) return NextResponse.json({ error: `Can't reopen as Confirmed — ${guard.reason}.` }, { status: 400 })
+      }
+      // A reopened booking must not keep claiming it is finished.
+      for (const field of closureFieldsToClear(b.status)) {
+        if (field === 'completedAt') delete b.completedAt
+        else delete b.cancelledAt
+      }
+      const from = b.status
+      b.status = target
+      const reason = str(body.reason, 500)
+      const stamp = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })
+      b.internalNotes = `${b.internalNotes ? b.internalNotes + '\n' : ''}[${stamp}] REOPENED ${from} → ${target} by ${actor}${reason ? ` · ${reason}` : ''}`
+      pushBookingEvent(b, {
+        actor, action: 'booking.reopened', result: `${from} → ${target}`,
+        meta: { from, to: target, by: actor, reason: reason || undefined },
+      })
+      extra = { reopenedFrom: from }
       break
     }
     case 'send-message': {

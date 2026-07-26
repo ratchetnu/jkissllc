@@ -68,10 +68,10 @@ const booking = (status: BookingStatus): Booking => ({
   updatedAt: 1,
 })
 
-async function seed(status: BookingStatus): Promise<void> {
+async function seed(status: BookingStatus, extra: Partial<Booking> = {}): Promise<void> {
   kv.clear()
   zsets.clear()
-  await saveBooking(booking(status))
+  await saveBooking({ ...booking(status), ...extra })
 }
 
 async function customerView() {
@@ -143,4 +143,92 @@ test('customer cancellation refuses a refunded booking and writes nothing', asyn
   })
   assert.equal(response.status, 409)
   assert.equal((await getBookingByToken(TOKEN))?.status, 'refunded')
+})
+
+// ── Closure reversal through the real admin handler ─────────────────────────
+
+test('reopen recovers a mis-clicked Mark complete and clears completedAt', async () => {
+  await seed('completed', { completedAt: 1_700_000_000_000 })
+  const before = await getBookingByToken(TOKEN)
+  assert.equal(before?.status, 'completed')
+  assert.equal(before?.completedAt, 1_700_000_000_000, 'the stamp must exist before we assert it is cleared')
+
+  const response = await adminPatch({ action: 'reopen', status: 'in_progress', reason: 'marked complete by mistake' })
+  assert.equal(response.status, 200)
+  const saved = await getBookingByToken(TOKEN)
+  assert.equal(saved?.status, 'in_progress')
+  assert.equal(saved?.completedAt, undefined, 'the record must stop claiming it finished')
+  const event = saved?.events?.find((e) => e.action === 'booking.reopened')
+  assert.ok(event, 'every reopen must leave an audit event')
+  assert.equal(event?.result, 'completed → in_progress')
+  assert.match(saved?.internalNotes ?? '', /REOPENED completed → in_progress/)
+})
+
+test('reopen recovers a mis-clicked Cancel and clears cancelledAt', async () => {
+  // A booking that was confirmed before being cancelled by mistake: it has a real date and
+  // money on file, so it satisfies the confirmed precondition on the way back.
+  await seed('cancelled', {
+    cancelledAt: 1_700_000_000_000,
+    selectedDate: '2026-08-01',
+    selectedWindow: '8am–10am',
+    amountPaidCents: 10_000,
+  })
+  assert.equal((await getBookingByToken(TOKEN))?.cancelledAt, 1_700_000_000_000)
+  const response = await adminPatch({ action: 'reopen', status: 'confirmed' })
+  assert.equal(response.status, 200)
+  const saved = await getBookingByToken(TOKEN)
+  assert.equal(saved?.status, 'confirmed')
+  assert.equal(saved?.cancelledAt, undefined)
+})
+
+test('reopen refuses a live booking and writes nothing', async () => {
+  await seed('confirmed')
+  const response = await adminPatch({ action: 'reopen', status: 'in_progress' })
+  assert.equal(response.status, 400)
+  assert.equal((await getBookingByToken(TOKEN))?.status, 'confirmed')
+})
+
+test('reopen refuses a target outside the allowlist and writes nothing', async () => {
+  await seed('completed')
+  const response = await adminPatch({ action: 'reopen', status: 'refunded' })
+  assert.equal(response.status, 400)
+  assert.equal((await getBookingByToken(TOKEN))?.status, 'completed')
+})
+
+test('reopen requires an explicit target — it never guesses', async () => {
+  await seed('completed')
+  const response = await adminPatch({ action: 'reopen' })
+  assert.equal(response.status, 400)
+  assert.equal((await getBookingByToken(TOKEN))?.status, 'completed')
+})
+
+test('the ordinary status control still refuses to reopen a closed booking', async () => {
+  await seed('completed')
+  const response = await adminPatch({ action: 'status', fields: { status: 'in_progress' } })
+  assert.equal(response.status, 400)
+  assert.equal((await getBookingByToken(TOKEN))?.status, 'completed')
+})
+
+test('reopen cannot bypass the confirmed precondition', async () => {
+  // An unresolved manual review with no date, price or payment: the status action refuses
+  // to confirm it, and reopen must refuse for the same reason rather than routing around it.
+  await seed('cancelled', {
+    cancelledAt: 1_700_000_000_000,
+    invoiceAmountCents: 0,
+    amountPaidCents: 0,
+    availableDates: [],
+    aiEstimate: { decision: 'manual_review' } as never,
+  })
+  const response = await adminPatch({ action: 'reopen', status: 'confirmed' })
+  assert.equal(response.status, 400)
+  const saved = await getBookingByToken(TOKEN)
+  assert.equal(saved?.status, 'cancelled', 'nothing may be written when the guard refuses')
+  assert.equal(saved?.cancelledAt, 1_700_000_000_000, 'the closure stamp must survive a refused reopen')
+})
+
+test('reopen to a non-confirmed target is unaffected by the confirmed guard', async () => {
+  await seed('cancelled', { cancelledAt: 1_700_000_000_000, aiEstimate: { decision: 'manual_review' } as never })
+  const response = await adminPatch({ action: 'reopen', status: 'booking_created' })
+  assert.equal(response.status, 200)
+  assert.equal((await getBookingByToken(TOKEN))?.status, 'booking_created')
 })

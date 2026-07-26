@@ -11,6 +11,8 @@ import WorkflowTimeline from './WorkflowTimeline'
 import ModifyEstimate from './ModifyEstimate'
 import type { Booking, Payment, InvoicePhoto } from '../../lib/bookings'
 import { serviceFamily } from '../../lib/bookings'
+import { CLOSED_STATUSES, BOOKING_STATUS_LABEL } from '../../lib/bookings'
+import { REOPEN_TARGETS } from '../../lib/booking-status'
 import type { EstimationResultV2 } from '../../lib/estimation/v2-bridge'
 import type { ClarificationV2 } from '../../lib/estimation/clarify-v2'
 import type { V2ShadowJob } from '../../lib/estimation/shadow-types'
@@ -1352,6 +1354,11 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
     finally { setMsgBusy('') }
   }
 
+  // Closure reversal. Rendered only for a closed booking; the target list is imported
+  // from the server policy so the two cannot drift apart.
+  const [reopenTo, setReopenTo] = useState<string>('')
+  const [reopenWhy, setReopenWhy] = useState('')
+
   async function run(action: string, body: Record<string, unknown> = {}, confirmMsg?: string) {
     if (confirmMsg && !confirm(confirmMsg)) return
     setBusy(action); setMsg(''); setErr('')
@@ -1738,6 +1745,36 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
             <ActBtn label="Delete" danger busy={busy === 'delete'} onClick={del} />
           </div>
         </div>
+        {CLOSED_STATUSES.includes(b.status) && (
+          <div className="pt-3 mt-3" style={{ borderTop: '1px solid rgba(255,255,255,.1)' }}>
+            <p className="text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color: 'var(--muted)' }}>Reopen — recover a closed booking</p>
+            <p className="text-[11px] mb-2" style={{ color: 'var(--muted)' }}>
+              This booking is {BOOKING_STATUS_LABEL[b.status]}. Reopening returns it to an active
+              state and is recorded on the timeline. Use it to undo a mistaken close.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="sr-only" htmlFor="reopen-target">Reopen into which status</label>
+              <select id="reopen-target" aria-label="Reopen into which status" value={reopenTo}
+                onChange={(e) => setReopenTo(e.target.value)}
+                className="text-xs px-2 py-2 rounded-lg"
+                style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--text)' }}>
+                <option value="">Reopen as…</option>
+                {REOPEN_TARGETS.map((t) => <option key={t} value={t}>{BOOKING_STATUS_LABEL[t]}</option>)}
+              </select>
+              <input aria-label="Reason for reopening (optional)" placeholder="Reason (optional)"
+                value={reopenWhy} onChange={(e) => setReopenWhy(e.target.value)} maxLength={500}
+                className="text-xs px-2 py-2 rounded-lg flex-1 min-w-[10rem]"
+                style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'var(--text)' }} />
+              <ActBtn label="Reopen booking" busy={busy === 'reopen'}
+                onClick={() => {
+                  if (!reopenTo) { setErr('Choose the status to reopen into.'); return }
+                  run('reopen', { status: reopenTo, reason: reopenWhy.trim() || undefined },
+                    `Reopen this booking as ${BOOKING_STATUS_LABEL[reopenTo as keyof typeof BOOKING_STATUS_LABEL]}?`)
+                    .then(() => { setReopenTo(''); setReopenWhy('') })
+                }} />
+            </div>
+          </div>
+        )}
         <a href={link} target="_blank" rel="noreferrer" className="block text-xs mt-3 font-mono break-all" style={{ color: 'var(--red)' }}>{link}</a>
         {msg && <p className="text-sm mt-2" style={{ color: '#34d399' }}>{msg}</p>}
         {err && <p className="text-sm mt-2" style={{ color: '#f87171' }}>{err}</p>}
