@@ -168,3 +168,45 @@ export function statusAfterCustomerView(from: BookingStatus): BookingStatus {
     ? nextStatusOrKeep(from, 'customer_viewed')
     : from
 }
+
+// ── Closure reversal (the explicit escape hatch) ─────────────────────────────
+// BOOKING_TRANSITIONS deliberately keeps terminal statuses closed, so no ordinary
+// status edit can reopen a finished job. But `Mark complete` and `Cancel` are one-click
+// controls, and a mis-click must not be permanent. Reopening is therefore its own
+// action with its own allowlist: deliberate, narrow, and audited by the caller.
+//
+// The source may be any closed status — a refund can be mis-clicked too, and recovering
+// from that matters more, not less. The TARGET is restricted to the active states a job
+// can plausibly return to; recompute() then settles payment/time-derived statuses.
+export const REOPEN_TARGETS: readonly BookingStatus[] = [
+  'confirmed', 'in_progress', 'continued', 'time_verified', 'booking_created',
+]
+
+export type ReopenRefusalCode = 'NOT_CLOSED' | 'INVALID_REOPEN_TARGET' | 'UNKNOWN_STATUS'
+export type ReopenCheck =
+  | { ok: true }
+  | { ok: false; code: ReopenRefusalCode; reason: string }
+
+/** Whether a closed booking may be reopened to `to`. Independent of canTransition(),
+ *  which must keep refusing this move for ordinary edits. */
+export function canReopen(from: BookingStatus, to: BookingStatus): ReopenCheck {
+  if (!BOOKING_TRANSITIONS[from]) return { ok: false, code: 'UNKNOWN_STATUS', reason: `unknown current status "${from}"` }
+  if (!isTerminalBookingStatus(from)) {
+    return { ok: false, code: 'NOT_CLOSED', reason: `${from} is not a closed booking — change the status directly instead` }
+  }
+  if (!REOPEN_TARGETS.includes(to)) {
+    return {
+      ok: false,
+      code: 'INVALID_REOPEN_TARGET',
+      reason: `a reopened booking must return to one of: ${REOPEN_TARGETS.join(', ')}`,
+    }
+  }
+  return { ok: true }
+}
+
+/** Closure stamps a reopened booking must shed, so the record never claims both states. */
+export function closureFieldsToClear(from: BookingStatus): Array<'completedAt' | 'cancelledAt'> {
+  if (from === 'completed' || from === 'partially_completed') return ['completedAt']
+  if (from === 'could_not_complete') return ['completedAt', 'cancelledAt']
+  return ['cancelledAt']   // cancelled, refunded
+}

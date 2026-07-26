@@ -157,6 +157,7 @@ export type BookingEventAction =
   | 'ai.final_queued' | 'ai.final_analyzed' | 'ai.final_failed' | 'ai.final_manual_review'
   | 'ai.owner_approved' | 'ai.quote_simulated'
   | 'status.changed'
+  | 'booking.reopened'
   | 'assignment.crew_added' | 'assignment.crew_removed'
   | 'assignment.pay_changed' | 'assignment.equipment_changed'
   | 'assignment.accepted' | 'assignment.declined'
