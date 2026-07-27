@@ -20,6 +20,10 @@ export type AuditAction =
   // ── Administrative identity / security events (Wave D/E) ──
   | 'user.created' | 'user.updated' | 'user.role_changed'
   | 'user.suspended' | 'user.reactivated' | 'user.deleted'
+  // ── Payroll (FIN-1) ──
+  // Exactly one line per statement that was actually issued; blocked duplicates and
+  // lock contention record nothing.
+  | 'paystatement.issued'
 
 export type AuditOutcome = 'success' | 'denied' | 'failure'
 

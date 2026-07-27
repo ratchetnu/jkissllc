@@ -33,7 +33,9 @@ shape the whole plan:
 - **No SCAN/KEYS** on the wrapper → any backfill/migration script talks to
   Upstash directly (the one allowed bypass), not through this client.
 - **No transactions across keys** → atomicity is per-key + app-level mutexes
-  (`route-mutex.ts`, `claim-mutex.ts`).
+  (`route-mutex.ts`, `claim-mutex.ts`, `pay-statement-mutex.ts` — the last serializes
+  statement generation per crew member + period, so the duplicate check and the write
+  are one step).
 - **No schema/constraints/indexes** beyond the hand-maintained `*:index` zsets.
 
 ## 2. Namespace inventory (FACT — condensed; full in `02`/`04`)
