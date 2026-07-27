@@ -14,8 +14,20 @@
 // authenticated UI instead of the sign-in screen.
 import { chromium } from 'playwright-core'
 import fs from 'node:fs'
+import { classifyCheck, summarize, INFRA_OUTCOMES } from './mobile-audit-classify.mjs'
 
-const BASE = process.env.BASE || 'http://localhost:3111'
+const INFRA_LIKE = new Set(INFRA_OUTCOMES)
+
+// Base URL resolution, in precedence order: --base flag, BASE env, default.
+// The app must already be running — this tool measures a live server and cannot
+// start one. See README-local-audit.md for how to bring up an isolated instance.
+const DEFAULT_BASE = 'http://localhost:3111'
+function resolveBase(argv = process.argv.slice(2)) {
+  const i = argv.indexOf('--base')
+  if (i >= 0 && argv[i + 1]) return argv[i + 1].replace(/\/$/, '')
+  return (process.env.BASE || DEFAULT_BASE).replace(/\/$/, '')
+}
+const BASE = resolveBase()
 const PW_EXE = process.env.PW_EXE || undefined
 const SHOT_DIR = process.env.SHOT_DIR || null
 const LABEL = process.env.LABEL || 'run'
@@ -62,6 +74,33 @@ async function maybeAuth(ctx) {
   } catch { return false }
 }
 
+// ── Preflight ────────────────────────────────────────────────────────────────
+// Fail fast and unambiguously when the app is not up. Without this, every route
+// records a connection error and the summary reports them as UI failures — the
+// exact misreporting this tool used to produce.
+async function preflight(base) {
+  try {
+    const res = await fetch(base, { method: 'GET', signal: AbortSignal.timeout(10000) })
+    return { ok: true, status: res.status }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? (e.cause?.code || e.message) : String(e) }
+  }
+}
+
+const pre = await preflight(BASE)
+if (!pre.ok) {
+  console.error(`\n==== MOBILE OVERFLOW AUDIT — INFRASTRUCTURE ERROR ====`)
+  console.error(`Cannot reach the app at ${BASE}`)
+  console.error(`Reason: ${pre.error}`)
+  console.error(`\nNo checks were run, and NOTHING is known about the UI.`)
+  console.error(`This is NOT a UI finding.\n`)
+  console.error(`Start the app first, then re-run. For an isolated local instance see`)
+  console.error(`docs/operations/README-local-audit.md. Override the target with:`)
+  console.error(`  npm run audit:mobile -- --base http://localhost:3111`)
+  console.error(`  BASE=http://localhost:3000 npm run audit:mobile\n`)
+  process.exit(2)
+}
+
 const browser = await chromium.launch({ executablePath: PW_EXE })
 const ctx = await browser.newContext({ deviceScaleFactor: 1 })
 const authed = await maybeAuth(ctx)
@@ -69,11 +108,12 @@ const page = await ctx.newPage()
 if (SHOT_DIR) fs.mkdirSync(SHOT_DIR, { recursive: true })
 
 const results = []
+let aborted = false
 for (const path of PATHS) {
   if (ONLY && !ONLY.includes(path)) continue
   for (const { w, h } of VIEWPORTS) {
     await page.setViewportSize({ width: w, height: h })
-    let ok = true, info = ''
+    let checkInput = {}
     try {
       const resp = await page.goto(BASE + path, { waitUntil: 'domcontentloaded', timeout: 20000 })
       await page.waitForTimeout(500)
@@ -123,28 +163,66 @@ for (const path of PATHS) {
         }
         return { sw, cw, offenders: offenders.slice(0, 8), clipped: [...new Set(clipped)].slice(0, 6) }
       })
-      if (m.sw > m.cw + 1) { ok = false; info = `scrollW=${m.sw} clientW=${m.cw} :: ${m.offenders.join(' | ')}` }
-      if (m.clipped.length) { ok = false; info += ` CLIPPED:[${m.clipped.join(',')}]` }
-      if (resp && resp.status() >= 400) info += ` [HTTP ${resp.status()}]`
+      checkInput = {
+        httpStatus: resp ? resp.status() : null,
+        scrollWidth: m.sw, clientWidth: m.cw, offenders: m.offenders, clipped: m.clipped,
+      }
       if (SHOT_DIR && SHOT_WIDTHS.has(w)) {
         const name = `${LABEL}__${(path === '/' ? 'root' : path.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, ''))}__${w}.png`
         await page.screenshot({ path: `${SHOT_DIR}/${name}` })
       }
-    } catch (e) { ok = false; info = 'ERR ' + String(e.message || e).slice(0, 90) }
-    results.push({ path, width: w, ok, info })
+    } catch (e) {
+      checkInput = { error: String(e?.message || e) }
+    }
+    const { outcome, detail } = classifyCheck(checkInput)
+    results.push({ path, width: w, outcome, detail })
+
+    // A connection failure mid-run means the server went away; every remaining
+    // check would record the same thing. Stop rather than manufacture hundreds of
+    // identical "failures" that say nothing about the UI.
+    if (outcome === 'infrastructure_unavailable') {
+      console.error(`\n!! app became unreachable at ${path} @${w} — aborting run (${detail})`)
+      aborted = true
+      break
+    }
   }
+  if (aborted) break
 }
 await browser.close()
 
-const bad = results.filter(r => !r.ok)
-console.log(`\n==== MOBILE OVERFLOW AUDIT (auth=${authed}) : ${results.length} checks, ${bad.length} failures ====`)
-for (const r of bad) console.log(`FAIL ${r.path} @${r.width}  ${r.info}`)
+const { counts, exitCode, measured } = summarize(results)
+
+console.log(`\n==== MOBILE OVERFLOW AUDIT (auth=${authed}, base=${BASE}) ====`)
+console.log(`${results.length} checks run${aborted ? ' (ABORTED EARLY)' : ''}`)
+console.log(`  ok                        ${counts.ok}`)
+console.log(`  overflow                  ${counts.overflow}      <- real UI findings`)
+console.log(`  page_error                ${counts.page_error}      <- real page findings (HTTP >= 400)`)
+console.log(`  navigation_error          ${counts.navigation_error}      <- harness/timeout, NOT a UI finding`)
+console.log(`  infrastructure_unavailable ${counts.infrastructure_unavailable}     <- app unreachable, NOTHING measured`)
+
+if (!measured) {
+  console.log(`\n!! The app became unreachable. These are NOT UI findings — nothing was measured.`)
+}
+
+const uiFindings = results.filter(r => r.outcome === 'overflow' || r.outcome === 'page_error')
+if (uiFindings.length) {
+  console.log(`\n---- findings ----`)
+  for (const r of uiFindings) console.log(`${r.outcome.toUpperCase()} ${r.path} @${r.width}  ${r.detail}`)
+}
+
+const harness = results.filter(r => INFRA_LIKE.has(r.outcome))
+if (harness.length) {
+  console.log(`\n---- harness / environment (not UI findings) ----`)
+  for (const r of harness) console.log(`${r.outcome} ${r.path} @${r.width}  ${r.detail}`)
+}
+
 console.log('\n---- per-route ----')
 const byPath = {}
 for (const r of results) (byPath[r.path] ??= []).push(r)
 for (const [p, rs] of Object.entries(byPath)) {
-  const f = rs.filter(x => !x.ok)
-  console.log(`${f.length === 0 ? 'PASS' : 'FAIL'} ${p} (${f.length}/${rs.length} bad${f.length ? ' @ ' + f.map(x => x.width).join(',') : ''})`)
+  const f = rs.filter(x => x.outcome === 'overflow' || x.outcome === 'page_error')
+  console.log(`${f.length === 0 ? 'PASS' : 'FAIL'} ${p} (${f.length}/${rs.length} with findings${f.length ? ' @ ' + f.map(x => x.width).join(',') : ''})`)
 }
 if (SHOT_DIR) console.log(`\nscreenshots → ${SHOT_DIR}/`)
-process.exit(bad.length ? 1 : 0)
+console.log(`\nexit ${exitCode}  (0 = clean, 1 = real UI findings, 2 = could not measure)`)
+process.exit(exitCode)

@@ -28,6 +28,15 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Agent/session scratch space. `.claude/worktrees/**` holds full checkouts of
+    // OTHER branches plus their build output — tens of thousands of lint problems
+    // that belong to code this config is not responsible for. Linting them made
+    // `npm run lint` report ~39k problems on an otherwise clean tree, which buried
+    // any real error and made the exit code useless as a signal.
+    // This hides NO tracked application code: every path here is untracked.
+    ".claude/**",
+    // Disposable local-audit artifacts (KV emulator pid/dumps).
+    ".local-audit/**",
   ]),
 ]);
 
