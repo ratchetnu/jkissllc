@@ -43,13 +43,19 @@ export async function executeRollback(i: ExecuteRollbackInput): Promise<ExecuteR
   if (prior?.status === 'completed') return { ok: true, rollback: prior, idempotent: true }
   if (prior?.status === 'rolling_back') return { ok: false, code: 'IN_PROGRESS', message: 'a rollback is already in progress for this business', rollback: prior }
 
-  const got = await acquireRollbackLock(i.business.id, i.actor)
-  if (!got) return { ok: false, code: 'IN_PROGRESS', message: 'a rollback is already in progress for this business' }
+  const lock = await acquireRollbackLock(i.business.id, i.actor)
+  if (!lock) return { ok: false, code: 'IN_PROGRESS', message: 'a rollback is already in progress for this business' }
 
   try {
     const again = await getRollbackByTarget(i.business.id, i.targetDeploymentId)
     if (again?.status === 'completed') return { ok: true, rollback: again, idempotent: true }
     if (again?.status === 'rolling_back') return { ok: false, code: 'IN_PROGRESS', message: 'a rollback is already in progress for this business', rollback: again }
+
+    // LOCK-1: verify we still own the lease before the FIRST write. A lapsed lease
+    // means another rollback may be in flight — never promote behind it.
+    if (!(await lock.heldNow())) {
+      return { ok: false, code: 'IN_PROGRESS', message: 'a rollback is already in progress for this business' }
+    }
 
     const rollback = await startRollback({
       now: i.now, businessId: i.business.id, businessSlug: i.business.slug,
@@ -71,7 +77,7 @@ export async function executeRollback(i: ExecuteRollbackInput): Promise<ExecuteR
     await audit(i, 'rollback.failed', `Rollback ${rollback.id} failed: ${res.error}`, { rollbackId: rollback.id, mode: i.mode })
     return { ok: false, code: 'PROMOTE_FAILED', message: 'the production rollback failed', rollback: failed ?? rollback }
   } finally {
-    await releaseRollbackLock(i.business.id)
+    await releaseRollbackLock(lock)
   }
 }
 

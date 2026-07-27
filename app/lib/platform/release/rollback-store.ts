@@ -7,6 +7,7 @@
 // only rollback KV.
 
 import { redis } from '../../redis'
+import { acquireLock, type KvLock } from '../../kv-lock'
 import type { ReleaseRollback } from './release-history'
 
 const REC = (id: string) => `platform:rollback:rec:${id}`
@@ -48,11 +49,18 @@ async function releaseTargetClaim(r: ReleaseRollback): Promise<void> {
   )
 }
 
-export async function acquireRollbackLock(businessId: string, holder: string): Promise<boolean> {
-  return redis.setNxPx(LOCK(businessId), holder, LOCK_TTL_MS)
+/**
+ * Acquire the per-business rollback mutex. Returns the held lock, or null when a
+ * rollback is already in flight. LOCK-1: unique per-acquisition token + ownership
+ * release, so a lapsed holder can never delete the next rollback's lock (the target
+ * claim already used compare-and-delete — this brings the mutex up to the same bar).
+ */
+export async function acquireRollbackLock(businessId: string, holder: string): Promise<KvLock | null> {
+  return acquireLock(LOCK(businessId), { ttlMs: LOCK_TTL_MS, holder, renew: true })
 }
-export async function releaseRollbackLock(businessId: string): Promise<void> {
-  await redis.del(LOCK(businessId)).catch(() => {})
+/** Release only if this caller still owns it. A null lock (never acquired) is a no-op. */
+export async function releaseRollbackLock(lock: KvLock | null): Promise<void> {
+  await lock?.release()
 }
 
 export async function saveRollback(r: ReleaseRollback): Promise<void> {

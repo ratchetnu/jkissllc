@@ -10,6 +10,7 @@
 // SAME still-valid binding returns the existing one instead of minting a conflicting second.
 
 import { redis } from '../../redis'
+import { acquireLock } from '../../kv-lock'
 import {
   type ReleaseApproval, type ApprovalBinding, APPROVAL_TTL_MS, APPROVAL_RECORD_TTL_MS, APPROVAL_TARGET,
   releaseBindingFingerprint, deriveApprovalState,
@@ -64,9 +65,13 @@ export type CreateApprovalResult =
  */
 export async function createApproval(i: CreateApprovalInput): Promise<CreateApprovalResult> {
   const fingerprint = releaseBindingFingerprint(i.binding)
-  const lockKey = LOCK(i.business.id)
-  const gotLock = await redis.setNxPx(lockKey, i.approvedBy, 10_000)
-  if (!gotLock) return { ok: false, code: 'LOCK_CONTENDED', message: 'another approval action is in flight for this business' }
+  // LOCK-1: the lease used to store `approvedBy` and release with an unconditional
+  // DEL — so two approvals by the SAME admin held indistinguishable values and could
+  // release each other, and a lapsed holder deleted the next holder's lock. The token
+  // is now unique per acquisition and the release is compare-and-delete. The
+  // idempotency/supersede logic below is unchanged.
+  const lock = await acquireLock(LOCK(i.business.id), { ttlMs: 10_000, holder: i.approvedBy })
+  if (!lock) return { ok: false, code: 'LOCK_CONTENDED', message: 'another approval action is in flight for this business' }
   try {
     const existing = await getActiveApprovalFor(i.business.id)
     if (existing && deriveApprovalState(existing, i.now, fingerprint) === 'active' && existing.bindingFingerprint === fingerprint) {
@@ -97,8 +102,8 @@ export async function createApproval(i: CreateApprovalInput): Promise<CreateAppr
     await redis.pexpire(ACTIVE(i.business.id), APPROVAL_RECORD_TTL_MS)
     return { ok: true, approval, reused: false }
   } finally {
-    // Best-effort release of the short mutex (it also self-expires in 10s).
-    await redis.del(lockKey).catch(() => {})
+    // Release only if we still own it (it also self-expires in 10s).
+    await lock.release()
   }
 }
 

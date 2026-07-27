@@ -132,6 +132,14 @@ function installFakeKv() {
       else { kv.set(k, v); result = 'OK' }
     }
     else if (cmd === 'DEL') { kv.delete(args[1]); result = 1 }
+    else if (cmd === 'EVAL') {
+      // Ownership-guarded lock scripts (LOCK-1): release / renew, both
+      //   if GET(KEYS[1]) == ARGV[1] then DEL | PEXPIRE(KEYS[1], ARGV[2]) else 0
+      const script = args[1], n = Number(args[2]), key = args[3], token = args[3 + n]
+      const owns = kv.get(key) === token
+      if (/pexpire/i.test(script)) result = owns ? 1 : 0
+      else { if (owns) kv.delete(key); result = owns ? 1 : 0 }
+    }
     else if (cmd === 'PEXPIRE' || cmd === 'EXPIRE' || cmd === 'ZADD') { result = 1 }
     return { json: async () => ({ result }) }
   }) as never

@@ -54,13 +54,20 @@ export async function executePublish(i: ExecutePublishInput): Promise<ExecutePub
   const prior = await getPublishByApproval(i.approval.id)
   if (prior) return { ok: true, publish: prior, idempotent: true }
 
-  const got = await acquirePublishLock(i.business.id, i.actor)
-  if (!got) return { ok: false, code: 'IN_PROGRESS', message: 'a publish is already in progress for this business' }
+  const lock = await acquirePublishLock(i.business.id, i.actor)
+  if (!lock) return { ok: false, code: 'IN_PROGRESS', message: 'a publish is already in progress for this business' }
 
   try {
     // Re-check idempotency inside the lock (a concurrent winner may have just bound it).
     const again = await getPublishByApproval(i.approval.id)
     if (again) return { ok: true, publish: again, idempotent: true }
+
+    // LOCK-1: verify we still own the lease before the FIRST write of the critical
+    // section. If it lapsed, another publish may already be running — stop rather
+    // than consume the approval and promote to Production behind it.
+    if (!(await lock.heldNow())) {
+      return { ok: false, code: 'IN_PROGRESS', message: 'a publish is already in progress for this business' }
+    }
 
     // Consume the approval atomically FIRST (single-use). Requires it still be active + bound.
     const fp = releaseBindingFingerprint(i.binding)
@@ -109,7 +116,7 @@ export async function executePublish(i: ExecutePublishInput): Promise<ExecutePub
     await audit(i, 'publish.completed', `Publish ${publish.id} completed (${i.mode})`, { publishId: publish.id, mode: i.mode })
     return { ok: true, publish: done ?? publish, idempotent: false }
   } finally {
-    await releasePublishLock(i.business.id)
+    await releasePublishLock(lock)
   }
 }
 

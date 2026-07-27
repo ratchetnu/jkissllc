@@ -2,6 +2,7 @@ import { redis } from './redis'
 import { timeStage } from './observability/pipeline-trace'
 import { maintainDueIndex } from './ai-due-index'
 import { optimisticUpdate, type Mutate, type UpdateOutcome } from './booking-concurrency'
+import { withLock, type KvLock } from './kv-lock'
 import type { JobAssignee } from './job-assignment'
 import type { StoredAiEstimate } from './ai/estimate-store'
 import type { CustomerConfirmation } from './ai/confirmation-schema'
@@ -618,15 +619,24 @@ export async function updateBooking(
  */
 export async function withBookingWriteLock<T>(
   token: string,
-  fn: () => Promise<T>,
+  fn: (lock?: KvLock | null) => Promise<T>,
   opts: { onBusy: () => T | Promise<T>; ttlMs?: number; lockHeld?: boolean },
 ): Promise<T> {
   if (opts.lockHeld) return fn()
-  const key = `bk:wlock:${token}`
-  let got = false
-  try { got = await redis.setNxPx(key, '1', opts.ttlMs ?? 20_000) } catch { got = true /* KV hiccup: don't block the write */ }
-  if (!got) return await opts.onBusy()
-  try { return await fn() } finally { try { await redis.del(key) } catch { /* lease self-expires */ } }
+  // LOCK-1: the lease used to store a constant '1' and release with an
+  // unconditional DEL, so a holder whose lease had expired deleted the NEXT
+  // holder's lock on its way out (reproduced in the audit) — two writers on one
+  // booking, with external side effects. It now carries a unique per-acquisition
+  // token, releases compare-and-delete, and HEARTBEATS: the AI job's lease (90s)
+  // no longer has to outlast the slowest model call, and `fn` can `assertHeld()`
+  // before a first write. A store error still runs unlocked (availability over
+  // serialization, as before) — but then we hold no token and release nothing.
+  return withLock<T>(`bk:wlock:${token}`, fn, {
+    ttlMs: opts.ttlMs ?? 20_000,
+    renew: true,
+    onBusy: opts.onBusy,
+    onStoreError: 'run_unlocked',
+  })
 }
 
 export async function deleteBooking(token: string): Promise<void> {
