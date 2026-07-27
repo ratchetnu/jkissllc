@@ -26,6 +26,14 @@ store, bound to `127.0.0.1`. Two properties matter:
 
 Data lives in the process and is discarded on exit.
 
+The emulator recognises supported Lua scripts by their complete operation shape,
+not by a generic text fragment. Baseline adoption models the Production contract:
+it compares the stored business `updatedAt`, and on a match atomically writes the
+adoption record, adoption index, business record, and business index. Missing,
+malformed, or stale business evidence writes none of those keys. An unrecognised
+script returns `EMULATOR_UNSUPPORTED_SCRIPT`; it is never treated as a successful
+no-op.
+
 ## 2. Start
 
 ```bash
@@ -119,6 +127,30 @@ ADMIN_PASSWORD=<the synthetic one> \
 npm run audit:mobile -- --base http://127.0.0.1:3111
 ```
 
-Exit codes: **0** clean · **1** real UI findings · **2** could not measure (app
-unreachable). A connection failure is reported as `infrastructure_unavailable` and
-is never counted as a UI finding.
+For a named synthetic Admin or Manager account, use `AUDIT_ROLE`, `AUDIT_EMAIL`,
+and `AUDIT_PASSWORD` instead of `ADMIN_PASSWORD`. A Preview target additionally
+requires `AUDIT_ENV=preview`; Production and arbitrary remote targets are rejected
+before Chromium launches.
+
+`PASS` means the requested final URL rendered its configured, hydrated,
+route-specific content and then passed page-overflow and action-visibility checks.
+A login page, redirect, blank shell, loading skeleton, error boundary, missing
+readiness assertion, or absent authenticated content can never pass.
+
+Result vocabulary:
+
+- `PASS` — intended content was proven and measured cleanly.
+- `FAIL` — intended content rendered but a content/layout assertion failed.
+- `ROUTE_ERROR` — navigation, HTTP, redirect, client, or error-boundary failure.
+- `BLOCKED_AUTH` — the required synthetic identity was not proven ready.
+- `BLOCKED_ENV` — the browser or permitted target environment was unavailable.
+- `INCONCLUSIVE` — hydration/readiness did not resolve to measurable content.
+
+Every route/viewport result records the requested and final route, environment,
+synthetic identity role, readiness assertion, reason, and an evidence path.
+Non-PASS results capture a screenshot whenever a page rendered. Internal table
+scroll rails remain valid; page-level horizontal overflow does not.
+
+Exit codes: **0** every check passed · **1** at least one `FAIL` or `ROUTE_ERROR`
+· **2** no finding was observed, but at least one check was blocked or inconclusive.
+Blocked and inconclusive checks are never included in the pass total.

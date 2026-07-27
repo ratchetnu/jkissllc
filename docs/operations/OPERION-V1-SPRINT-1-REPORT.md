@@ -143,7 +143,8 @@ on in Preview and walking a real booking end-to-end is the first task of the nex
 session, before Sprint 2 builds pay on top of this.
 
 `npm run audit:mobile` requires a dev server on `:3111`; without one every route
-reports FAIL. That is an unmet precondition, not a regression.
+reports `BLOCKED_ENV` and exits 2. That is an unmet precondition, not a UI
+regression and never a PASS.
 
 ---
 

@@ -1,79 +1,115 @@
-// Outcome classification for the mobile overflow audit.
-//
-// Extracted as a pure module for one reason: the audit used to collapse EVERY
-// failure — including "the dev server isn't running" — into a single `FAIL`
-// line and a blended failure count. A completely broken run rendered as
-// "333 checks, 333 failures", which reads as a catastrophic UI regression when
-// in fact nothing was measured at all.
-//
-// Classifying the outcome is now separable from producing it, so the mapping is
-// unit-tested against real error shapes instead of being inferred from a report.
+// Pure outcome policy for the mobile audit. PASS is deliberately the last branch:
+// it is reachable only after environment, authentication, navigation, hydration,
+// route-specific readiness, and layout evidence have all been proven.
 
-/** @typedef {'ok'|'overflow'|'page_error'|'navigation_error'|'infrastructure_unavailable'} Outcome */
+/** @typedef {'PASS'|'FAIL'|'BLOCKED_AUTH'|'BLOCKED_ENV'|'ROUTE_ERROR'|'INCONCLUSIVE'} AuditOutcome */
 
-/** Outcomes that describe the PAGE (a real finding) vs. the harness/environment. */
-export const FINDING_OUTCOMES = ['overflow', 'page_error']
-export const INFRA_OUTCOMES = ['navigation_error', 'infrastructure_unavailable']
+export const AUDIT_OUTCOMES = [
+  'PASS', 'FAIL', 'BLOCKED_AUTH', 'BLOCKED_ENV', 'ROUTE_ERROR', 'INCONCLUSIVE',
+]
+export const FINDING_OUTCOMES = ['FAIL', 'ROUTE_ERROR']
+export const BLOCKED_OUTCOMES = ['BLOCKED_AUTH', 'BLOCKED_ENV', 'INCONCLUSIVE']
+// Backward-compatible name used by the entry point.
+export const INFRA_OUTCOMES = BLOCKED_OUTCOMES
 
-// Connection-level failures mean the target never answered — nothing about the UI
-// was observed. Playwright surfaces these as net::ERR_* / Node as ECONNREFUSED.
 const INFRA_PATTERNS = [
   /ERR_CONNECTION_REFUSED/i, /ERR_CONNECTION_RESET/i, /ERR_NAME_NOT_RESOLVED/i,
   /ERR_ADDRESS_UNREACHABLE/i, /ERR_INTERNET_DISCONNECTED/i, /ERR_SSL/i,
   /ECONNREFUSED/i, /ENOTFOUND/i, /EHOSTUNREACH/i, /ECONNRESET/i,
 ]
 
-/** True when the error means "the app was not reachable", not "the page is broken". */
 export function isInfrastructureError(message) {
-  const s = String(message ?? '')
-  return INFRA_PATTERNS.some((re) => re.test(s))
+  const value = String(message ?? '')
+  return INFRA_PATTERNS.some((pattern) => pattern.test(value))
+}
+
+export function validateAuditTarget(base, environment = '') {
+  let url
+  try { url = new URL(base) } catch { return { ok: false, reason: 'invalid audit target URL' } }
+  const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1'
+  if (loopback) return { ok: true, environment: 'local' }
+  if (environment === 'preview' && url.protocol === 'https:' && url.hostname.endsWith('.vercel.app')) {
+    return { ok: true, environment: 'preview' }
+  }
+  return { ok: false, reason: 'audit target must be loopback or an explicitly labelled Vercel Preview' }
 }
 
 /**
- * Classify one route × viewport check.
- *
- * @param {{ error?: string|null, httpStatus?: number|null,
- *           scrollWidth?: number, clientWidth?: number,
- *           offenders?: string[], clipped?: string[] }} input
- * @returns {{ outcome: Outcome, detail: string }}
+ * @param {{
+ *   environmentAllowed?: boolean, authRequired?: boolean, authReady?: boolean,
+ *   error?: string|null, httpStatus?: number|null, finalUrlMatches?: boolean,
+ *   redirectLoop?: boolean, loginDetected?: boolean, errorBoundary?: boolean,
+ *   clientError?: string|null, hydrated?: boolean, blank?: boolean,
+ *   loading?: boolean, readinessConfigured?: boolean, readinessMet?: boolean,
+ *   primaryActionRequired?: boolean, primaryActionVisible?: boolean,
+ *   scrollWidth?: number, clientWidth?: number, offenders?: string[], clipped?: string[],
+ *   evidencePath?: string|null
+ * }} input
+ * @returns {{ outcome: AuditOutcome, detail: string, evidencePath?: string }}
  */
 export function classifyCheck(input = {}) {
-  const { error, httpStatus, scrollWidth, clientWidth, offenders = [], clipped = [] } = input
+  const evidence = input.evidencePath ? { evidencePath: input.evidencePath } : {}
+  const result = (outcome, detail) => ({ outcome, detail, ...evidence })
 
-  if (error) {
-    return isInfrastructureError(error)
-      ? { outcome: 'infrastructure_unavailable', detail: `app unreachable: ${trim(error)}` }
-      : { outcome: 'navigation_error', detail: `navigation failed: ${trim(error)}` }
+  if (input.environmentAllowed === false) return result('BLOCKED_ENV', 'target environment is not permitted')
+  if (input.error && isInfrastructureError(input.error)) {
+    return result('BLOCKED_ENV', `app unreachable: ${trim(input.error)}`)
   }
-
-  // A 4xx/5xx is a real defect about the page, but it is NOT an overflow — and
-  // measuring layout on an error page produces meaningless offender lists.
-  if (typeof httpStatus === 'number' && httpStatus >= 400) {
-    return { outcome: 'page_error', detail: `HTTP ${httpStatus}` }
+  if (input.authRequired && !input.authReady) return result('BLOCKED_AUTH', 'authenticated session was not proven ready')
+  if (input.redirectLoop) return result('ROUTE_ERROR', 'redirect loop detected')
+  if (input.error) return result('ROUTE_ERROR', `navigation failed: ${trim(input.error)}`)
+  if (input.httpStatus === 401 || input.httpStatus === 403) {
+    return result(input.authRequired ? 'BLOCKED_AUTH' : 'ROUTE_ERROR', `HTTP ${input.httpStatus}`)
+  }
+  if (typeof input.httpStatus === 'number' && input.httpStatus >= 400) {
+    return result('ROUTE_ERROR', `HTTP ${input.httpStatus}`)
+  }
+  if (input.loginDetected) return result('BLOCKED_AUTH', 'login page rendered instead of requested content')
+  if (input.finalUrlMatches === false) return result('ROUTE_ERROR', 'final URL does not match the requested route')
+  if (input.errorBoundary) return result('ROUTE_ERROR', 'application error boundary rendered')
+  if (input.clientError) return result('ROUTE_ERROR', `client error: ${trim(input.clientError)}`)
+  if (input.loading) return result('INCONCLUSIVE', 'route remained in a loading state')
+  if (input.hydrated === false) return result('INCONCLUSIVE', 'client hydration was not proven')
+  if (input.blank) return result('FAIL', 'blank or empty client shell rendered')
+  if (input.readinessConfigured === false) return result('INCONCLUSIVE', 'no route-specific readiness assertion is configured')
+  if (input.readinessMet === false) return result('FAIL', 'route-specific authenticated content was not found')
+  if (input.primaryActionRequired && !input.primaryActionVisible) {
+    return result('FAIL', 'configured primary action is hidden or unreachable')
   }
 
   const parts = []
-  // +1px tolerance absorbs sub-pixel rounding at fractional device scales.
-  if (typeof scrollWidth === 'number' && typeof clientWidth === 'number' && scrollWidth > clientWidth + 1) {
-    parts.push(`scrollW=${scrollWidth} clientW=${clientWidth} :: ${offenders.join(' | ')}`)
+  const offenders = input.offenders ?? []
+  const clipped = input.clipped ?? []
+  if (
+    typeof input.scrollWidth === 'number' &&
+    typeof input.clientWidth === 'number' &&
+    input.scrollWidth > input.clientWidth + 1
+  ) {
+    parts.push(`scrollW=${input.scrollWidth} clientW=${input.clientWidth} :: ${offenders.join(' | ')}`)
   }
   if (clipped.length) parts.push(`CLIPPED:[${clipped.join(',')}]`)
-
-  return parts.length ? { outcome: 'overflow', detail: parts.join(' ') } : { outcome: 'ok', detail: '' }
+  return parts.length ? result('FAIL', parts.join(' ')) : result('PASS', '')
 }
 
-/** Tally outcomes and decide the process exit code. */
 export function summarize(results) {
-  const counts = { ok: 0, overflow: 0, page_error: 0, navigation_error: 0, infrastructure_unavailable: 0 }
-  for (const r of results) counts[r.outcome] = (counts[r.outcome] ?? 0) + 1
-
-  const findings = counts.overflow + counts.page_error
-  const infra = counts.infrastructure_unavailable + counts.navigation_error
-
-  // 2 = we could not measure (env problem). 1 = we measured and found real issues.
-  // Distinguishing them means CI can tell "the app was down" from "the UI broke".
-  const exitCode = counts.infrastructure_unavailable > 0 ? 2 : findings > 0 ? 1 : 0
-  return { counts, findings, infra, exitCode, measured: counts.infrastructure_unavailable === 0 }
+  const counts = Object.fromEntries(AUDIT_OUTCOMES.map((outcome) => [outcome, 0]))
+  for (const row of results) counts[row.outcome] = (counts[row.outcome] ?? 0) + 1
+  const passed = counts.PASS
+  const findings = counts.FAIL + counts.ROUTE_ERROR
+  const blocked = counts.BLOCKED_AUTH + counts.BLOCKED_ENV
+  const inconclusive = counts.INCONCLUSIVE
+  const exitCode = findings > 0 ? 1 : (blocked > 0 || inconclusive > 0) ? 2 : 0
+  return {
+    counts,
+    passed,
+    findings,
+    blocked,
+    inconclusive,
+    exitCode,
+    measured: blocked === 0 && inconclusive === 0,
+  }
 }
 
-function trim(s) { return String(s).replace(/\s+/g, ' ').slice(0, 120) }
+function trim(value) {
+  return String(value).replace(/\s+/g, ' ').slice(0, 160)
+}
