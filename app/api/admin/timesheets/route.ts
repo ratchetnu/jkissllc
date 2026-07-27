@@ -8,6 +8,8 @@ import { listRoutes } from '../../../lib/routes'
 import { listBookings, type Booking } from '../../../lib/bookings'
 import { isEnabled } from '../../../lib/platform/flags'
 import { selectTimeEntries, rollupByStaff, periodTotalMinutes, type TimeFilter } from '../../../lib/timesheets'
+import { punchId, listCorrectionsForPunches } from '../../../lib/time-corrections'
+import { can } from '../../../lib/rbac'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -29,13 +31,23 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
     listRoutes(1000),
     bookingLaneEnabled ? listBookings(1000) : Promise.resolve<Booking[]>([]),
   ])
-  const entries = selectTimeEntries(routes, bookings, filter)
+  // Corrections are loaded for exactly the punches in view, then projected onto the
+  // entries — so every figure below (durations, rollups, the period total) is the
+  // EFFECTIVE time, never the raw stamp.
+  const punchIds: string[] = []
+  for (const r of routes) for (const a of r.assignees ?? []) punchIds.push(punchId('route', r.token, a.staffId))
+  for (const b of bookings) for (const a of b.assignees ?? []) punchIds.push(punchId('booking', b.token, a.staffId))
+  const corrections = await listCorrectionsForPunches(punchIds)
+
+  const entries = selectTimeEntries(routes, bookings, filter, corrections)
 
   return NextResponse.json({
     entries,
     byStaff: rollupByStaff(entries),
     periodTotalMinutes: periodTotalMinutes(entries),
     bookingLaneEnabled,
+    /** Drives the row action — never trust this alone; the API enforces it too. */
+    canCorrect: can(who.role, 'time:manage'),
     filter: { staffId: staffId ?? null, start: start ?? null, end: end ?? null, type: type ?? null },
   })
 })

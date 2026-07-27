@@ -12,7 +12,18 @@ export type CompRoute = {
   businessName: string
   status: string
   routeDate: string // YYYY-MM-DD
-  assignees?: { staffId: string; payCents?: number; role?: string }[]
+  assignees?: {
+    staffId: string
+    payCents?: number
+    role?: string
+    /**
+     * The amount the ONE effective pay model resolved for this assignment (hourly ×
+     * effective corrected duration, or the flat route amount). When present it wins,
+     * so the crew portal and Admin payroll can never disagree. Absent → the legacy
+     * flat snapshot, exactly as before.
+     */
+    effectivePayCents?: number
+  }[]
 }
 
 export type CompLine = { routeNumber: string; businessName: string; date: string; payCents: number }
@@ -44,7 +55,7 @@ export function computeCrewComp(
     const mine = r.assignees?.find(a => a.staffId === staffId)
     if (!mine) continue
     if (r.businessName) businesses.add(r.businessName)
-    const pay = mine.payCents ?? 0
+    const pay = mine.effectivePayCents ?? mine.payCents ?? 0
 
     if (r.status === 'completed') {
       completedRoutes++

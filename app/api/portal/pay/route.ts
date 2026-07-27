@@ -3,6 +3,7 @@ import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route
 import { requireCrew } from '../_lib/crew'
 import { listRoutes } from '../../../lib/routes'
 import { computeCrewComp } from '../../../lib/crew-comp'
+import { computePay } from '../../../lib/route-pay'
 import { getFinanceSettings } from '../../../lib/finance'
 import { centralToday, mondayOf } from '../../../lib/dates'
 
@@ -21,6 +22,31 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
 
   const routes = await listRoutes(1000)
   const today = centralToday()
-  const summary = computeCrewComp(who.staffId, routes, today, mondayOf(today))
+
+  // Earnings must be the SAME number Admin payroll computes. computePay applies the
+  // one effective model (corrections + compensation snapshots, hourly or flat); we
+  // project its per-route amounts back onto this crew member's assignments so the
+  // portal cannot drift from payroll. Legacy flat pay resolves to itself, so a
+  // deployment with neither corrections nor snapshots is unchanged.
+  const effective = new Map<string, number>()
+  try {
+    const lifetime = await computePay('1970-01-01', '2999-12-31')
+    const mine = lifetime.contractors.find(c => c.staffId === who.staffId)
+    for (const line of mine?.routes ?? []) {
+      if (line.source === 'booking') continue          // this surface is the routes lane
+      if (line.amountCents != null) effective.set(line.routeNumber, line.amountCents)
+    }
+  } catch { /* fall back to the stored snapshot below — never block the portal */ }
+
+  const projected = routes.map(r => ({
+    ...r,
+    assignees: (r.assignees ?? []).map(a => (
+      a.staffId === who.staffId && effective.has(r.routeNumber)
+        ? { ...a, effectivePayCents: effective.get(r.routeNumber) }
+        : a
+    )),
+  }))
+
+  const summary = computeCrewComp(who.staffId, projected, today, mondayOf(today))
   return NextResponse.json({ ok: true, visible: true, summary })
 })
