@@ -1,7 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useEffect, useMemo, useState } from 'react'
 import { COMPANY } from '../../../lib/company'
 import Link from 'next/link'
 import { Building2, ClipboardList, MapPin, CalendarClock, Users, CheckCircle2, ChevronLeft, Send, Sparkles, Truck, Phone, Lock, User, AlertTriangle } from 'lucide-react'
@@ -68,7 +67,6 @@ const presetBtn: React.CSSProperties = { padding: '7px 13px', borderRadius: 999,
 const equipChip = (on: boolean): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 14px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--red)' : 'var(--line)'}`, background: on ? 'var(--red)' : 'transparent', color: on ? '#fff' : 'var(--muted)' })
 
 function Builder() {
-  const router = useRouter()
   const [step, setStep] = useState(0)
   const [staff, setStaff] = useState<Staff[]>([])
   const [equipment, setEquipment] = useState<Equip[]>([])

@@ -7,7 +7,7 @@ import test from 'node:test'
 import {
   STAGE_KEYS, STAGE_DEFS, ANALYZING_INDEX, LAST_INDEX, MSG, DEFAULT_ANALYZE_P50_MS,
   runningState, revealState, settledState, settleFrames, analyzingFraction, isOverrun,
-  createTimedDriver, type ProgressState, type BackendOutcome,
+  createTimedDriver, type ProgressState,
 } from '../app/lib/ai/progress-stages'
 import {
   median, clampP50, computeCalibration, MIN_SAMPLES, MIN_P50_MS, MAX_P50_MS,

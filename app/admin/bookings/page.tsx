@@ -270,7 +270,7 @@ function Dashboard() {
   }
 
   function toggleCheck(token: string) {
-    setChecked(prev => { const n = new Set(prev); n.has(token) ? n.delete(token) : n.add(token); return n })
+    setChecked(prev => { const n = new Set(prev); if (n.has(token)) n.delete(token); else n.add(token); return n })
   }
 
   const STATUS_FILTERS = ['active', 'requests', 'junk', 'moving', 'zelle', 'unpaid', 'unscheduled', 'completed', 'cancelled', 'all'] as const

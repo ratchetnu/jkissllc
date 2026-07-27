@@ -63,7 +63,7 @@ export function listPaymentProviders(): PaymentProvider[] {
 // UI-safe projection (no functions) for the client checkout cards.
 export type PublicPaymentMethod = Omit<PaymentProvider, 'configured'>
 export function publicPaymentMethods(): PublicPaymentMethod[] {
-  return listPaymentProviders().map(({ configured: _c, ...rest }) => { void _c; return rest })
+  return listPaymentProviders().map(({ configured: _c, ...rest }) => rest)
 }
 
 // A provider requires an uploaded, verifiable proof before the booking may be created.
