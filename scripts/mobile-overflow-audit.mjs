@@ -41,7 +41,14 @@ const VIEWPORTS = [
 ]
 const PATHS = [
   '/', '/quote', '/track', '/about', '/careers', '/reviews', '/safety',
-  '/privacy', '/terms', '/booking', '/box-truck-delivery', '/start-your-carrier',
+  '/privacy', '/terms', '/start-your-carrier',
+  // NOTE: '/booking' and '/box-truck-delivery' are NOT listed. Both are parents of
+  // dynamic segments (`/booking/[token]`, `/box-truck-delivery/[city]`) with no index
+  // page, so they 404 by design. They sat in this list returning HTTP 404 on every
+  // run, which the old reporter counted as 18 UI failures. To cover those templates,
+  // pass a concrete instance instead, e.g.
+  //   ONLY=/box-truck-delivery/dallas npm run audit:mobile
+  '/box-truck-delivery/dallas',
   '/opspilot', '/operion', '/coi',
   '/admin/operations', '/admin/operations/schedule', '/admin/operations/book-now', '/admin/operations/list',
   '/admin/operations/employees', '/admin/operations/businesses', '/admin/operations/equipment',
