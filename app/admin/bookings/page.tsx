@@ -452,6 +452,14 @@ function GuidedApprovalPanel({ booking, busy, run, isOwner }: { booking: Booking
   )
 }
 
+// Presentational only — declared at module scope so it is not recreated on every
+// render of AiEstimatePanel (react-hooks/static-components). It closes over nothing.
+function Row({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex justify-between gap-3 py-1 text-sm"><span style={{ color: 'var(--muted)' }}>{k}</span><span className="text-white text-right">{v}</span></div>
+  )
+}
+
 function AiEstimatePanel({ est, busy, run }: { est: StoredAiEstimate; busy: string; run: (action: string, body?: Record<string, unknown>) => void }) {
   const a = est.analysis
   const p = est.pricing
@@ -463,9 +471,6 @@ function AiEstimatePanel({ est, busy, run }: { est: StoredAiEstimate; busy: stri
   const finalUsd = est.override?.overriddenUsd ?? p.recommendedUsd
   const cond = a.detectedConditions
   const activeConds = Object.entries(cond).filter(([, v]) => v).map(([k]) => k.replace(/([A-Z])/g, ' $1').replace(/Possible$/, ' (possible)').toLowerCase())
-  const Row = ({ k, v }: { k: string; v: string }) => (
-    <div className="flex justify-between gap-3 py-1 text-sm"><span style={{ color: 'var(--muted)' }}>{k}</span><span className="text-white text-right">{v}</span></div>
-  )
   return (
     <div className="glass-card mt-4" style={{ borderRadius: 14, border: '1px solid rgba(224,0,42,.25)', overflow: 'hidden' }}>
       <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2" style={{ background: 'rgba(224,0,42,.06)', borderBottom: '1px solid var(--line)' }}>

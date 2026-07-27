@@ -124,8 +124,14 @@ export default function BookingClient({
   const [banner, setBanner] = useState<string>('')
 
   // Mark viewed + refresh on mount (also picks up a just-completed payment).
-  // Banner is derived from the return URL inside this async callback (not in the
-  // effect body) so we never setState synchronously during the effect.
+  //
+  // NOTE: the banner IS set synchronously with respect to the effect — setBanner runs
+  // before the first `await`, so being inside an async callback does not defer it. An
+  // earlier comment here claimed otherwise; react-hooks/set-state-in-effect correctly
+  // flags it. The cascade is one extra render on mount and is harmless, so it is
+  // suppressed rather than restructured: this is the customer-facing payment-return
+  // path and reordering it around the fetch would change when "Payment received"
+  // appears. Worth revisiting on its own, not during a lint sweep.
   const refresh = useCallback(async () => {
     const sp = new URLSearchParams(window.location.search)
     if (sp.get('paid') === '1') setBanner('Payment received — thank you!')
@@ -136,6 +142,7 @@ export default function BookingClient({
     } catch { /* keep SSR data */ }
   }, [token])
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { refresh() }, [refresh])
 
   const cancelled = b.status === 'cancelled'
