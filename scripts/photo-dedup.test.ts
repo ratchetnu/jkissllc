@@ -7,8 +7,8 @@ import { dedupePhotoUrls } from '../app/lib/ai/photo-dedup'
 // Fake fetch: map url -> bytes. Identical bytes ⇒ same content hash ⇒ duplicate.
 const fakeFetch = (bytes: Record<string, string>) => (async (url: string) => {
   const b = bytes[url]
-  if (b === undefined) return { ok: false, arrayBuffer: async () => new ArrayBuffer(0) } as any
-  return { ok: true, arrayBuffer: async () => new TextEncoder().encode(b).buffer } as any
+  if (b === undefined) return { ok: false, arrayBuffer: async () => new ArrayBuffer(0) } as unknown as Response
+  return { ok: true, arrayBuffer: async () => new TextEncoder().encode(b).buffer } as unknown as Response
 }) as unknown as typeof fetch
 
 test('exact byte-duplicates collapse to one (order preserved)', async () => {
