@@ -79,10 +79,29 @@ function parseScoreBound(tok) {
 // LOCK-1 heartbeat was first verified against this emulator.)
 const OWNED_RE = /redis\.call\('get',\s*KEYS\[1\]\)\s*==\s*ARGV\[1\]/i
 const RENEW_RE = /pexpire/i
-const CAS_RE = /cjson\.decode/i
+const VERSION_CAS_SHAPE = [
+  /redis\.call\('GET',\s*KEYS\[1\]\)/i,
+  /tonumber\(ARGV\[2\]\)/i,
+  /obj\.version/i,
+  /redis\.call\('SET',\s*KEYS\[1\],\s*ARGV\[1\]\)/i,
+]
+const isVersionCas = (script) => VERSION_CAS_SHAPE.every((part) => part.test(script))
 // APRV-1's single-use transition also decodes JSON, so it must be recognised BEFORE
 // the generic version-CAS branch or it would be compared against the wrong field.
 const STATUS_CAS_RE = /decoded\.status/i
+// Baseline adoption is a four-key transaction guarded by the BUSINESS revision,
+// not a one-key document-version CAS. Keep this shape deliberately specific so a
+// merely similar script cannot be reported as successful.
+const BASELINE_ADOPTION_CAS_SHAPE = [
+  /redis\.call\('GET',\s*KEYS\[3\]\)/i,
+  /tonumber\(decoded\.updatedAt\)\s*~=\s*tonumber\(ARGV\[6\]\)/i,
+  /redis\.call\('SET',\s*KEYS\[1\],\s*ARGV\[1\]\)/i,
+  /redis\.call\('ZADD',\s*KEYS\[2\],\s*ARGV\[2\],\s*ARGV\[3\]\)/i,
+  /redis\.call\('SET',\s*KEYS\[3\],\s*ARGV\[4\]\)/i,
+  /redis\.call\('ZADD',\s*KEYS\[4\],\s*ARGV\[2\],\s*ARGV\[5\]\)/i,
+]
+const isBaselineAdoptionCas = (script) =>
+  BASELINE_ADOPTION_CAS_SHAPE.every((part) => part.test(script))
 
 function evalScript(script, keys, args) {
   if (OWNED_RE.test(script) && RENEW_RE.test(script)) {  // compare-and-extend lock renewal
@@ -99,6 +118,24 @@ function evalScript(script, keys, args) {
     if (cur !== null && cur === args[0]) { strings.delete(keys[0]); return 1 }
     return 0
   }
+  if (isBaselineAdoptionCas(script)) {                 // business.updatedAt CAS + four atomic writes
+    if (keys.length !== 4 || args.length < 6) return 0
+    const raw = getStr(keys[2])
+    if (raw === null) return 0
+    let current
+    try { current = JSON.parse(raw) } catch { return 0 }
+    if (!current || typeof current !== 'object') return 0
+    const actualUpdatedAt = Number(current.updatedAt)
+    const expectedUpdatedAt = Number(args[5])
+    if (!Number.isFinite(actualUpdatedAt) || !Number.isFinite(expectedUpdatedAt)) return 0
+    if (actualUpdatedAt !== expectedUpdatedAt) return 0
+
+    strings.set(keys[0], { v: args[0], exp: null })
+    zset(keys[1]).set(args[2], Number(args[1]))
+    strings.set(keys[2], { v: args[3], exp: null })
+    zset(keys[3]).set(args[4], Number(args[1]))
+    return 1
+  }
   if (STATUS_CAS_RE.test(script)) {                    // status CAS: active → consumed
     const raw = getStr(keys[0])
     if (raw === null) return 0
@@ -108,7 +145,7 @@ function evalScript(script, keys, args) {
     strings.set(keys[0], { v: args[0], exp: args[2] ? Date.now() + Number(args[2]) : null })
     return 1
   }
-  if (CAS_RE.test(script)) {                           // optimistic version CAS on a JSON doc
+  if (isVersionCas(script)) {                          // optimistic version CAS on a JSON doc
     const raw = getStr(keys[0])
     const expected = Number(args[1])
     let curv = 0
