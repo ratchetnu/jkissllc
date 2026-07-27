@@ -24,6 +24,9 @@ export type AuditAction =
   // Exactly one line per statement that was actually issued; blocked duplicates and
   // lock contention record nothing.
   | 'paystatement.issued'
+  // One line per statement actually voided (FIN-2); a repeated void of an
+  // already-void statement changes nothing and records nothing.
+  | 'paystatement.voided'
 
 export type AuditOutcome = 'success' | 'denied' | 'failure'
 

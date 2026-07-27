@@ -345,6 +345,31 @@ is duplicate-guarded (`findByPeriod`), so a corrected statement requires an expl
 **void** first, which frees the period. Void is the audit/version model; nothing
 overwrites an issued statement.
 
+**Void frees only its OWN period (FIN-2, fixed 2026-07-27).** The period index
+`paystmt:period:{staffId}:{start}:{end}` is shared by a crew member and a week, but a
+void is addressed by *statement id* — and the old implementation deleted the key
+unconditionally. So voiding a statement that had already been superseded deleted the
+**replacement's** index; the duplicate guard then saw a free period and issued a second
+live statement for the same crew member and week. No concurrency was required: a stale
+tab or a second click on an already-void row was enough. Two fixes, each independently
+sufficient for the reported path: void now **takes the same per-(tenant, staff, period)
+lock as generation** (so a void can never interleave with the duplicate check it is
+about to invalidate), is **idempotent** (an already-void statement is a truthful no-op
+that touches no index, changes no record and emits no second audit event), and releases
+the period with an **atomic compare-and-delete** — the key is deleted only while it
+still maps to the statement being voided. Contention answers **423** `statement_busy`,
+never a 500. A void consumes no statement number and rewrites no snapshot: only
+`status` moves.
+
+**Ordering (not a transaction).** The void is persisted *before* the index is released.
+The reverse order can leave an issued statement with no index — a live statement the
+duplicate guard cannot see, which is the duplicate defect again. This order's only
+failure window leaves the index pointing at a **void** statement, which `findByPeriod`
+already treats as absent: the period reads as free and the next successful generation
+overwrites the key. Self-correcting, and it can never produce two live statements. The
+KV store has no multi-key transaction, so this is ordering safety, not atomicity, and is
+stated as such.
+
 **Generation is serialized per tenant + crew member + period (FIN-1, fixed 2026-07-26).**
 The duplicate guard used to be a check-then-act pair — `findByPeriod()` decided the period
 was free, and only the later `saveStatement()` wrote the index that would have told the

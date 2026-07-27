@@ -100,12 +100,65 @@ async function hydrate(ids: string[]): Promise<PayStatement[]> {
     .filter((x): x is PayStatement => x !== null)
 }
 
-// Void frees the period so a corrected statement can be re-issued.
-export async function voidStatement(id: string): Promise<PayStatement | null> {
+// ── Void ─────────────────────────────────────────────────────────────────────
+//
+// FIN-2 (July 2026 audit). Void frees the period so a corrected statement can be
+// re-issued. The period key is shared by (staff, period) but a void is addressed by
+// STATEMENT ID, and the old implementation deleted the key unconditionally — so
+// voiding a statement that had already been superseded deleted the *replacement's*
+// index. The duplicate guard then saw a free period and issued a second live
+// statement for the same crew member and week. No concurrency was needed: a stale
+// tab or a second click on an already-void row was enough.
+//
+// The key may now only be deleted when it still points at THIS statement, and that
+// test happens inside Redis (compare-and-delete), not in the app.
+const RELEASE_PERIOD_IF_OWNED =
+  "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
+
+/**
+ * Free the period index only if it still belongs to `statementId`. Atomic — a
+ * GET-then-DEL could still delete a successor's index in the gap. Returns true when
+ * this statement actually owned (and released) the period.
+ */
+export async function releasePeriodIndexIfOwned(s: Pick<PayStatement, 'id' | 'staffId' | 'periodStart' | 'periodEnd'>): Promise<boolean> {
+  const res = await redis.eval(RELEASE_PERIOD_IF_OWNED, [PERIOD_KEY(s.staffId, s.periodStart, s.periodEnd)], [s.id])
+  return res === 1 || res === '1'
+}
+
+export type VoidOutcome =
+  | { kind: 'voided'; statement: PayStatement; freedPeriod: boolean }
+  | { kind: 'already_void'; statement: PayStatement }
+  | { kind: 'not_found' }
+
+/**
+ * Void one statement. Reloads the record itself so the status decision is made on
+ * the freshest copy — callers hold the per-(staff, period) lock around this, so no
+ * generation can interleave.
+ *
+ * Idempotent: an already-void statement is a truthful no-op that touches NO index
+ * and NO other record. `beforeWrite` (FIN-1's lease ownership check) runs only when
+ * there is actually something to write.
+ *
+ * ORDER — persist the void, THEN release the index. The reverse order can leave an
+ * issued statement with no index (a live statement the duplicate guard cannot see →
+ * duplicates). This order's only failure window leaves the index pointing at a VOID
+ * statement, which `findByPeriod` already treats as absent, so the period reads as
+ * free and the next successful generation overwrites the key. Self-correcting, and
+ * it can never produce two live statements. This is ordering safety, NOT
+ * transactional atomicity — the KV store has no multi-key transaction.
+ */
+export async function voidStatement(
+  id: string,
+  opts: { beforeWrite?: () => Promise<void> } = {},
+): Promise<VoidOutcome> {
   const s = await getStatement(id)
-  if (!s) return null
+  if (!s) return { kind: 'not_found' }
+  if (s.status === 'void') return { kind: 'already_void', statement: s }
+
+  await opts.beforeWrite?.()
+
   s.status = 'void'
-  await redis.del(PERIOD_KEY(s.staffId, s.periodStart, s.periodEnd))
-  await persist(s)
-  return s
+  await persist(s)                                    // persist() never re-claims the period for a void record
+  const freedPeriod = await releasePeriodIndexIfOwned(s)
+  return { kind: 'voided', statement: s, freedPeriod }
 }
