@@ -160,7 +160,7 @@ test('duplicate prevention: second identical dispatch is skipped', async () => {
 })
 
 test('explicit idempotency key controls dedup', async () => {
-  const { deps, calls } = makeDeps()
+  const { deps } = makeDeps()
   await dispatchComm('JOB_COMPLETED', fullCtx(), { mode: 'live', idempotencyKey: 'k1' }, deps)
   const res2 = await dispatchComm('JOB_COMPLETED', fullCtx(), { mode: 'live', idempotencyKey: 'k1' }, deps)
   assert.equal(res2.duplicate, true)

@@ -15,7 +15,7 @@ const env = loadEnv(new URL('../.env.production.local', import.meta.url).pathnam
 const BASE = 'https://www.jkissllc.com'
 let cookie = ''
 let pass = 0, fail = 0
-function ok(name, cond, detail = '') { (cond ? pass++ : fail++); console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`) }
+function ok(name, cond, detail = '') { if (cond) pass++; else fail++; console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`) }
 
 async function j(method, path, body, opts = {}) {
   const res = await fetch(BASE + path, {

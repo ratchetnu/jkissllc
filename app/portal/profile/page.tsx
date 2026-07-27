@@ -57,6 +57,10 @@ function Profile() {
         <>
           <div className="os-card os-rise" style={{ padding: 22, display: 'flex', alignItems: 'center', gap: 16 }}>
             {crew.photoUrl
+              // A 60px avatar is never the LCP element, and crew.photoUrl is a remote Blob
+              // URL. next/image would throw on it unless images.remotePatterns is added to
+              // next.config — a wider change than this warning justifies.
+              // eslint-disable-next-line @next/next/no-img-element
               ? <img src={crew.photoUrl} alt="" style={{ width: 60, height: 60, borderRadius: 999, objectFit: 'cover' }} />
               : <div style={{ width: 60, height: 60, borderRadius: 999, background: 'var(--red)', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 22 }}>{initials || '—'}</div>}
             <div style={{ minWidth: 0 }}>

@@ -7,7 +7,6 @@ import { isLateRequest } from '../app/lib/timeoff'
 import { buildCrewScore, scoreBand, type ScoreStats } from '../app/lib/crew-score'
 
 // ── 24-hour time-off policy ──────────────────────────────────────────────────
-const DAY = 24 * 60 * 60 * 1000
 // Fixed "now": 2026-07-10 12:00 UTC.
 const NOW = Date.UTC(2026, 6, 10, 12, 0)
 

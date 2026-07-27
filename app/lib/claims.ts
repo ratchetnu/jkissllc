@@ -14,7 +14,7 @@
 // who the crew were, AT CLAIM TIME. Re-pricing a business or re-crewing a route
 // later must never rewrite a claim's history. Same philosophy as RouteFinancials.
 import { redis } from './redis'
-import type { ClaimType, ClaimDirection } from './claim-types'
+import type { ClaimType } from './claim-types'
 import { addDaysStr, centralToday, isDateStr, mondayOf } from './dates'
 import { bizKey, type Business } from './businesses'
 import { computeRouteMoney } from './finance'

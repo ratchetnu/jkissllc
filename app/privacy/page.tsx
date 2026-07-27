@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { COMPANY, CREDENTIALS_DOT } from '../lib/company';
+import { COMPANY } from '../lib/company';
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {

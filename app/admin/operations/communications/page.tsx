@@ -110,7 +110,9 @@ export default function Communications() {
     loadHistory().catch(() => {})
   }, [selected, loadHistory])
 
-  const events = health?.events || []
+  // Memoised so its identity is stable; as a bare `|| []` it produced a new array every
+  // render, which defeated the useMemo below that depends on it.
+  const events = useMemo(() => health?.events || [], [health])
   const selectedDef = useMemo(() => events.find(e => e.event === selected), [events, selected])
 
   return (

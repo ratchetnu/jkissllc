@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { validateManifest, isSafeRepoPath, sha256, sortEntries, manifestFromCommitFiles, type ApplyManifest } from '../app/lib/platform/automation/manifest'
-import { applyManifest, applySummary, type FsAdapter, type ContentMap } from '../app/lib/platform/automation/apply-executor'
+import { applyManifest, applySummary, type FsAdapter } from '../app/lib/platform/automation/apply-executor'
 
 function memFs(seed: Record<string, string> = {}): FsAdapter & { files: Map<string, string> } {
   const files = new Map(Object.entries(seed))

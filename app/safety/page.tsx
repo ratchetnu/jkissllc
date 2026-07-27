@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { COMPANY, CREDENTIALS_DOT } from '../lib/company';
+import { COMPANY } from '../lib/company';
 import Link from 'next/link'
 
 const SITE_URL = COMPANY.siteUrl

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { UserPlus, Camera, ChevronDown, Sparkles, Phone, Pencil, Trash2, Wallet, History, Plus, X, Clock, Users, FileText, CalendarOff, Gauge } from 'lucide-react'
+import { UserPlus, Camera, ChevronDown, Phone, Pencil, Trash2, Wallet, History, Plus, X, Clock, Users, FileText, CalendarOff, Gauge } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { invalidateOps } from '../useOps'
 import { Avatar, scoreColor, ymd, fmtDay, fmtTs, money, onActivate, MoneyInput, Toggle, centsToInput, looksLikeMoney, osLabel } from '../ui'
