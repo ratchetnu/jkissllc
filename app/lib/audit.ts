@@ -27,6 +27,10 @@ export type AuditAction =
   // One line per statement actually voided (FIN-2); a repeated void of an
   // already-void statement changes nothing and records nothing.
   | 'paystatement.voided'
+  // ── Time corrections (append-only; the original punch is never rewritten) ──
+  | 'time.correction.created' | 'time.correction.superseded'
+  // ── Crew compensation (immutable per-assignment snapshots) ──
+  | 'crew.compensation.set'
 
 export type AuditOutcome = 'success' | 'denied' | 'failure'
 

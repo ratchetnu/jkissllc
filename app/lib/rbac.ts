@@ -75,7 +75,7 @@ export type Permission =
   | 'accounts:suspend'     // suspend / reactivate accounts
   | 'reports:view'         // operational reports
   | 'time:view'            // view crew timesheets / hours worked (admin timesheet)
-  | 'time:manage'          // correct/annotate time entries (reserved; correction UI deferred, see Wave C)
+  | 'time:manage'          // correct/annotate time entries — append-only corrections (admin + manager)
   // ── Crew self-service (portal) ──
   | 'self:view'            // view own portal data
   | 'self:availability'    // submit own availability (Phase B)
@@ -120,6 +120,7 @@ const MANAGER: Permission[] = [
   'reports:view',
   'permissions:view',   // read-only matrix viewer (NOT audit:view — that stays admin-only)
   'time:view',            // managers may view authorized tenant timesheets
+  'time:manage',          // …and correct punches (append-only; never rewrites the original)
 ]
 
 // Crew = own data only. All crew permissions are self-scoped; the server further

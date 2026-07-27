@@ -53,7 +53,8 @@ const PATHS = [
   '/admin/operations', '/admin/operations/schedule', '/admin/operations/book-now', '/admin/operations/list',
   '/admin/operations/employees', '/admin/operations/businesses', '/admin/operations/equipment',
   '/admin/operations/claims', '/admin/operations/messages', '/admin/operations/communications',
-  '/admin/operations/finance', '/admin/operations/pay-statements', '/admin/operations/settings',
+  '/admin/operations/finance', '/admin/operations/pay-statements', '/admin/operations/timesheets',
+  '/admin/operations/settings',
   '/admin/operations/release',
   // AI Command Center sections — the data-dense pages most prone to mobile overflow.
   '/admin/operations/ai', '/admin/operations/ai/controls', '/admin/operations/ai/performance',

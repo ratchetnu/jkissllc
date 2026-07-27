@@ -131,13 +131,18 @@ test('rollups: payable totals count COMPLETE punches only; open/invalid surfaced
 
 // ── Authorization + registry pins ─────────────────────────────────────────────
 
-test('time:view is admin+manager; time:manage is admin-only', () => {
+test('time:view and time:manage are admin+manager; crew has neither', () => {
   assert.equal(can('admin', 'time:view'), true)
   assert.equal(can('manager', 'time:view'), true)
+  // Corrections are an operations duty, not an owner-only one: managers run the
+  // schedule and are the people who notice a bad punch. The correction is
+  // append-only and attributed, so the original punch is never at risk.
   assert.equal(can('admin', 'time:manage'), true)
-  assert.equal(can('manager', 'time:manage'), false)     // corrections are admin-only
+  assert.equal(can('manager', 'time:manage'), true)
   assert.equal(can('crew', 'time:view'), false)
+  assert.equal(can('crew', 'time:manage'), false)        // crew stays strictly read-only
   assert.ok(permissionsForRole('admin').includes('time:manage'))
+  assert.ok(permissionsForRole('manager').includes('time:manage'))
 })
 
 test('time-tracking capability is full, spans both lanes, gated time:view', () => {

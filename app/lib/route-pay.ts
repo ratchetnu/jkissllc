@@ -8,6 +8,11 @@
 // silently reduce a statement: every deduction line names its claim, business,
 // route, reason, amount and date.
 import { addDaysStr, centralToday, isDateStr, mondayOf } from './dates'
+import { punchId, listCorrectionsForPunches, effectivePunch } from './time-corrections'
+import {
+  assignmentId, listSnapshotsForAssignments, resolveCompensation, payableForAssignment,
+  detectAmbiguousAllocations, type CompensationMode, type PayrollGapReason,
+} from './crew-compensation'
 import { listRoutes } from './routes'
 import { effectiveServiceDate, listBookings } from './bookings'
 import { listStaff } from './staff'
@@ -59,6 +64,24 @@ export type PaySummary = {
   payrollGaps?: Array<{ bookingNumber: string; staffIds: string[]; reason: 'missing_service_date' }>
   bookingWindowSaturated?: boolean
   unpricedCount: number
+  /**
+   * Assignments whose compensation could not be resolved into a payable amount —
+   * ADDITIVE and visible, never silently $0. Legacy assignments with no pay set
+   * keep their existing `unpriced` treatment (they are listed here too, so the
+   * reason is visible, but the payable math is byte-identical to before).
+   */
+  compensationGaps?: CompensationGap[]
+}
+
+export type CompensationGap = {
+  assignmentId: string
+  staffId: string
+  staffName: string
+  workType: 'route' | 'booking'
+  jobNumber: string
+  serviceDate: string
+  reason: PayrollGapReason
+  mode?: CompensationMode
 }
 
 // Pull a dollar figure out of free-text payRate: "$175/route", "175", "$1,250.00".
@@ -115,6 +138,86 @@ export async function computePay(startIn: string, endIn: string): Promise<PaySum
     listStaff(),
     listClaims(1000),
   ])
+  // ── Effective models (corrections + compensation snapshots) ────────────────
+  // Loaded once for every assignment in the window. With neither present this is a
+  // no-op: resolveCompensation falls back to the legacy flat `payCents`, so an
+  // untouched deployment computes byte-identical pay.
+  const punchIds: string[] = []
+  const assignmentIds: string[] = []
+  for (const r of routes) for (const a of r.assignees ?? []) {
+    punchIds.push(punchId('route', r.token, a.staffId)); assignmentIds.push(assignmentId('route', r.token, a.staffId))
+  }
+  for (const b of bookings) for (const a of b.assignees ?? []) {
+    punchIds.push(punchId('booking', b.token, a.staffId)); assignmentIds.push(assignmentId('booking', b.token, a.staffId))
+  }
+  const [corrections, snapshots] = await Promise.all([
+    listCorrectionsForPunches(punchIds),
+    listSnapshotsForAssignments(assignmentIds),
+  ])
+  const compensationGaps: CompensationGap[] = []
+
+  // The effective punch + payable amount for ONE assignment — the single seam every
+  // lane below goes through, so hourly/flat and corrected/uncorrected are decided
+  // in exactly one place.
+  type Resolved = { amountCents: number | null; minutes?: number; mode?: CompensationMode; corrected: boolean }
+  const resolveAssignment = (
+    workType: 'route' | 'booking', jobToken: string, jobNumber: string, serviceDate: string,
+    a: { staffId: string; name: string; clockInAt?: number; clockOutAt?: number; payCents?: number; paySource?: string },
+    legacyCents: number | null,
+    ambiguous: ReadonlySet<string>,
+  ): Resolved => {
+    const aid = assignmentId(workType, jobToken, a.staffId)
+    const eff = effectivePunch(
+      { clockInAt: a.clockInAt ?? null, clockOutAt: a.clockOutAt ?? null },
+      corrections.get(punchId(workType, jobToken, a.staffId)) ?? [],
+    )
+    const complete = eff.clockInAt != null && eff.clockOutAt != null && eff.clockOutAt >= eff.clockInAt
+    const minutes = complete ? Math.round(((eff.clockOutAt as number) - (eff.clockInAt as number)) / 60_000) : null
+
+    const resolved = resolveCompensation(
+      snapshots.get(aid),
+      { payCents: legacyCents ?? undefined, paySource: a.paySource },
+      { staffId: a.staffId, workType, jobToken, serviceDate },
+    )
+    const payable = payableForAssignment({
+      compensation: resolved,
+      effectiveMinutes: minutes,
+      punchComplete: complete,
+      ambiguousAllocation: ambiguous.has(aid),
+    })
+    if (!payable.ok) {
+      compensationGaps.push({
+        assignmentId: aid, staffId: a.staffId, staffName: a.name, workType,
+        jobNumber, serviceDate, reason: payable.gap, ...(payable.mode ? { mode: payable.mode } : {}),
+      })
+      // Unresolved compensation stays UNPRICED (null), exactly as an unpriced crew
+      // member behaves today — visible in the pay review, never paid as $0.
+      return { amountCents: null, ...(minutes != null ? { minutes } : {}), mode: payable.mode, corrected: eff.corrected }
+    }
+    return {
+      amountCents: payable.amountCents,
+      // Recorded hours always reflect the EFFECTIVE punch — including for flat
+      // assignments, where the correction changes attendance but not the amount.
+      ...(minutes != null ? { minutes } : {}),
+      mode: payable.mode,
+      corrected: eff.corrected,
+    }
+  }
+
+  // Overlapping hourly assignments for one crew member are never split by guess.
+  const ambiguous = detectAmbiguousAllocations([
+    ...routes.flatMap(r => (r.assignees ?? []).map(a => ({
+      assignmentId: assignmentId('route', r.token, a.staffId), staffId: a.staffId, serviceDate: r.routeDate,
+      mode: (snapshots.get(assignmentId('route', r.token, a.staffId))?.compensationMode ?? 'route_flat') as CompensationMode,
+      clockInAt: a.clockInAt ?? null, clockOutAt: a.clockOutAt ?? null,
+    }))),
+    ...bookings.flatMap(b => (b.assignees ?? []).map(a => ({
+      assignmentId: assignmentId('booking', b.token, a.staffId), staffId: a.staffId, serviceDate: effectiveServiceDate(b) ?? '',
+      mode: (snapshots.get(assignmentId('booking', b.token, a.staffId))?.compensationMode ?? 'route_flat') as CompensationMode,
+      clockInAt: a.clockInAt ?? null, clockOutAt: a.clockOutAt ?? null,
+    }))),
+  ])
+
   const nameOf = new Map(staff.map(s => [s.id, s.name]))
   const byStaff = new Map<string, ContractorPay>()
   let unpriced = 0, routeCount = 0, deliveryRouteCount = 0, bookingCount = 0
@@ -179,8 +282,12 @@ export async function computePay(startIn: string, endIn: string): Promise<PaySum
       ? crew.map(a => ({ id: a.staffId, name: a.name, pay: a.pay, clockInAt: a.clockInAt, clockOutAt: a.clockOutAt }))
       : (r.assignedStaffId ? [{ id: r.assignedStaffId, name: r.assignedStaffName || '', pay: r.payRate, clockInAt: undefined, clockOutAt: undefined }] : [])
     for (const l of lines) {
-      const cents = parsePayCents(l.pay)
-      addEarning({ source: 'route', number: r.routeNumber, date: r.routeDate, businessName: r.businessName, staffId: l.id, staffName: l.name, amountCents: cents, payRateRaw: l.pay, hasProof, completedBy: r.completedBy, workedMinutes: workedMinutes(l.clockInAt, l.clockOutAt) })
+      const legacyCents = parsePayCents(l.pay)
+      const assignee = (r.assignees ?? []).find(x => x.staffId === l.id)
+      const res = resolveAssignment('route', r.token, r.routeNumber, r.routeDate,
+        { staffId: l.id, name: l.name, clockInAt: l.clockInAt, clockOutAt: l.clockOutAt, payCents: assignee?.payCents, paySource: assignee?.paySource },
+        legacyCents, ambiguous)
+      addEarning({ source: 'route', number: r.routeNumber, date: r.routeDate, businessName: r.businessName, staffId: l.id, staffName: l.name, amountCents: res.amountCents, payRateRaw: l.pay, hasProof, completedBy: r.completedBy, workedMinutes: res.minutes ?? workedMinutes(l.clockInAt, l.clockOutAt) })
     }
   }
 
@@ -204,6 +311,8 @@ export async function computePay(startIn: string, endIn: string): Promise<PaySum
     bookingCount++
     const hasProof = Boolean(b.completionNote || b.completionPhotos?.length)
     for (const a of crew) {
+      const legacyCents = a.payCents ?? parsePayCents(a.pay)
+      const res = resolveAssignment('booking', b.token, b.bookingNumber, serviceDate, a, legacyCents, ambiguous)
       addEarning({
         source: 'booking',
         number: b.bookingNumber,
@@ -211,11 +320,11 @@ export async function computePay(startIn: string, endIn: string): Promise<PaySum
         businessName: 'Customer booking',
         staffId: a.staffId,
         staffName: a.name,
-        amountCents: a.payCents ?? parsePayCents(a.pay),
+        amountCents: res.amountCents,
         payRateRaw: a.pay,
         hasProof,
         completedBy: b.jobCompletedBy === 'crew' ? 'contractor' : b.jobCompletedBy,
-        workedMinutes: workedMinutes(a.clockInAt, a.clockOutAt),
+        workedMinutes: res.minutes ?? workedMinutes(a.clockInAt, a.clockOutAt),
       })
     }
   }
@@ -249,6 +358,7 @@ export async function computePay(startIn: string, endIn: string): Promise<PaySum
     start, end, contractors,
     grandGrossCents: grandGross, grandDeductionCents: grandDeduction, grandNetCents: grandNet,
     routeCount, unpricedCount: unpriced,
+    ...(compensationGaps.length ? { compensationGaps } : {}),
     ...(includeBookings ? {
       deliveryRouteCount,
       bookingCount,

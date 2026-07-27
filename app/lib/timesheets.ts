@@ -8,6 +8,7 @@
 import type { RouteRecord } from './routes'
 import { effectiveServiceDate, type Booking } from './bookings'
 import type { JobAssignee } from './job-assignment'
+import { punchId, effectivePunch, type TimeCorrection } from './time-corrections'
 
 export type PunchStatus = 'open' | 'complete' | 'invalid'
 
@@ -18,11 +19,23 @@ export type TimeEntry = {
   staffId: string
   staffName: string
   date: string
+  /** EFFECTIVE clock stamps — the original punch unless a correction supersedes it. */
   clockInAt: number | null
   clockOutAt: number | null
   durationMinutes: number | null   // null unless the punch is complete + well-ordered
   status: PunchStatus
   locationDenied: boolean
+  // ── Correction projection (FIN/TIME wave) ─────────────────────────────────
+  /** Stable derived punch identity — `{type}:{jobToken}:{staffId}`. */
+  punchId: string
+  /** True when an active correction supersedes the original punch. */
+  corrected: boolean
+  /** The immutable original, kept beside the effective value for display + audit. */
+  originalClockInAt: number | null
+  originalClockOutAt: number | null
+  correctionId?: string
+  correctedAt?: number
+  correctionCount: number
 }
 
 export type TimeFilter = { staffId?: string; start?: string; end?: string; type?: 'route' | 'booking' }
@@ -45,17 +58,38 @@ export function durationMinutes(clockInAt: number | null, clockOutAt: number | n
   return Math.round(((clockOutAt as number) - (clockInAt as number)) / 60_000)
 }
 
-function toEntry(type: 'route' | 'booking', jobToken: string, jobNumber: string, date: string, a: JobAssignee): TimeEntry | null {
-  // Never punched → not a time entry at all (an assigned-but-idle crew member).
-  if (a.clockInAt == null && a.clockOutAt == null) return null
-  const clockInAt = a.clockInAt ?? null
-  const clockOutAt = a.clockOutAt ?? null
+// Corrections keyed by punchId. The map is supplied by the caller (which loads it
+// from the correction store) so this stays pure and unit-testable.
+export type CorrectionsByPunch = ReadonlyMap<string, TimeCorrection[]>
+
+function toEntry(
+  type: 'route' | 'booking', jobToken: string, jobNumber: string, date: string, a: JobAssignee,
+  corrections?: CorrectionsByPunch,
+): TimeEntry | null {
+  const originalIn = a.clockInAt ?? null
+  const originalOut = a.clockOutAt ?? null
+  const pid = punchId(type, jobToken, a.staffId)
+  const forPunch = corrections?.get(pid) ?? []
+
+  // Never punched AND never corrected → not a time entry at all (an assigned-but-idle
+  // crew member). A correction can legitimately CREATE payable time for a crew member
+  // who forgot to punch, so a corrected entry surfaces even with no original stamps.
+  if (originalIn == null && originalOut == null && forPunch.length === 0) return null
+
+  const eff = effectivePunch({ clockInAt: originalIn, clockOutAt: originalOut }, forPunch)
   return {
     type, jobToken, jobNumber, staffId: a.staffId, staffName: a.name, date,
-    clockInAt, clockOutAt,
-    durationMinutes: durationMinutes(clockInAt, clockOutAt),
-    status: punchStatus(clockInAt, clockOutAt),
+    clockInAt: eff.clockInAt, clockOutAt: eff.clockOutAt,
+    durationMinutes: durationMinutes(eff.clockInAt, eff.clockOutAt),
+    status: punchStatus(eff.clockInAt, eff.clockOutAt),
     locationDenied: !!a.clockInLocationDenied || !!a.clockOutLocationDenied,
+    punchId: pid,
+    corrected: eff.corrected,
+    originalClockInAt: originalIn,
+    originalClockOutAt: originalOut,
+    ...(eff.correctionId ? { correctionId: eff.correctionId } : {}),
+    ...(eff.correctedAt ? { correctedAt: eff.correctedAt } : {}),
+    correctionCount: eff.correctionCount,
   }
 }
 
@@ -69,14 +103,17 @@ function inWindow(date: string, f: TimeFilter): boolean {
 // the caller supplies the already-loaded routes + bookings (bookings come in empty
 // when BOOKING_ASSIGNMENT_ENABLED is off, so the booking lane simply contributes
 // nothing).
-export function selectTimeEntries(routes: RouteRecord[], bookings: Booking[], filter: TimeFilter = {}): TimeEntry[] {
+export function selectTimeEntries(
+  routes: RouteRecord[], bookings: Booking[], filter: TimeFilter = {},
+  corrections?: CorrectionsByPunch,
+): TimeEntry[] {
   const out: TimeEntry[] = []
   if (filter.type !== 'booking') {
     for (const r of routes) {
       if (!inWindow(r.routeDate, filter)) continue
       for (const a of r.assignees ?? []) {
         if (filter.staffId && a.staffId !== filter.staffId) continue
-        const e = toEntry('route', r.token, r.routeNumber, r.routeDate, a)
+        const e = toEntry('route', r.token, r.routeNumber, r.routeDate, a, corrections)
         if (e) out.push(e)
       }
     }
@@ -87,7 +124,7 @@ export function selectTimeEntries(routes: RouteRecord[], bookings: Booking[], fi
       if (!inWindow(date, filter)) continue
       for (const a of b.assignees ?? []) {
         if (filter.staffId && a.staffId !== filter.staffId) continue
-        const e = toEntry('booking', b.token, b.bookingNumber, date, a)
+        const e = toEntry('booking', b.token, b.bookingNumber, date, a, corrections)
         if (e) out.push(e)
       }
     }

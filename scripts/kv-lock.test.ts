@@ -135,10 +135,12 @@ test('assertHeld / heldNow report the truth', async () => {
 
 test('the heartbeat keeps a lease alive across work longer than the TTL', async () => {
   reset()
-  const lock = (await acquireLock(KEY, { ttlMs: 60, renew: true }))!
+  // TTL generous enough that a busy event loop cannot starve the beat (the beat
+  // fires at TTL/3 = 100ms, so two may be missed before the lease would lapse).
+  const lock = (await acquireLock(KEY, { ttlMs: 300, renew: true }))!
   let heldThroughout = true
   for (let i = 0; i < 8; i++) {
-    await new Promise(r => setTimeout(r, 25))
+    await new Promise(r => setTimeout(r, 100))          // 800ms total — well past the TTL
     if (live(KEY) === null) heldThroughout = false
   }
   assert.equal(heldThroughout, true, 'a long operation never loses its lease')
