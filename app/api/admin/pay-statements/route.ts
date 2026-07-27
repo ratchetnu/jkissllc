@@ -7,8 +7,23 @@ import {
   listStatements, findByPeriod, saveStatement, nextStatementNumber, newStatementId,
   type PayStatement, type StatementLine, type StatementDeduction,
 } from '../../../lib/pay-statements'
+import { withPayStatementLock, StatementGenerationBusyError } from '../../../lib/pay-statement-mutex'
+import { auditAdmin } from '../../../lib/audit'
 import { roleLabel } from '../../../lib/rbac'
 import { isDateStr } from '../../../lib/dates'
+
+type PayrollGap = { bookingNumber: string; staffIds: string[]; reason: string }
+
+// The result of one guarded generation attempt. Returned OUT of the lock so the
+// HTTP mapping (and the post-commit audit line) happen after the lock is released.
+type GenerateOutcome =
+  | { kind: 'created'; statement: PayStatement }
+  | { kind: 'duplicate'; existing: PayStatement }
+  | { kind: 'no_activity' }
+  | { kind: 'payroll_gap'; gaps: PayrollGap[] }
+
+const gapError = (gaps: PayrollGap[]) =>
+  `Cannot generate this statement: ${gaps.map(g => g.bookingNumber).join(', ')} needs a service date.`
 
 // Build the pay figures for ONE crew member over a period from the deterministic
 // engine (computePay uses completed routes/bookings + the claims ledger). Returns
@@ -61,47 +76,91 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   const staff = await getStaff(staffId)
   if (!staff) return NextResponse.json({ ok: false, error: 'Crew member not found.' }, { status: 404 })
 
-  const snap = await buildSnapshot(staffId, start, end)
-  if (!snap) {
-    return NextResponse.json({ ok: false, error: 'No completed jobs for this crew member in that period.' }, { status: 400 })
-  }
-  if ('blockedBy' in snap && snap.blockedBy) {
-    return NextResponse.json({
-      ok: false,
-      error: `Cannot generate this statement: ${snap.blockedBy.map(g => g.bookingNumber).join(', ')} needs a service date.`,
-      payrollGaps: snap.blockedBy,
-    }, { status: 409 })
-  }
-
+  // Preview reads only — it issues nothing, so it never takes the generation lock
+  // and can never be blocked by (or block) an in-flight generation.
   if (preview) {
+    const snap = await buildSnapshot(staffId, start, end)
+    if (!snap) {
+      return NextResponse.json({ ok: false, error: 'No completed jobs for this crew member in that period.' }, { status: 400 })
+    }
+    if ('blockedBy' in snap && snap.blockedBy) {
+      return NextResponse.json({ ok: false, error: gapError(snap.blockedBy), payrollGaps: snap.blockedBy }, { status: 409 })
+    }
     return NextResponse.json({ ok: true, preview: { staffId, staffName: staff.name, periodStart: start, periodEnd: end, ...snap } })
   }
 
-  // Duplicate prevention: one live statement per crew + exact period.
-  const existing = await findByPeriod(staffId, start, end)
-  if (existing) {
-    return NextResponse.json({ ok: false, error: `A statement for this period already exists (${existing.statementNumber}). Void it first to re-issue.`, existing }, { status: 409 })
+  // FIN-1: the duplicate check and the write must be ONE atomic step. Everything
+  // that decides whether a statement may exist — the duplicate check, the payroll-gap
+  // validation, the immutable snapshot, the statement number and the persist — runs
+  // inside the per-crew+period lock, so a second caller cannot pass the duplicate
+  // check while the first is still generating. Losers return before any number is
+  // allocated, so a blocked request never consumes a statement number.
+  let outcome: GenerateOutcome
+  try {
+    outcome = await withPayStatementLock({ staffId, periodStart: start, periodEnd: end }, async () => {
+      const existing = await findByPeriod(staffId, start, end)
+      if (existing) return { kind: 'duplicate', existing } as const
+
+      const snap = await buildSnapshot(staffId, start, end)
+      if (!snap) return { kind: 'no_activity' } as const
+      if ('blockedBy' in snap && snap.blockedBy) return { kind: 'payroll_gap', gaps: snap.blockedBy } as const
+
+      const now = Date.now()
+      const statement: PayStatement = {
+        id: newStatementId(),
+        statementNumber: await nextStatementNumber(),
+        staffId,
+        staffName: staff.name,
+        periodStart: start,
+        periodEnd: end,
+        grossCents: snap.grossCents,
+        deductionCents: snap.deductionCents,
+        netCents: snap.netCents,
+        routeCount: snap.routeCount,
+        lines: snap.lines,
+        deductions: snap.deductions,
+        status: 'issued',
+        issuedBy: who.sub === 'owner' ? 'Owner' : `${roleLabel[who.role]} (${who.sub})`,
+        issuedAt: now,
+        updatedAt: now,
+      }
+      await saveStatement(statement)
+      return { kind: 'created', statement } as const
+    })
+  } catch (err) {
+    // Ordinary contention is not an error condition: the lock is held by another
+    // generation for this exact crew + period. 423 Locked, never a 500.
+    if (err instanceof StatementGenerationBusyError) {
+      return NextResponse.json({
+        ok: false,
+        reason: 'generation_in_progress',
+        error: 'A statement for this crew member and period is already being generated. Try again in a moment.',
+      }, { status: 423 })
+    }
+    throw err
   }
 
-  const now = Date.now()
-  const statement: PayStatement = {
-    id: newStatementId(),
-    statementNumber: await nextStatementNumber(),
-    staffId,
-    staffName: staff.name,
-    periodStart: start,
-    periodEnd: end,
-    grossCents: snap.grossCents,
-    deductionCents: snap.deductionCents,
-    netCents: snap.netCents,
-    routeCount: snap.routeCount,
-    lines: snap.lines,
-    deductions: snap.deductions,
-    status: 'issued',
-    issuedBy: who.sub === 'owner' ? 'Owner' : `${roleLabel[who.role]} (${who.sub})`,
-    issuedAt: now,
-    updatedAt: now,
+  switch (outcome.kind) {
+    case 'no_activity':
+      return NextResponse.json({ ok: false, error: 'No completed jobs for this crew member in that period.' }, { status: 400 })
+    case 'payroll_gap':
+      return NextResponse.json({ ok: false, error: gapError(outcome.gaps), payrollGaps: outcome.gaps }, { status: 409 })
+    case 'duplicate':
+      return NextResponse.json({
+        ok: false,
+        reason: 'duplicate_period',
+        error: `A statement for this period already exists (${outcome.existing.statementNumber}). Void it first to re-issue.`,
+        existing: outcome.existing,
+      }, { status: 409 })
+    case 'created':
+      // Post-commit and fail-open (auditAdmin swallows its own errors). Emitted only
+      // on the one request that actually issued — blocked duplicates record nothing.
+      await auditAdmin(who, 'paystatement.issued', {
+        entity: 'pay_statement',
+        entityId: outcome.statement.id,
+        summary: `Issued pay statement ${outcome.statement.statementNumber} for ${outcome.statement.staffName} (${start} → ${end})`,
+        meta: { statementNumber: outcome.statement.statementNumber, staffId, periodStart: start, periodEnd: end },
+      })
+      return NextResponse.json({ ok: true, statement: outcome.statement })
   }
-  await saveStatement(statement)
-  return NextResponse.json({ ok: true, statement })
 })

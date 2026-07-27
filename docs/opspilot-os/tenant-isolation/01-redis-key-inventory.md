@@ -38,7 +38,7 @@ Not every key is prefixed — the platform-global allowlist is explicit.
 ## Classification buckets (per the sprint's required taxonomy)
 - **platform-global:** `opspilot: platform: ai: rl:`
 - **tenant-owned:** everything above in the second table
-- **ephemeral/operational:** `rt:lock:*` / mutex keys (via `EVAL`, tenant-scoped)
+- **ephemeral/operational:** `rt:lock:*`, `clm:lock:*`, `paystmt:lock:*` / mutex keys (via `EVAL`, tenant-scoped)
 - **idempotency:** `msg:pid:*`, `rsend:occ:*`, booking idempotency (tenant-owned)
 - **rate-limit:** `rl:*` → **global**
 - **session:** none in Redis (stateless HMAC cookie)

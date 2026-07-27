@@ -345,6 +345,31 @@ is duplicate-guarded (`findByPeriod`), so a corrected statement requires an expl
 **void** first, which frees the period. Void is the audit/version model; nothing
 overwrites an issued statement.
 
+**Generation is serialized per tenant + crew member + period (FIN-1, fixed 2026-07-26).**
+The duplicate guard used to be a check-then-act pair — `findByPeriod()` decided the period
+was free, and only the later `saveStatement()` wrote the index that would have told the
+next caller otherwise. Concurrent identical POSTs (a double-click, two operators, a retried
+request, two app instances) all passed the check and all issued; because
+`nextStatementNumber()` is atomic they even carried valid sequential numbers, so the
+duplicates looked legitimate. The audit reproduced this 5/5: five concurrent requests →
+five issued statements for one crew member and week.
+
+The whole critical section — duplicate check, payroll-gap validation, immutable snapshot,
+statement-number allocation, persist + period index — now runs inside a Redis
+`SET NX PX` lock (`app/lib/pay-statement-mutex.ts`, the same primitive as `route-mutex` /
+`claim-mutex`), keyed `paystmt:lock:{staffId}:{periodStart}:{periodEnd}` with the tenant
+prefix applied by the `redis.ts` chokepoint. Bounded TTL (20s), released compare-and-delete
+so a caller can only ever release its own lock. Different crew members, and different
+periods for the same crew member, take different keys and never block each other; preview
+takes no lock at all.
+
+**Contention responses** (never a 500): the loser of a race waits out the winner and then
+sees the statement that now exists → **409** `duplicate_period` (same body as the existing
+sequential duplicate, plus a `reason`). If the lock is still held when the retry budget
+(~6s) runs out → **423** `generation_in_progress`. Neither path allocates a statement
+number, writes a period index, or emits an audit event — exactly one `paystatement.issued`
+audit line is recorded, by the request that actually issued.
+
 **Not deployed / not overstated:** this whole path is gated by `BOOKING_ASSIGNMENT_ENABLED`,
 which is **OFF in Production** — so route-only payroll behaviour is unchanged in prod and
 booking pay does not yet appear on live statements. Flag-off, the change is inert; when the
