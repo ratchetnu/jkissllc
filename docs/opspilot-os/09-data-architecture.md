@@ -33,9 +33,18 @@ shape the whole plan:
 - **No SCAN/KEYS** on the wrapper → any backfill/migration script talks to
   Upstash directly (the one allowed bypass), not through this client.
 - **No transactions across keys** → atomicity is per-key + app-level mutexes
-  (`route-mutex.ts`, `claim-mutex.ts`, `pay-statement-mutex.ts` — the last serializes
-  statement generation per crew member + period, so the duplicate check and the write
-  are one step).
+  (`route-mutex.ts`, `claim-mutex.ts`, `pay-statement-mutex.ts`, plus the shared
+  `kv-lock.ts` primitive) and atomic claims / CAS where a lock would be overkill:
+  - pay statements serialize per crew member + period, so the duplicate check and the
+    write are one step;
+  - **route-invoice mutations serialize per tenant + invoice** (`rt:inv:lock:*`) —
+    payment recording and every admin edit take the same lease, so a stale edit can no
+    longer revert a recorded payment;
+  - **applicant promotion is a single identity** (`app:promoted:{applicantId}`, SET NX)
+    that becomes the durable applicant → staff mapping, so concurrent approvals
+    converge on one crew record instead of minting several;
+  - **approval consumption is one atomic transition** (`active → consumed` by Lua CAS),
+    so single-use is enforced by the record itself rather than by its caller's lock.
 - **No schema/constraints/indexes** beyond the hand-maintained `*:index` zsets.
 
 ## 2. Namespace inventory (FACT — condensed; full in `02`/`04`)

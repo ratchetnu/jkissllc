@@ -99,6 +99,72 @@ const KEY_NUM = 'app:num:' // app:num:{applicantNumber} -> id
 const KEY_INDEX = 'app:index' // sorted set, score=updatedAt, member=id
 const KEY_COUNTER = 'app:counter'
 
+// ── Promotion identity claim (APP-1) ─────────────────────────────────────────
+//
+// Approving an applicant used to be: read applicant → `if (!promotedStaffId)` →
+// look for a duplicate → saveStaff → saveApplicant. Three concurrent approvals all
+// read "not promoted", all found no duplicate, and all minted a crew member — the
+// applicant then recorded ONE id, leaving real, assignable orphan people on the
+// roster (reproduced 3/3 in the race audit).
+//
+// The applicant's promotion is now an identity that must be CLAIMED atomically
+// before any crew record is minted. The key is tenant-scoped by the redis
+// chokepoint like every other `app:` key.
+//
+// The claim doubles as the durable applicant → staff mapping: while a promotion is
+// in flight it holds a short-lived token, and on success it is overwritten with the
+// staff id and no TTL. That is what lets a loser converge on the winner's record,
+// and what lets a retry recover if the process died between saveStaff and
+// saveApplicant (findStaffDuplicate({ applicantId }) is the second, independent
+// recovery path — the staff record carries applicantId).
+const PROMOTION_CLAIM_TTL_MS = 60_000
+const CLAIM_TOKEN_PREFIX = 'claiming:'
+export const PROMOTION_KEY = (applicantId: string) => `app:promoted:${applicantId}`
+
+const RELEASE_IF_OWNED = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
+
+export type PromotionClaim =
+  | { won: true; token: string }
+  | { won: false; staffId: string | null }   // staffId when the winner already committed
+
+/** Try to own this applicant's promotion. Atomic — never a read-then-write. */
+export async function claimPromotion(applicantId: string): Promise<PromotionClaim> {
+  const token = `${CLAIM_TOKEN_PREFIX}${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  if (await redis.setNxPx(PROMOTION_KEY(applicantId), token, PROMOTION_CLAIM_TTL_MS)) return { won: true, token }
+  const held = await redis.get(PROMOTION_KEY(applicantId))
+  return { won: false, staffId: held && !held.startsWith(CLAIM_TOKEN_PREFIX) ? held : null }
+}
+
+/** Commit the promotion: the claim becomes the permanent applicant → staff mapping. */
+export async function commitPromotion(applicantId: string, staffId: string): Promise<void> {
+  await redis.set(PROMOTION_KEY(applicantId), staffId)
+}
+
+/** Release a claim that minted nothing, so a retry can promote. Owner-only. */
+export async function releasePromotionClaim(applicantId: string, token: string): Promise<void> {
+  try { await redis.eval(RELEASE_IF_OWNED, [PROMOTION_KEY(applicantId)], [token]) } catch { /* it self-expires */ }
+}
+
+/** The committed staff id for an applicant, or null while unpromoted/in flight. */
+export async function promotedStaffIdFor(applicantId: string): Promise<string | null> {
+  const v = await redis.get(PROMOTION_KEY(applicantId))
+  return v && !v.startsWith(CLAIM_TOKEN_PREFIX) ? v : null
+}
+
+/**
+ * A loser waits briefly for the winner to commit, then converges on its staff id.
+ * Returns null if the winner never committed (it died mid-promotion), in which case
+ * the caller may take the promotion over.
+ */
+export async function awaitPromotedStaffId(applicantId: string, attempts = 6, delayMs = 50): Promise<string | null> {
+  for (let i = 0; i < attempts; i++) {
+    const id = await promotedStaffIdFor(applicantId)
+    if (id) return id
+    await new Promise<void>(r => setTimeout(r, delayMs))
+  }
+  return null
+}
+
 // ── IDs ───────────────────────────────────────────────────────────────────────
 export function generateApplicantId(): string {
   return (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '')

@@ -7,6 +7,7 @@ import { saveStaff, findStaffDuplicate } from '../../../lib/staff'
 import {
   getApplicant, listApplicants, saveApplicant, deleteApplicant, rescore,
   pushApplicantEvent, APPLICANT_STATUS_LABEL,
+  claimPromotion, commitPromotion, releasePromotionClaim, promotedStaffIdFor, awaitPromotedStaffId,
   type ApplicantStatus, type Recommendation,
 } from '../../../lib/applicants'
 import { POSITIONS } from '../../../lib/ats-config'
@@ -86,31 +87,69 @@ export const PATCH = withTenantRoute(async (req: NextRequest) => {
       rescore(a)
       break
     case 'hire': {
-      // Approve → activate as crew. Idempotent (promotedStaffId guards re-hiring) and
-      // duplicate-safe: if a crew member already exists for this applicant/email/phone
-      // we LINK to it instead of creating a second person, and carry over contact/photo.
+      // Approve → activate as crew. Idempotent and duplicate-safe: if a crew member
+      // already exists for this applicant/email/phone we LINK to it instead of
+      // creating a second person, and carry over contact/photo.
+      //
+      // APP-1: `if (!a.promotedStaffId)` was a check-then-act — three concurrent
+      // approvals all read "not promoted" and all minted a person. The promotion is
+      // now an atomic claim; only the winner may mint, and losers converge on the
+      // winner's staff id instead of creating a rival.
       a.status = 'hired'
       a.recommendation = 'hire'
       if (!a.promotedStaffId) {
-        const now = Date.now()
-        const dup = await findStaffDuplicate({ applicantId: a.id, email: a.email, phone: a.phone })
-        if (dup) {
-          a.promotedStaffId = dup.id
-          dup.applicantId = dup.applicantId || a.id
-          if (!dup.email && a.email) dup.email = a.email
-          if (!dup.photoUrl && a.badgeHeadshotUrl) dup.photoUrl = a.badgeHeadshotUrl
-          await saveStaff(dup)
+        // A committed promotion from an earlier (possibly crashed) attempt wins
+        // outright — this is also the recovery path when a previous run saved the
+        // staff record but died before saving the applicant.
+        const committed = await promotedStaffIdFor(a.id)
+        if (committed) {
+          a.promotedStaffId = committed
           linkedExisting = true
-          pushApplicantEvent(a, 'admin', 'Approved — linked to existing crew member', dup.name)
         } else {
-          const sid = (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '')
-          await saveStaff({
-            id: sid, name: a.name, phone: a.phone, email: a.email || undefined,
-            role: POSITIONS[a.position].title, photoUrl: a.badgeHeadshotUrl,
-            active: true, applicantId: a.id, onboarding: true, createdAt: now, updatedAt: now,
-          })
-          a.promotedStaffId = sid
-          pushApplicantEvent(a, 'admin', 'Approved — activated as crew (pending onboarding)')
+          const claim = await claimPromotion(a.id)
+          if (!claim.won) {
+            // Someone else is promoting this applicant right now. Converge on their
+            // record rather than minting a second person.
+            const winner = claim.staffId ?? await awaitPromotedStaffId(a.id)
+            if (winner) {
+              a.promotedStaffId = winner
+              linkedExisting = true
+            }
+            // winner === null → the claimant died before committing; the claim's TTL
+            // frees the identity and the next approval promotes cleanly.
+          } else {
+            const now = Date.now()
+            let promotedId: string | null = null
+            try {
+              const dup = await findStaffDuplicate({ applicantId: a.id, email: a.email, phone: a.phone })
+              if (dup) {
+                promotedId = dup.id
+                dup.applicantId = dup.applicantId || a.id
+                if (!dup.email && a.email) dup.email = a.email
+                if (!dup.photoUrl && a.badgeHeadshotUrl) dup.photoUrl = a.badgeHeadshotUrl
+                await saveStaff(dup)
+                linkedExisting = true
+                pushApplicantEvent(a, 'admin', 'Approved — linked to existing crew member', dup.name)
+              } else {
+                const sid = (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '')
+                await saveStaff({
+                  id: sid, name: a.name, phone: a.phone, email: a.email || undefined,
+                  role: POSITIONS[a.position].title, photoUrl: a.badgeHeadshotUrl,
+                  active: true, applicantId: a.id, onboarding: true, createdAt: now, updatedAt: now,
+                })
+                promotedId = sid
+                pushApplicantEvent(a, 'admin', 'Approved — activated as crew (pending onboarding)')
+              }
+              // Commit BEFORE the applicant save: the mapping is what a loser reads
+              // and what a retry recovers from if this request dies below.
+              await commitPromotion(a.id, promotedId)
+              a.promotedStaffId = promotedId
+            } catch (e) {
+              // Nothing was promoted — free the identity so a retry can.
+              if (!promotedId) await releasePromotionClaim(a.id, claim.token)
+              throw e
+            }
+          }
         }
       }
       break

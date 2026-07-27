@@ -133,12 +133,23 @@ function installFakeKv() {
     }
     else if (cmd === 'DEL') { kv.delete(args[1]); result = 1 }
     else if (cmd === 'EVAL') {
+      const script = args[1], n = Number(args[2]), key = args[3], token = args[3 + n]
+      // APRV-1 consume CAS — checked FIRST because it also mentions PEXPIRE:
+      //   if decode(GET(KEYS[1])).status == ARGV[2] then SET+PEXPIRE else 0
+      if (/decoded\.status/.test(script)) {
+        const argv = args.slice(3 + n)          // ARGV[1]=record, ARGV[2]=expected status
+        const raw = kv.get(key)
+        if (!raw) result = 0
+        else if (JSON.parse(raw).status !== argv[1]) result = 0
+        else { kv.set(key, argv[0]); result = 1 }
+      }
       // Ownership-guarded lock scripts (LOCK-1): release / renew, both
       //   if GET(KEYS[1]) == ARGV[1] then DEL | PEXPIRE(KEYS[1], ARGV[2]) else 0
-      const script = args[1], n = Number(args[2]), key = args[3], token = args[3 + n]
-      const owns = kv.get(key) === token
-      if (/pexpire/i.test(script)) result = owns ? 1 : 0
-      else { if (owns) kv.delete(key); result = owns ? 1 : 0 }
+      else {
+        const owns = kv.get(key) === token
+        if (/pexpire/i.test(script)) result = owns ? 1 : 0
+        else { if (owns) kv.delete(key); result = owns ? 1 : 0 }
+      }
     }
     else if (cmd === 'PEXPIRE' || cmd === 'EXPIRE' || cmd === 'ZADD') { result = 1 }
     return { json: async () => ({ result }) }

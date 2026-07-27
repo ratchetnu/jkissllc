@@ -9,6 +9,7 @@ import { listRoutes } from './routes'
 import { mutateRoute } from './route-mutex'
 import { parsePayCents } from './route-pay'
 import { generateInvoiceToken, INVOICE_TOKEN_RE, nextSequentialNumber, planInvoicePayment } from './invoicing/shared'
+import { withLock } from './kv-lock'
 
 export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'void'
 
@@ -145,6 +146,65 @@ export async function uninvoicedRoutes(businessName: string, start: string, end:
     .sort((a, b) => a.routeDate.localeCompare(b.routeDate) || a.routeNumber.localeCompare(b.routeNumber))
 }
 
+// ── Per-invoice write lease (INV-1) ──────────────────────────────────────────
+//
+// The race audit confirmed this: payment recording was read → plan → save with no
+// lease, while every admin edit is its own read → mutate → save. An edit that read
+// the invoice BEFORE the payment landed would save afterwards and revert
+// `status` to 'sent', erasing paidAt / paidMethod / stripeSessionId /
+// amountPaidCents. Stripe had the money; Operion showed the invoice unpaid.
+//
+// Every mutation of one invoice now serializes on its own lease. The key lives in
+// the invoice's OWN namespace (`rt:inv:lock:*`, tenant-scoped by the redis
+// chokepoint) — deliberately not the booking write-lock namespace. Different
+// invoices never contend.
+export const INVOICE_LOCK_KEY = (token: string) => `rt:inv:lock:${token}`
+
+/** Raised when the invoice lease could not be acquired within the retry budget. */
+export class InvoiceBusyError extends Error {
+  constructor() { super('INVOICE_BUSY'); this.name = 'InvoiceBusyError' }
+}
+
+/**
+ * Run `fn` holding the invoice's lease. `onBusy` decides what contention means for
+ * this caller (a controlled 423 for an interactive edit; "return what's stored" for
+ * the webhook backstop) — never a 500. Uses the shared kv-lock primitive: unique
+ * token, SET NX PX, compare-and-delete release.
+ */
+export async function withInvoiceLock<T>(
+  token: string,
+  fn: () => Promise<T>,
+  opts: { onBusy: () => T | Promise<T>; ttlMs?: number },
+): Promise<T> {
+  return withLock<T>(INVOICE_LOCK_KEY(token), fn, {
+    ttlMs: opts.ttlMs ?? 15_000,
+    attempts: 25,          // ~2.5s of retries before a caller is told the invoice is busy
+    backoffMs: 100,
+    onBusy: opts.onBusy,
+    onStoreError: 'busy',  // money record: prefer a controlled retry over an unguarded write
+  })
+}
+
+/**
+ * Load the invoice FRESH under its lease, mutate, persist. This freshness is the
+ * point: a caller that loaded the invoice before acquiring the lease must not save
+ * that stale copy over a payment recorded in the meantime. `mutate` returns false
+ * to skip the save (a validation bail-out).
+ */
+export async function mutateInvoice<T>(
+  token: string,
+  mutate: (inv: RouteInvoice) => T | false | Promise<T | false>,
+  opts: { onBusy: () => T | false | Promise<T | false> },
+): Promise<T | false | null> {
+  return withInvoiceLock<T | false | null>(token, async () => {
+    const fresh = await getInvoiceByToken(token)
+    if (!fresh) return null
+    const value = await mutate(fresh)
+    if (value !== false) await saveInvoice(fresh)      // `false` = validation bail-out
+    return value
+  }, { onBusy: opts.onBusy })
+}
+
 // Mark a route invoice paid from its completed Stripe Checkout Session — the SAME
 // idempotent transition the success-URL return path applies, exposed so the Stripe
 // webhook can act as the durable backstop. A route invoice paid at Stripe can no
@@ -155,17 +215,23 @@ export async function uninvoicedRoutes(businessName: string, start: string, end:
 export async function recordStripeInvoicePayment(session: Stripe.Checkout.Session): Promise<RouteInvoice | null> {
   const token = session.metadata?.invoiceToken
   if (!token) return null
-  const inv = await getInvoiceByToken(token)
-  if (!inv) return null
-  const patch = planInvoicePayment(
-    { status: inv.status, subtotalCents: subtotalCents(inv), stripeSessionId: inv.stripeSessionId },
-    { id: session.id, payment_status: session.payment_status },
-    Date.now(),
-  )
-  if (!patch) return inv
-  Object.assign(inv, patch)
-  await saveInvoice(inv)
-  return inv
+  // INV-1: serialize with every admin edit of this invoice, and re-read inside the
+  // lease so the decision is made on the freshest record. On contention return what
+  // is stored rather than failing the webhook — the backstop is retried anyway, and
+  // planInvoicePayment keeps the whole thing idempotent.
+  return withInvoiceLock<RouteInvoice | null>(token, async () => {
+    const inv = await getInvoiceByToken(token)
+    if (!inv) return null
+    const patch = planInvoicePayment(
+      { status: inv.status, subtotalCents: subtotalCents(inv), stripeSessionId: inv.stripeSessionId },
+      { id: session.id, payment_status: session.payment_status },
+      Date.now(),
+    )
+    if (!patch) return inv
+    Object.assign(inv, patch)
+    await saveInvoice(inv)
+    return inv
+  }, { onBusy: () => getInvoiceByToken(token) })
 }
 
 // Create a draft invoice from a business's uninvoiced completed routes in a
