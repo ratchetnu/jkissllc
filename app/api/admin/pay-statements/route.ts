@@ -7,7 +7,7 @@ import {
   listStatements, findByPeriod, saveStatement, nextStatementNumber, newStatementId,
   type PayStatement, type StatementLine, type StatementDeduction,
 } from '../../../lib/pay-statements'
-import { withPayStatementLock, StatementGenerationBusyError } from '../../../lib/pay-statement-mutex'
+import { withPayStatementLock, StatementGenerationBusyError, StatementLockLostError } from '../../../lib/pay-statement-mutex'
 import { auditAdmin } from '../../../lib/audit'
 import { roleLabel } from '../../../lib/rbac'
 import { isDateStr } from '../../../lib/dates'
@@ -97,13 +97,18 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   // allocated, so a blocked request never consumes a statement number.
   let outcome: GenerateOutcome
   try {
-    outcome = await withPayStatementLock({ staffId, periodStart: start, periodEnd: end }, async () => {
+    outcome = await withPayStatementLock({ staffId, periodStart: start, periodEnd: end }, async (lock) => {
       const existing = await findByPeriod(staffId, start, end)
       if (existing) return { kind: 'duplicate', existing } as const
 
       const snap = await buildSnapshot(staffId, start, end)
       if (!snap) return { kind: 'no_activity' } as const
       if ('blockedBy' in snap && snap.blockedBy) return { kind: 'payroll_gap', gaps: snap.blockedBy } as const
+
+      // The snapshot above is the long part of this section (thousands of KV reads,
+      // proportional to store size). Re-verify the lease before the FIRST write, so a
+      // generation that outlived its lock aborts instead of issuing a duplicate.
+      await lock.assertHeld()
 
       const now = Date.now()
       const statement: PayStatement = {
@@ -129,8 +134,9 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     })
   } catch (err) {
     // Ordinary contention is not an error condition: the lock is held by another
-    // generation for this exact crew + period. 423 Locked, never a 500.
-    if (err instanceof StatementGenerationBusyError) {
+    // generation for this exact crew + period, or this caller's lease lapsed before
+    // it could write (nothing was written — it aborted). 423 Locked, never a 500.
+    if (err instanceof StatementGenerationBusyError || err instanceof StatementLockLostError) {
       return NextResponse.json({
         ok: false,
         reason: 'generation_in_progress',

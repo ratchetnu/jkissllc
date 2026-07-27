@@ -358,17 +358,30 @@ The whole critical section — duplicate check, payroll-gap validation, immutabl
 statement-number allocation, persist + period index — now runs inside a Redis
 `SET NX PX` lock (`app/lib/pay-statement-mutex.ts`, the same primitive as `route-mutex` /
 `claim-mutex`), keyed `paystmt:lock:{staffId}:{periodStart}:{periodEnd}` with the tenant
-prefix applied by the `redis.ts` chokepoint. Bounded TTL (20s), released compare-and-delete
-so a caller can only ever release its own lock. Different crew members, and different
-periods for the same crew member, take different keys and never block each other; preview
-takes no lock at all.
+prefix applied by the `redis.ts` chokepoint. Different crew members, and different periods
+for the same crew member, take different keys and never block each other; preview takes no
+lock at all.
+
+**Lease sizing.** A fixed TTL cannot cover this critical section: it is dominated by
+`computePay()`, whose cost is data-proportional — every record is one Upstash REST round
+trip, and at the configured read ceilings (routes 2000, bookings 2000, staff 200, claims
+1000) a single generation measures **~5,200 GETs**; the route declares no `maxDuration`, so
+the function may run for minutes. The lease is therefore **short (30s) and renewed on a
+10s heartbeat** while the work runs — compare-and-extend, so a beat can only ever prolong
+the caller's *own* lock. A crashed holder still frees the period in ~30s rather than
+wedging it for the length of the longest conceivable run. Release is compare-and-delete:
+a caller can only delete its own lock. As a backstop, the holder re-verifies ownership
+(`assertHeld()`) immediately before its **first write**, after the expensive snapshot —
+so a generation that somehow outlived its lease **aborts with 423 and writes nothing**
+rather than issuing the duplicate this lock exists to prevent.
 
 **Contention responses** (never a 500): the loser of a race waits out the winner and then
 sees the statement that now exists → **409** `duplicate_period` (same body as the existing
 sequential duplicate, plus a `reason`). If the lock is still held when the retry budget
-(~6s) runs out → **423** `generation_in_progress`. Neither path allocates a statement
-number, writes a period index, or emits an audit event — exactly one `paystatement.issued`
-audit line is recorded, by the request that actually issued.
+(~6s) runs out — or if the holder finds its own lease lost before writing → **423**
+`generation_in_progress`. Neither path allocates a statement number, writes a period index,
+or emits an audit event — exactly one `paystatement.issued` audit line is recorded, by the
+request that actually issued.
 
 **Not deployed / not overstated:** this whole path is gated by `BOOKING_ASSIGNMENT_ENABLED`,
 which is **OFF in Production** — so route-only payroll behaviour is unchanged in prod and

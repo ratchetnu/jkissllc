@@ -29,6 +29,9 @@ const z = (k: string) => zsets.get(k) ?? zsets.set(k, new Map()).get(k)!
 
 // Injected fault: when set, any command whose (cmd, key) matches throws once.
 let failOnce: ((cmd: string, key: string) => boolean) | null = null
+// Injected interference: runs BEFORE the command is served, so a test can perturb the
+// store mid-request (e.g. steal a lock while a generation is between reads).
+let onCommand: ((cmd: string, key: string) => void) | null = null
 
 function live(key: string): string | null {
   const e = kv.get(key)
@@ -50,6 +53,7 @@ globalThis.fetch = (async (url: string, init: { body?: string }) => {
   const command = String(cmd).toUpperCase()
   const key = args[0]
   if (failOnce?.(command, key)) { failOnce = null; throw new Error('fake redis: injected failure') }
+  onCommand?.(command, key)
   let result: unknown = null
   switch (command) {
     case 'GET': result = live(key); break
@@ -79,12 +83,19 @@ globalThis.fetch = (async (url: string, init: { body?: string }) => {
     }
     case 'PEXPIRE': case 'EXPIRE': result = 1; break
     case 'EVAL': {
-      // The only script in use is the compare-and-delete lock release:
-      //   if GET(KEYS[1]) == ARGV[1] then DEL(KEYS[1]) else 0
+      // Two ownership-guarded scripts are in use, distinguished by their body:
+      //   release: if GET(KEYS[1]) == ARGV[1] then DEL(KEYS[1])            else 0
+      //   renew:   if GET(KEYS[1]) == ARGV[1] then PEXPIRE(KEYS[1], ARGV[2]) else 0
+      const script = String(args[0])
       const numKeys = Number(args[1])
       const k = args[2]
       const token = args[2 + numKeys]
-      if (live(k) === token) { kv.delete(k); result = 1 } else result = 0
+      const owns = live(k) === token
+      if (/pexpire/i.test(script)) {
+        if (owns) { kv.set(k, { value: token, expiresAt: Date.now() + Number(args[3 + numKeys]) }); result = 1 } else result = 0
+      } else {
+        if (owns) { kv.delete(k); result = 1 } else result = 0
+      }
       break
     }
     default: result = null
@@ -162,7 +173,7 @@ const claimWithDeduction = (staffId: string, amountCents: number, periodDate: st
 } as unknown as ClaimRecord)
 
 async function reset() {
-  kv.clear(); zsets.clear(); failOnce = null
+  kv.clear(); zsets.clear(); failOnce = null; onCommand = null
   adminCookie = await createUserSessionToken({ id: 'u_admin', role: 'admin' })
   crewCookie = await createUserSessionToken({ id: 'u_marcus', role: 'crew', staffId: 'marcus' })
   await saveStaff({ id: 'marcus', name: 'Marcus', phone: '+15550001', role: 'Driver', active: true, createdAt: 1, updatedAt: 1 })
@@ -372,6 +383,87 @@ test('the lock never outlives its work, and the route waits out a real generatio
   await hold
   assert.equal(res.status, 200, 'a brief hold is waited out, not rejected')
   assert.deepEqual(lockKeys(), [])
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lease renewal — the critical section is data-proportional (~5,200 KV reads at the
+// configured ceilings), so it can outlast any fixed TTL. The lease is renewed while
+// the work runs, and a genuinely lost lease must abort rather than write.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('the heartbeat keeps a long generation\'s lease alive past the base TTL', async () => {
+  await reset()
+  const key = payStatementLockKey('marcus', START, END)
+  let heldThroughout = true
+
+  // Work runs ~5x the base lease; without renewal the key would be long gone.
+  await withPayStatementLock({ staffId: 'marcus', periodStart: START, periodEnd: END }, async (lock) => {
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 20))
+      if (live(key) === null) heldThroughout = false
+    }
+    await lock.assertHeld()   // still ours at the end of a long run
+  }, { ttlMs: 40, renewEveryMs: 10 })
+
+  assert.equal(heldThroughout, true, 'the lease must never lapse while the work is running')
+  assert.equal(live(key), null, 'and it is released when the work finishes')
+})
+
+test('the heartbeat stops with the work — it cannot keep a released lock alive', async () => {
+  await reset()
+  const key = payStatementLockKey('marcus', START, END)
+  await withPayStatementLock({ staffId: 'marcus', periodStart: START, periodEnd: END }, async () => {
+    await new Promise(r => setTimeout(r, 30))
+  }, { ttlMs: 40, renewEveryMs: 10 })
+  assert.equal(live(key), null)
+
+  // A competitor takes the key; the finished holder's (cleared) heartbeat must not
+  // extend or disturb it.
+  kv.set(key, { value: 'competitor-token', expiresAt: Date.now() + 60 })
+  await new Promise(r => setTimeout(r, 40))
+  assert.equal(live(key), 'competitor-token', 'untouched by the previous holder')
+  await new Promise(r => setTimeout(r, 40))
+  assert.equal(live(key), null, 'and it expires on its own schedule, not an extended one')
+})
+
+test('compare-and-extend never prolongs another caller\'s lock', async () => {
+  await reset()
+  const key = payStatementLockKey('marcus', START, END)
+  kv.set(key, { value: 'someone-elses-token', expiresAt: Date.now() + 80 })
+
+  // A caller that does not own the key runs its heartbeat against it and gives up on
+  // acquire; the foreign lock must still expire on its ORIGINAL schedule.
+  await assert.rejects(
+    () => withPayStatementLock({ staffId: 'marcus', periodStart: START, periodEnd: END }, async () => 'x',
+      { attempts: 3, backoffMs: 10, ttlMs: 10_000, renewEveryMs: 10 }),
+    (e: Error) => e instanceof StatementGenerationBusyError,
+  )
+  await new Promise(r => setTimeout(r, 100))
+  assert.equal(live(key), null, 'the foreign lock expired on time — nobody extended it')
+})
+
+test('a lost lease ABORTS the generation: 423, and nothing is written', async () => {
+  await reset()
+  await saveRoute(route('marcus', 'JK-R-2001', '2026-07-07', 17500))
+  const key = payStatementLockKey('marcus', START, END)
+
+  // Steal the lock mid-generation — while computePay is reading, before any write.
+  onCommand = (cmd, k) => {
+    if (cmd === 'ZREVRANGE' && k === 'rt:index') {
+      kv.set(key, { value: 'stolen-by-another-instance', expiresAt: Date.now() + 30_000 })
+      onCommand = null
+    }
+  }
+
+  const res = await generate('marcus')
+  assert.equal(res.status, 423, 'a generation that lost its lease must not push through')
+  const body = await readJson(res)
+  assert.equal(body.reason, 'generation_in_progress')
+
+  assert.equal((await listStatements()).length, 0, 'no statement was written')
+  assert.deepEqual(periodKeys(), [], 'no period index was written')
+  assert.equal(live('paystmt:counter'), null, 'no statement number was consumed')
+  assert.equal(live(key), 'stolen-by-another-instance', 'and the thief\'s lock was not deleted')
 })
 
 test('lock key: mirrors the period index, normalizes boundaries, scopes per tenant', () => {
