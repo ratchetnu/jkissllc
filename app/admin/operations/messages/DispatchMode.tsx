@@ -25,6 +25,11 @@ export default function DispatchMode({ dispatch }: { dispatch: DispatchActionT[]
       if (!alive || alive.on) { setCrew(d.crew); setCounts(d.counts) }
     } catch { /* ignore */ }
   }, [])
+  // load() only setStates after `await api(...)`, so nothing is set synchronously inside
+  // the effect and no cascading render occurs; the alive-guard also blocks a post-unmount
+  // write. The rule cannot see past the await, so it is suppressed here rather than
+  // restructuring a correct mount-fetch.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { const a = { on: true }; load(a); return () => { a.on = false } }, [load])
 
   return (
