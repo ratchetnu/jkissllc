@@ -6,6 +6,7 @@
 // second promotion. It touches no business/job/deployment/provider — only publish KV.
 
 import { redis } from '../../redis'
+import { acquireLock, type KvLock } from '../../kv-lock'
 import type { PublishRecordStatus } from './publish'
 
 const REC = (id: string) => `platform:publish:rec:${id}`
@@ -57,12 +58,22 @@ export async function getPublishByApproval(approvalId: string): Promise<ReleaseP
   return id ? getPublish(id) : null
 }
 
-/** Acquire the per-business publish mutex (atomic). Returns false if one is already held. */
-export async function acquirePublishLock(businessId: string, holder: string): Promise<boolean> {
-  return redis.setNxPx(LOCK(businessId), holder, LOCK_TTL_MS)
+/**
+ * Acquire the per-business publish mutex (atomic). Returns the held lock, or null if
+ * one is already in flight.
+ *
+ * LOCK-1: the lease used to store the actor's name and release with an unconditional
+ * DEL — so a publish whose 120s lease had lapsed deleted the NEXT publish's lock, and
+ * two publishes by the same admin could release each other. The token is now unique
+ * per acquisition and release is compare-and-delete. (Publish is also idempotent via
+ * the approval→publish pointer; this closes the lock itself.)
+ */
+export async function acquirePublishLock(businessId: string, holder: string): Promise<KvLock | null> {
+  return acquireLock(LOCK(businessId), { ttlMs: LOCK_TTL_MS, holder, renew: true })
 }
-export async function releasePublishLock(businessId: string): Promise<void> {
-  await redis.del(LOCK(businessId)).catch(() => {})
+/** Release only if this caller still owns it. A null lock (never acquired) is a no-op. */
+export async function releasePublishLock(lock: KvLock | null): Promise<void> {
+  await lock?.release()
 }
 
 export async function savePublish(p: ReleasePublish): Promise<void> {
