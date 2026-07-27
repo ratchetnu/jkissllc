@@ -69,13 +69,29 @@ function parseScoreBound(tok) {
   return { v: Number(t), ex: false }
 }
 
-// The two Lua scripts the app actually uses. Recognized by shape rather than
-// interpreted — a Lua VM would be far more machinery than two fixed scripts need.
-const RELEASE_RE = /redis\.call\('get',\s*KEYS\[1\]\)\s*==\s*ARGV\[1\]/i
+// The Lua scripts the app actually uses. Recognized by shape rather than
+// interpreted — a Lua VM would be far more machinery than three fixed scripts need.
+//
+// ORDER MATTERS. Release and renew share the same ownership test
+// (`get(KEYS[1]) == ARGV[1]`) and differ only in what they then DO, so the renew
+// shape must be checked FIRST — otherwise a heartbeat is executed as a delete and
+// a renewed lock silently destroys itself. (That is exactly what happened when the
+// LOCK-1 heartbeat was first verified against this emulator.)
+const OWNED_RE = /redis\.call\('get',\s*KEYS\[1\]\)\s*==\s*ARGV\[1\]/i
+const RENEW_RE = /pexpire/i
 const CAS_RE = /cjson\.decode/i
 
 function evalScript(script, keys, args) {
-  if (RELEASE_RE.test(script)) {                       // compare-and-delete lock release
+  if (OWNED_RE.test(script) && RENEW_RE.test(script)) {  // compare-and-extend lock renewal
+    const cur = getStr(keys[0])
+    if (cur !== null && cur === args[0]) {
+      const rec = strings.get(keys[0])
+      if (rec) rec.exp = Date.now() + Number(args[1])
+      return 1
+    }
+    return 0
+  }
+  if (OWNED_RE.test(script)) {                         // compare-and-delete lock release
     const cur = getStr(keys[0])
     if (cur !== null && cur === args[0]) { strings.delete(keys[0]); return 1 }
     return 0
