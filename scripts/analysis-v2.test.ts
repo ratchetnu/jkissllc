@@ -15,17 +15,19 @@ import {
   type AnalyzePhotosV2Deps,
 } from '../app/lib/ai/analysis-v2'
 import { ANALYSIS_V2_PROMPT_VERSION, buildAnalysisV2Prompt } from '../app/lib/ai/analysis-v2-prompt'
+import type { PhotoQualityGateResult } from '../app/lib/ai/photo-quality-gate'
+import type { AiTaskResult } from '../app/lib/ai/service'
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
 const blob = (name: string) => `https://store.public.blob.vercel-storage.com/${name}`
 
 // A gate result marking the first `usable` photos usable and the rest unusable.
-function gateFor(ids: string[], usable = ids.length) {
+function gateFor(ids: string[], usable = ids.length): PhotoQualityGateResult {
   return {
     classification: 'sufficient' as const,
     score: 90,
-    perPhoto: ids.map((id, i) => ({ id, usableForEstimate: i < usable, warnings: [] as string[] })),
+    perPhoto: ids.map((id, i) => ({ id, usableForEstimate: i < usable, warnings: [] })),
     submissionWarnings: [],
     missingCoverage: [],
     clarificationRecommendations: [],
@@ -35,10 +37,12 @@ function gateFor(ids: string[], usable = ids.length) {
 }
 
 // A successful runAiTask result carrying arbitrary model text.
-function aiOk(text: string, over: Partial<Record<string, unknown>> = {}) {
+function aiOk<T = Record<string, unknown>>(text: string, over: Partial<Record<string, unknown>> = {}): AiTaskResult<T> {
   return {
     ok: true as const,
-    data: {},
+    // A mock returns no parsed payload; this single assertion is inherent to that,
+    // and is narrower than the blanket `as any` it replaces.
+    data: {} as unknown as T,
     text,
     callId: 'call_1',
     usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
@@ -85,8 +89,8 @@ const WELL_FORMED = JSON.stringify({
 test('well-formed model response normalizes into a V2 analysis (per-image + unified)', async () => {
   const ids = ['img_1', 'img_2']
   const deps: AnalyzePhotosV2Deps = {
-    evaluateQuality: () => gateFor(ids) as any,
-    runAi: (async () => aiOk(WELL_FORMED)) as any,
+    evaluateQuality: () => gateFor(ids),
+    runAi: async <T,>() => aiOk<T>(WELL_FORMED),
   }
   const r = await analyzePhotosV2(
     { bookingId: 'b1', photoUrls: [blob('a.jpg'), blob('b.jpg')], nowIso: '2026-07-15T00:00:00Z' },
@@ -100,14 +104,14 @@ test('well-formed model response normalizes into a V2 analysis (per-image + unif
   assert.equal(r.analysis.imageCountReceived, 2)
   assert.equal(r.analysis.imageCountUsable, 2)
   // No price anywhere in the contract — model never sets money.
-  assert.equal((r.analysis as any).price, undefined)
+  assert.equal((r.analysis as unknown as Record<string, unknown>).price, undefined)
 })
 
 test('overlapping-photo response keeps sourceImageIds on the merged object', async () => {
   const ids = ['img_1', 'img_2']
   const deps: AnalyzePhotosV2Deps = {
-    evaluateQuality: () => gateFor(ids) as any,
-    runAi: (async () => aiOk(WELL_FORMED)) as any,
+    evaluateQuality: () => gateFor(ids),
+    runAi: async <T,>() => aiOk<T>(WELL_FORMED),
   }
   const r = await analyzePhotosV2(
     { bookingId: 'b1', photoUrls: [blob('a.jpg'), blob('b.jpg')], nowIso: '2026-07-15T00:00:00Z' },
@@ -123,8 +127,8 @@ test('malformed response → repair retry → still bad → manual-review fallba
   const ids = ['img_1', 'img_2']
   let calls = 0
   const deps: AnalyzePhotosV2Deps = {
-    evaluateQuality: () => gateFor(ids) as any,
-    runAi: (async () => { calls++; return aiOk('sorry, I cannot produce JSON here') }) as any,
+    evaluateQuality: () => gateFor(ids),
+    runAi: async <T,>() => { calls++; return aiOk<T>('sorry, I cannot produce JSON here') },
   }
   const r = await analyzePhotosV2(
     { bookingId: 'b1', photoUrls: [blob('a.jpg'), blob('b.jpg')], nowIso: '2026-07-15T00:00:00Z' },
@@ -142,8 +146,8 @@ test('repair retry recovers when the second response is valid', async () => {
   const ids = ['img_1', 'img_2']
   let calls = 0
   const deps: AnalyzePhotosV2Deps = {
-    evaluateQuality: () => gateFor(ids) as any,
-    runAi: (async () => { calls++; return calls === 1 ? aiOk('no json') : aiOk(WELL_FORMED) }) as any,
+    evaluateQuality: () => gateFor(ids),
+    runAi: async <T,>() => { calls++; return calls === 1 ? aiOk<T>('no json') : aiOk<T>(WELL_FORMED) },
   }
   const r = await analyzePhotosV2(
     { bookingId: 'b1', photoUrls: [blob('a.jpg'), blob('b.jpg')], nowIso: '2026-07-15T00:00:00Z' },
@@ -159,8 +163,8 @@ test('0 usable photos → manual-review fallback, no AI call', async () => {
   const ids = ['img_1', 'img_2']
   let called = false
   const deps: AnalyzePhotosV2Deps = {
-    evaluateQuality: () => gateFor(ids, 0) as any, // all unusable
-    runAi: (async () => { called = true; return aiOk(WELL_FORMED) }) as any,
+    evaluateQuality: () => gateFor(ids, 0), // all unusable
+    runAi: async <T,>() => { called = true; return aiOk<T>(WELL_FORMED) },
   }
   const r = await analyzePhotosV2(
     { bookingId: 'b1', photoUrls: [blob('a.jpg'), blob('b.jpg')], nowIso: '2026-07-15T00:00:00Z' },
@@ -179,8 +183,8 @@ test('prompt version const is stamped onto the analysis', async () => {
   assert.equal(buildAnalysisV2Prompt(2).version, 'v2-2')
   const ids = ['img_1']
   const deps: AnalyzePhotosV2Deps = {
-    evaluateQuality: () => gateFor(ids) as any,
-    runAi: (async () => aiOk(WELL_FORMED)) as any,
+    evaluateQuality: () => gateFor(ids),
+    runAi: async <T,>() => aiOk<T>(WELL_FORMED),
   }
   const r = await analyzePhotosV2(
     { bookingId: 'b1', photoUrls: [blob('a.jpg')], nowIso: '2026-07-15T00:00:00Z' },
@@ -192,8 +196,9 @@ test('prompt version const is stamped onto the analysis', async () => {
 test('provider error → fail-soft manual-review fallback', async () => {
   const ids = ['img_1', 'img_2']
   const deps: AnalyzePhotosV2Deps = {
-    evaluateQuality: () => gateFor(ids) as any,
-    runAi: (async () => ({ ok: false, error: 'boom', status: 503, callId: 'call_err', outcome: 'provider_error' })) as any,
+    evaluateQuality: () => gateFor(ids),
+    runAi: async <T,>(): Promise<AiTaskResult<T>> =>
+      ({ ok: false, error: 'boom', status: 503, callId: 'call_err', outcome: 'provider_error', errorClass: 'provider' }),
   }
   const r = await analyzePhotosV2(
     { bookingId: 'b1', photoUrls: [blob('a.jpg'), blob('b.jpg')], nowIso: '2026-07-15T00:00:00Z' },
@@ -208,8 +213,8 @@ test('provider error → fail-soft manual-review fallback', async () => {
 test('the customerSafeSummary and internalOwnerSummary survive normalization', async () => {
   const ids = ['img_1', 'img_2']
   const deps: AnalyzePhotosV2Deps = {
-    evaluateQuality: () => gateFor(ids) as any,
-    runAi: (async () => aiOk(WELL_FORMED)) as any,
+    evaluateQuality: () => gateFor(ids),
+    runAi: async <T,>() => aiOk<T>(WELL_FORMED),
   }
   const r = await analyzePhotosV2(
     { bookingId: 'b1', photoUrls: [blob('a.jpg'), blob('b.jpg')], nowIso: '2026-07-15T00:00:00Z' },
