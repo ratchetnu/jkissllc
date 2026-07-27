@@ -36,6 +36,15 @@ export type UpsertCustomerInput = {
 export interface CustomerClient {
   get(key: string): Promise<string | null>
   set(key: string, value: string): Promise<void>
+  /**
+   * Atomic claim: set only if absent. CUST-1 — without this, `findCustomerId`
+   * (read) and `indexCustomer` (write) are a check-then-act pair, so two
+   * concurrent first-touch upserts for one person both miss the index and both
+   * mint a customer. Optional so an existing caller's client keeps compiling;
+   * when it is absent the claim degrades to the previous read-then-write, which
+   * is no worse than before.
+   */
+  setNxPx?(key: string, value: string, ttlMs: number): Promise<boolean>
 }
 
 const custKey = (id: string) => `cust:${id}`
@@ -67,6 +76,30 @@ export function makeCustomers(client: CustomerClient) {
     return null
   }
 
+  // The identity index doubles as the uniqueness claim, so the claim TTL only has
+  // to outlive the few writes between winning it and persisting the record. A
+  // crashed claimant frees the identity instead of wedging it forever; the normal
+  // path immediately overwrites the key with a permanent (TTL-less) SET below.
+  const CLAIM_TTL_MS = 60_000
+
+  /**
+   * Try to own this identity. Returns the id that owns it — ours when we won,
+   * the WINNER's when we lost, so a loser converges instead of minting a second
+   * record. Falls back to the legacy read/write when the client cannot claim.
+   */
+  async function claimIdentity(key: string, candidateId: string): Promise<string> {
+    if (!client.setNxPx) {
+      const seen = await client.get(key)
+      if (seen) return seen
+      await client.set(key, candidateId)
+      return candidateId
+    }
+    const won = await client.setNxPx(key, candidateId, CLAIM_TTL_MS)
+    if (won) return candidateId
+    // Someone else owns it — read through to their id.
+    return (await client.get(key)) ?? candidateId
+  }
+
   async function indexCustomer(c: Customer): Promise<void> {
     if (c.email) await client.set(emailIndex(c.email), c.id)
     if (c.phone && normPhone(c.phone)) await client.set(phoneIndex(c.phone), c.id)
@@ -75,6 +108,19 @@ export function makeCustomers(client: CustomerClient) {
   /**
    * Upsert a customer identity. Reuses an existing record when email/phone match,
    * back-filling missing contact fields; otherwise mints a new id.
+   *
+   * IDENTITY is exact under concurrency (CUST-1): the index is claimed atomically,
+   * so N simultaneous first-touch upserts produce exactly ONE record and every
+   * caller returns it.
+   *
+   * `bookingCount` is BEST-EFFORT, not exact. Updating an existing record is a
+   * read-modify-write with no compare-and-set, so two callers incrementing at the
+   * same instant can lose one increment. That is pre-existing behaviour in this
+   * branch; the identity claim simply makes it reachable on first touch too.
+   * Nothing reads this counter today, and making it exact means either a CAS on
+   * the record or a separate atomic counter — a data-model change, deliberately
+   * out of scope here. Do not treat it as a billing or reporting figure without
+   * fixing that first.
    */
   async function upsertCustomer(input: UpsertCustomerInput): Promise<{ customer: Customer; isNew: boolean }> {
     const now = Date.now()
@@ -97,8 +143,35 @@ export function makeCustomers(client: CustomerClient) {
       }
     }
 
+    // ── First touch: claim the identity BEFORE minting a record ───────────────
+    // Email is the primary identity, phone the fallback — the same precedence
+    // findCustomerId uses, so the claim and the lookup can never disagree.
+    const candidateId = newId()
+    const claimKey = normEmail(input.email)
+      ? emailIndex(input.email!)
+      : (normPhone(input.phone).length >= 7 ? phoneIndex(input.phone!) : null)
+
+    if (claimKey) {
+      const ownerId = await claimIdentity(claimKey, candidateId)
+      if (ownerId !== candidateId) {
+        // We lost the race. Converge on the winner rather than creating a rival
+        // record; re-running the upsert now takes the `existingId` branch, so the
+        // booking count and any back-filled contact fields still land.
+        //
+        // The winner may have claimed microseconds ago and not persisted yet, so
+        // wait briefly for its record instead of assuming it will never exist.
+        for (let i = 0; i < 5; i++) {
+          if (await getCustomer(ownerId)) return upsertCustomer(input)
+          await new Promise<void>(r => setTimeout(r, 50))
+        }
+        // Still nothing: the claimant died mid-write. Take the identity over
+        // rather than deadlock on a record that is never coming.
+        await client.set(claimKey, candidateId)
+      }
+    }
+
     const customer: Customer = {
-      id: newId(),
+      id: candidateId,
       tenantId: input.tenantId,
       name: input.name,
       email: normEmail(input.email) || undefined,
@@ -109,7 +182,7 @@ export function makeCustomers(client: CustomerClient) {
       updatedAt: now,
     }
     await client.set(custKey(customer.id), JSON.stringify(customer))
-    await indexCustomer(customer)
+    await indexCustomer(customer)   // permanent SET — replaces the TTL'd claim
     return { customer, isNew: true }
   }
 

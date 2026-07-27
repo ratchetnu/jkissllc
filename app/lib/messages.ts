@@ -280,7 +280,48 @@ export async function crewUnreadCount(staffId: string, limit = 100): Promise<num
   return msgs.filter(m => m.direction === 'outbound' && !m.crewReadAt).length
 }
 
-// Has this provider message id already been stored? (idempotent webhook guard)
+// ── Provider-message idempotency (WEBHOOK-1) ─────────────────────────────────
+//
+// Providers retry, and their retries genuinely arrive CONCURRENTLY. The guard used
+// to be `seenProviderMessage()` (a GET) followed later by the SET inside
+// saveMessage — a check-then-act pair, so two simultaneous deliveries of one
+// MessageSid both saw "not seen" and both stored the message. Reproduced in the
+// July 2026 race audit; a sequential redelivery was always deduped correctly,
+// which is why it never surfaced in practice.
+//
+// The claim IS the dedup: `SET NX` on the same key the mapping already uses, so
+// exactly one delivery can proceed. The winner's saveMessage then overwrites the
+// key with the real message id and NO ttl, leaving the permanent provider-id →
+// message-id mapping this module has always kept.
+const CLAIM_TTL_MS = 10 * 60_000   // only spans claim → save; the save makes it permanent
+const CLAIM_VALUE_PREFIX = 'claim:'
+
+// Compare-and-delete: release a claim only while WE still hold it, so a retry that
+// already took over is never freed by a straggler.
+const RELEASE_IF_OWNED = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
+
+/**
+ * Claim a provider message id for processing. Returns a token when THIS caller won
+ * and should process the delivery, or null when it is a duplicate to be ignored.
+ * Atomic — never a read-then-write.
+ */
+export async function claimProviderMessage(providerMessageId: string): Promise<string | null> {
+  const token = `${CLAIM_VALUE_PREFIX}${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  const won = await redis.setNxPx(dedupKey(providerMessageId), token, CLAIM_TTL_MS)
+  return won ? token : null
+}
+
+/**
+ * Release a claim that did NOT result in a stored message (validation rejected it,
+ * or the write threw), so the provider's next retry can be processed. A claim that
+ * already became a real message id is left alone — the value no longer matches.
+ */
+export async function releaseProviderMessageClaim(providerMessageId: string, token: string): Promise<void> {
+  try { await redis.eval(RELEASE_IF_OWNED, [dedupKey(providerMessageId)], [token]) } catch { /* it self-expires */ }
+}
+
+// Has this provider message id already been stored or claimed? (read-only view;
+// callers that need to ACT on the answer must use claimProviderMessage instead.)
 export async function seenProviderMessage(providerMessageId: string): Promise<boolean> {
   return !!(await redis.get(dedupKey(providerMessageId)))
 }

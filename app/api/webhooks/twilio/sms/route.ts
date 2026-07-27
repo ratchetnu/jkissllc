@@ -14,7 +14,7 @@ import { toE164 } from '../../../../lib/sms'
 import { verifyTwilioSignature } from '../../../../lib/twilio-webhook'
 import { classifyInboundKeyword, helpTwiml, STOP_WORDS, START_WORDS } from '../../../../lib/sms-keywords'
 import { listBookings, saveBooking, type Booking } from '../../../../lib/bookings'
-import { recordMessage, seenProviderMessage } from '../../../../lib/messages'
+import { recordMessage, claimProviderMessage, releaseProviderMessageClaim } from '../../../../lib/messages'
 import { notifyOwnerOfReply } from '../../../../lib/owner-alerts'
 import { redis } from '../../../../lib/redis'
 import { withBackgroundTenant } from '../../../../lib/platform/tenancy/request-context'
@@ -84,8 +84,16 @@ export async function POST(req: NextRequest) {
   const from = toE164(fromRaw) || fromRaw
   const bodyText = (params.Body || '').trim()
 
-  // Idempotency — Twilio may retry the same SID.
-  if (messageSid && (await seenProviderMessage(messageSid))) return twiml()
+  // Idempotency — Twilio retries the same SID, and its retries arrive concurrently.
+  // Claiming the SID atomically (WEBHOOK-1) is what makes two simultaneous
+  // deliveries resolve to ONE stored message; the old seen-check was a
+  // check-then-act pair that both deliveries passed. The claim is released below
+  // if this delivery ends up storing nothing.
+  let claimToken: string | null = null
+  if (messageSid) {
+    claimToken = await claimProviderMessage(messageSid)
+    if (!claimToken) return twiml()          // a duplicate delivery — already handled
+  }
 
   // STOP / START keyword handling (defense-in-depth alongside Twilio's own opt-out).
   const kw = bodyText.toUpperCase()
@@ -120,7 +128,12 @@ export async function POST(req: NextRequest) {
       bookingNumber: booking?.bookingNumber,
       tags: isStop ? ['opt-out'] : undefined,
     })
-  } catch (e) { console.error('[twilio-sms] store failed', e) }
+  } catch (e) {
+    console.error('[twilio-sms] store failed', e)
+    // Nothing was stored, so free the SID — otherwise Twilio's next retry would be
+    // treated as a duplicate and the message lost for good.
+    if (messageSid && claimToken) await releaseProviderMessageClaim(messageSid, claimToken)
+  }
 
   // Pause nagging reminders — the customer is engaging (but not on a STOP).
   if (booking && !isStop) {
