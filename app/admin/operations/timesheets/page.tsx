@@ -73,6 +73,25 @@ const workCell: React.CSSProperties = { ...filterLabel, flex: '1 1 132px', maxWi
 const th: React.CSSProperties = { textAlign: 'left', padding: '10px 12px', fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }
 const td: React.CSSProperties = { padding: '11px 12px', fontSize: 13.5, color: 'var(--text)', borderTop: '1px solid var(--line)', whiteSpace: 'nowrap' }
 
+// ── Sticky action column ─────────────────────────────────────────────────────
+// The entries table is wider than its container (it carries nine data columns and
+// scrolls inside its own rail — the page itself never scrolls). Before this, the
+// Edit-time cell sat at the far right of that rail, so the ONLY entry point to the
+// correction workflow was off-screen until you discovered the horizontal scroll.
+// Pinning the action cell to the right edge keeps it visible at every width while
+// the data columns scroll underneath: the action is always reachable in one click,
+// and the table keeps its full readable content.
+//
+// A sticky cell is transparent by default, so it needs its own background or the
+// scrolling columns show through it. The hairline on its left edge is what reads as
+// "this is pinned" rather than "this is the last column".
+const stickyCell: React.CSSProperties = {
+  position: 'sticky', right: 0, zIndex: 1,
+  background: 'var(--card)', borderLeft: '1px solid var(--line)',
+}
+const actionTh: React.CSSProperties = { ...th, ...stickyCell, padding: '10px 12px' }
+const actionTd: React.CSSProperties = { ...td, ...stickyCell, padding: '9px 12px' }
+
 function StatusBadge({ s }: { s: PunchStatus }) {
   const map: Record<PunchStatus, { label: string; fg: string; bg: string }> = {
     open: { label: 'On the clock', fg: '#34d399', bg: 'rgba(52,211,153,.13)' },
@@ -100,6 +119,20 @@ const fromLocalInput = (v: string): number | null => {
   const ms = new Date(v).getTime()
   return Number.isFinite(ms) ? ms : null
 }
+// A punch instant can legitimately fall on a different calendar day from the job's
+// SERVICE date (a crew member clocks in the night before, an overnight shift, or a
+// late correction). Showing a bare time beside the service date made that read like
+// a bug, so wherever the two sit together we show the punch's own date too.
+const fmtStamp = (ms: number | null): string =>
+  ms == null ? '—' : new Date(ms).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Chicago',
+  })
+const sameDayAs = (ms: number | null, ymd: string): boolean => {
+  if (ms == null || !ymd) return true
+  const d = new Date(ms).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+  return d === ymd
+}
+
 const durationLabel = (inMs: number | null, outMs: number | null): string => {
   if (inMs == null || outMs == null) return '—'
   if (outMs < inMs) return 'invalid'
@@ -178,14 +211,22 @@ function CorrectionModal({ entry, onClose, onSaved }: {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10, marginBottom: 14 }}>
           <div><div style={label}>Crew</div><div style={ro}>{entry.staffName}</div></div>
           <div><div style={label}>Work</div><div style={{ ...ro, textTransform: 'capitalize' }}>{entry.type} · {entry.jobNumber}</div></div>
-          <div><div style={label}>Service date</div><div style={ro}>{entry.date || '—'}</div></div>
+          <div><div style={label}>Service date (job)</div><div style={ro}>{entry.date || '—'}</div></div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10, padding: 12, border: '1px solid var(--line)', borderRadius: 12, marginBottom: 14 }}>
-          <div><div style={label}>Original in</div><div style={ro}>{fmtClock(entry.originalClockInAt)}</div></div>
-          <div><div style={label}>Original out</div><div style={ro}>{fmtClock(entry.originalClockOutAt)}</div></div>
-          <div><div style={label}>Current effective in</div><div style={ro}>{fmtClock(entry.clockInAt)}</div></div>
-          <div><div style={label}>Current effective out</div><div style={ro}>{fmtClock(entry.clockOutAt)}</div></div>
+        <div style={{ padding: 12, border: '1px solid var(--line)', borderRadius: 12, marginBottom: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10 }}>
+            <div><div style={label}>Original punch in</div><div style={ro}>{fmtStamp(entry.originalClockInAt)}</div></div>
+            <div><div style={label}>Original punch out</div><div style={ro}>{fmtStamp(entry.originalClockOutAt)}</div></div>
+            <div><div style={label}>Current effective in</div><div style={ro}>{fmtStamp(entry.clockInAt)}</div></div>
+            <div><div style={label}>Current effective out</div><div style={ro}>{fmtStamp(entry.clockOutAt)}</div></div>
+          </div>
+          {!sameDayAs(entry.originalClockInAt, entry.date) && (
+            <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '10px 0 0', lineHeight: 1.45 }}>
+              The punch was recorded on a different day from the job’s service date. Both are correct —
+              the service date is when the job is scheduled, the punch is when the crew actually clocked.
+            </p>
+          )}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 10, marginBottom: 12 }}>
@@ -400,11 +441,11 @@ function Board() {
 
               {/* Entries table — scrolls horizontally on narrow screens, never the page */}
               <div style={{ border: '1px solid var(--line)', borderRadius: 14, overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
                   <thead><tr>
                     <th style={th}>Work</th><th style={th}>Job</th><th style={th}>Crew</th><th style={th}>Date</th>
                     <th style={th}>In</th><th style={th}>Out</th><th style={th}>Duration</th><th style={th}>Status</th><th style={th}>Location</th>
-                    {data.canCorrect && <th style={th} aria-label="Actions" />}
+                    {data.canCorrect && <th style={actionTh} scope="col">Edit</th>}
                   </tr></thead>
                   <tbody>
                     {data.entries.map((e, i) => (
@@ -433,7 +474,9 @@ function Board() {
                             : <span style={{ color: 'var(--muted)', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12.5 }}><MapPin size={12} /> ok</span>}
                         </td>
                         {data.canCorrect && (
-                          <td style={td}>
+                          <td style={e.status === 'open'
+                            ? { ...actionTd, background: 'color-mix(in srgb, var(--card) 100%, transparent)', boxShadow: 'inset 0 0 0 999px rgba(52,211,153,.05)' }
+                            : actionTd}>
                             <button type="button" onClick={() => setEditing(e)} className="os-tap"
                               aria-label={`Edit time for ${e.staffName} on ${e.jobNumber}`}
                               style={{ ...field, padding: '6px 10px', fontSize: 12.5, cursor: 'pointer', color: 'var(--muted)', fontWeight: 700 }}>

@@ -87,3 +87,42 @@ test('the row action is permission-gated in the markup as well as the API', () =
   assert.match(SRC, /Edit time/, 'the action exists for permitted roles')
   assert.match(SRC, /aria-label=\{`Edit time for/, 'and is labelled for assistive tech')
 })
+
+// ── Action visibility (Preview verification finding) ─────────────────────────
+// The entries table is wider than its container, so the Edit-time cell — the ONLY
+// entry point to the correction workflow — sat outside the visible area until the
+// operator discovered the table's horizontal scroll. Pinning it fixes that.
+test('the Edit time action is pinned, so it never hides behind the table scroll', () => {
+  const sticky = styleBlock('stickyCell')
+  assert.match(sticky, /position:\s*'sticky'/, 'the action cell is sticky')
+  assert.match(sticky, /right:\s*0/, 'pinned to the right edge, where the action column lives')
+  assert.match(sticky, /background:/, 'it carries its own background — a transparent sticky cell shows the scrolling columns through it')
+  assert.match(sticky, /borderLeft:/, 'and a hairline so it reads as pinned, not as the last column')
+
+  // Both the header and the body cell must be pinned, or they drift apart on scroll.
+  assert.match(SRC, /const actionTh: React\.CSSProperties = \{ \.\.\.th, \.\.\.stickyCell/, 'header cell is sticky')
+  assert.match(SRC, /const actionTd: React\.CSSProperties = \{ \.\.\.td, \.\.\.stickyCell/, 'body cell is sticky')
+  assert.match(SRC, /style=\{actionTh\}/, 'the header cell uses it')
+  assert.match(SRC, /actionTd\}?>/, 'the body cell uses it')
+})
+
+test('the action column header is announced, not an empty cell', () => {
+  assert.doesNotMatch(SRC, /<th style=\{th\} aria-label="Actions" \/>/, 'no empty header cell remains')
+  assert.match(SRC, /<th style=\{actionTh\} scope="col">Edit<\/th>/, 'it has a real, scoped label')
+})
+
+test('the table keeps a readable floor without forcing the action off-screen', () => {
+  // Anchored to the TABLE — a looser pattern also matches the rollup cards.
+  const m = /borderCollapse: 'collapse', minWidth: (\d+)/.exec(SRC)
+  assert.ok(m, 'the table declares a minimum width')
+  const min = Number(m![1])
+  assert.ok(min >= 560 && min <= 720, `table minWidth ${min} stays readable without over-reserving`)
+})
+
+test('modal dates distinguish the job service date from the punch instant', () => {
+  assert.match(SRC, /Service date \(job\)/, 'the service date is labelled as the job\'s')
+  assert.match(SRC, /Original punch in/, 'and the punch is labelled as the punch')
+  assert.match(SRC, /const fmtStamp =/, 'punch values carry their own date')
+  assert.match(SRC, /timeZone: 'America\/Chicago'/, 'in the operating timezone, like every other date in the OS')
+  assert.match(SRC, /sameDayAs/, 'and a note explains a punch that lands on another day')
+})
