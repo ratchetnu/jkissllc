@@ -43,3 +43,9 @@ next-env.d.ts
 
 # product-sync generated reports
 tools/product-sync/out/
+
+# agent/session scratch space (worktrees + their build output)
+.claude/
+
+# disposable local-audit artifacts (KV emulator pid / dumps)
+.local-audit/
