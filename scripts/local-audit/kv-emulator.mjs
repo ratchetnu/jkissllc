@@ -80,6 +80,9 @@ function parseScoreBound(tok) {
 const OWNED_RE = /redis\.call\('get',\s*KEYS\[1\]\)\s*==\s*ARGV\[1\]/i
 const RENEW_RE = /pexpire/i
 const CAS_RE = /cjson\.decode/i
+// APRV-1's single-use transition also decodes JSON, so it must be recognised BEFORE
+// the generic version-CAS branch or it would be compared against the wrong field.
+const STATUS_CAS_RE = /decoded\.status/i
 
 function evalScript(script, keys, args) {
   if (OWNED_RE.test(script) && RENEW_RE.test(script)) {  // compare-and-extend lock renewal
@@ -95,6 +98,15 @@ function evalScript(script, keys, args) {
     const cur = getStr(keys[0])
     if (cur !== null && cur === args[0]) { strings.delete(keys[0]); return 1 }
     return 0
+  }
+  if (STATUS_CAS_RE.test(script)) {                    // status CAS: active → consumed
+    const raw = getStr(keys[0])
+    if (raw === null) return 0
+    let cur = null
+    try { cur = JSON.parse(raw).status } catch { return 0 }
+    if (cur !== args[1]) return 0
+    strings.set(keys[0], { v: args[0], exp: args[2] ? Date.now() + Number(args[2]) : null })
+    return 1
   }
   if (CAS_RE.test(script)) {                           // optimistic version CAS on a JSON doc
     const raw = getStr(keys[0])

@@ -38,7 +38,8 @@ Not every key is prefixed — the platform-global allowlist is explicit.
 ## Classification buckets (per the sprint's required taxonomy)
 - **platform-global:** `opspilot: platform: ai: rl:`
 - **tenant-owned:** everything above in the second table
-- **ephemeral/operational:** `rt:lock:*`, `clm:lock:*`, `paystmt:lock:*` / mutex keys (via `EVAL`, tenant-scoped)
+- **ephemeral/operational:** `rt:lock:*`, `clm:lock:*`, `paystmt:lock:*`, `rt:inv:lock:*` / mutex keys (via `EVAL`, tenant-scoped)
+- **identity claims:** `app:promoted:{applicantId}` — a bounded SET NX claim during promotion that becomes the permanent applicant → staff mapping (tenant-owned)
 - **idempotency:** `msg:pid:*`, `rsend:occ:*`, booking idempotency (tenant-owned)
 - **rate-limit:** `rl:*` → **global**
 - **session:** none in Redis (stateless HMAC cookie)

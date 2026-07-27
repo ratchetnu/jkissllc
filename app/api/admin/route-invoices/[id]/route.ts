@@ -3,7 +3,7 @@ import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-ro
 import { COMPANY } from '../../../../lib/company'
 import { requirePermission } from '../../_lib/session'
 import {
-  getInvoiceByToken, saveInvoice, deleteInvoice, voidInvoice, subtotalCents,
+  getInvoiceByToken, saveInvoice, deleteInvoice, voidInvoice, subtotalCents, withInvoiceLock,
   type InvoiceLine,
 } from '../../../../lib/route-invoices'
 import { emailRaw, siteUrl } from '../../../../lib/booking-emails'
@@ -32,11 +32,19 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
   const who = await requirePermission(req, 'invoices:manage')
   if (who instanceof NextResponse) return who
   const { id } = await params
-  const inv = await getInvoiceByToken(id)
-  if (!inv) return NextResponse.json({ error: 'Invoice not found.' }, { status: 404 })
-
   const b = await req.json().catch(() => ({}))
   const action = S(b.action, 40)
+
+  // INV-1: hold the invoice's lease for the whole mutation and read the record
+  // FRESH inside it. Loading before the lease and saving after is exactly how a
+  // note edit used to erase a Stripe payment recorded in between.
+  const busy = () => NextResponse.json({
+    error: 'This invoice is being updated right now. Try again in a moment.', reason: 'invoice_busy',
+  }, { status: 423 })
+
+  return withInvoiceLock<NextResponse>(id, async () => {
+  const inv = await getInvoiceByToken(id)
+  if (!inv) return NextResponse.json({ error: 'Invoice not found.' }, { status: 404 })
 
   if (action === 'update') {
     if (inv.status === 'paid') return NextResponse.json({ error: 'A paid invoice can’t be edited.' }, { status: 409 })
@@ -91,12 +99,19 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
   }
 
   return NextResponse.json({ error: 'Unknown action.' }, { status: 400 })
+  }, { onBusy: busy })
 })
 
 export const DELETE = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const who = await requirePermission(req, 'invoices:manage')
   if (who instanceof NextResponse) return who
   const { id } = await params
-  await deleteInvoice(id)
-  return NextResponse.json({ ok: true })
+  return withInvoiceLock<NextResponse>(id, async () => {
+    await deleteInvoice(id)
+    return NextResponse.json({ ok: true })
+  }, {
+    onBusy: () => NextResponse.json({
+      error: 'This invoice is being updated right now. Try again in a moment.', reason: 'invoice_busy',
+    }, { status: 423 }),
+  })
 })

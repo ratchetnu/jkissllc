@@ -109,15 +109,47 @@ export async function createApproval(i: CreateApprovalInput): Promise<CreateAppr
 
 /** Single-use: consume an approval iff it is active AND still bound to the same release.
  *  (No publish exists this phase; exposed + tested for the FUTURE publish action.) */
+// APRV-1: the active → consumed transition must be won by exactly ONE caller.
+// It used to be GET → check 'active' → SET 'consumed', so three concurrent consumes
+// all read 'active' and all reported success (reproduced 3/3 in the race audit).
+// Nothing double-published, because executePublish holds the per-business lock and
+// re-checks the approval→publish pointer inside it — but "single-use" then lived
+// entirely in the CALLER. A new call site without that lock would have promoted to
+// Production twice. This script makes the contract self-enforcing.
+//
+// Compare-and-set on the stored record: re-read it INSIDE Redis, verify it is still
+// exactly the status we expect, and only then write. Every other field is preserved
+// because the caller supplies the full consumed record — the script never rebuilds
+// the approval, it just refuses to write when the precondition no longer holds.
+const CONSUME_IF_ACTIVE = `
+  local raw = redis.call('GET', KEYS[1])
+  if not raw then return 0 end
+  local decoded = cjson.decode(raw)
+  if decoded.status ~= ARGV[2] then return 0 end
+  redis.call('SET', KEYS[1], ARGV[1])
+  redis.call('PEXPIRE', KEYS[1], ARGV[3])
+  return 1
+`
+
 export async function consumeApproval(
   id: string,
   opts: { now: number; expectedFingerprint: string },
 ): Promise<{ ok: true; approval: ReleaseApproval } | { ok: false; code: string }> {
   const a = await getApproval(id)
   if (!a) return { ok: false, code: 'NOT_FOUND' }
+  // Every non-atomic precondition (expiry, fingerprint drift, revoked) is still
+  // decided here; only the status transition itself needs to be atomic.
   if (deriveApprovalState(a, opts.now, opts.expectedFingerprint) !== 'active') return { ok: false, code: 'NOT_ACTIVE' }
+
   const consumed: ReleaseApproval = { ...a, status: 'consumed', consumedAt: opts.now }
-  await persist(consumed)
+  const won = await redis.eval(
+    CONSUME_IF_ACTIVE,
+    [REC(id)],
+    [JSON.stringify(consumed), 'active', String(APPROVAL_RECORD_TTL_MS)],
+  )
+  // Lost the CAS: someone else moved it out of 'active' first. The record is
+  // untouched by this call.
+  if (won !== 1 && won !== '1') return { ok: false, code: 'ALREADY_CONSUMED' }
   return { ok: true, approval: consumed }
 }
 

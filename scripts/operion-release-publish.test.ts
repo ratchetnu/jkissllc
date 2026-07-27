@@ -104,6 +104,22 @@ function installFakeKv() {
     else if (cmd === 'ZCARD') result = (z.get(a[1]) ?? []).length
     else if (cmd === 'ZREM') { z.set(a[1], (z.get(a[1]) ?? []).filter((x) => x.member !== a[2])); result = 1 }
     else if (cmd === 'PEXPIRE' || cmd === 'EXPIRE') result = 1
+    else if (cmd === 'EVAL') {
+      // Two script shapes reach this store: the APRV-1 consume CAS
+      //   (if decode(GET).status == ARGV[2] then SET+PEXPIRE) — checked first because
+      //   it also mentions PEXPIRE — and the LOCK-1 ownership release / renew.
+      const script = a[1], n = Number(a[2]), key = a[3], argv = a.slice(3 + n)
+      if (/decoded\.status/.test(script)) {
+        const raw = kv.get(key)
+        if (!raw) result = 0
+        else if (JSON.parse(raw).status !== argv[1]) result = 0
+        else { kv.set(key, argv[0]); result = 1 }
+      } else {
+        const owns = kv.get(key) === argv[0]
+        if (/pexpire/i.test(script)) result = owns ? 1 : 0
+        else { if (owns) kv.delete(key); result = owns ? 1 : 0 }
+      }
+    }
     return { json: async () => ({ result }) }
   }) as never
   return { kv, restore() { globalThis.fetch = prev.fetch; if (prev.url === undefined) delete process.env.KV_REST_API_URL; else process.env.KV_REST_API_URL = prev.url; if (prev.tok === undefined) delete process.env.KV_REST_API_TOKEN; else process.env.KV_REST_API_TOKEN = prev.tok } }
