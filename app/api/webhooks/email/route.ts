@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { listBookings, saveBooking, getBookingByNumber, type Booking } from '../../../lib/bookings'
-import { recordMessage, seenProviderMessage } from '../../../lib/messages'
+import { recordMessage, claimProviderMessage, releaseProviderMessageClaim } from '../../../lib/messages'
 import { notifyOwnerOfReply } from '../../../lib/owner-alerts'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
 import { activeTenantIds } from '../../../lib/platform/tenancy/tenant-store'
@@ -65,7 +65,13 @@ export async function POST(req: NextRequest) {
   const messageId = (p.messageId || p['Message-Id'] || p.message_id || '').toString()
 
   if (!from && !text) return NextResponse.json({ ok: true, skipped: 'empty' })
-  if (messageId && (await seenProviderMessage(messageId))) return NextResponse.json({ ok: true, dedup: true })
+  // Atomic claim, not a seen-check: concurrent redeliveries of one Message-Id must
+  // resolve to a single stored message (WEBHOOK-1). Released below if nothing is stored.
+  let claimToken: string | null = null
+  if (messageId) {
+    claimToken = await claimProviderMessage(messageId)
+    if (!claimToken) return NextResponse.json({ ok: true, dedup: true })
+  }
 
   // Match: the JK-* booking number in the subject (most reliable, survives the thread),
   // then fall back to the sender's email address.
@@ -88,7 +94,11 @@ export async function POST(req: NextRequest) {
       customerName: booking?.customerName, customerPhone: booking?.customerPhone,
       bookingToken: booking?.token, bookingNumber: booking?.bookingNumber,
     })
-  } catch (e) { console.error('[email-webhook] store failed', e) }
+  } catch (e) {
+    console.error('[email-webhook] store failed', e)
+    // Nothing stored → release the claim so the provider's retry is processed.
+    if (messageId && claimToken) await releaseProviderMessageClaim(messageId, claimToken)
+  }
 
   if (booking) {
     try {
