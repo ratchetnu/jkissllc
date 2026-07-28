@@ -24,7 +24,7 @@
 // authenticated UI instead of the sign-in screen.
 import { chromium } from 'playwright-core'
 import fs from 'node:fs'
-import { classifyRoute, summarizeRoutes, ROUTE_BLOCKED_OUTCOMES } from './mobile-audit-classify.mjs'
+import { classifyRoute, summarizeRoutes, ROUTE_BLOCKED_OUTCOMES, roleSatisfiesRoute } from './mobile-audit-classify.mjs'
 import { classifyTarget, classifyFinalUrl, resolveBase } from './mobile-audit-target-guard.mjs'
 
 
@@ -74,10 +74,22 @@ const VIEWPORTS = [
 // sign-in screen or a blank client shell passed every viewport. Each route now
 // declares how to PROVE the intended page actually rendered.
 //
-//   auth:  'none' | 'admin'  — an 'admin' route is BLOCKED_AUTH unless we are signed in
-//   ready: a CSS selector (or {text}) that only exists once the real content mounted.
+//   auth:  'none' | 'crew' | 'admin' — the ROLE the route needs. A route is
+//          BLOCKED_AUTH unless the active principal can actually reach it.
+//   ready: a CSS selector that only exists once the real content mounted.
 //          Deliberately per-route: one universal title check would pass on the shell.
+//   readyText: exact visible text proving THIS page rendered. Used where the page has
+//          no distinctive element — a generic `h1` check passes on any admin page, and
+//          on a page with no h1 at all it can never pass (the /admin/disposal defect).
 //   requireAction: a selector for a primary action that must be visibly reachable.
+//   expectDenial: { roles, text } — a role that is SUPPOSED to be refused. Proving the
+//          denial card rendered is a truthful pass for that role, recorded as state
+//          'denial' so it can never be read as the admin workflow passing.
+//
+// Routes that only redirect are NOT listed. `/opspilot` (→ /operion, next.config.ts)
+// and `/admin/operations/ai/shadow` (→ /ai/performance, that page's own redirect) can
+// never satisfy a rendered-content assertion, and their destinations are already
+// audited below — listing them added zero coverage and 54 false results.
 const ROUTES = [
   { path: '/', auth: 'none', ready: 'h1, [data-hero]' },
   { path: '/quote', auth: 'none', ready: 'form, input, button' },
@@ -93,7 +105,6 @@ const ROUTES = [
   // dynamic segments (`/booking/[token]`, `/box-truck-delivery/[city]`) with no index
   // page, so they 404 by design. Cover the templates with a concrete instance.
   { path: '/box-truck-delivery/dallas', auth: 'none', ready: 'h1' },
-  { path: '/opspilot', auth: 'none', ready: 'h1' },
   { path: '/operion', auth: 'none', ready: 'h1' },
   { path: '/coi', auth: 'none', ready: 'h1' },
 
@@ -110,7 +121,10 @@ const ROUTES = [
   { path: '/admin/operations/messages', auth: 'admin', ready: 'h1' },
   { path: '/admin/operations/communications', auth: 'admin', ready: 'h1' },
   { path: '/admin/operations/finance', auth: 'admin', ready: 'h1' },
-  { path: '/admin/operations/pay-statements', auth: 'admin', ready: 'h1' },
+  // A manager is correctly refused here. That refusal is the app working, so it is
+  // asserted on its own terms rather than measured against the admin content.
+  { path: '/admin/operations/pay-statements', auth: 'admin', ready: 'h1', readyText: 'Pay Statements',
+    expectDenial: { roles: ['manager'], text: 'Pay statements are restricted to administrators' } },
   // The Timesheets table is a deliberate horizontal scroll RAIL with a pinned
   // action column — internal scrolling is legitimate, a hidden action is not.
   { path: '/admin/operations/timesheets', auth: 'admin', ready: 'h1', requireAction: 'select' },
@@ -121,27 +135,55 @@ const ROUTES = [
   { path: '/admin/operations/ai/controls', auth: 'admin', ready: 'h1' },
   { path: '/admin/operations/ai/performance', auth: 'admin', ready: 'h1' },
   { path: '/admin/operations/ai/learning', auth: 'admin', ready: 'h1' },
-  { path: '/admin/operations/ai/shadow', auth: 'admin', ready: 'h1' },
   { path: '/admin/operations/ai/alerts', auth: 'admin', ready: 'h1' },
-  { path: '/admin/disposal', auth: 'admin', ready: 'h1' },
-  { path: '/portal', auth: 'none', ready: 'h1, form, input' },
+  // No <h1> on this page at all — its title is a styled <p>. `ready: 'h1'` could
+  // therefore never be satisfied, which produced 18 false failures.
+  { path: '/admin/disposal', auth: 'admin', ready: 'input, label', readyText: 'Disposal & Pricing' },
+  // A crew-authenticated surface, not a public page. Declaring it public made its
+  // login gate a layout FAIL on every anonymous, admin and manager run (27 of them).
+  { path: '/portal', auth: 'crew', ready: 'h1', readyText: 'Sign out' },
 ]
 
-async function maybeAuth(ctx) {
+// Session probes, one per role family. NOT a universal gate: `/api/admin/timesheets`
+// used to be the single proof of authentication, and a crew member legitimately gets
+// 403 from it — so a fully valid crew session was recorded as `identity=anonymous`
+// while the browser went on rendering authenticated crew pages. Authentication and
+// authorization are different questions; a 403 from an endpoint OUTSIDE your role
+// answers the second one, never the first.
+const ROLE_PROBES = {
+  crew: '/api/portal/me',                    // requireCrew — the crew's own session
+  manager: '/api/admin/platform/whoami',     // requireStaffSession — any staff principal
+  admin: '/api/admin/platform/whoami',
+  owner: '/api/admin/platform/whoami',
+}
+
+/**
+ * Establish WHO we are, using evidence appropriate to that identity.
+ * @returns {{ authState: 'ok'|'failed'|'absent', role: string }}
+ */
+async function resolveIdentity(ctx) {
   // Two ways in, because the owner password is not available everywhere:
   //  • ADMIN_PASSWORD            → the shared owner login (/api/admin/auth)
   //  • AUDIT_EMAIL + AUDIT_PASSWORD → a named user (/api/auth/login), which is how
-  //    a Preview run authenticates as a specific admin or MANAGER without the
-  //    owner credential. Role coverage matters: a manager sees a different surface.
+  //    a Preview run authenticates as a specific admin, MANAGER or CREW without the
+  //    owner credential. Role coverage matters: each sees a different surface.
   const pw = process.env.ADMIN_PASSWORD
   const email = process.env.AUDIT_EMAIL
   const userPw = process.env.AUDIT_PASSWORD
-  if (!pw && !(email && userPw)) return false
+  if (!pw && !(email && userPw)) return { authState: 'absent', role: 'anonymous' }
   try {
     const res = pw
       ? await ctx.request.post(`${BASE}/api/admin/auth`, { data: { password: pw } })
       : await ctx.request.post(`${BASE}/api/auth/login`, { data: { email, password: userPw } })
-    if (!res.ok()) return false
+    if (!res.ok()) return { authState: 'failed', role: 'anonymous' }
+
+    // The server tells us the role it just authenticated. That is the authoritative
+    // answer — never inferred from what a page happened to render, which would let
+    // route content silently elevate an identity.
+    const body = await res.json().catch(() => null)
+    const role = pw ? 'owner' : (body?.role ?? null)
+    if (!role) return { authState: 'failed', role: 'anonymous' }
+
     // Production correctly marks the session Secure. Local HTTP audits cannot send that
     // cookie automatically, so install the returned token into this isolated localhost
     // browser context with secure=false. Never logs or persists the token.
@@ -150,13 +192,13 @@ async function maybeAuth(ctx) {
       const match = setCookie.match(/(?:^|[,;]\s*)jk_admin_session=([^;]+)/)
       if (match) await ctx.addCookies([{ name: 'jk_admin_session', value: match[1], url: BASE, httpOnly: true, secure: false, sameSite: 'Lax' }])
     }
-    // A named manager is legitimately not `owner`; treat any accepted admin-surface
-    // session as authenticated, and prove it by reading a gated endpoint.
-    const check = await ctx.request.get(`${BASE}/api/admin/platform/whoami`)
-    if (check.ok() && (await check.json().catch(() => null))?.owner === true) return true
-    const gated = await ctx.request.get(`${BASE}/api/admin/timesheets`)
-    return gated.ok()
-  } catch { return false }
+
+    // Confirm the cookie actually works, against an endpoint THIS role may read.
+    const probe = ROLE_PROBES[role]
+    if (!probe) return { authState: 'failed', role: 'anonymous' }
+    const check = await ctx.request.get(`${BASE}${probe}`)
+    return check.ok() ? { authState: 'ok', role } : { authState: 'failed', role: 'anonymous' }
+  } catch { return { authState: 'failed', role: 'anonymous' } }
 }
 
 // ── Preflight ────────────────────────────────────────────────────────────────
@@ -210,26 +252,32 @@ const ctx = await browser.newContext({
   deviceScaleFactor: 1,
   ...(process.env.VERCEL_BYPASS ? { extraHTTPHeaders: { 'x-vercel-protection-bypass': process.env.VERCEL_BYPASS } } : {}),
 })
-const authed = await maybeAuth(ctx)
+const { authState, role: ACTIVE_ROLE } = await resolveIdentity(ctx)
 // Recorded on every result so a report can never be read as "some admin somewhere".
-const IDENTITY = authed ? (process.env.AUDIT_IDENTITY || 'owner/admin') : 'anonymous'
+// The role comes from the server's own answer, not from AUDIT_IDENTITY — a label
+// cannot be allowed to disagree with the principal that actually signed in.
+const IDENTITY = authState === 'ok' ? ACTIVE_ROLE : 'anonymous'
 const page = await ctx.newPage()
 if (SHOT_DIR) fs.mkdirSync(SHOT_DIR, { recursive: true })
 
 const results = []
 let aborted = false
-const authState = authed ? 'ok' : (process.env.ADMIN_PASSWORD ? 'failed' : 'absent')
 for (const route of ROUTES) {
   const path = route.path
   if (ONLY && !ONLY.includes(path)) continue
-  const requiresAuth = route.auth === 'admin'
+  const requiredRole = route.auth ?? 'none'
+  const requiresAuth = requiredRole !== 'none'
+  // This principal is SUPPOSED to be refused here — assert the denial, not the content.
+  const expectedDenial = !!route.expectDenial?.roles?.includes(IDENTITY)
+  const denialText = expectedDenial ? route.expectDenial.text : null
 
-  // An admin route with no session was never really visited. Record it as blocked
-  // for every viewport instead of measuring the sign-in screen and calling it a pass.
-  if (requiresAuth && authState !== 'ok') {
+  // A route whose required role we do not hold was never really visited. Record it as
+  // blocked for every viewport instead of measuring the sign-in screen and calling it
+  // a pass — and never quietly relabel a different identity as the one it needs.
+  if (!roleSatisfiesRoute(requiredRole, IDENTITY)) {
     for (const { w } of VIEWPORTS) {
-      const { outcome, detail } = classifyRoute({ requiresAuth, authState, requestedPath: path })
-      results.push({ path, width: w, outcome, detail, finalPath: null, identity: IDENTITY, assertion: route.ready ?? null, evidence: null })
+      const { outcome, detail, state } = classifyRoute({ requiredRole, activeRole: IDENTITY, authState, requestedPath: path })
+      results.push({ path, width: w, outcome, detail, state, finalPath: null, identity: IDENTITY, assertion: route.readyText ?? route.ready ?? null, evidence: null })
     }
     continue
   }
@@ -243,10 +291,21 @@ for (const route of ROUTES) {
       // a page that keeps a socket open must not fail the audit for that alone.
       await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {})
 
+      // A role that is supposed to be refused proves the DENIAL card instead. Text,
+      // not a selector: the card is deliberately plain, and matching structure would
+      // let any styled paragraph on any page satisfy it.
+      let denialTextFound = null
+      if (expectedDenial) {
+        denialTextFound = await page.waitForFunction(
+          (t) => (document.body?.innerText || '').includes(t),
+          denialText, { timeout: 10000 },
+        ).then(() => true).catch(() => false)
+      }
+
       // The readiness proof: wait for the route's own content to mount. Its ABSENCE
       // is the finding — this is what a blank client shell can never satisfy.
       let readinessFound = null
-      if (route.ready) {
+      if (route.ready && !expectedDenial) {
         // ANY visible match, not `.first()`. A page can legitimately carry hidden
         // instances of the selector (a collapsed menu, an off-canvas control), and
         // waiting on the first DOM match made a fully-rendered page look unready —
@@ -258,8 +317,18 @@ for (const route of ROUTES) {
           }),
           route.ready, { timeout: 10000 },
         ).then(() => true).catch(() => false)
-      } else {
+      } else if (!expectedDenial) {
         await page.waitForTimeout(500)
+      }
+
+      // Route-specific TEXT proof, where a selector cannot distinguish this page from
+      // any other admin page — or where the page has no matching element at all.
+      let readinessTextFound = null
+      if (route.readyText && !expectedDenial) {
+        readinessTextFound = await page.waitForFunction(
+          (t) => (document.body?.innerText || '').includes(t),
+          route.readyText, { timeout: 10000 },
+        ).then(() => true).catch(() => false)
       }
       if (CLICK_TEXT) {
         const target = page.getByRole('tab', { name: CLICK_TEXT, exact: true })
@@ -323,18 +392,21 @@ for (const route of ROUTES) {
       }
       checkInput = {
         requestedPath: path, finalPath: m.finalPath,
-        requiresAuth, authState,
+        requiredRole, activeRole: IDENTITY, requiresAuth, authState,
+        canonicalRedirect: route.canonicalRedirect ?? null,
         httpStatus: resp ? resp.status() : null,
         bodyTextLength: m.bodyTextLength, hasLoginForm: m.hasLoginForm,
         hasErrorBoundary: m.hasErrorBoundary, skeletonStillVisible: m.skeletonStillVisible,
         readinessSelector: route.ready ?? null, readinessFound,
+        readinessText: route.readyText ?? null, readinessTextFound,
+        expectedDenial, denialText, denialTextFound,
         requireActionSelector: route.requireAction ?? null, actionVisible,
         scrollWidth: m.sw, clientWidth: m.cw, offenders: m.offenders, clipped: m.clipped,
       }
     } catch (e) {
-      checkInput = { requestedPath: path, requiresAuth, authState, error: String(e?.message || e) }
+      checkInput = { requestedPath: path, requiredRole, activeRole: IDENTITY, requiresAuth, authState, error: String(e?.message || e) }
     }
-    const { outcome, detail } = classifyRoute(checkInput)
+    const { outcome, detail, state } = classifyRoute(checkInput)
 
     // Evidence for EVERY non-pass, not just the four screenshot widths — a failure
     // you cannot look at is a failure you cannot act on.
@@ -345,9 +417,10 @@ for (const route of ROUTES) {
       await page.screenshot({ path: evidence }).catch(() => { evidence = null })
     }
     results.push({
-      path, width: w, outcome, detail,
+      path, width: w, outcome, detail, state,
       finalPath: checkInput.finalPath ?? null, identity: IDENTITY,
-      assertion: route.ready ?? null, evidence,
+      assertion: expectedDenial ? denialText : (route.readyText ?? route.ready ?? null),
+      evidence,
     })
 
     // A connection failure mid-run means the server went away; every remaining
@@ -370,14 +443,15 @@ console.log(`${results.length} checks run${aborted ? ' (ABORTED EARLY)' : ''}`)
 console.log(`  PASS           ${counts.PASS}      <- content PROVEN rendered, layout held`)
 console.log(`  FAIL           ${counts.FAIL}      <- real finding (blank/login/error/skeleton/overflow/hidden action)`)
 console.log(`  ROUTE_ERROR    ${counts.ROUTE_ERROR}      <- real finding (HTTP >= 400)`)
-console.log(`  BLOCKED_AUTH   ${counts.BLOCKED_AUTH}      <- NOT measured: no session for an admin route`)
+console.log(`  BLOCKED_AUTH   ${counts.BLOCKED_AUTH}      <- NOT measured: the required role was not established`)
 console.log(`  BLOCKED_ENV    ${counts.BLOCKED_ENV}      <- NOT measured: app unreachable`)
 console.log(`  INCONCLUSIVE   ${counts.INCONCLUSIVE}      <- NOT measured: navigation/timeout`)
 
 if (!fullyMeasured) {
   console.log(`\n!! ${blocked} check(s) were NOT measured. They are not passes and are not UI findings.`)
   if (counts.BLOCKED_AUTH > 0) {
-    console.log(`   Set ADMIN_PASSWORD (and BASE) to measure admin routes; without a session they are skipped, never passed.`)
+    console.log(`   Supply a credential for the role each route needs (ADMIN_PASSWORD, or AUDIT_EMAIL/AUDIT_PASSWORD`)
+    console.log(`   for a named admin, manager or crew account). Without it those routes are skipped, never passed.`)
   }
 }
 
@@ -385,7 +459,7 @@ const uiFindings = results.filter(r => r.outcome === 'FAIL' || r.outcome === 'RO
 if (uiFindings.length) {
   console.log(`\n---- findings ----`)
   for (const r of uiFindings) {
-    console.log(`${r.outcome} ${r.path} @${r.width} [as ${r.identity}] rendered=${r.finalPath ?? 'n/a'} assert=${r.assertion ?? 'none'}`)
+    console.log(`${r.outcome} ${r.path} @${r.width} [as ${r.identity}${r.state ? `/${r.state}` : ''}] rendered=${r.finalPath ?? 'n/a'} assert=${r.assertion ?? 'none'}`)
     console.log(`       ${r.detail}${r.evidence ? `  → ${r.evidence}` : ''}`)
   }
 }
@@ -408,6 +482,7 @@ for (const [p, rs] of Object.entries(byPath)) {
   const verdict = f.length ? 'FAIL' : b.length ? b[0].outcome : 'PASS'
   const note = f.length ? `${f.length}/${rs.length} with findings @ ${f.map(x => x.width).join(',')}`
     : b.length ? `${b.length}/${rs.length} not measured — ${b[0].detail}`
+    : rs.every(x => x.state === 'denial') ? `${rs.length}/${rs.length} proved the EXPECTED DENIAL state (not the admin workflow)`
     : `${rs.length}/${rs.length} measured and passed`
   console.log(`${verdict} ${p} (${note})`)
 }
