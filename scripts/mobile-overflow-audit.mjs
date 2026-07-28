@@ -2,7 +2,8 @@
 // tool — run with:  npm run audit:mobile
 //
 //   PW_EXE=<chrome-headless-shell path> BASE=http://localhost:3111 \
-//     [SHOT_DIR=shots] [LABEL=run] [ONLY=/,/quote] [ADMIN_PASSWORD=…] [AUDIT_IDENTITY=…]
+//     [SHOT_DIR=shots] [LABEL=run] [ONLY=/,/quote] [AUDIT_IDENTITY=…]
+//     [ADMIN_PASSWORD=…  |  AUDIT_EMAIL=… AUDIT_PASSWORD=…]   [VERCEL_BYPASS=…]
 //     [CLICK_TEXT="Activation Readiness"] \
 //     node scripts/mobile-overflow-audit.mjs
 //
@@ -102,10 +103,19 @@ const ROUTES = [
 ]
 
 async function maybeAuth(ctx) {
+  // Two ways in, because the owner password is not available everywhere:
+  //  • ADMIN_PASSWORD            → the shared owner login (/api/admin/auth)
+  //  • AUDIT_EMAIL + AUDIT_PASSWORD → a named user (/api/auth/login), which is how
+  //    a Preview run authenticates as a specific admin or MANAGER without the
+  //    owner credential. Role coverage matters: a manager sees a different surface.
   const pw = process.env.ADMIN_PASSWORD
-  if (!pw) return false
+  const email = process.env.AUDIT_EMAIL
+  const userPw = process.env.AUDIT_PASSWORD
+  if (!pw && !(email && userPw)) return false
   try {
-    const res = await ctx.request.post(`${BASE}/api/admin/auth`, { data: { password: pw } })
+    const res = pw
+      ? await ctx.request.post(`${BASE}/api/admin/auth`, { data: { password: pw } })
+      : await ctx.request.post(`${BASE}/api/auth/login`, { data: { email, password: userPw } })
     if (!res.ok()) return false
     // Production correctly marks the session Secure. Local HTTP audits cannot send that
     // cookie automatically, so install the returned token into this isolated localhost
@@ -115,8 +125,12 @@ async function maybeAuth(ctx) {
       const match = setCookie.match(/(?:^|[,;]\s*)jk_admin_session=([^;]+)/)
       if (match) await ctx.addCookies([{ name: 'jk_admin_session', value: match[1], url: BASE, httpOnly: true, secure: false, sameSite: 'Lax' }])
     }
+    // A named manager is legitimately not `owner`; treat any accepted admin-surface
+    // session as authenticated, and prove it by reading a gated endpoint.
     const check = await ctx.request.get(`${BASE}/api/admin/platform/whoami`)
-    return check.ok() && (await check.json().catch(() => null))?.owner === true
+    if (check.ok() && (await check.json().catch(() => null))?.owner === true) return true
+    const gated = await ctx.request.get(`${BASE}/api/admin/timesheets`)
+    return gated.ok()
   } catch { return false }
 }
 
@@ -148,7 +162,12 @@ if (!pre.ok) {
 }
 
 const browser = await chromium.launch({ executablePath: PW_EXE })
-const ctx = await browser.newContext({ deviceScaleFactor: 1 })
+// A protected Vercel Preview 302s every request to SSO. VERCEL_BYPASS carries the
+// project's automation bypass secret so the audit can reach it. Never logged.
+const ctx = await browser.newContext({
+  deviceScaleFactor: 1,
+  ...(process.env.VERCEL_BYPASS ? { extraHTTPHeaders: { 'x-vercel-protection-bypass': process.env.VERCEL_BYPASS } } : {}),
+})
 const authed = await maybeAuth(ctx)
 // Recorded on every result so a report can never be read as "some admin somewhere".
 const IDENTITY = authed ? (process.env.AUDIT_IDENTITY || 'owner/admin') : 'anonymous'
