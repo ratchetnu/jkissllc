@@ -64,15 +64,33 @@ test('an admin route with no session is BLOCKED_AUTH — never PASS', () => {
   }
 })
 
-test('rendering the sign-in screen on an admin route is BLOCKED_AUTH, never PASS', () => {
-  const r = classifyRoute(goodAdmin({ hasLoginForm: true })) as Result
-  assert.equal(r.outcome, 'BLOCKED_AUTH')
-  assert.match(r.detail, /sign-in/i)
+test('rendering the sign-in screen on an admin route never PASSes', () => {
+  // With NO session this is BLOCKED_AUTH: we could not measure the route. (The
+  // missing-session check fires first, so the reason names that rather than the form.)
+  const blocked = classifyRoute(goodAdmin({ hasLoginForm: true, authState: 'absent' })) as Result
+  assert.equal(blocked.outcome, 'BLOCKED_AUTH')
+  assert.match(blocked.detail, /not authenticated|sign-in/i)
+  assert.match(blocked.detail, /not measured|sign-in/i)
+
+  // WITH a valid session it is a defect, not a missing credential — the app rejected a
+  // principal it had just accepted. Reporting that as BLOCKED_AUTH filed a real bug
+  // under "not measured", which is what Wave 2 corrects.
+  const failed = classifyRoute(goodAdmin({ hasLoginForm: true, authState: 'ok' })) as Result
+  assert.equal(failed.outcome, 'FAIL')
+  assert.match(failed.detail, /sign-in/i)
 })
 
 test('a redirect away from the requested route never passes', () => {
+  // A redirect is evidence about ROUTING, never about authentication. With a session
+  // in hand an undeclared redirect is a finding; it used to be reported as "no session"
+  // and that misfiled `/ai/shadow → /ai/performance` 18 times.
   const admin = classifyRoute(goodAdmin({ finalPath: '/admin' })) as Result
-  assert.equal(admin.outcome, 'BLOCKED_AUTH')
+  assert.equal(admin.outcome, 'FAIL')
+  assert.match(admin.detail, /unexpected redirect/)
+
+  // Without a session we genuinely cannot tell an auth bounce from a real redirect.
+  const noSession = classifyRoute(goodAdmin({ finalPath: '/admin', authState: 'absent' })) as Result
+  assert.equal(noSession.outcome, 'BLOCKED_AUTH')
   const pub = classifyRoute(goodAdmin({
     requiresAuth: false, authState: 'not_required',
     requestedPath: '/quote', finalPath: '/',

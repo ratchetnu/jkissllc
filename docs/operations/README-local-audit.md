@@ -189,12 +189,50 @@ Outcomes, none of which can become a pass:
 
 | Outcome | Meaning |
 |---|---|
-| `PASS` | content proven rendered, layout held |
-| `FAIL` | real finding — blank, sign-in on a public route, error boundary, stuck skeleton, readiness assertion unmet, page-level overflow, or a hidden required action |
+| `PASS` | content proven rendered, layout held — or a configured **expected denial** proven for a role that is supposed to be refused |
+| `FAIL` | real finding — blank, sign-in on a public route, error boundary, stuck skeleton, readiness assertion unmet, page-level overflow, a hidden required action, an undeclared redirect, or a redirect loop |
 | `ROUTE_ERROR` | HTTP ≥ 400 |
-| `BLOCKED_AUTH` | admin route with no session — **not measured** |
-| `BLOCKED_ENV` | app unreachable — **not measured** |
+| `BLOCKED_AUTH` | the role the route requires could not be established — **not measured** |
+| `BLOCKED_ENV` | app unreachable, or a refused target — **not measured** |
 | `INCONCLUSIVE` | navigation/timeout — **not measured** |
+
+Every result also carries a `state`: `content` (the route's own page) or `denial` (the
+authorization refusal a lower-privilege role is supposed to see). A manager PASS on
+`/admin/operations/pay-statements` is a *denial* pass and is printed as such — it never
+means the admin workflow was exercised.
+
+### Roles, not a boolean
+
+Each route declares the **role** it needs (`none` / `crew` / `admin`), because "is a
+login required" cannot express the difference between `/portal` wanting a crew member
+and `/admin/*` wanting staff. A manager counts for admin surfaces — a manager
+legitimately browses them and simply sees less.
+
+Identity comes from the server's own login response and is confirmed with a probe that
+the role may actually read (`/api/portal/me` for crew, `/api/admin/platform/whoami` for
+staff). It is never inferred from page content, and `AUDIT_IDENTITY` cannot override it.
+A single admin-only endpoint used to be the universal proof of authentication, so a
+valid crew session — which correctly gets 403 there — was recorded as `anonymous` while
+the browser went on rendering authenticated crew pages. Authentication and authorization
+are different questions.
+
+### Redirects
+
+A redirect is evidence about routing, never about authentication:
+
+- with a session, an **undeclared** redirect is a `FAIL` — it must never silently pass
+- a route may declare `canonicalRedirect`, and is then judged on the destination
+- **without** a session, a redirect on a gated route stays `BLOCKED_AUTH` (an auth
+  bounce and a real redirect are indistinguishable)
+- an authenticated bounce to the sign-in screen is a `FAIL`: the app rejected a
+  principal it had just accepted
+- a redirect **loop** is a `FAIL`, not an environment problem — the server answered
+- a redirect to Production is stopped by the target guard before launch (§ above)
+
+Routes that only redirect are not listed at all. `/opspilot` (→ `/operion`) and
+`/admin/operations/ai/shadow` (→ `/ai/performance`) can never satisfy a rendered-content
+assertion and their destinations are already audited, so listing them added no coverage
+and 54 false results.
 
 Exit codes: **0** every check measured and passed · **1** real findings · **2**
 something was not measured. Blocked outranks findings, so an unmeasured run can

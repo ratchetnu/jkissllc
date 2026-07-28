@@ -29,6 +29,16 @@ export function isInfrastructureError(message) {
   return INFRA_PATTERNS.some((re) => re.test(s))
 }
 
+// A redirect loop is a defect in the PAGE, not in the environment — the server is
+// answering, it is just answering with a cycle. Treating it as a navigation timeout
+// would file it under "could not measure" and hide a real bug.
+const REDIRECT_LOOP_PATTERN = /ERR_TOO_MANY_REDIRECTS|redirect(?:ed)?\s+too\s+many\s+times/i
+
+/** True when navigation failed because the route redirects in a cycle. */
+export function isRedirectLoopError(message) {
+  return REDIRECT_LOOP_PATTERN.test(String(message ?? ''))
+}
+
 /**
  * Classify one route × viewport check.
  *
@@ -102,80 +112,173 @@ export const ROUTE_BLOCKED_OUTCOMES = ['BLOCKED_AUTH', 'BLOCKED_ENV', 'INCONCLUS
 /** Below this much visible text, the page rendered nothing worth measuring. */
 export const MIN_BODY_TEXT = 40
 
+// ── Roles ────────────────────────────────────────────────────────────────────
+//
+// A route declares the role it NEEDS, not merely "is a login required". The old
+// boolean could not express the difference between "/portal wants a crew member" and
+// "/admin/* wants staff", so /portal was declared public and its login gate was
+// reported as a layout FAIL on every anonymous, admin and manager run — 27 of the 90
+// false failures in the 2026-07-27 audit.
+//
+// `manager` is included for admin surfaces on purpose: a manager legitimately browses
+// them and simply sees less. Being shown a denial card is authorization working, not
+// authentication missing.
+export const ROUTE_ROLE_MATRIX = {
+  none: ['anonymous', 'crew', 'manager', 'admin', 'owner'],
+  crew: ['crew'],
+  admin: ['manager', 'admin', 'owner'],
+}
+
+/** True when the signed-in principal may reach a route with this requirement. */
+export function roleSatisfiesRoute(requiredRole, activeRole) {
+  const allowed = ROUTE_ROLE_MATRIX[requiredRole ?? 'none']
+  if (!allowed) return false
+  return allowed.includes(activeRole ?? 'anonymous')
+}
+
 /**
  * Classify one route × viewport check with readiness taken into account.
  *
  * @param {{
  *   requestedPath?: string, finalPath?: string,
+ *   requiredRole?: 'none'|'crew'|'admin'|null,
+ *   activeRole?: 'anonymous'|'crew'|'manager'|'admin'|'owner',
  *   requiresAuth?: boolean, authState?: 'ok'|'failed'|'absent'|'not_required',
+ *   canonicalRedirect?: string|null,
  *   error?: string|null, httpStatus?: number|null,
  *   bodyTextLength?: number, hasLoginForm?: boolean, hasErrorBoundary?: boolean,
  *   skeletonStillVisible?: boolean,
  *   readinessSelector?: string|null, readinessFound?: boolean|null,
+ *   readinessText?: string|null, readinessTextFound?: boolean|null,
+ *   expectedDenial?: boolean, denialText?: string|null, denialTextFound?: boolean|null,
  *   requireActionSelector?: string|null, actionVisible?: boolean|null,
  *   scrollWidth?: number, clientWidth?: number, offenders?: string[], clipped?: string[],
  * }} input
- * @returns {{ outcome: RouteOutcome, detail: string }}
+ * @returns {{ outcome: RouteOutcome, detail: string, state: 'content'|'denial'|null }}
  */
 export function classifyRoute(input = {}) {
   const {
     requestedPath, finalPath,
+    requiredRole = null, activeRole = 'anonymous',
     requiresAuth = false, authState = 'not_required',
+    canonicalRedirect = null,
     error, httpStatus,
     bodyTextLength = 0, hasLoginForm = false, hasErrorBoundary = false,
     skeletonStillVisible = false,
     readinessSelector = null, readinessFound = null,
+    readinessText = null, readinessTextFound = null,
+    expectedDenial = false, denialText = null, denialTextFound = null,
     requireActionSelector = null, actionVisible = null,
     scrollWidth, clientWidth, offenders = [], clipped = [],
   } = input
 
-  // 1. Nothing was observed at all.
+  // `requiredRole` is the modern form; `requiresAuth` is the legacy boolean. When only
+  // the boolean is given, "needs a session" means the admin surface.
+  const needsRole = requiredRole ?? (requiresAuth ? 'admin' : 'none')
+  const gated = needsRole !== 'none'
+  const authed = authState === 'ok'
+  // A caller that names no role is using the legacy contract, where `authState === 'ok'`
+  // by itself meant "we hold a session good for this route". Only a NAMED role is
+  // checked against the matrix, so adding role awareness cannot retroactively block
+  // callers that never claimed one.
+  const roleKnown = input.activeRole !== undefined
+  // Whether THIS principal may reach the route at all. A signed-in admin visiting a
+  // crew-only route is authenticated but not eligible — that is BLOCKED_AUTH for the
+  // route's purposes, and it must never be silently relabelled as the crew run.
+  const eligible = !gated || (authed && (!roleKnown || roleSatisfiesRoute(needsRole, activeRole)))
+
+  // 1. Nothing was observed at all. A redirect LOOP is separated out: the server
+  //    answered, so it is a page defect, not an environment one.
   if (error) {
+    if (isRedirectLoopError(error)) {
+      return done('FAIL', `redirect loop on ${requestedPath ?? 'route'}: ${trim(error)}`)
+    }
     return isInfrastructureError(error)
-      ? { outcome: 'BLOCKED_ENV', detail: `app unreachable: ${trim(error)}` }
-      : { outcome: 'INCONCLUSIVE', detail: `navigation failed: ${trim(error)}` }
+      ? done('BLOCKED_ENV', `app unreachable: ${trim(error)}`)
+      : done('INCONCLUSIVE', `navigation failed: ${trim(error)}`)
   }
 
-  // 2. An authenticated route we are not authenticated for was never really visited.
-  //    This is the defect that made ~20 admin routes pass against a sign-in screen.
-  if (requiresAuth && authState !== 'ok') {
-    return { outcome: 'BLOCKED_AUTH', detail: `not authenticated (${authState}) — route not measured` }
+  // 2. We could not establish the role this route requires, so it was never really
+  //    visited. This is the defect that made ~20 admin routes pass against a sign-in
+  //    screen. It is about AUTHENTICATION — never about a redirect existing.
+  if (!eligible) {
+    const why = !authed
+      ? `not authenticated (${authState})`
+      : `signed in as ${activeRole}, which cannot reach a ${needsRole} route`
+    return done('BLOCKED_AUTH', `${why} — route not measured`)
   }
 
   // 3. The server said no.
   if (typeof httpStatus === 'number' && httpStatus >= 400) {
-    return { outcome: 'ROUTE_ERROR', detail: `HTTP ${httpStatus}` }
+    return done('ROUTE_ERROR', `HTTP ${httpStatus}`)
   }
 
   // 4. We landed on a sign-in screen. A 200 does not make that the page under test.
+  //    With a session in hand this is a real defect — the app rejected a valid
+  //    principal — so it must not be filed under "no session".
   if (hasLoginForm) {
-    return requiresAuth
-      ? { outcome: 'BLOCKED_AUTH', detail: 'rendered the sign-in screen, not the route' }
-      : { outcome: 'FAIL', detail: 'unexpected sign-in screen on a public route' }
+    if (authed) return done('FAIL', `signed in as ${activeRole} but the route rendered the sign-in screen`)
+    return gated
+      ? done('BLOCKED_AUTH', 'rendered the sign-in screen, not the route')
+      : done('FAIL', 'unexpected sign-in screen on a public route')
   }
 
   // 5. We were sent somewhere else.
+  //
+  //    The defect this replaces: ANY redirect on an authenticated route returned
+  //    BLOCKED_AUTH, even with authState === 'ok'. `/admin/operations/ai/shadow`
+  //    redirects to `/ai/performance` by design, and the audit reported it as "no
+  //    session" 18 times — a redirect is evidence about ROUTING, never about auth.
   if (requestedPath && finalPath && finalPath !== requestedPath) {
-    return requiresAuth
-      ? { outcome: 'BLOCKED_AUTH', detail: `redirected ${requestedPath} → ${finalPath}` }
-      : { outcome: 'FAIL', detail: `redirected ${requestedPath} → ${finalPath}` }
+    // A declared canonical destination is the route working as designed. Fall through
+    // and judge the page we actually landed on.
+    if (canonicalRedirect && finalPath === canonicalRedirect) {
+      // continue — readiness below is asserted against the destination
+    } else if (!authed && gated) {
+      // Without a session we genuinely cannot tell an auth bounce from a real redirect.
+      return done('BLOCKED_AUTH', `redirected ${requestedPath} → ${finalPath} with no session`)
+    } else {
+      // Authenticated, or a public route: an undeclared redirect is a routing finding.
+      // It must never silently pass just because the destination happens to render.
+      return done('FAIL', `unexpected redirect ${requestedPath} → ${finalPath}`)
+    }
   }
 
   // 6. An error boundary renders with HTTP 200 and perfect layout.
-  if (hasErrorBoundary) return { outcome: 'FAIL', detail: 'error boundary rendered' }
+  if (hasErrorBoundary) return done('FAIL', 'error boundary rendered')
 
-  // 7. A blank client shell fits every viewport.
+  // 7. A blank client shell fits every viewport, and satisfies no assertion below.
   if (bodyTextLength < MIN_BODY_TEXT) {
-    return { outcome: 'FAIL', detail: `blank/near-empty body (${bodyTextLength} chars < ${MIN_BODY_TEXT})` }
+    return done('FAIL', `blank/near-empty body (${bodyTextLength} chars < ${MIN_BODY_TEXT})`)
   }
 
   // 8. A skeleton that never resolved is not the feature.
-  if (skeletonStillVisible) return { outcome: 'FAIL', detail: 'loading skeleton never resolved' }
+  if (skeletonStillVisible) return done('FAIL', 'loading skeleton never resolved')
 
   // 9. The route-specific proof that THIS page rendered.
-  if (readinessSelector && readinessFound === false) {
-    return { outcome: 'FAIL', detail: `readiness assertion not met: ${readinessSelector}` }
+  //
+  //    Two shapes, because a lower-privilege principal is SUPPOSED to see a different
+  //    page. A manager on /pay-statements gets "Pay statements are restricted to
+  //    administrators" — the app working correctly — and asserting the admin content
+  //    against it produced 9 false failures. The denial is proven on its own terms and
+  //    reported as its own state, so it can never be read as the admin workflow passing.
+  if (expectedDenial) {
+    if (denialText && denialTextFound === false) {
+      return done('FAIL', `expected denial state not rendered: "${denialText}"`, 'denial')
+    }
+    if (!denialText) {
+      return done('FAIL', 'route declares an expected denial state but no denial assertion', 'denial')
+    }
+  } else {
+    if (readinessSelector && readinessFound === false) {
+      return done('FAIL', `readiness assertion not met: ${readinessSelector}`)
+    }
+    if (readinessText && readinessTextFound === false) {
+      return done('FAIL', `expected content not rendered: "${readinessText}"`)
+    }
   }
+
+  const state = expectedDenial ? 'denial' : 'content'
 
   // 10. Only now is a layout measurement meaningful.
   const parts = []
@@ -183,12 +286,18 @@ export function classifyRoute(input = {}) {
     parts.push(`scrollW=${scrollWidth} clientW=${clientWidth} :: ${offenders.join(' | ')}`)
   }
   if (clipped.length) parts.push(`CLIPPED:[${clipped.join(',')}]`)
-  if (requireActionSelector && actionVisible === false) {
+  // A denial card has no workflow, so a missing primary action is not a finding there.
+  if (!expectedDenial && requireActionSelector && actionVisible === false) {
     parts.push(`primary action not visible: ${requireActionSelector}`)
   }
-  if (parts.length) return { outcome: 'FAIL', detail: parts.join(' ') }
+  if (parts.length) return done('FAIL', parts.join(' '), state)
 
-  return { outcome: 'PASS', detail: '' }
+  return done('PASS', expectedDenial ? `expected denial state for ${activeRole}` : '', state)
+}
+
+/** Uniform result shape. `state` records WHICH contract was proven, never just "ok". */
+function done(outcome, detail, state = null) {
+  return { outcome, detail, state }
 }
 
 /**
