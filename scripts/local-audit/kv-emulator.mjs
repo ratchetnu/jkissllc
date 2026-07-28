@@ -83,6 +83,16 @@ const CAS_RE = /cjson\.decode/i
 // APRV-1's single-use transition also decodes JSON, so it must be recognised BEFORE
 // the generic version-CAS branch or it would be compared against the wrong field.
 const STATUS_CAS_RE = /decoded\.status/i
+// Baseline adoption's multi-key CAS decodes JSON too. Before this branch existed it
+// fell into the generic version-CAS below, which read the WRONG KEY (the adoption
+// record instead of the business), compared the WRONG FIELD (`version` instead of
+// `updatedAt`), compared it against the WRONG ARGV (adoptedAt instead of the expected
+// updatedAt), and wrote ONE of the script's FOUR keys. The CAS condition was never
+// evaluated, so a baseline-adoption runtime check against this emulator proved
+// nothing — assertions phrased as "not more than one adoption" passed vacuously on
+// zero adoptions, and "no partial state" was measured against a partial write the
+// emulator itself invented.
+const BASELINE_CAS_RE = /decoded\.updatedAt/i
 
 function evalScript(script, keys, args) {
   if (OWNED_RE.test(script) && RENEW_RE.test(script)) {  // compare-and-extend lock renewal
@@ -106,6 +116,33 @@ function evalScript(script, keys, args) {
     try { cur = JSON.parse(raw).status } catch { return 0 }
     if (cur !== args[1]) return 0
     strings.set(keys[0], { v: args[0], exp: args[2] ? Date.now() + Number(args[2]) : null })
+    return 1
+  }
+  if (BASELINE_CAS_RE.test(script)) {
+    // Baseline adoption (app/lib/platform/updates/store.ts):
+    //   local current = redis.call('GET', KEYS[3])          -- the BUSINESS record
+    //   if not current then return 0 end
+    //   if tonumber(cjson.decode(current).updatedAt) ~= tonumber(ARGV[6]) then return 0 end
+    //   SET KEYS[1] ARGV[1]                                  -- adoption record
+    //   ZADD KEYS[2] ARGV[2] ARGV[3]                         -- adoption index
+    //   SET KEYS[3] ARGV[4]                                  -- business record
+    //   ZADD KEYS[4] ARGV[2] ARGV[5]                         -- business index
+    // Lua is 1-indexed, so KEYS[3] is keys[2] and ARGV[6] is args[5] here.
+    const business = getStr(keys[2])
+    if (business === null) return 0                    // missing business → refuse
+    let decoded
+    try { decoded = JSON.parse(business) } catch {
+      // Faithful to Redis: cjson.decode raises on malformed input and the whole
+      // EVAL fails — it does NOT quietly return 0. Surfacing it keeps a corrupt
+      // record loud instead of looking like an ordinary CAS loss.
+      throw new Error('EMULATOR_LUA_ERROR: cjson.decode failed on KEYS[3]')
+    }
+    if (Number(decoded?.updatedAt) !== Number(args[5])) return 0   // stale expectation
+    // All four writes, or none. This is the property the script exists to provide.
+    strings.set(keys[0], { v: args[0], exp: null })
+    zset(keys[1]).set(args[2], Number(args[1]))
+    strings.set(keys[2], { v: args[3], exp: null })
+    zset(keys[3]).set(args[4], Number(args[1]))
     return 1
   }
   if (CAS_RE.test(script)) {                           // optimistic version CAS on a JSON doc
