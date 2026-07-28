@@ -506,6 +506,7 @@ for (const route of ROUTES) {
       missingRequired: checkInput.missingRequired ?? [],
       otherFailures: checkInput.otherFailures ?? [],
       consoleErrors: checkInput.consoleErrors ?? [],
+      networkEchoes: checkInput.networkEchoes ?? [],
       pageErrors: checkInput.pageErrors ?? [],
       hydrationErrors: checkInput.hydrationErrors ?? [],
       evidence,
@@ -554,6 +555,7 @@ if (uiFindings.length) {
     if (r.pageErrors?.length) console.log(`       page errors: ${r.pageErrors.join(' | ')}`)
     if (r.hydrationErrors?.length) console.log(`       hydration: ${r.hydrationErrors.join(' | ')}`)
     if (r.consoleErrors?.length) console.log(`       console: ${r.consoleErrors.join(' | ')}`)
+    if (r.networkEchoes?.length) console.log(`       (console echoes of subresource failures — judged by the network contract, not here): ${r.networkEchoes.join(' | ')}`)
     if (r.otherFailures?.length) console.log(`       other (non-disqualifying) request failures: ${r.otherFailures.join(', ')}`)
   }
 }

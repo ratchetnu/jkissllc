@@ -19,7 +19,7 @@ import { readFileSync } from 'node:fs'
 import { classifyRoute, summarizeRoutes } from './mobile-audit-classify.mjs'
 import {
   redactMessage, summarizeRuntimeSignals, evaluateRequests,
-  isApplicationRequest, isHydrationMessage, isAllowlistedNoise,
+  isApplicationRequest, isHydrationMessage, isAllowlistedNoise, isNetworkEcho,
   CONSOLE_NOISE_ALLOWLIST, MAX_MESSAGE_LENGTH,
 } from './mobile-audit-runtime-signals.mjs'
 
@@ -72,11 +72,53 @@ test('the noise allowlist stays narrow and every entry explains itself', () => {
   assert.equal(isAllowlistedNoise('Failed to load resource: 403 (Forbidden)'), false)
 })
 
-test('duplicate messages are de-duplicated', () => {
+test("Chrome's generic resource-failure echo is owned by the network layer, not the console", () => {
+  // The text names no URL, so the console cannot tell whether the endpoint mattered.
+  // Judging it here would sentence the same failure twice, the second time blind.
+  const { consoleErrors, networkEchoes } = summarizeRuntimeSignals({
+    consoleErrors: ['Failed to load resource: the server responded with a status of 429 ()'],
+  })
+  assert.deepEqual(consoleErrors, [])
+  assert.equal(networkEchoes.length, 1, 'still reported, just not independently disqualifying')
+  assert.equal(cls(good({ consoleErrors })).outcome, 'PASS')
+})
+
+test('a required endpoint failure still fails even though its console echo does not', () => {
+  const ev = evaluateRequests([{ path: '/api/admin/ai-overview', method: 'GET', status: 403 }], ['/api/admin/ai-overview'])
   const { consoleErrors } = summarizeRuntimeSignals({
-    consoleErrors: Array(50).fill('Failed to load resource: the server responded with a status of 403'),
+    consoleErrors: ['Failed to load resource: the server responded with a status of 403 ()'],
+  })
+  assert.deepEqual(consoleErrors, [], 'the echo alone is not the mechanism')
+  const r = cls(good({ ...ev, consoleErrors }))
+  assert.equal(r.outcome, 'FAIL')
+  assert.equal(r.state, 'data', 'the network contract is what fails it')
+})
+
+test('a real application console error still fails, echoes notwithstanding', () => {
+  const { consoleErrors } = summarizeRuntimeSignals({
+    consoleErrors: [
+      'Failed to load resource: the server responded with a status of 404 ()',
+      "TypeError: Cannot read properties of null (reading 'id')",
+    ],
   })
   assert.equal(consoleErrors.length, 1)
+  assert.match(consoleErrors[0], /TypeError/)
+  assert.equal(cls(good({ consoleErrors })).outcome, 'FAIL')
+})
+
+test('duplicate messages are de-duplicated', () => {
+  // One failing fetch in a render loop emits the same line hundreds of times. A report
+  // that repeats it hundreds of times is unreadable without being any more true.
+  const { consoleErrors } = summarizeRuntimeSignals({
+    consoleErrors: Array(50).fill("TypeError: Cannot read properties of null (reading 'id')"),
+  })
+  assert.equal(consoleErrors.length, 1)
+
+  const { networkEchoes } = summarizeRuntimeSignals({
+    consoleErrors: Array(50).fill('Failed to load resource: the server responded with a status of 403'),
+  })
+  assert.equal(networkEchoes.length, 1, 'echoes are de-duplicated too')
+  assert.equal(isNetworkEcho('Failed to load resource: the server responded with a status of 403'), true)
 })
 
 test('a console message echoing a page error is not counted twice', () => {

@@ -69,6 +69,23 @@ export function isAllowlistedNoise(message) {
   return CONSOLE_NOISE_ALLOWLIST.some((e) => e.pattern.test(String(message ?? '')))
 }
 
+// Chrome logs this for EVERY non-2xx subresource, with no way to tell from the text
+// which request it was. It is an echo of something the network layer already saw and
+// already judged: `evaluateRequests` decides whether that endpoint was required.
+// Counting the echo as an independent console error means the same failure is judged
+// twice, and the second judgement has no idea whether the endpoint mattered — which
+// turned a shared rate-limiter tripping under the audit's own parallel load into 88
+// false failures on static public pages.
+//
+// This is NOT an allowlist entry: the failure is still reported, and if it was a
+// required endpoint the network contract fails the route on its own terms.
+const NETWORK_ECHO_PATTERN = /^Failed to load resource(?::|\b)/i
+
+/** True for Chrome's generic subresource-failure echo, which the network layer owns. */
+export function isNetworkEcho(message) {
+  return NETWORK_ECHO_PATTERN.test(String(message ?? ''))
+}
+
 // A console/pageerror message that means the framework failed to hydrate, as opposed to
 // an ordinary application error. Kept separate because the remedy is different and the
 // audit must not report every slow fetch as a hydration failure.
@@ -114,13 +131,17 @@ export function summarizeRuntimeSignals(raw = {}) {
 
   const hydration = [...pageErrors, ...consoleAll].filter(isHydrationMessage)
   const hydrationSet = new Set(hydration)
-  const consoleErrors = consoleAll.filter((m) => !hydrationSet.has(m) && !isAllowlistedNoise(m))
-  const ignored = consoleAll.filter((m) => isAllowlistedNoise(m))
+  const remaining = consoleAll.filter((m) => !hydrationSet.has(m))
+
+  const ignored = remaining.filter(isAllowlistedNoise)
+  const networkEchoes = remaining.filter((m) => !isAllowlistedNoise(m) && isNetworkEcho(m))
+  const consoleErrors = remaining.filter((m) => !isAllowlistedNoise(m) && !isNetworkEcho(m))
 
   return {
     consoleErrors,
     pageErrors: pageErrors.filter((m) => !hydrationSet.has(m)),
     hydrationErrors: hydration,
+    networkEchoes,
     ignored,
   }
 }
