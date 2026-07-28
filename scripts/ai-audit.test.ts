@@ -11,7 +11,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-process.env.TENANT_ID = 'audit-tenant.example'
+// WAVE 5 (TEN-1): opaque slug — a dotted host is no longer a valid tenant boundary.
+process.env.TENANT_ID = 'audit-tenant'
 
 import { runAiTask, type AiTaskDeps } from '../app/lib/ai/service'
 import { getPrompt } from '../app/lib/ai/prompts'
@@ -69,7 +70,7 @@ for (const f of FEATURES) {
     assert.equal(rec.taskId, f.taskId)
     assert.equal(rec.outcome, 'success')
     assert.equal(rec.ok, true)
-    assert.equal(rec.tenantId, 'audit-tenant.example')
+    assert.equal(rec.tenantId, 'audit-tenant')
     // prompt-version tracking — recorded from the registry at call time
     assert.equal(rec.promptVersion, getPrompt(f.taskId).version)
     // token counts — passed straight through from the model usage
