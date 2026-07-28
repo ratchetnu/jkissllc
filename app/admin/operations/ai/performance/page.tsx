@@ -10,7 +10,8 @@ import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import OperationsShell from '../../OperationsShell'
-import AICommandShell, { aiCard, aiLabel, AIStat, AISkeleton, AIError, AIEmpty } from '../AICommandShell'
+import AICommandShell, { aiCard, aiLabel, AIStat, AISkeleton, AIError, AIEmpty, AIDenied } from '../AICommandShell'
+import { accessStateForStatus } from '../../../../lib/access-state'
 
 const V2C = '#34d399', V1C = '#f87171', TIEC = '#94a3b8'
 const pct = (n?: number | null) => (typeof n === 'number' ? `${n}%` : '—')
@@ -68,12 +69,12 @@ function Perf() {
 
   const hasFilter = !!(category || model || reviewed || gt || fromD || toD)
   const resetFilters = () => { setCategory(''); setModel(''); setReviewed(''); setGt(''); setFromD(''); setToD('') }
-  const [res, setRes] = useState<{ key: string; payload: Payload | null; err: string } | null>(null)
+  const [res, setRes] = useState<{ key: string; payload: Payload | null; err: string; denied?: boolean } | null>(null)
   useEffect(() => {
     const c = new AbortController()
-    const done = (payload: Payload | null, err: string) => setRes({ key: query, payload, err })
+    const done = (payload: Payload | null, err: string, denied = false) => setRes({ key: query, payload, err, denied })
     fetch(`/api/admin/shadow-learning${query}`, { credentials: 'same-origin', signal: c.signal })
-      .then(async (r) => { if (r.status === 401 || r.status === 403) return done(null, 'Owner access required.'); done(await r.json(), '') })
+      .then(async (r) => { if (accessStateForStatus(r.status) === 'denied') return done(null, '', true); done(await r.json(), '') })
       .catch((e) => { if ((e as { name?: string })?.name !== 'AbortError') done(null, 'Could not load performance.') })
     return () => c.abort()
   }, [query])
@@ -87,11 +88,16 @@ function Perf() {
   const data = res?.payload ?? null
   const err = res?.err ?? ''
 
+  // Denial is checked before `loading`: a refused request has already resolved, so the
+  // skeleton must not outlive it.
+  if (res?.denied) return <AIDenied />
   if (err) return <AIError message={err} />
   if (!res || loading) return <AISkeleton rows={4} />
   if (data && !data.enabled) return <AIEmpty title="AI evaluation is off" detail={data.reason ?? 'Enable SHADOW_ANALYTICS_ENABLED to see performance.'} />
   const o = data?.overview; const r = data?.readiness
-  if (!o || !r) return <AISkeleton rows={4} />
+  // A 200 missing the sections this screen renders is a broken response, not a pending
+  // one — an endless skeleton here is the "chrome renders, data area empty" symptom.
+  if (!o || !r) return <AIError message="The performance response was incomplete." />
   const verified = o.groundTruthsRecorded
 
   const inputStyle: React.CSSProperties = { padding: '6px 9px', background: 'transparent', border: '1px solid var(--line)', borderRadius: 8, color: 'var(--text)', fontSize: 11.5 }

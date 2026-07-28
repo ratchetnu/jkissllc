@@ -369,7 +369,9 @@ test('every known false-PASS route declares its required endpoint', () => {
   for (const c of KNOWN) {
     const block = AUDIT_SRC.slice(AUDIT_SRC.indexOf(`path: '${c.path}'`))
     const entry = block.slice(0, block.indexOf('},') + 2)
-    assert.match(entry, /data: \{ required:/, `${c.path} must declare a data contract`)
+    // Whitespace-tolerant: a route may spread its data contract over several lines once
+    // it carries per-role overrides. What matters is that it declares one, not its layout.
+    assert.match(entry, /data: \{\s*required:/, `${c.path} must declare a data contract`)
     assert.ok(entry.includes(c.endpoint), `${c.path} must declare ${c.endpoint}`)
   }
 })

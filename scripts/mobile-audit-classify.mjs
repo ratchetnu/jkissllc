@@ -137,6 +137,29 @@ export function roleSatisfiesRoute(requiredRole, activeRole) {
 }
 
 /**
+ * The endpoints a route genuinely cannot work without FOR THIS PRINCIPAL.
+ *
+ * A single global `required` list assumes every role needs the same data, and that is
+ * not true: a manager holds `businesses:manage` but not `invoices:manage`, so
+ * /admin/operations/businesses is legitimately theirs while /api/admin/route-invoices
+ * legitimately refuses them. Requiring it of everyone reported a working page as a data
+ * failure; dropping it for everyone would stop proving that an ADMIN can load invoices.
+ *
+ * `byRole` therefore narrows (or widens) the list for one role, and the global list
+ * remains the default. Naming the exception per role is the point — it keeps the
+ * contract explicit rather than quietly weakening it for all.
+ *
+ * @param {{ required?: string[], byRole?: Record<string, { required?: string[] }> }|null|undefined} data
+ * @param {string|null|undefined} activeRole
+ * @returns {string[]}
+ */
+export function requiredEndpointsFor(data, activeRole) {
+  if (!data) return []
+  const override = activeRole ? data.byRole?.[activeRole] : undefined
+  return (override?.required ?? data.required) ?? []
+}
+
+/**
  * Classify one route × viewport check with readiness taken into account.
  *
  * @param {{

@@ -11,7 +11,8 @@ import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import OperationsShell from '../../OperationsShell'
-import AICommandShell from '../AICommandShell'
+import AICommandShell, { AIDenied, AISkeleton } from '../AICommandShell'
+import { accessStateForStatus } from '../../../../lib/access-state'
 
 const card: React.CSSProperties = { background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 14, padding: 16 }
 const lab: React.CSSProperties = { display: 'block', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--muted)', marginBottom: 4 }
@@ -67,7 +68,7 @@ function Inner() {
   // One keyed result for the whole request; loading is DERIVED from the key, so the fetch
   // effect never calls setState synchronously (which would cascade renders) and a stale
   // response can't be mistaken for the current one.
-  const [res, setRes] = useState<{ key: string; payload: Payload | null; err: string } | null>(null)
+  const [res, setRes] = useState<{ key: string; payload: Payload | null; err: string; denied?: boolean } | null>(null)
 
   const query = useMemo(() => {
     const p = new URLSearchParams()
@@ -81,10 +82,10 @@ function Inner() {
 
   useEffect(() => {
     const c = new AbortController()
-    const done = (payload: Payload | null, err: string) => setRes({ key: query, payload, err })
+    const done = (payload: Payload | null, err: string, denied = false) => setRes({ key: query, payload, err, denied })
     fetch(`/api/admin/shadow-learning?${query}`, { credentials: 'same-origin', signal: c.signal })
       .then(async (r) => {
-        if (r.status === 401 || r.status === 403) return done(null, 'Owner access required.')
+        if (accessStateForStatus(r.status) === 'denied') return done(null, '', true)
         done(await r.json(), '')
       })
       .catch((e) => { if ((e as { name?: string })?.name !== 'AbortError') done(null, 'Could not load AI Learning.') })
@@ -107,13 +108,25 @@ function Inner() {
             <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--muted)' }}>Recorded owner feedback and validated readiness evidence. Nothing here retrains a model — it is the accumulated record of what you reviewed. Accuracy trends live in Performance. No AI is run here.</p>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <a href={`/api/admin/shadow-learning?${query}${query ? '&' : ''}format=csv`} style={{ ...seg, border: '1px solid var(--line)', borderRadius: 9, textDecoration: 'none', color: 'var(--text)' }}>Export CSV</a>
+            {/* The export hits the same owner-only endpoint. Offering it to a refused
+                principal would hand them a link that only downloads a 403. */}
+            {!res?.denied && <a href={`/api/admin/shadow-learning?${query}${query ? '&' : ''}format=csv`} style={{ ...seg, border: '1px solid var(--line)', borderRadius: 9, textDecoration: 'none', color: 'var(--text)' }}>Export CSV</a>}
             <Link href="/admin/operations/ai/performance" style={{ ...seg, border: '1px solid var(--line)', borderRadius: 9, textDecoration: 'none', color: 'var(--text)' }}>Performance →</Link>
           </div>
         </header>
 
-        {err && <div style={{ ...card, borderColor: '#f87171', color: '#f87171', fontSize: 13 }}>{err}</div>}
+        {/* Owner-only refusal — stated as a permission decision, not an error, and
+            terminal (nothing below re-requests). */}
+        {res?.denied && <AIDenied />}
+        {/* Previously nothing at all rendered while the request was in flight, and
+            nothing rendered when it came back unusable: the body is gated on
+            `data?.enabled && o && r`, so the page showed header-only chrome. */}
+        {!res?.denied && !err && (!res || loading) && <AISkeleton rows={4} />}
+        {err && <div role="alert" style={{ ...card, borderColor: '#f87171', color: '#f87171', fontSize: 13 }}>{err}</div>}
         {data && !data.enabled && <div style={{ ...card, fontSize: 13, color: 'var(--muted)' }}>{data.reason ?? 'SHADOW_ANALYTICS_ENABLED is off'}. Enable it to populate AI Learning.</div>}
+        {!res?.denied && !err && !loading && data?.enabled && (!o || !r) && (
+          <div role="alert" style={{ ...card, borderColor: '#f87171', color: '#f87171', fontSize: 13 }}>The AI Learning response was incomplete.</div>
+        )}
 
         {data?.enabled && o && r && (
           <>

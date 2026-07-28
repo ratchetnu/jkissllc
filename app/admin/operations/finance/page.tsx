@@ -3,11 +3,12 @@
 // Money — ADMIN ONLY. Revenue in, payouts out, profit between.
 // Reachable from the OS home card and Settings → More tools. Drivers and
 // contractors have no route to this page and no API that returns its data.
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ChevronLeft, Wallet, TrendingUp, TriangleAlert, Users, Building2 } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
-import { money, moneyOrDash, profitColor, fmtDay, ymd, StatusChip, osField, osLabel } from '../ui'
+import { money, moneyOrDash, profitColor, fmtDay, ymd, StatusChip, osField, osLabel, AccessDenied, DataError } from '../ui'
+import { accessStateForStatus, type AccessState, type LoadState } from '../../../lib/access-state'
 
 type Group = { key: string; label: string; routeCount: number; revenueCents: number; payoutCents: number; profitCents: number }
 type Line = {
@@ -46,32 +47,38 @@ function Finance() {
   const [business, setBusiness] = useState('')
   const [staffId, setStaffId] = useState('')
   const [status, setStatus] = useState('completed')
-  const [summary, setSummary] = useState<Summary | null>(null)
   const [staff, setStaff] = useState<Staff[]>([])
-  const [loading, setLoading] = useState(true)
-  const [err, setErr] = useState('')
 
-  const load = useCallback(async () => {
-    setLoading(true); setErr('')
+  // The query is the request's identity, so "am I still loading?" is DERIVED from it
+  // (`result.key !== query`) rather than stored. That matters twice over: the old pair
+  // (`loading` + a null `summary`) could not express "the server refused you", so a 403
+  // left `loading` false and `summary` null — and the template's `loading || !summary`
+  // branch is the skeleton, which is why a refused manager watched it pulse forever.
+  // Deriving it also keeps `load` from setting state synchronously inside an effect.
+  const query = useMemo(() => {
     const q = new URLSearchParams()
     if (range.start) q.set('start', range.start)
     if (range.end) q.set('end', range.end)
     if (business) q.set('business', business)
     if (staffId) q.set('staffId', staffId)
     if (status) q.set('status', status)
-    try {
-      const d = await fetch(`/api/admin/finance?${q}`, { credentials: 'same-origin' }).then(r => r.json())
-      if (d.summary) setSummary(d.summary)
-      else setErr(d.error === 'UPSTASH_NOT_CONFIGURED' ? 'Storage is not configured.' : 'Could not load finance.')
-    } catch { setErr('Network error.') } finally { setLoading(false) }
+    return q.toString()
   }, [range.start, range.end, business, staffId, status])
-  useEffect(() => { load() }, [load])
 
-  // Filter options come from the FULL dataset, once. Deriving them from `summary`
-  // would collapse the dropdown to whatever the current filter matched, leaving
-  // no way back to "all".
+  const [result, setResult] = useState<{ key: string; state: AccessState; summary: Summary | null; err: string } | null>(null)
+
+  // Filter options come from the FULL dataset, once. Deriving them from `summary` would
+  // collapse the dropdown to whatever the current filter matched, leaving no way back to
+  // "all".
+  //
+  // Loaded from inside `load` on its first success rather than from its own effect: a
+  // refused principal has no filters to populate, and an effect keyed on the load state
+  // would set state in response to state — the cascade the hooks lint rejects.
   const [allBiz, setAllBiz] = useState<string[]>([])
-  useEffect(() => {
+  const optionsLoaded = useRef(false)
+  const loadFilterOptions = useCallback(() => {
+    if (optionsLoaded.current) return
+    optionsLoaded.current = true
     Promise.all([
       fetch('/api/admin/staff', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
       fetch('/api/admin/routes', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
@@ -80,6 +87,31 @@ function Finance() {
       setAllBiz([...new Set(((r.items || []) as { businessName?: string }[]).map(x => x.businessName).filter((b): b is string => !!b))].sort())
     })
   }, [])
+
+  const load = useCallback(async () => {
+    const done = (state: AccessState, summary: Summary | null, err: string) =>
+      setResult({ key: query, state, summary, err })
+    try {
+      const res = await fetch(`/api/admin/finance?${query}`, { credentials: 'same-origin' })
+      const access = accessStateForStatus(res.status)
+      // Terminal, and deliberately BEFORE reading the body: a refusal is an answer, so
+      // the page stops waiting here and never re-requests.
+      if (access === 'denied') return done('denied', null, '')
+      const d = await res.json().catch(() => ({}))
+      if (access === 'error' || !d.summary) {
+        return done('error', null, d.error === 'UPSTASH_NOT_CONFIGURED' ? 'Storage is not configured.' : 'Could not load finance.')
+      }
+      done('ready', d.summary, '')
+      loadFilterOptions()
+    } catch { done('error', null, 'Network error.') }
+  }, [query, loadFilterOptions])
+  useEffect(() => { load() }, [load])
+
+  // A result for a STALE query is not this query's answer, so it reads as loading.
+  const fresh = result?.key === query ? result : null
+  const state: LoadState = fresh ? fresh.state : 'loading'
+  const summary = fresh?.summary ?? null
+  const err = fresh?.err ?? ''
 
   const businesses = useMemo(() => allBiz, [allBiz])
   const hasGaps = !!summary && (summary.unpricedRoutes > 0 || summary.unpricedCrewRoutes > 0)
@@ -93,6 +125,16 @@ function Finance() {
         <h1 className="jkos-h" style={{ fontSize: 'clamp(28px,6vw,40px)' }}>Money</h1>
       </div>
 
+      {/* A manager holds no `profitability:view` grant (app/lib/rbac.ts), so /api/admin/finance
+          refuses them by design. Say so plainly instead of leaving the skeleton running. */}
+      {state === 'denied' ? (
+        <AccessDenied
+          title="Admins only"
+          detail="Money is restricted to administrators. Revenue, payouts and estimated profit are outside the manager role."
+          requirement="the Admin role"
+        />
+      ) : (
+      <>
       {/* Filters */}
       <div className="os-card os-rise" style={{ padding: 16, marginBottom: 16 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(150px, 100%), 1fr))', gap: 10 }}>
@@ -127,14 +169,15 @@ function Finance() {
         </div>
       </div>
 
-      {err && <div className="os-card" style={{ padding: '11px 14px', marginBottom: 16, fontSize: 13.5, color: '#fca5a5' }}>{err}</div>}
-
-      {loading || !summary ? (
+      {/* A failed required request is an ERROR, never an empty ledger. */}
+      {state === 'error' ? (
+        <DataError title="Couldn’t load Money" detail={err || 'The finance summary could not be loaded.'} onRetry={load} />
+      ) : state === 'loading' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div className="skeleton" style={{ width: '100%', height: 96, borderRadius: 16 }} />
           <div className="skeleton" style={{ width: '100%', height: 160, borderRadius: 16 }} />
         </div>
-      ) : (
+      ) : summary && (
         <>
           {/* Headline */}
           <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14 }}>
@@ -228,6 +271,8 @@ function Finance() {
             )}
           </div>
         </>
+      )}
+      </>
       )}
     </div>
   )

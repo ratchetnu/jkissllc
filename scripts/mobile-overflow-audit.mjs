@@ -24,7 +24,7 @@
 // authenticated UI instead of the sign-in screen.
 import { chromium } from 'playwright-core'
 import fs from 'node:fs'
-import { classifyRoute, summarizeRoutes, ROUTE_BLOCKED_OUTCOMES, roleSatisfiesRoute } from './mobile-audit-classify.mjs'
+import { classifyRoute, summarizeRoutes, ROUTE_BLOCKED_OUTCOMES, roleSatisfiesRoute, requiredEndpointsFor } from './mobile-audit-classify.mjs'
 import { classifyTarget, classifyFinalUrl, resolveBase } from './mobile-audit-target-guard.mjs'
 import { summarizeRuntimeSignals, evaluateRequests, isApplicationRequest, redactMessage } from './mobile-audit-runtime-signals.mjs'
 
@@ -86,13 +86,17 @@ const VIEWPORTS = [
 //   expectDenial: { roles, text } — a role that is SUPPOSED to be refused. Proving the
 //          denial card rendered is a truthful pass for that role, recorded as state
 //          'denial' so it can never be read as the admin workflow passing.
-//   data:  { required, loadedText, emptyText } — proof the page's DATA resolved, not
-//          just its chrome. `required` names same-origin endpoints the page cannot work
-//          without: a 4xx/5xx on one of them (or never calling it) disqualifies a pass,
-//          which is what six route×role combinations needed — correct heading, correct
-//          URL, perfect layout, 403 payload, reported PASS. `loadedText`/`emptyText`
-//          let a route accept EITHER a populated result or an explicit empty state, so
-//          a correct page with no records is not failed for having none.
+//   data:  { required, byRole, loadedText, emptyText } — proof the page's DATA resolved,
+//          not just its chrome. `required` names same-origin endpoints the page cannot
+//          work without: a 4xx/5xx on one of them (or never calling it) disqualifies a
+//          pass, which is what six route×role combinations needed — correct heading,
+//          correct URL, perfect layout, 403 payload, reported PASS. `loadedText`/
+//          `emptyText` let a route accept EITHER a populated result or an explicit empty
+//          state, so a correct page with no records is not failed for having none.
+//          `byRole: { <role>: { required } }` narrows the list for ONE role, because
+//          "what this page needs" is not role-invariant: a manager owns
+//          /admin/operations/businesses but may not read /api/admin/route-invoices.
+//          The exception is named per role so the admin proof is never silently dropped.
 //
 // Routes that only redirect are NOT listed. `/opspilot` (→ /operion, next.config.ts)
 // and `/admin/operations/ai/shadow` (→ /ai/performance, that page's own redirect) can
@@ -123,13 +127,22 @@ const ROUTES = [
   { path: '/admin/operations/book-now', auth: 'admin', ready: 'h1, table' },
   { path: '/admin/operations/list', auth: 'admin', ready: 'h1, table' },
   { path: '/admin/operations/employees', auth: 'admin', ready: 'h1' },
+  // A manager holds `businesses:manage` and this page IS theirs — only the invoice feed
+  // (`invoices:manage`) refuses them, so route-invoices is required of admins and not of
+  // managers. Narrowing it per role keeps the admin proof intact instead of deleting it.
   { path: '/admin/operations/businesses', auth: 'admin', ready: 'h1',
-    data: { required: ['/api/admin/route-invoices', '/api/admin/businesses'] } },
+    data: {
+      required: ['/api/admin/route-invoices', '/api/admin/businesses'],
+      byRole: { manager: { required: ['/api/admin/businesses'] } },
+    } },
   { path: '/admin/operations/equipment', auth: 'admin', ready: 'h1' },
   { path: '/admin/operations/claims', auth: 'admin', ready: 'h1' },
   { path: '/admin/operations/messages', auth: 'admin', ready: 'h1' },
   { path: '/admin/operations/communications', auth: 'admin', ready: 'h1' },
-  { path: '/admin/operations/finance', auth: 'admin', ready: 'h1' },
+  // `profitability:view` is admin-only (app/lib/rbac.ts), so a manager is refused here by
+  // design and must be SHOWN that — the page used to sit in a permanent skeleton instead.
+  { path: '/admin/operations/finance', auth: 'admin', ready: 'h1',
+    expectDenial: { roles: ['manager'], text: 'Money is restricted to administrators' } },
   // A manager is correctly refused here. That refusal is the app working, so it is
   // asserted on its own terms rather than measured against the admin content.
   { path: '/admin/operations/pay-statements', auth: 'admin', ready: 'h1', readyText: 'Pay Statements',
@@ -138,19 +151,33 @@ const ROUTES = [
   // action column — internal scrolling is legitimate, a hidden action is not.
   { path: '/admin/operations/timesheets', auth: 'admin', ready: 'h1', requireAction: 'select',
     data: { required: ['/api/admin/timesheets'] } },
-  { path: '/admin/operations/settings', auth: 'admin', ready: 'h1' },
+  // `settings:manage` is admin-only, and every write on this page is admin-only too, so a
+  // manager is denied as a whole page rather than shown switches that roll back.
+  { path: '/admin/operations/settings', auth: 'admin', ready: 'h1',
+    expectDenial: { roles: ['manager'], text: 'Settings is restricted to administrators' } },
+  // /api/admin/release is `requireAdmin`.
   { path: '/admin/operations/release', auth: 'admin', ready: 'h1',
-    data: { required: ['/api/admin/release'] } },
+    data: { required: ['/api/admin/release'] },
+    expectDenial: { roles: ['manager'], text: 'The Release Center is restricted to administrators' } },
   // AI Command Center sections — the data-dense pages most prone to mobile overflow.
+  //
+  // Every endpoint behind these four is `requirePlatformOwner` — a tier ABOVE admin (see
+  // app/api/admin/_lib/session.ts). A named admin and a manager are BOTH refused unless
+  // the admin is listed in PLATFORM_OWNER_SUBS, so both must see the Platform Owner state.
+  // Only the `owner` identity is measured against the real content.
   { path: '/admin/operations/ai', auth: 'admin', ready: 'h1',
-    data: { required: ['/api/admin/ai-overview'] } },
+    data: { required: ['/api/admin/ai-overview'] },
+    expectDenial: { roles: ['admin', 'manager'], text: 'Platform Owner only' } },
   { path: '/admin/operations/ai/controls', auth: 'admin', ready: 'h1' },
   { path: '/admin/operations/ai/performance', auth: 'admin', ready: 'h1',
-    data: { required: ['/api/admin/shadow-learning'] } },
+    data: { required: ['/api/admin/shadow-learning'] },
+    expectDenial: { roles: ['admin', 'manager'], text: 'Platform Owner only' } },
   { path: '/admin/operations/ai/learning', auth: 'admin', ready: 'h1',
-    data: { required: ['/api/admin/shadow-learning'] } },
+    data: { required: ['/api/admin/shadow-learning'] },
+    expectDenial: { roles: ['admin', 'manager'], text: 'Platform Owner only' } },
   { path: '/admin/operations/ai/alerts', auth: 'admin', ready: 'h1',
-    data: { required: ['/api/admin/ai-alerts'] } },
+    data: { required: ['/api/admin/ai-alerts'] },
+    expectDenial: { roles: ['admin', 'manager'], text: 'Platform Owner only' } },
   // No <h1> on this page at all — its title is a styled <p>. `ready: 'h1'` could
   // therefore never be satisfied, which produced 18 false failures.
   { path: '/admin/disposal', auth: 'admin', ready: 'input, label', readyText: 'Disposal & Pricing' },
@@ -336,7 +363,10 @@ for (const route of ROUTES) {
     page.on('requestfailed', onRequestFailed)
     // Summarized lazily so the catch path reports the same signals as the happy path.
     const signals = () => summarizeRuntimeSignals({ consoleErrors: rawConsole, pageErrors: rawPageErrors })
-    const requests = () => evaluateRequests(observedRequests, route.data?.required ?? [])
+    // Required endpoints are resolved for THIS principal: a role that is not supposed to
+    // read one of them must not be failed for being refused it.
+    const requiredEndpoints = requiredEndpointsFor(route.data, IDENTITY)
+    const requests = () => evaluateRequests(observedRequests, requiredEndpoints)
 
     try {
       const resp = await page.goto(BASE + path, { waitUntil: 'domcontentloaded', timeout: 20000 })
@@ -501,7 +531,7 @@ for (const route of ROUTES) {
       finalPath: checkInput.finalPath ?? null, identity: IDENTITY,
       requestedUrl: BASE + path,
       assertion: expectedDenial ? denialText : (route.readyText ?? route.ready ?? null),
-      dataAssertion: route.data ? (route.data.loadedText ?? route.data.required?.join(', ') ?? null) : null,
+      dataAssertion: route.data ? (route.data.loadedText ?? (requiredEndpointsFor(route.data, IDENTITY).join(', ') || null)) : null,
       requiredFailures: checkInput.requiredFailures ?? [],
       missingRequired: checkInput.missingRequired ?? [],
       otherFailures: checkInput.otherFailures ?? [],
