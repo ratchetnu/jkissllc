@@ -50,6 +50,11 @@ const iStyle: React.CSSProperties = {
 // stable across remounts (owner-only items + the Book Now badge don't pop in on every click).
 const navCache = { isOwner: false, bookNowNew: 0 }
 
+// Width of the mobile bottom bar's trailing "More" button, and of the empty leading slot
+// that balances it. Shared so the two cannot drift apart — if they do, the raised Book Now
+// button stops being centred, which is exactly the defect this constant exists to prevent.
+const MOBILE_MORE_W = 58
+
 function initials(name: string | null, role: string | null): string {
   if (name && name.trim()) {
     const parts = name.trim().split(/\s+/)
@@ -288,8 +293,19 @@ export default function OperationsShell({ children }: { children: React.ReactNod
       )}
 
       {/* ── Mobile bottom bar — 4 destinations + raised Book Now centre + More ────── */}
+      {/* MOBILE_MORE_W is shared by the trailing More button and the leading spacer that
+          balances it. One constant, so the two can never drift apart and knock Book Now
+          off centre again. */}
       <nav aria-label="Primary" className="os-glass" data-dock="mobile"
         style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', padding: '8px 6px calc(8px + env(safe-area-inset-bottom))', borderLeft: 'none', borderRight: 'none', borderBottom: 'none' }}>
+        {/* Leading spacer — the SAME width as the trailing More button.
+            Without it, Book Now is not actually centred: the two flex:1 zones share
+            (container − bookNow − More), so their shared midpoint — and the raised button
+            between them — sits half of More's width (29px) left of the true centre. The
+            asymmetry is small enough to look like a rendering quirk and large enough to
+            see. Balancing More with an equal empty slot puts Book Now on the real centre
+            line while keeping More at the trailing edge. */}
+        <span aria-hidden style={{ flexShrink: 0, width: MOBILE_MORE_W }} />
         {/* left zone — TWO destinations, matching the two on the right, so the four read as
             an even rhythm around the raised Book Now. (It used to take three here against
             two on the right, which made the left items 90px wide and the right ones 135px.) */}
@@ -333,7 +349,7 @@ export default function OperationsShell({ children }: { children: React.ReactNod
             four destinations or push Book Now off the centre between them. */}
         <button type="button" aria-label="More" aria-expanded={moreOpen} onClick={() => setMoreOpen(v => !v)}
           className={`os-dock-item os-tap${(moreOpen || activeInMobileMore) ? ' is-active' : ''}`}
-          style={{ flexShrink: 0, width: 58, display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '6px 2px', borderRadius: 14, border: 'none', cursor: 'pointer', background: 'transparent', color: (moreOpen || activeInMobileMore) ? 'var(--text)' : 'var(--muted)' }}>
+          style={{ flexShrink: 0, width: MOBILE_MORE_W, display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '6px 2px', borderRadius: 14, border: 'none', cursor: 'pointer', background: 'transparent', color: (moreOpen || activeInMobileMore) ? 'var(--text)' : 'var(--muted)' }}>
           <MoreHorizontal size={22} strokeWidth={2} />
           <span style={{ fontSize: 10.5, fontWeight: 700 }}>More</span>
         </button>
