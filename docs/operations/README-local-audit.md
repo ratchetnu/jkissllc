@@ -26,6 +26,23 @@ store, bound to `127.0.0.1`. Two properties matter:
 
 Data lives in the process and is discarded on exit.
 
+### Lua fidelity
+
+The emulator recognises the app's Lua scripts by **shape** rather than interpreting
+Lua. That is a fair trade for a handful of fixed scripts, but it has silently
+mis-modelled one three times — a lock heartbeat executed as a delete (LOCK-1), the
+approval consume CAS compared against the wrong field (APRV-1), and the
+baseline-adoption multi-key CAS falling into the generic version-CAS branch, where
+it read the wrong key, compared the wrong field against the wrong ARGV, and wrote
+one of the script's four keys. In each case a runtime result stayed green while
+proving nothing.
+
+Every shipped script shape is now pinned by `scripts/kv-emulator-lua.test.ts`,
+including that an **unrecognised script fails loudly** (`EMULATOR_UNSUPPORTED_SCRIPT`)
+rather than being treated as executed. If you add a Lua script to the app, add its
+shape here and a test there — a script the emulator does not model must never look
+like it ran.
+
 ## 2. Start
 
 ```bash
@@ -116,9 +133,42 @@ These are properties of the isolated environment, not app defects:
 ```bash
 PW_EXE=<chrome-headless-shell path> \
 ADMIN_PASSWORD=<the synthetic one> \
+[AUDIT_IDENTITY=owner/admin] [SHOT_DIR=shots] [ONLY=/,/quote] \
 npm run audit:mobile -- --base http://127.0.0.1:3111
 ```
 
-Exit codes: **0** clean · **1** real UI findings · **2** could not measure (app
-unreachable). A connection failure is reported as `infrastructure_unavailable` and
-is never counted as a UI finding.
+### What a PASS means
+
+A route passes only when the audit **proved the intended page rendered**: it is
+authenticated where required, was not redirected, is not a sign-in screen, is not
+blank, is not a stuck loading skeleton, satisfies the route's own readiness
+assertion — and only then, that the layout holds. Every route in the table declares
+its own `ready` selector; there is deliberately no universal title check, because a
+single global assertion passes on the shell.
+
+Outcomes, none of which can become a pass:
+
+| Outcome | Meaning |
+|---|---|
+| `PASS` | content proven rendered, layout held |
+| `FAIL` | real finding — blank, sign-in on a public route, error boundary, stuck skeleton, readiness assertion unmet, page-level overflow, or a hidden required action |
+| `ROUTE_ERROR` | HTTP ≥ 400 |
+| `BLOCKED_AUTH` | admin route with no session — **not measured** |
+| `BLOCKED_ENV` | app unreachable — **not measured** |
+| `INCONCLUSIVE` | navigation/timeout — **not measured** |
+
+Exit codes: **0** every check measured and passed · **1** real findings · **2**
+something was not measured. Blocked outranks findings, so an unmeasured run can
+never look clean. Without `ADMIN_PASSWORD` every `/admin/*` route reports
+`BLOCKED_AUTH` and the run exits 2 — it used to measure the sign-in screen at every
+viewport and report ~180 passes.
+
+### Where to run it
+
+**Admin routes cannot be validated against `next dev` in headless Chromium.** The
+server answers 200 and the APIs work, but the admin client shell does not hydrate
+under the dev bundle — the page stays on its loading bar, so the audit reports
+`FAIL blank/near-empty body` with a screenshot. That is the tool being honest about
+an environment limit, not a UI defect: the same routes render correctly in a
+production build. Run admin coverage against a **production build or a Preview
+deployment**; use the local dev server for public routes.
