@@ -50,10 +50,19 @@ const iStyle: React.CSSProperties = {
 // stable across remounts (owner-only items + the Book Now badge don't pop in on every click).
 const navCache = { isOwner: false, bookNowNew: 0 }
 
-// Width of the mobile bottom bar's trailing "More" button, and of the empty leading slot
-// that balances it. Shared so the two cannot drift apart — if they do, the raised Book Now
-// button stops being centred, which is exactly the defect this constant exists to prevent.
+// Width of the mobile bottom bar's trailing "More" button. More is positioned OUT of the
+// flex flow, and the right-hand zone reserves exactly this much padding for it — one
+// constant for both, so the reserved gap can never drift from the button that sits in it.
 const MOBILE_MORE_W = 58
+
+// Dock labels are single-line, but they used to have no overflow handling at all: a label
+// wider than its slot simply spilled over its neighbour, so "Operations" and "Messages"
+// overlapped by 7px at 320px. Truncating is the honest failure mode — an ellipsis says
+// "there is more of this word", overlapping text says nothing and just looks broken.
+const dockLabel = (active: boolean): React.CSSProperties => ({
+  fontSize: 10.5, fontWeight: active ? 800 : 700, whiteSpace: 'nowrap',
+  display: 'block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center',
+})
 
 function initials(name: string | null, role: string | null): string {
   if (name && name.trim()) {
@@ -298,14 +307,6 @@ export default function OperationsShell({ children }: { children: React.ReactNod
           off centre again. */}
       <nav aria-label="Primary" className="os-glass" data-dock="mobile"
         style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', padding: '8px 6px calc(8px + env(safe-area-inset-bottom))', borderLeft: 'none', borderRight: 'none', borderBottom: 'none' }}>
-        {/* Leading spacer — the SAME width as the trailing More button.
-            Without it, Book Now is not actually centred: the two flex:1 zones share
-            (container − bookNow − More), so their shared midpoint — and the raised button
-            between them — sits half of More's width (29px) left of the true centre. The
-            asymmetry is small enough to look like a rendering quirk and large enough to
-            see. Balancing More with an equal empty slot puts Book Now on the real centre
-            line while keeping More at the trailing edge. */}
-        <span aria-hidden style={{ flexShrink: 0, width: MOBILE_MORE_W }} />
         {/* left zone — TWO destinations, matching the two on the right, so the four read as
             an even rhythm around the raised Book Now. (It used to take three here against
             two on the right, which made the left items 90px wide and the right ones 135px.) */}
@@ -316,7 +317,7 @@ export default function OperationsShell({ children }: { children: React.ReactNod
             <Link key={n.href} href={n.href} aria-label={n.label} aria-current={active ? 'page' : undefined} className={`os-dock-item${active ? ' is-active' : ''}`}
               style={{ flex: 1, display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '6px 2px', borderRadius: 14, textDecoration: 'none', color: active ? 'var(--text)' : 'var(--muted)', minWidth: 0 }}>
               <Icon size={22} strokeWidth={active ? 2.2 : 1.9} />
-              <span style={{ fontSize: 10.5, fontWeight: active ? 800 : 700, whiteSpace: 'nowrap' }}>{n.label}</span>
+              <span style={dockLabel(active)}>{n.label}</span>
             </Link>
           )
         })}
@@ -331,7 +332,11 @@ export default function OperationsShell({ children }: { children: React.ReactNod
             <span style={{ fontSize: 10.5, fontWeight: 700, color: activeHref === BOOK_NOW_HREF ? 'var(--text)' : 'var(--muted)' }}>Book Now</span>
           </Link>
         )}
-        {/* right zone — the remaining TWO destinations, mirroring the left zone */}
+        {/* right zone — the remaining TWO destinations, mirroring the left zone.
+            More's width is reserved by a spacer CHILD (below), never by padding on this
+            zone: a flex item with `flex: 1` resolves from a zero basis and then adds its
+            padding on top, so padding here would make this zone 58px wider than the left
+            one and push Book Now off centre — the very bug being fixed. */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'space-around', alignItems: 'flex-end' }}>
         {mobPrimary.slice(2).map(n => {
           const Icon = iconFor(n.href); const active = n.href === activeHref
@@ -339,17 +344,24 @@ export default function OperationsShell({ children }: { children: React.ReactNod
             <Link key={n.href} href={n.href} aria-label={n.label} aria-current={active ? 'page' : undefined} className={`os-dock-item${active ? ' is-active' : ''}`}
               style={{ flex: 1, display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '6px 2px', borderRadius: 14, textDecoration: 'none', color: active ? 'var(--text)' : 'var(--muted)', minWidth: 0 }}>
               <Icon size={22} strokeWidth={active ? 2.2 : 1.9} />
-              <span style={{ fontSize: 10.5, fontWeight: active ? 800 : 700, whiteSpace: 'nowrap' }}>{n.label}</span>
+              <span style={dockLabel(active)}>{n.label}</span>
             </Link>
           )
         })}
+        {/* The slot More occupies. A child of this zone, so both zones stay equal width. */}
+        <span aria-hidden style={{ flex: `0 0 ${MOBILE_MORE_W}px` }} />
         </div>
-        {/* More sits OUTSIDE the two destination zones, at the trailing edge — it opens a
-            sheet rather than going anywhere, so it shouldn't compete for rhythm with the
-            four destinations or push Book Now off the centre between them. */}
+        {/* More sits OUTSIDE the flex flow entirely, pinned to the trailing edge. It opens a
+            sheet rather than going anywhere, so it should neither compete with the four
+            destinations for rhythm nor push Book Now off centre — and as a flex child it
+            did exactly that, dragging the button 29px left of the midpoint.
+            Taking it out of flow (its width reserved by the right zone's padding) fixes
+            the centring without adding any width, which a balancing leading spacer would
+            have done: that cost 58px and squeezed the labels into each other — 21.8px of
+            overlap at 320 and 11.8px at 360, where there had been none. */}
         <button type="button" aria-label="More" aria-expanded={moreOpen} onClick={() => setMoreOpen(v => !v)}
           className={`os-dock-item os-tap${(moreOpen || activeInMobileMore) ? ' is-active' : ''}`}
-          style={{ flexShrink: 0, width: MOBILE_MORE_W, display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '6px 2px', borderRadius: 14, border: 'none', cursor: 'pointer', background: 'transparent', color: (moreOpen || activeInMobileMore) ? 'var(--text)' : 'var(--muted)' }}>
+          style={{ position: 'absolute', right: 6, bottom: 'calc(8px + env(safe-area-inset-bottom))', width: MOBILE_MORE_W, display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '6px 2px', borderRadius: 14, border: 'none', cursor: 'pointer', background: 'transparent', color: (moreOpen || activeInMobileMore) ? 'var(--text)' : 'var(--muted)' }}>
           <MoreHorizontal size={22} strokeWidth={2} />
           <span style={{ fontSize: 10.5, fontWeight: 700 }}>More</span>
         </button>
