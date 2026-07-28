@@ -137,6 +137,45 @@ ADMIN_PASSWORD=<the synthetic one> \
 npm run audit:mobile -- --base http://127.0.0.1:3111
 ```
 
+### The target guard — where this audit is allowed to point
+
+The audit refuses to launch a browser at anything it does not positively recognise.
+Before authentication, before `chromium.launch()`, before route iteration, screenshots
+or any `CLICK_TEXT`, the target is checked against an **allowlist**:
+
+| Allowed | |
+|---|---|
+| loopback | `localhost`, the whole `127.0.0.0/8` block, `::1` |
+| Vercel **Preview** deployments | `<project>-<hash>-<scope>.vercel.app` and `<project>-git-<branch>-<scope>.vercel.app` |
+| an approved test host | exact match against `AUDIT_ALLOWED_HOST` |
+
+Everything else is refused as `BLOCKED_ENV` with exit code 2 — never a pass, never a UI
+finding. Known Production hostnames (`jkissllc.com`, `www.jkissllc.com`,
+`jkissllc.vercel.app`, and the Supercharged domains, mirroring
+`app/lib/platform/sandbox/guards.ts`) are named explicitly so the refusal says *why*,
+but the allowlist is what actually stops an unrecognised host — including a lookalike,
+an uppercase spelling, a trailing-dot FQDN, or an explicit port.
+
+Two more properties worth knowing:
+
+- **`jkissllc.vercel.app` is the Production alias**, not a Preview. It carries no
+  deployment hash and no `-git-` segment, so it can never satisfy the Preview shape.
+  A substring test like `hostname.includes('preview')` is deliberately *not* used —
+  `preview.jkissllc.com` would pass it.
+- **Redirects are re-checked.** An allowed origin that 30x's onto a Production host is
+  a Production session; the run stops at that point and never continues auditing.
+  `AUDIT_ALLOWED_HOST` cannot be used to re-admit a Production hostname.
+
+`BASE` unset means "use the local default". `BASE` set but **blank** is refused rather
+than silently resolving to localhost — a blank value means something upstream failed to
+interpolate, and quietly auditing the wrong target is the class of untruth this tool
+exists to prevent.
+
+Why this exists: `preflight()` used to check only whether the host answered. Nothing
+asked whether the host was *allowed*. `BASE=https://jkissllc.com` with a valid
+`ADMIN_PASSWORD` authenticated against Production and navigated every configured route
+as the owner. Pinned by `scripts/mobile-audit-target-guard.test.ts`.
+
 ### What a PASS means
 
 A route passes only when the audit **proved the intended page rendered**: it is
