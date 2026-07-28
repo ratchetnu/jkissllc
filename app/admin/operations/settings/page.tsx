@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { MessageSquare, Mail, Star, Briefcase, CalendarCheck, Trash2, ScrollText, BarChart3, CalendarDays, LogOut, Check, ClipboardList, DollarSign, FileText, Wallet, EyeOff, ShieldCheck, Sparkles } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
-import { osField as field } from '../ui'
+import { osField as field, AccessDenied, DataError } from '../ui'
+import { accessStateForStatus, type LoadState } from '../../../lib/access-state'
 
 type Config = { sms: boolean; email: boolean; smsTo: string; emailTo: string }
 type FinanceCfg = { showPayInConfirm: boolean }
@@ -50,21 +51,36 @@ function Settings() {
   const [fin, setFin] = useState<FinanceCfg | null>(null)
   const [auto, setAuto] = useState<AutoCfg | null>(null)
   const [finBusy, setFinBusy] = useState(false)
-  const [loading, setLoading] = useState(true)
+  // Settings is governed by `settings:manage`, which a manager does not hold
+  // (app/lib/rbac.ts). Both /api/admin/alerts and /api/admin/finance refuse them, and
+  // every write on this page is admin-only — /api/admin/automation answers a manager's
+  // GET but rejects the POST, so rendering its toggles would offer switches that
+  // silently roll back. The page is therefore denied as a whole, not section by section.
+  const [state, setState] = useState<LoadState>('loading')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
   const load = useCallback(async () => {
+    setState('loading')
     try {
+      const [aRes, fRes, auRes] = await Promise.all([
+        fetch('/api/admin/alerts', { credentials: 'same-origin' }),
+        fetch('/api/admin/finance', { credentials: 'same-origin' }),
+        fetch('/api/admin/automation', { credentials: 'same-origin' }),
+      ])
+      // The refusal is the answer. Terminal — no retry, no spinner left running.
+      if (accessStateForStatus(aRes.status) === 'denied') { setState('denied'); return }
+      if (!aRes.ok) { setState('error'); return }
       const [a, f, au] = await Promise.all([
-        fetch('/api/admin/alerts', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
-        fetch('/api/admin/finance', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
-        fetch('/api/admin/automation', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
+        aRes.json().catch(() => ({})),
+        fRes.ok ? fRes.json().catch(() => ({})) : Promise.resolve({}),
+        auRes.ok ? auRes.json().catch(() => ({})) : Promise.resolve({}),
       ])
       if (a.config) setCfg(a.config)
       if (f.settings) setFin(f.settings)
       if (au.settings) setAuto(au.settings)
-    } catch { /* ignore */ } finally { setLoading(false) }
+      setState('ready')
+    } catch { setState('error') }
   }, [])
   useEffect(() => { load() }, [load])
 
@@ -110,12 +126,22 @@ function Settings() {
         <h1 className="jkos-h" style={{ fontSize: 'clamp(28px,6vw,40px)' }}>Settings</h1>
       </div>
 
+      {state === 'denied' ? (
+        <AccessDenied
+          title="Admins only"
+          detail="Settings is restricted to administrators. Notification preferences, crew reminders and crew pay visibility are configured by an admin. You can still sign out from the account menu."
+          requirement="the Admin role"
+        />
+      ) : state === 'error' ? (
+        <DataError title="Couldn’t load Settings" detail="The settings could not be loaded." onRetry={load} />
+      ) : (
+      <>
       {/* Notifications */}
       <div className="os-card os-rise" style={{ padding: 22, marginBottom: 16 }}>
         <h2 className="jkos-h" style={{ fontSize: 18, marginBottom: 4 }}>Notify me</h2>
         <p style={{ fontSize: 13.5, color: 'var(--muted)', marginBottom: 18 }}>When a contractor declines or ignores a route, or a customer replies, we’ll reach you here.</p>
 
-        {loading || !cfg ? (
+        {state === 'loading' || !cfg ? (
           <div className="skeleton" style={{ width: '100%', height: 52, borderRadius: 12 }} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -148,7 +174,7 @@ function Settings() {
       <div className="os-card os-rise" style={{ padding: 22, marginBottom: 16 }}>
         <h2 className="jkos-h" style={{ fontSize: 18, marginBottom: 4 }}>Crew reminders</h2>
         <p style={{ fontSize: 13.5, color: 'var(--muted)', marginBottom: 18 }}>Automatic text reminders sent to crew each morning (9am Central). Owner alerts about unconfirmed routes still come through either way.</p>
-        {loading || !auto ? (
+        {state === 'loading' || !auto ? (
           <div className="skeleton" style={{ width: '100%', height: 52, borderRadius: 12 }} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -178,7 +204,7 @@ function Settings() {
         <h2 className="jkos-h" style={{ fontSize: 18, marginBottom: 4 }}>Crew pay visibility</h2>
         <p style={{ fontSize: 13.5, color: 'var(--muted)', marginBottom: 18 }}>Controls what a driver or helper sees in their assignment text and on their confirmation page.</p>
 
-        {loading || !fin ? (
+        {state === 'loading' || !fin ? (
           <div className="skeleton" style={{ width: '100%', height: 52, borderRadius: 12 }} />
         ) : (
           <>
@@ -227,6 +253,8 @@ function Settings() {
           <LogOut size={16} /> Sign out
         </button>
       </div>
+      </>
+      )}
     </div>
   )
 }

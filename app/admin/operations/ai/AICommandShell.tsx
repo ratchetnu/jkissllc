@@ -122,6 +122,33 @@ export function AIEmpty({ title, detail }: { title: string; detail?: string }) {
   )
 }
 
+// ── Platform Owner denial ────────────────────────────────────────────────────
+// Every AI Command Center endpoint is guarded by `requirePlatformOwner` (a tier ABOVE
+// admin — see app/api/admin/_lib/session.ts), so an ordinary admin and a manager are
+// both refused. That refusal used to render through AIError: a red card reading
+// "Owner access required." with a Try again button. Two things were wrong with it —
+// it presented a permission decision as a failure, and the retry re-issued a request
+// the server had already, permanently, declined.
+//
+// This is a distinct, terminal state: it names the tier required, offers no retry, and
+// is never followed by a skeleton.
+export function AIDenied({ detail }: { detail?: string }) {
+  return (
+    <div style={{ ...aiCard, textAlign: 'center', padding: 30 }} role="status">
+      <div style={{ fontSize: 15, fontWeight: 800 }}>Platform Owner only</div>
+      <p style={{ fontSize: 12.5, color: 'var(--muted)', margin: '8px auto 0', maxWidth: 460, lineHeight: 1.55 }}>
+        {detail ?? 'The AI Command Center is restricted to the Platform Owner. Admin and manager accounts cannot view AI evaluation data, cost, or model readiness.'}
+      </p>
+      <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 10 }}>
+        Requires <b style={{ color: 'var(--text)' }}>Platform Owner</b> access.
+      </p>
+      <Link href="/admin/operations" style={{ display: 'inline-block', marginTop: 16, padding: '9px 15px', borderRadius: 11, fontSize: 12.5, fontWeight: 700, textDecoration: 'none', color: 'var(--text)', border: '1px solid var(--line)', background: 'color-mix(in srgb, var(--text) 6%, transparent)' }}>
+        Back to Operations
+      </Link>
+    </div>
+  )
+}
+
 export function AIError({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
     <div style={{ ...aiCard, borderColor: '#f8717155' }}>

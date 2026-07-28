@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { RefreshCw, GitCommitHorizontal, Server, CalendarClock, Flag, AlertTriangle, CheckCircle2, XCircle, MinusCircle, Clock, Rocket, ShieldCheck, ChevronDown } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { osLabel, osMiniBtn } from '../ui'
@@ -520,10 +521,11 @@ function ReleaseCenter() {
           <h1 className="jkos-h" style={{ fontSize: 24, margin: 0 }}>Release Center</h1>
           <p style={{ fontSize: 13, color: 'var(--muted)', margin: '4px 0 0' }}>Test updates, review what changed, and safely publish when you’re ready.</p>
         </div>
-        <button onClick={checkCurrentState} disabled={busy} className="os-tap" aria-label="Check Supercharged current state"
+        {/* A refused principal gets no action that only produces another refusal. */}
+        {state !== 'forbidden' && <button onClick={checkCurrentState} disabled={busy} className="os-tap" aria-label="Check Supercharged current state"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', background: 'var(--card)', border: '1px solid var(--line)', cursor: 'pointer' }}>
           <RefreshCw size={14} style={{ animation: busy ? 'spin 1s linear infinite' : undefined }} /> {busy ? 'Checking…' : 'Check Supercharged'}
-        </button>
+        </button>}
       </div>
 
       {checkMessage && <p role="status" style={{ fontSize: 12.5, color: 'var(--muted)', margin: '-8px 0 0' }}>{checkMessage}</p>}
@@ -534,9 +536,16 @@ function ReleaseCenter() {
         </div>
       )}
 
+      {/* /api/admin/release is `requireAdmin`, so a manager is refused by design. The
+          previous copy ("Sign in with an admin account") described a signed-OUT visitor
+          and read as a broken session to a manager who is, in fact, correctly signed in. */}
       {state === 'forbidden' && (
-        <Section title="Admin access required" icon={ShieldCheck}>
-          <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>The Release Center is admin-only. Sign in with an admin account to view it.</p>
+        <Section title="Admins only" icon={ShieldCheck}>
+          <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0, lineHeight: 1.55 }}>
+            The Release Center is restricted to administrators. Reviewing, approving and publishing updates is outside the manager role.
+          </p>
+          <p style={{ fontSize: 12.5, color: 'var(--muted)', margin: '8px 0 0' }}>Requires <b style={{ color: 'var(--text)' }}>the Admin role</b>.</p>
+          <Link href="/admin/operations" className="os-tap" style={{ display: 'inline-block', marginTop: 14, padding: '8px 14px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, textDecoration: 'none', color: 'var(--text)', background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)' }}>Back to Operations</Link>
         </Section>
       )}
 

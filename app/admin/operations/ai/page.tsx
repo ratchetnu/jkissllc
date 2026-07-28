@@ -9,7 +9,8 @@
 import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
 import OperationsShell from '../OperationsShell'
-import AICommandShell, { aiCard, aiLabel, AIStat, AISkeleton, AIError } from './AICommandShell'
+import AICommandShell, { aiCard, aiLabel, AIStat, AISkeleton, AIError, AIDenied } from './AICommandShell'
+import { accessStateForStatus } from '../../../lib/access-state'
 
 const READINESS: Record<string, { c: string; label: string }> = {
   NOT_READY: { c: '#f87171', label: 'Not ready' },
@@ -37,15 +38,15 @@ export default function AIOverviewPage() {
 }
 
 function Overview() {
-  const [res, setRes] = useState<{ payload: Payload | null; err: string } | null>(null)
+  const [res, setRes] = useState<{ payload: Payload | null; err: string; denied: boolean } | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     const c = new AbortController()
-    const done = (payload: Payload | null, err: string) => setRes({ payload, err })
+    const done = (payload: Payload | null, err: string, denied = false) => setRes({ payload, err, denied })
     fetch('/api/admin/ai-overview', { credentials: 'same-origin', signal: c.signal })
       .then(async (r) => {
-        if (r.status === 401 || r.status === 403) return done(null, 'Owner access required.')
+        if (accessStateForStatus(r.status) === 'denied') return done(null, '', true)
         done(await r.json(), '')
       })
       .catch((e) => { if ((e as { name?: string })?.name !== 'AbortError') done(null, 'Could not load the AI overview.') })
@@ -53,6 +54,7 @@ function Overview() {
   }, [reloadKey])
 
   if (!res) return <AISkeleton rows={4} />
+  if (res.denied) return <AIDenied />
   if (res.err) return <AIError message={res.err} onRetry={() => setReloadKey((k) => k + 1)} />
   const d = res.payload
   if (d && !d.enabled) return (
@@ -61,7 +63,12 @@ function Overview() {
       <p style={{ margin: 0, fontSize: 12.5, color: 'var(--muted)' }}>{d.reason ?? 'SHADOW_ANALYTICS_ENABLED is off'}. Enable it to populate the Command Center.</p>
     </div>
   )
-  if (!d?.readiness || !d.groundTruth || !d.usage || !d.attention || !d.health) return <AISkeleton rows={4} />
+  // A 200 that is missing the sections this screen is made of is a broken response, not
+  // a slow one. Rendering a skeleton here left the page pulsing forever — the "renders
+  // chrome, shows nothing" symptom. Say it failed, and allow one deliberate retry.
+  if (!d?.readiness || !d.groundTruth || !d.usage || !d.attention || !d.health) {
+    return <AIError message="The AI overview response was incomplete." onRetry={() => setReloadKey((k) => k + 1)} />
+  }
 
   const rd = READINESS[d.readiness.tier] ?? { c: 'var(--muted)', label: d.readiness.tier }
   const attn = d.attention

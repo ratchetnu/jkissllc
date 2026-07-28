@@ -4,6 +4,7 @@
 // Single source of truth for the OS design language: status system, avatars,
 // formatters, and shared styles. Every OS page imports from here — no local
 // re-definitions, so labels/colors/formatting stay consistent everywhere.
+import Link from 'next/link'
 import type { CSSProperties, KeyboardEvent } from 'react'
 
 // ── Canonical route status ───────────────────────────────────────────────────
@@ -157,6 +158,70 @@ export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boo
       style={{ width: 50, height: 30, borderRadius: 999, border: 'none', cursor: 'pointer', padding: 3, background: on ? 'var(--red)' : 'rgba(255,255,255,.14)', transition: 'background .2s var(--os-ease)', flexShrink: 0 }}>
       <span style={{ display: 'block', width: 24, height: 24, borderRadius: 999, background: '#fff', transform: on ? 'translateX(20px)' : 'translateX(0)', transition: 'transform .2s var(--os-spring)' }} />
     </button>
+  )
+}
+
+// ── Access states (denied / empty / error) ───────────────────────────────────
+// Three visually distinct, TERMINAL states. They exist because a page with no place
+// to put "the server refused you" fell back to a spinner that never stopped, and a
+// page with no place to put "the request failed" rendered an empty list — which reads
+// as "there is nothing here" and is a lie.
+//
+// The rules each one encodes:
+//   AccessDenied — names the role/capability required, offers a way back, and is
+//                  never retryable (a 403 does not change on the second try).
+//   DataEmpty    — the request SUCCEEDED and returned nothing. Must never be reached
+//                  from a failed request.
+//   DataError    — the request failed for a reason that may not repeat, so this is
+//                  the only one of the three that may offer a retry.
+
+export function AccessDenied({ title, detail, requirement, backHref = '/admin/operations', backLabel = 'Back to Operations', style }: {
+  title: string
+  detail: string
+  /** The role or capability that WOULD grant access, named plainly. */
+  requirement?: string
+  backHref?: string | null
+  backLabel?: string
+  style?: CSSProperties
+}) {
+  return (
+    <div className="os-card os-rise" role="status" style={{ padding: 26, textAlign: 'center', ...style }}>
+      <p className="jkos-h" style={{ fontSize: 18 }}>{title}</p>
+      <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 6, lineHeight: 1.55, maxWidth: 460, marginLeft: 'auto', marginRight: 'auto' }}>{detail}</p>
+      {requirement && (
+        <p style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 10 }}>
+          Requires <b style={{ color: 'var(--text)' }}>{requirement}</b>.
+        </p>
+      )}
+      {backHref && (
+        <Link href={backHref} className="os-tap" style={{ display: 'inline-block', marginTop: 16, padding: '9px 16px', borderRadius: 11, fontSize: 13.5, fontWeight: 700, textDecoration: 'none', color: 'var(--text)', background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)' }}>
+          {backLabel}
+        </Link>
+      )}
+    </div>
+  )
+}
+
+export function DataEmpty({ title, detail }: { title: string; detail?: string }) {
+  return (
+    <div className="os-card" role="status" style={{ padding: 22, textAlign: 'center' }}>
+      <p style={{ fontSize: 14, fontWeight: 700 }}>{title}</p>
+      {detail && <p style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 5 }}>{detail}</p>}
+    </div>
+  )
+}
+
+export function DataError({ title = 'Couldn’t load this', detail, onRetry }: { title?: string; detail?: string; onRetry?: () => void }) {
+  return (
+    <div className="os-card" role="alert" style={{ padding: 22, borderColor: 'rgba(248,113,113,.4)' }}>
+      <p style={{ fontSize: 14, fontWeight: 700, color: '#fca5a5' }}>{title}</p>
+      {detail && <p style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 5 }}>{detail}</p>}
+      {onRetry && (
+        <button onClick={onRetry} className="os-tap" style={{ marginTop: 12, padding: '8px 14px', fontSize: 12.5, fontWeight: 700, borderRadius: 10, background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', color: 'var(--text)', cursor: 'pointer' }}>
+          Try again
+        </button>
+      )}
+    </div>
   )
 }
 

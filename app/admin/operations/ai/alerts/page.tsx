@@ -10,7 +10,8 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import OperationsShell from '../../OperationsShell'
-import AICommandShell, { aiCard, aiLabel, AIStat, AISkeleton, AIError, AIEmpty } from '../AICommandShell'
+import AICommandShell, { aiCard, aiLabel, AIStat, AISkeleton, AIError, AIEmpty, AIDenied } from '../AICommandShell'
+import { accessStateForStatus } from '../../../../lib/access-state'
 
 const SEV: Record<string, { c: string; label: string }> = {
   critical: { c: '#f87171', label: 'Critical' }, warning: { c: '#fb923c', label: 'Warning' },
@@ -31,21 +32,23 @@ export default function AlertsPage() {
 }
 
 function Alerts() {
-  const [res, setRes] = useState<{ payload: Payload | null; err: string } | null>(null)
+  const [res, setRes] = useState<{ payload: Payload | null; err: string; denied?: boolean } | null>(null)
   const [reload, setReload] = useState(0)
   useEffect(() => {
     const c = new AbortController()
     fetch('/api/admin/ai-alerts', { credentials: 'same-origin', signal: c.signal })
-      .then(async (r) => { if (r.status === 401 || r.status === 403) return setRes({ payload: null, err: 'Owner access required.' }); setRes({ payload: await r.json(), err: '' }) })
+      .then(async (r) => { if (accessStateForStatus(r.status) === 'denied') return setRes({ payload: null, err: '', denied: true }); setRes({ payload: await r.json(), err: '' }) })
       .catch((e) => { if ((e as { name?: string })?.name !== 'AbortError') setRes({ payload: null, err: 'Could not load alerts.' }) })
     return () => c.abort()
   }, [reload])
 
   if (!res) return <AISkeleton rows={4} />
+  if (res.denied) return <AIDenied />
   if (res.err) return <AIError message={res.err} onRetry={() => setReload((k) => k + 1)} />
   const d = res.payload
   if (d && !d.enabled) return <AIEmpty title="AI evaluation is off" detail="Enable SHADOW_ANALYTICS_ENABLED to see alerts & readiness." />
-  if (!d?.readiness) return <AISkeleton rows={4} />
+  // Incomplete 200 → say so, never an endless skeleton.
+  if (!d?.readiness) return <AIError message="The alerts response was incomplete." onRetry={() => setReload((k) => k + 1)} />
   const r = d.readiness
   const rd = READINESS[r.tier] ?? { c: 'var(--muted)', label: r.tier }
   const alerts = d.alerts ?? []

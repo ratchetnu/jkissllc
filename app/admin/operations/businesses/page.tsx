@@ -8,6 +8,7 @@ import { invalidateOps } from '../useOps'
 import { money, ymd, fmtDay, fmtTs, weekdaysLabel, onActivate, MoneyInput, Toggle, centsToInput, looksLikeMoney, osLabel, DOW, Avatar } from '../ui'
 import ApplyScope from '../ApplyScope'
 import ClaimsHistory from '../claims/ClaimsHistory'
+import { accessStateForStatus } from '../../../lib/access-state'
 
 type RouteLite = { routeNumber: string; businessName: string; status: string; routeDate: string; reportTime: string }
 type Portal = { token: string; businessName: string; label?: string }
@@ -47,17 +48,27 @@ function Hub() {
   const [openKey, setOpenKey] = useState('')
   const [msg, setMsg] = useState('')
 
+  // A manager DOES hold `businesses:manage`, so this page is theirs by design. What they
+  // do not hold is `invoices:manage` — /api/admin/route-invoices refuses them. That 403
+  // used to be swallowed into an empty array, so the Invoices section simply vanished
+  // and read as "this client has no invoices". A refused request must never render as an
+  // empty result, so the refusal is tracked and shown for what it is.
+  const [invoicesDenied, setInvoicesDenied] = useState(false)
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [r, p, i, t, b, s] = await Promise.all([
+      const [r, p, iRes, t, b, s] = await Promise.all([
         fetch('/api/admin/routes', { credentials: 'same-origin' }).then(x => x.json()),
         fetch('/api/admin/client-portals', { credentials: 'same-origin' }).then(x => x.json()),
-        fetch('/api/admin/route-invoices', { credentials: 'same-origin' }).then(x => x.json()),
+        fetch('/api/admin/route-invoices', { credentials: 'same-origin' }),
         fetch('/api/admin/route-templates', { credentials: 'same-origin' }).then(x => x.json()),
         fetch('/api/admin/businesses', { credentials: 'same-origin' }).then(x => x.json()),
         fetch('/api/admin/staff', { credentials: 'same-origin' }).then(x => x.json()),
       ])
+      const denied = accessStateForStatus(iRes.status) === 'denied'
+      setInvoicesDenied(denied)
+      const i = denied || !iRes.ok ? {} : await iRes.json().catch(() => ({}))
       setRoutes(r.items || []); setPortals(p.items || []); setInvoices(i.items || []); setTemplates(t.items || []); setRecords(b.items || []); setStaff((s.items || []).filter((x: Staff) => x.active))
     } catch { /* ignore */ } finally { setLoading(false) }
   }, [])
@@ -119,7 +130,7 @@ function Hub() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {businesses.map((b, i) => <BizCard key={b.key} b={b} staff={staff} open={openKey === b.key} onToggle={() => setOpenKey(o => o === b.key ? '' : b.key)} onOpen={() => setOpenKey(b.key)} onCreatePortal={() => createPortal(b.name)} onReload={load} setMsg={setMsg} delay={i} />)}
+          {businesses.map((b, i) => <BizCard key={b.key} b={b} staff={staff} invoicesDenied={invoicesDenied} open={openKey === b.key} onToggle={() => setOpenKey(o => o === b.key ? '' : b.key)} onOpen={() => setOpenKey(b.key)} onCreatePortal={() => createPortal(b.name)} onReload={load} setMsg={setMsg} delay={i} />)}
         </div>
       )}
     </div>
@@ -453,7 +464,7 @@ function ScheduleEditor({ mode, biz, tmpl, staff, onDone, onCancel, setMsg }: {
   )
 }
 
-function BizCard({ b, staff, open, onToggle, onOpen, onCreatePortal, onReload, setMsg, delay }: { b: Biz; staff: Staff[]; open: boolean; onToggle: () => void; onOpen: () => void; onCreatePortal: () => void; onReload: () => void; setMsg: (m: string) => void; delay: number }) {
+function BizCard({ b, staff, invoicesDenied, open, onToggle, onOpen, onCreatePortal, onReload, setMsg, delay }: { b: Biz; staff: Staff[]; invoicesDenied: boolean; open: boolean; onToggle: () => void; onOpen: () => void; onCreatePortal: () => void; onReload: () => void; setMsg: (m: string) => void; delay: number }) {
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState('')
   // Which recurring contract's schedule is being edited ('' = none, 'new' = create).
@@ -574,7 +585,16 @@ function BizCard({ b, staff, open, onToggle, onOpen, onCreatePortal, onReload, s
             </div>
           )}
 
-          {b.invoices.length > 0 && (
+          {/* Refused, not empty. Without this the section disappeared and a manager
+              could not tell "no invoices exist" from "you may not see invoices". */}
+          {invoicesDenied ? (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>Invoices</div>
+              <p role="status" style={{ fontSize: 12.5, color: 'var(--muted)', margin: 0, padding: '10px 12px', borderRadius: 10, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line)' }}>
+                Invoices are restricted to administrators. This is not an empty list — your role cannot read billing for this client.
+              </p>
+            </div>
+          ) : b.invoices.length > 0 && (
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>Invoices</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -607,7 +627,7 @@ function BizCard({ b, staff, open, onToggle, onOpen, onCreatePortal, onReload, s
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button onClick={() => setEditing(true)} className="btn-ghost os-tap" style={{ borderRadius: 10, height: 38, fontSize: 13 }}><Pencil size={14} /> Edit business</button>
             <Link href="/admin/operations/new" className="btn os-tap" style={{ borderRadius: 10, height: 38, fontSize: 13 }}><Plus size={15} /> New assignment</Link>
-            <Link href="/admin/routes/invoices" className="btn-ghost os-tap" style={{ borderRadius: 10, height: 38, fontSize: 13 }}><FileText size={15} /> Invoices</Link>
+            {!invoicesDenied && <Link href="/admin/routes/invoices" className="btn-ghost os-tap" style={{ borderRadius: 10, height: 38, fontSize: 13 }}><FileText size={15} /> Invoices</Link>}
           </div>
           </>}
         </div></div>
