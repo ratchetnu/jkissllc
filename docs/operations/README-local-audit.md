@@ -196,10 +196,61 @@ Outcomes, none of which can become a pass:
 | `BLOCKED_ENV` | app unreachable, or a refused target — **not measured** |
 | `INCONCLUSIVE` | navigation/timeout — **not measured** |
 
-Every result also carries a `state`: `content` (the route's own page) or `denial` (the
-authorization refusal a lower-privilege role is supposed to see). A manager PASS on
-`/admin/operations/pay-statements` is a *denial* pass and is printed as such — it never
-means the admin workflow was exercised.
+Every result also carries a `state` recording *which* contract was proven:
+`content` (the route's own page), `empty` (a valid explicit empty dataset), `denial`
+(the authorization refusal a lower-privilege role is supposed to see), `data` (the data
+contract failed) or `runtime` (the page threw, failed to hydrate, or logged an error).
+A manager PASS on `/admin/operations/pay-statements` is a *denial* pass and is printed
+as such — it never means the admin workflow was exercised.
+
+### Data contracts — chrome is not evidence
+
+A page can render a correct heading at a correct URL with a perfect layout and be
+completely empty. Six route×role combinations did exactly that and passed, because
+their required request returned 403 and nothing was looking.
+
+A route may declare:
+
+```js
+data: { required: ['/api/admin/ai-overview'], loadedText: '…', emptyText: '…' }
+```
+
+- a **4xx/5xx on a declared required endpoint**, or never calling it at all,
+  disqualifies a pass
+- an **empty dataset stays valid**: name both `loadedText` and `emptyText` and either
+  one satisfies the contract, so a correct page with no records is not failed for
+  having none
+- an **expected denial is exempt** — being refused *is* that role's contract
+
+### Runtime signals
+
+Console errors, uncaught page errors, unhandled rejections, crashes and hydration
+mismatches are captured per route × viewport, and each one disqualifies a pass however
+well the layout measured. Listeners attach **before** navigation — the errors thrown
+during the render under test are exactly the ones a late listener misses — and detach
+after, so signals never bleed between routes.
+
+Hydration is classified separately from slow data: an unresolved skeleton keeps its own
+reason and is never reported as a hydration failure.
+
+Two deliberate limits on what can fail a route:
+
+- The console **noise allowlist** is tiny and every entry carries a reason, because
+  anything matched there can never fail a route again. An unknown console error is a
+  finding, not noise.
+- Chrome's generic `Failed to load resource…` line names no URL, so the console cannot
+  tell whether the endpoint mattered. Those echoes are reported but judged by the
+  **network contract**, which is the only layer that knows which endpoints are required.
+  Counting them twice turned a shared rate limiter — tripped by running four identities
+  in parallel against one Preview — into 88 false failures on static public pages.
+
+Everything captured is **redacted on the way in**, never at print time: console text
+comes from the page and is written to a report, so a value that reaches the results
+array has already escaped.
+
+> Run identities **serially** against a single Preview. Four concurrent browsers is
+> enough to trip shared rate limits and produce 429s that are the harness's doing, not
+> the app's.
 
 ### Roles, not a boolean
 

@@ -26,6 +26,7 @@ import { chromium } from 'playwright-core'
 import fs from 'node:fs'
 import { classifyRoute, summarizeRoutes, ROUTE_BLOCKED_OUTCOMES, roleSatisfiesRoute } from './mobile-audit-classify.mjs'
 import { classifyTarget, classifyFinalUrl, resolveBase } from './mobile-audit-target-guard.mjs'
+import { summarizeRuntimeSignals, evaluateRequests, isApplicationRequest, redactMessage } from './mobile-audit-runtime-signals.mjs'
 
 
 // Base URL resolution lives in the guard module with the rest of target policy, so it
@@ -85,6 +86,13 @@ const VIEWPORTS = [
 //   expectDenial: { roles, text } — a role that is SUPPOSED to be refused. Proving the
 //          denial card rendered is a truthful pass for that role, recorded as state
 //          'denial' so it can never be read as the admin workflow passing.
+//   data:  { required, loadedText, emptyText } — proof the page's DATA resolved, not
+//          just its chrome. `required` names same-origin endpoints the page cannot work
+//          without: a 4xx/5xx on one of them (or never calling it) disqualifies a pass,
+//          which is what six route×role combinations needed — correct heading, correct
+//          URL, perfect layout, 403 payload, reported PASS. `loadedText`/`emptyText`
+//          let a route accept EITHER a populated result or an explicit empty state, so
+//          a correct page with no records is not failed for having none.
 //
 // Routes that only redirect are NOT listed. `/opspilot` (→ /operion, next.config.ts)
 // and `/admin/operations/ai/shadow` (→ /ai/performance, that page's own redirect) can
@@ -115,7 +123,8 @@ const ROUTES = [
   { path: '/admin/operations/book-now', auth: 'admin', ready: 'h1, table' },
   { path: '/admin/operations/list', auth: 'admin', ready: 'h1, table' },
   { path: '/admin/operations/employees', auth: 'admin', ready: 'h1' },
-  { path: '/admin/operations/businesses', auth: 'admin', ready: 'h1' },
+  { path: '/admin/operations/businesses', auth: 'admin', ready: 'h1',
+    data: { required: ['/api/admin/route-invoices', '/api/admin/businesses'] } },
   { path: '/admin/operations/equipment', auth: 'admin', ready: 'h1' },
   { path: '/admin/operations/claims', auth: 'admin', ready: 'h1' },
   { path: '/admin/operations/messages', auth: 'admin', ready: 'h1' },
@@ -127,15 +136,21 @@ const ROUTES = [
     expectDenial: { roles: ['manager'], text: 'Pay statements are restricted to administrators' } },
   // The Timesheets table is a deliberate horizontal scroll RAIL with a pinned
   // action column — internal scrolling is legitimate, a hidden action is not.
-  { path: '/admin/operations/timesheets', auth: 'admin', ready: 'h1', requireAction: 'select' },
+  { path: '/admin/operations/timesheets', auth: 'admin', ready: 'h1', requireAction: 'select',
+    data: { required: ['/api/admin/timesheets'] } },
   { path: '/admin/operations/settings', auth: 'admin', ready: 'h1' },
-  { path: '/admin/operations/release', auth: 'admin', ready: 'h1' },
+  { path: '/admin/operations/release', auth: 'admin', ready: 'h1',
+    data: { required: ['/api/admin/release'] } },
   // AI Command Center sections — the data-dense pages most prone to mobile overflow.
-  { path: '/admin/operations/ai', auth: 'admin', ready: 'h1' },
+  { path: '/admin/operations/ai', auth: 'admin', ready: 'h1',
+    data: { required: ['/api/admin/ai-overview'] } },
   { path: '/admin/operations/ai/controls', auth: 'admin', ready: 'h1' },
-  { path: '/admin/operations/ai/performance', auth: 'admin', ready: 'h1' },
-  { path: '/admin/operations/ai/learning', auth: 'admin', ready: 'h1' },
-  { path: '/admin/operations/ai/alerts', auth: 'admin', ready: 'h1' },
+  { path: '/admin/operations/ai/performance', auth: 'admin', ready: 'h1',
+    data: { required: ['/api/admin/shadow-learning'] } },
+  { path: '/admin/operations/ai/learning', auth: 'admin', ready: 'h1',
+    data: { required: ['/api/admin/shadow-learning'] } },
+  { path: '/admin/operations/ai/alerts', auth: 'admin', ready: 'h1',
+    data: { required: ['/api/admin/ai-alerts'] } },
   // No <h1> on this page at all — its title is a styled <p>. `ready: 'h1'` could
   // therefore never be satisfied, which produced 18 false failures.
   { path: '/admin/disposal', auth: 'admin', ready: 'input, label', readyText: 'Disposal & Pricing' },
@@ -285,6 +300,44 @@ for (const route of ROUTES) {
   for (const { w, h } of VIEWPORTS) {
     await page.setViewportSize({ width: w, height: h })
     let checkInput = {}
+
+    // Listeners are attached BEFORE navigation, or the errors thrown during the very
+    // render we care about are the ones we miss. Everything is redacted on the way in:
+    // console text is captured from the page and written to a report, so it is an
+    // exfiltration path, and a value that reaches the results array has already escaped.
+    const rawConsole = []
+    const rawPageErrors = []
+    const observedRequests = []
+    const onConsole = (m) => {
+      const type = m.type()
+      const text = m.text()
+      // Warnings only count when they describe a runtime/data failure — React logs
+      // plenty of advice nobody needs the audit to fail on.
+      if (type === 'error' || (type === 'warning' && /hydrat|did not match|failed|error/i.test(text))) {
+        rawConsole.push(redactMessage(text))
+      }
+    }
+    const onPageError = (e) => rawPageErrors.push(redactMessage(e?.message ?? e))
+    const onCrash = () => rawPageErrors.push('Page crashed')
+    const onResponse = (r) => {
+      const url = r.url()
+      if (!isApplicationRequest(url, BASE)) return
+      try { observedRequests.push({ path: new URL(url).pathname, method: r.request().method(), status: r.status() }) } catch { /* ignore */ }
+    }
+    const onRequestFailed = (r) => {
+      const url = r.url()
+      if (!isApplicationRequest(url, BASE)) return
+      try { observedRequests.push({ path: new URL(url).pathname, method: r.method(), status: 0 }) } catch { /* ignore */ }
+    }
+    page.on('console', onConsole)
+    page.on('pageerror', onPageError)
+    page.on('crash', onCrash)
+    page.on('response', onResponse)
+    page.on('requestfailed', onRequestFailed)
+    // Summarized lazily so the catch path reports the same signals as the happy path.
+    const signals = () => summarizeRuntimeSignals({ consoleErrors: rawConsole, pageErrors: rawPageErrors })
+    const requests = () => evaluateRequests(observedRequests, route.data?.required ?? [])
+
     try {
       const resp = await page.goto(BASE + path, { waitUntil: 'domcontentloaded', timeout: 20000 })
       // Measure AFTER hydration, not the server shell. `networkidle` is best-effort:
@@ -329,6 +382,21 @@ for (const route of ROUTES) {
           (t) => (document.body?.innerText || '').includes(t),
           route.readyText, { timeout: 10000 },
         ).then(() => true).catch(() => false)
+      }
+
+      // The DATA proof. A route may accept EITHER a populated result or an explicit
+      // empty state — requiring records would fail a correct page that simply has none.
+      let dataLoadedFound = null
+      let dataEmptyFound = null
+      if (!expectedDenial && (route.data?.loadedText || route.data?.emptyText)) {
+        const wanted = [route.data.loadedText, route.data.emptyText].filter(Boolean)
+        await page.waitForFunction(
+          (texts) => texts.some((t) => (document.body?.innerText || '').includes(t)),
+          wanted, { timeout: 10000 },
+        ).catch(() => {})
+        const body = await page.evaluate(() => document.body?.innerText || '')
+        if (route.data.loadedText) dataLoadedFound = body.includes(route.data.loadedText)
+        if (route.data.emptyText) dataEmptyFound = body.includes(route.data.emptyText)
       }
       if (CLICK_TEXT) {
         const target = page.getByRole('tab', { name: CLICK_TEXT, exact: true })
@@ -400,11 +468,23 @@ for (const route of ROUTES) {
         readinessSelector: route.ready ?? null, readinessFound,
         readinessText: route.readyText ?? null, readinessTextFound,
         expectedDenial, denialText, denialTextFound,
+        dataLoadedText: route.data?.loadedText ?? null, dataLoadedFound,
+        dataEmptyText: route.data?.emptyText ?? null, dataEmptyFound,
+        ...signals(), ...requests(),
         requireActionSelector: route.requireAction ?? null, actionVisible,
         scrollWidth: m.sw, clientWidth: m.cw, offenders: m.offenders, clipped: m.clipped,
       }
     } catch (e) {
-      checkInput = { requestedPath: path, requiredRole, activeRole: IDENTITY, requiresAuth, authState, error: String(e?.message || e) }
+      checkInput = {
+        requestedPath: path, requiredRole, activeRole: IDENTITY, requiresAuth, authState,
+        error: String(e?.message || e), ...signals(), ...requests(),
+      }
+    } finally {
+      page.off('console', onConsole)
+      page.off('pageerror', onPageError)
+      page.off('crash', onCrash)
+      page.off('response', onResponse)
+      page.off('requestfailed', onRequestFailed)
     }
     const { outcome, detail, state } = classifyRoute(checkInput)
 
@@ -419,7 +499,16 @@ for (const route of ROUTES) {
     results.push({
       path, width: w, outcome, detail, state,
       finalPath: checkInput.finalPath ?? null, identity: IDENTITY,
+      requestedUrl: BASE + path,
       assertion: expectedDenial ? denialText : (route.readyText ?? route.ready ?? null),
+      dataAssertion: route.data ? (route.data.loadedText ?? route.data.required?.join(', ') ?? null) : null,
+      requiredFailures: checkInput.requiredFailures ?? [],
+      missingRequired: checkInput.missingRequired ?? [],
+      otherFailures: checkInput.otherFailures ?? [],
+      consoleErrors: checkInput.consoleErrors ?? [],
+      networkEchoes: checkInput.networkEchoes ?? [],
+      pageErrors: checkInput.pageErrors ?? [],
+      hydrationErrors: checkInput.hydrationErrors ?? [],
       evidence,
     })
 
@@ -461,6 +550,29 @@ if (uiFindings.length) {
   for (const r of uiFindings) {
     console.log(`${r.outcome} ${r.path} @${r.width} [as ${r.identity}${r.state ? `/${r.state}` : ''}] rendered=${r.finalPath ?? 'n/a'} assert=${r.assertion ?? 'none'}`)
     console.log(`       ${r.detail}${r.evidence ? `  → ${r.evidence}` : ''}`)
+    if (r.requiredFailures?.length) console.log(`       required endpoints: ${r.requiredFailures.join(', ')}`)
+    if (r.missingRequired?.length) console.log(`       required endpoints never called: ${r.missingRequired.join(', ')}`)
+    if (r.pageErrors?.length) console.log(`       page errors: ${r.pageErrors.join(' | ')}`)
+    if (r.hydrationErrors?.length) console.log(`       hydration: ${r.hydrationErrors.join(' | ')}`)
+    if (r.consoleErrors?.length) console.log(`       console: ${r.consoleErrors.join(' | ')}`)
+    if (r.networkEchoes?.length) console.log(`       (console echoes of subresource failures — judged by the network contract, not here): ${r.networkEchoes.join(' | ')}`)
+    if (r.otherFailures?.length) console.log(`       other (non-disqualifying) request failures: ${r.otherFailures.join(', ')}`)
+  }
+}
+
+// Reported, never auto-failed: a flaky background request must not become the kind of
+// false FAIL Wave 2 spent a whole PR removing. It is still visible.
+const noisyPasses = results.filter(r => r.outcome === 'PASS' && r.otherFailures?.length)
+if (noisyPasses.length) {
+  console.log(`\n---- non-disqualifying request failures on passing routes ----`)
+  const seen = new Set()
+  for (const r of noisyPasses) {
+    for (const f of r.otherFailures) {
+      const k = `${r.path} ${f}`
+      if (seen.has(k)) continue
+      seen.add(k)
+      console.log(`${r.path} [as ${r.identity}]  ${f}`)
+    }
   }
 }
 
