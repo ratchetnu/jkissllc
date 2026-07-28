@@ -4,8 +4,12 @@
 //   PW_EXE=<chrome-headless-shell path> BASE=http://localhost:3111 \
 //     [SHOT_DIR=shots] [LABEL=run] [ONLY=/,/quote] [AUDIT_IDENTITY=…]
 //     [ADMIN_PASSWORD=…  |  AUDIT_EMAIL=… AUDIT_PASSWORD=…]   [VERCEL_BYPASS=…]
-//     [CLICK_TEXT="Activation Readiness"] \
+//     [CLICK_TEXT="Activation Readiness"] [AUDIT_ALLOWED_HOST=…] \
 //     node scripts/mobile-overflow-audit.mjs
+//
+// The target must be loopback, a Vercel PREVIEW deployment, or AUDIT_ALLOWED_HOST.
+// Anything else — Production above all — is refused as BLOCKED_ENV before a browser
+// is launched. See mobile-audit-target-guard.mjs and README-local-audit.md §7.
 //
 // For every route × viewport it FIRST proves the intended page actually rendered
 // (authenticated, not redirected, not a sign-in screen, not blank, not a stuck
@@ -21,18 +25,39 @@
 import { chromium } from 'playwright-core'
 import fs from 'node:fs'
 import { classifyRoute, summarizeRoutes, ROUTE_BLOCKED_OUTCOMES } from './mobile-audit-classify.mjs'
+import { classifyTarget, classifyFinalUrl, resolveBase } from './mobile-audit-target-guard.mjs'
 
 
-// Base URL resolution, in precedence order: --base flag, BASE env, default.
+// Base URL resolution lives in the guard module with the rest of target policy, so it
+// can be unit tested without importing this file (which would start an audit).
 // The app must already be running — this tool measures a live server and cannot
 // start one. See README-local-audit.md for how to bring up an isolated instance.
-const DEFAULT_BASE = 'http://localhost:3111'
-function resolveBase(argv = process.argv.slice(2)) {
-  const i = argv.indexOf('--base')
-  if (i >= 0 && argv[i + 1]) return argv[i + 1].replace(/\/$/, '')
-  return (process.env.BASE || DEFAULT_BASE).replace(/\/$/, '')
-}
 const BASE = resolveBase()
+
+// ── Target guard ─────────────────────────────────────────────────────────────
+// FIRST, before anything else in this file does work: refuse a Production target.
+// This runs ahead of authentication, chromium.launch(), route iteration, screenshots
+// and any CLICK_TEXT, because every one of those is a Production interaction if the
+// target is wrong. Refusal is BLOCKED_ENV — never a pass, never a UI finding.
+function refuseTarget(verdict, phase) {
+  const { counts } = summarizeRoutes([{ outcome: 'BLOCKED_ENV' }])
+  console.error(`\n==== MOBILE AUDIT — TARGET REFUSED (${phase}) ====`)
+  console.error(`BLOCKED_ENV [${verdict.code}] ${verdict.reason}`)
+  if (verdict.host) console.error(`Rejected hostname: ${verdict.host}`)
+  console.error(`\nNo browser was launched, no session was created, and NOTHING was measured.`)
+  console.error(`This is NOT a UI finding and NOT a pass.`)
+  console.error(`  PASS ${counts.PASS}   BLOCKED_ENV ${counts.BLOCKED_ENV}`)
+  console.error(`\nThe audit runs against loopback or a Vercel Preview deployment only.`)
+  console.error(`See docs/operations/README-local-audit.md.\n`)
+  process.exit(2)
+}
+
+const targetVerdict = classifyTarget(BASE, {
+  vercelEnv: process.env.VERCEL_ENV,
+  approvedHost: process.env.AUDIT_ALLOWED_HOST,
+})
+if (!targetVerdict.ok) refuseTarget(targetVerdict, 'pre-launch')
+
 const PW_EXE = process.env.PW_EXE || undefined
 const SHOT_DIR = process.env.SHOT_DIR || null
 const LABEL = process.env.LABEL || 'run'
@@ -140,14 +165,31 @@ async function maybeAuth(ctx) {
 // exact misreporting this tool used to produce.
 async function preflight(base) {
   try {
-    const res = await fetch(base, { method: 'GET', signal: AbortSignal.timeout(10000) })
-    return { ok: true, status: res.status }
+    // Carries the same bypass header the browser context uses, so a protected Preview
+    // answers directly instead of 30x-ing to SSO and looking like an off-target redirect.
+    const res = await fetch(base, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(10000),
+      ...(process.env.VERCEL_BYPASS ? { headers: { 'x-vercel-protection-bypass': process.env.VERCEL_BYPASS } } : {}),
+    })
+    return { ok: true, status: res.status, finalUrl: res.url || base }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? (e.cause?.code || e.message) : String(e) }
   }
 }
 
 const pre = await preflight(BASE)
+
+// Where we ENDED UP, not where we aimed. An approved origin that redirects onto
+// Production is a Production session; stop here rather than launch a browser into it.
+if (pre.ok && pre.finalUrl) {
+  const finalVerdict = classifyFinalUrl(pre.finalUrl, {
+    vercelEnv: process.env.VERCEL_ENV,
+    approvedHost: process.env.AUDIT_ALLOWED_HOST,
+  })
+  if (!finalVerdict.ok) refuseTarget(finalVerdict, 'post-redirect, pre-launch')
+}
 if (!pre.ok) {
   console.error(`\n==== MOBILE OVERFLOW AUDIT — INFRASTRUCTURE ERROR ====`)
   console.error(`Cannot reach the app at ${BASE}`)
