@@ -151,10 +151,14 @@ export function roleSatisfiesRoute(requiredRole, activeRole) {
  *   readinessSelector?: string|null, readinessFound?: boolean|null,
  *   readinessText?: string|null, readinessTextFound?: boolean|null,
  *   expectedDenial?: boolean, denialText?: string|null, denialTextFound?: boolean|null,
+ *   dataLoadedText?: string|null, dataLoadedFound?: boolean|null,
+ *   dataEmptyText?: string|null, dataEmptyFound?: boolean|null,
+ *   requiredFailures?: string[], missingRequired?: string[], otherFailures?: string[],
+ *   consoleErrors?: string[], pageErrors?: string[], hydrationErrors?: string[],
  *   requireActionSelector?: string|null, actionVisible?: boolean|null,
  *   scrollWidth?: number, clientWidth?: number, offenders?: string[], clipped?: string[],
  * }} input
- * @returns {{ outcome: RouteOutcome, detail: string, state: 'content'|'denial'|null }}
+ * @returns {{ outcome: RouteOutcome, detail: string, state: 'content'|'denial'|'empty'|'data'|'runtime'|null }}
  */
 export function classifyRoute(input = {}) {
   const {
@@ -168,6 +172,13 @@ export function classifyRoute(input = {}) {
     readinessSelector = null, readinessFound = null,
     readinessText = null, readinessTextFound = null,
     expectedDenial = false, denialText = null, denialTextFound = null,
+    dataLoadedText = null, dataLoadedFound = null,
+    dataEmptyText = null, dataEmptyFound = null,
+    // `otherFailures` is deliberately NOT read here: an unrelated background request
+    // failing is reported by the caller but must not fail the route on its own, or a
+    // flaky analytics beacon becomes exactly the kind of false FAIL Wave 2 removed.
+    requiredFailures = [], missingRequired = [],
+    consoleErrors = [], pageErrors = [], hydrationErrors = [],
     requireActionSelector = null, actionVisible = null,
     scrollWidth, clientWidth, offenders = [], clipped = [],
   } = input
@@ -278,7 +289,55 @@ export function classifyRoute(input = {}) {
     }
   }
 
-  const state = expectedDenial ? 'denial' : 'content'
+  // 9b. The DATA contract. Chrome and layout tell you the page mounted; they cannot
+  //     tell you it works. Six route×role combinations rendered a correct heading, a
+  //     correct URL and a perfect layout while their required request returned 403 —
+  //     and passed. A page that could not load its data does not pass.
+  //
+  //     An expected denial is exempt: being refused IS the contract for that role.
+  if (!expectedDenial) {
+    if (requiredFailures.length) {
+      return done('FAIL', `required data request failed: ${requiredFailures.join(', ')}`, 'data')
+    }
+    if (missingRequired.length) {
+      return done('FAIL', `required data request was never made: ${missingRequired.join(', ')}`, 'data')
+    }
+    // An empty dataset is a legitimate outcome, so a route may name BOTH the populated
+    // proof and the explicit empty state. Requiring records would fail a correct page
+    // that simply has none.
+    if (dataLoadedText || dataEmptyText) {
+      const loaded = dataLoadedText ? dataLoadedFound === true : false
+      const empty = dataEmptyText ? dataEmptyFound === true : false
+      if (!loaded && !empty) {
+        const want = [dataLoadedText && `"${dataLoadedText}"`, dataEmptyText && `empty state "${dataEmptyText}"`]
+          .filter(Boolean).join(' or ')
+        return done('FAIL', `data never resolved — expected ${want}`, 'data')
+      }
+    }
+  }
+
+  // 9c. Runtime signals. A page that threw, or failed to hydrate, or logged an error
+  //     nobody has explained, is not a passing page — however well it measured. These
+  //     come AFTER the route/data contracts so the more actionable finding is reported
+  //     first, and they apply to a denial state too: being refused is fine, throwing
+  //     while being refused is not.
+  //
+  //     A browser/process failure is the one case that is not a statement about the
+  //     page's content, so it keeps ROUTE_ERROR.
+  if (pageErrors.some(isBrowserProcessFailure)) {
+    return done('ROUTE_ERROR', `browser/process failure: ${pageErrors.find(isBrowserProcessFailure)}`, 'runtime')
+  }
+  if (pageErrors.length) {
+    return done('FAIL', `uncaught page error: ${pageErrors.join(' | ')}`, 'runtime')
+  }
+  if (hydrationErrors.length) {
+    return done('FAIL', `hydration failure: ${hydrationErrors.join(' | ')}`, 'runtime')
+  }
+  if (consoleErrors.length) {
+    return done('FAIL', `console error: ${consoleErrors.join(' | ')}`, 'runtime')
+  }
+
+  const state = expectedDenial ? 'denial' : (dataEmptyFound === true ? 'empty' : 'content')
 
   // 10. Only now is a layout measurement meaningful.
   const parts = []
@@ -298,6 +357,12 @@ export function classifyRoute(input = {}) {
 /** Uniform result shape. `state` records WHICH contract was proven, never just "ok". */
 function done(outcome, detail, state = null) {
   return { outcome, detail, state }
+}
+
+// The browser itself died, rather than the page misbehaving. Not a content finding.
+const BROWSER_FAILURE_PATTERN = /Target (?:page|browser|closed|crashed)|Page crashed|browser has been closed|Protocol error/i
+function isBrowserProcessFailure(message) {
+  return BROWSER_FAILURE_PATTERN.test(String(message ?? ''))
 }
 
 /**
