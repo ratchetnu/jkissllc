@@ -570,8 +570,9 @@ export async function deleteRoute(token: string): Promise<void> {
 // from "nothing to do". A truncated scan that looks like a clean scan is the failure
 // mode worth engineering against.
 //
-// This enumerates the WHOLE index in pages and reports whether it managed to. It
-// never raises a limit and hopes; it proves coverage or admits it could not.
+// This snapshots the WHOLE bounded index in one Redis command, then pages the record
+// reads and verifies that index membership stayed unchanged. It never raises a limit
+// and hopes; it proves coverage or admits it could not.
 
 export type RouteScan = {
   routes: RouteRecord[]
@@ -590,15 +591,15 @@ export const ROUTE_SCAN_MAX = 20_000
 const ROUTE_SCAN_PAGE = 500
 
 /**
- * Enumerate every route in the index, in pages.
+ * Enumerate every route in a stable, bounded index snapshot.
  *
- * `complete` is the contract: it is true ONLY when the number of index entries
- * enumerated equals the `zcard` taken at the start. Callers that mutate must refuse
- * to act when it is false.
+ * `complete` is the contract: it is true ONLY when every unique indexed token has a
+ * readable record and index membership is unchanged at the end. Callers that mutate
+ * must refuse to act when it is false.
  *
- * Snapshot semantics: `total` is read once, up front. Routes written DURING the scan
- * may or may not be included, which is why the auto-cancel path re-reads each record
- * under its lock before acting — the scan proposes, the locked record decides.
+ * Routes written DURING the scan make the snapshot incomplete and defer the whole
+ * batch. The auto-cancel path still re-runs full eligibility under each route lock:
+ * the scan proposes, the locked record decides.
  */
 export async function scanAllRoutes(opts?: { pageSize?: number; max?: number }): Promise<RouteScan> {
   const pageSize = Math.max(1, opts?.pageSize ?? ROUTE_SCAN_PAGE)
@@ -612,29 +613,60 @@ export async function scanAllRoutes(opts?: { pageSize?: number; max?: number }):
     }
   }
 
-  const tokens: string[] = []
-  for (let start = 0; start < total; start += pageSize) {
-    const page = await redis.zrange(KEY_INDEX, start, Math.min(start + pageSize, total) - 1)
-    if (!page.length) break // index shrank mid-scan — stop and report incomplete below
-    tokens.push(...page)
+  // Capture the index in ONE Redis command. Offset pagination over a sorted set whose
+  // scores can change between calls can duplicate one token and skip another while
+  // still returning `total` rows. The ceiling above keeps this bounded.
+  const openingTokens = total ? await redis.zrange(KEY_INDEX, 0, total - 1) : []
+  const uniqueTokens = Array.from(new Set(openingTokens))
+  if (openingTokens.length !== total || uniqueTokens.length !== total) {
+    return {
+      routes: [], complete: false, scanned: uniqueTokens.length, total,
+      truncatedReason:
+        `route index snapshot was unstable: expected ${total} unique entries, ` +
+        `received ${openingTokens.length} entries / ${uniqueTokens.length} unique`,
+    }
   }
 
-  const unique = Array.from(new Set(tokens))
-  const complete = tokens.length >= total
-
-  const raws = await Promise.all(unique.map(t => redis.get(KEY(t))))
-  const routes = raws
-    .filter(Boolean)
-    .map(r => { try { return normalize(JSON.parse(r as string) as RouteRecord) } catch { return null } })
-    .filter((r): r is RouteRecord => r !== null)
-
-  return {
-    routes,
-    complete,
-    scanned: tokens.length,
-    total,
-    truncatedReason: complete ? undefined : `enumerated ${tokens.length} of ${total} index entries`,
+  // Page the record reads, not the mutable index. A missing or malformed indexed
+  // record means the scan is incomplete; destructive callers must see no routes.
+  const routes: RouteRecord[] = []
+  for (let start = 0; start < uniqueTokens.length; start += pageSize) {
+    const page = uniqueTokens.slice(start, start + pageSize)
+    const raws = await Promise.all(page.map(t => redis.get(KEY(t))))
+    for (let i = 0; i < raws.length; i++) {
+      const raw = raws[i]
+      if (!raw) {
+        return {
+          routes: [], complete: false, scanned: routes.length, total,
+          truncatedReason: `indexed route ${page[i]} has no readable record`,
+        }
+      }
+      try {
+        routes.push(normalize(JSON.parse(raw) as RouteRecord))
+      } catch {
+        return {
+          routes: [], complete: false, scanned: routes.length, total,
+          truncatedReason: `indexed route ${page[i]} contains malformed JSON`,
+        }
+      }
+    }
   }
+
+  // Re-read membership after loading records. Any addition, removal, or reordering
+  // makes this pass conservative: cancel nothing and let a retry take a clean view.
+  const closingTotal = await redis.zcard(KEY_INDEX)
+  const closingTokens = closingTotal ? await redis.zrange(KEY_INDEX, 0, closingTotal - 1) : []
+  const stable =
+    closingTotal === total &&
+    closingTokens.length === openingTokens.length &&
+    closingTokens.every((token, i) => token === openingTokens[i])
+
+  return stable
+    ? { routes, complete: true, scanned: routes.length, total }
+    : {
+        routes: [], complete: false, scanned: routes.length, total,
+        truncatedReason: 'route index changed while the complete scan was running',
+      }
 }
 
 export async function listRoutes(limit = 500): Promise<RouteRecord[]> {
@@ -691,14 +723,19 @@ export const SYSTEM_AUTO_CANCEL_PRINCIPAL = { sub: 'system:route-auto-cancel', r
  *   from / to  the previous status and 'cancelled'
  *   note       the reason, the ROUTE date, and the CENTRAL execution date+time
  *
- * Returns false without touching the record if it is already terminal, so a retry is
- * a no-op rather than a second entry.
+ * Returns false without touching the record if it is Draft or already terminal, so a
+ * retry or a route returned to planning is a no-op rather than a cancellation.
  */
 export function autoCancelRoute(
   r: RouteRecord,
   ctx: { reason: string; routeDate: string; centralAt: string },
 ): boolean {
-  if (r.status === 'cancelled' || r.status === 'completed' || r.status === 'no_show') return false
+  if (
+    r.status === 'draft' ||
+    r.status === 'cancelled' ||
+    r.status === 'completed' ||
+    r.status === 'no_show'
+  ) return false
   const from = r.status
   r.status = 'cancelled'
   pushAuditFor(

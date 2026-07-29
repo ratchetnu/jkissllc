@@ -23,7 +23,10 @@ process.env.KV_REST_API_URL = `http://127.0.0.1:${PORT}`
 process.env.KV_REST_API_TOKEN = 'emulator-accepts-anything'
 
 import { NextRequest } from 'next/server'
-import { saveRoute, getRouteByToken, scanAllRoutes, ROUTE_SCAN_MAX, type RouteRecord, type Assignee } from '../app/lib/routes'
+import {
+  saveRoute, getRouteByToken, scanAllRoutes, autoCancelRoute, ROUTE_SCAN_MAX,
+  type RouteRecord, type Assignee,
+} from '../app/lib/routes'
 import { runWithTenant, currentTenantId } from '../app/lib/platform/tenancy/context'
 import { redis } from '../app/lib/redis'
 import { GET } from '../app/api/cron/route-auto-cancel/route'
@@ -243,6 +246,35 @@ test('SCAN: enumerates every route across page boundaries (pageSize-1, exact, +1
   }
 })
 
+test('SCAN: index reordering during the scan FAILS CLOSED', async () => {
+  await seedN(4)
+  const original = redis.zrange.bind(redis)
+  let snapshotReads = 0
+  redis.zrange = (async (...args: Parameters<typeof redis.zrange>) => {
+    const result = await original(...args)
+    if (args[1] === 0 && args[2] === 3 && ++snapshotReads === 2) return [...result].reverse()
+    return result
+  }) as typeof redis.zrange
+  try {
+    const scan = await runWithTenant({ tenantId: 'jkiss' }, () => scanAllRoutes({ pageSize: 2 }))
+    assert.equal(scan.complete, false)
+    assert.deepEqual(scan.routes, [], 'an unstable membership snapshot exposes no candidates')
+    assert.match(String(scan.truncatedReason), /index changed/)
+  } finally {
+    redis.zrange = original as typeof redis.zrange
+  }
+})
+
+test('SCAN: a missing indexed record FAILS CLOSED', async () => {
+  const r = mkRoute()
+  await seed(r)
+  await runWithTenant({ tenantId: 'jkiss' }, () => redis.del(`rt:${r.token}`))
+  const scan = await runWithTenant({ tenantId: 'jkiss' }, () => scanAllRoutes())
+  assert.equal(scan.complete, false)
+  assert.deepEqual(scan.routes, [])
+  assert.match(String(scan.truncatedReason), /no readable record/)
+})
+
 test('SCAN: at the exact ceiling it completes; one over it FAILS CLOSED', async () => {
   await seedN(5)
   const at = await runWithTenant({ tenantId: 'jkiss' }, () => scanAllRoutes({ max: 5 }))
@@ -333,6 +365,24 @@ test('TENANCY: an outer context is restored after the cron runs inside it', asyn
   assert.equal(seen, 'outer')
 })
 
+test('TENANT FAILURE: a store exception reports 503, incomplete, and never a clean pass', async () => {
+  const original = redis.zcard.bind(redis)
+  redis.zcard = (async () => { throw new Error('synthetic scan failure') }) as typeof redis.zcard
+  try {
+    const { status, body } = await withFlag(false, () => call())
+    assert.equal(status, 503)
+    assert.equal(body.ok, false)
+    assert.equal(body.scanComplete, false)
+    const tenants = body.tenants as Array<Record<string, unknown>>
+    assert.equal(tenants[0].scanComplete, false)
+    assert.equal(tenants[0].candidateCount, null)
+    assert.deepEqual(tenants[0].cancelled, [])
+    assert.equal(tenants[0].error, 'Error')
+  } finally {
+    redis.zcard = original as typeof redis.zcard
+  }
+})
+
 // ─────────────────────────────────────────────────────────────────────────────
 // RETRY / GRACE WINDOW / PARTIAL FAILURE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -369,6 +419,54 @@ test('RETRY: crew added between attempts stops the cancellation immediately', as
   await withFlag(true, () => call())
   const after = await runWithTenant({ tenantId: 'jkiss' }, () => stored(r.token))
   assert.equal(after, before, 'the under-lock re-read refuses a now-crewed route')
+})
+
+test('LOCKED RECHECK: a route returned to Draft after the scan is not cancelled', async () => {
+  const now = Date.parse('2026-07-29T05:30:00Z') // 00:30 America/Chicago (CDT)
+  const r = mkRoute({ routeDate: '2026-07-29', status: 'assigned', assignees: [] })
+  await seed(r)
+
+  const originalNow = Date.now
+  const originalGet = redis.get.bind(redis)
+  const originalSet = redis.set.bind(redis)
+  let routeReads = 0
+  Date.now = () => now
+  redis.get = (async (key: string) => {
+    if (key === `rt:${r.token}` && ++routeReads === 2) {
+      const draft = { ...r, status: 'draft' as const, updatedAt: now }
+      const raw = JSON.stringify(draft)
+      await originalSet(key, raw)
+      return raw
+    }
+    return originalGet(key)
+  }) as typeof redis.get
+
+  try {
+    const { status, body } = await withFlag(true, () => call())
+    assert.equal(status, 200)
+    const tenant = (body.tenants as Array<{
+      cancelled: string[]
+      skipped: Array<{ routeNumber: string; why: string }>
+    }>)[0]
+    assert.deepEqual(tenant.cancelled, [])
+    assert.match(tenant.skipped[0].why, /returned to draft/)
+    const fresh = await runWithTenant({ tenantId: 'jkiss' }, () => originalGet(`rt:${r.token}`))
+    assert.equal(JSON.parse(String(fresh)).status, 'draft')
+  } finally {
+    Date.now = originalNow
+    redis.get = originalGet as typeof redis.get
+  }
+})
+
+test('DEFENCE IN DEPTH: autoCancelRoute itself refuses Draft', () => {
+  const r = mkRoute({ status: 'draft', assignees: [] })
+  const before = JSON.stringify(r)
+  assert.equal(autoCancelRoute(r, {
+    reason: 'No crew assigned.',
+    routeDate: r.routeDate,
+    centralAt: '2026-07-29 00:30',
+  }), false)
+  assert.equal(JSON.stringify(r), before)
 })
 
 test('PARTIAL FAILURE: one bad route does not stop the rest of the batch', async () => {

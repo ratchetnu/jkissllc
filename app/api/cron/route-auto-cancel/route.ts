@@ -8,7 +8,7 @@ import { currentTenantId } from '../../../lib/platform/tenancy/context'
 import { alert } from '../../../lib/alerts'
 import {
   selectAutoCancelCandidates, isCancellationWindow, centralDate, centralHour, centralStamp,
-  isLiveRoute, hasNoCrew, OPS_TIMEZONE, CANCELLATION_GRACE_HOURS,
+  OPS_TIMEZONE, CANCELLATION_GRACE_HOURS,
   type AutoCancelCandidate,
 } from '../../../lib/schedule/auto-cancel'
 
@@ -90,9 +90,21 @@ async function runForTenant(now: number, write: boolean): Promise<Outcome> {
         // scan proposes — the record under the lock decides.
         const fresh = await getRouteByToken(c.token)
         if (!fresh) { out.skipped.push({ routeNumber: c.routeNumber, why: 'route no longer exists' }); return }
-        if (!isLiveRoute(fresh)) { out.skipped.push({ routeNumber: c.routeNumber, why: `already ${fresh.status}` }); return }
-        if (!hasNoCrew(fresh)) { out.skipped.push({ routeNumber: c.routeNumber, why: 'crew assigned since scan' }); return }
-        if (fresh.routeDate !== c.routeDate) { out.skipped.push({ routeNumber: c.routeNumber, why: 'route date changed' }); return }
+        // Re-run the COMPLETE eligibility predicate. Checking only selected fields
+        // here previously allowed a route changed back to Draft after the scan to be
+        // cancelled. The locked record must qualify exactly as a fresh candidate.
+        const stillEligible = selectAutoCancelCandidates([fresh], now)[0]
+        if (!stillEligible) {
+          const why = fresh.status === 'draft'
+            ? 'route returned to draft since scan'
+            : fresh.routeDate !== c.routeDate
+              ? 'route date changed'
+              : (fresh.assignees?.length ?? 0) > 0
+                ? 'crew assigned since scan'
+                : `already ${fresh.status}`
+          out.skipped.push({ routeNumber: c.routeNumber, why })
+          return
+        }
 
         // ONE attributed lifecycle entry carrying actor, reason, route date, previous
         // and new status, and the Central execution stamp.
@@ -193,7 +205,15 @@ export async function GET(req: NextRequest) {
         })
       } catch (e) {
         console.error('[cron/route-auto-cancel] tenant', tenantId, e)
-        tenants.push({ tenant: tenantId, error: e instanceof Error ? e.name : 'unknown' })
+        anyIncompleteScan = true
+        tenants.push({
+          tenant: tenantId,
+          scanComplete: false,
+          candidateCount: null,
+          cancelled: [],
+          cancelledCount: 0,
+          error: e instanceof Error ? e.name : 'unknown',
+        })
       }
     }
 
@@ -207,7 +227,7 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json({
-      ok: true,
+      ok: !anyIncompleteScan,
       mode,
       write,
       scanComplete: !anyIncompleteScan,
@@ -221,7 +241,7 @@ export async function GET(req: NextRequest) {
       inCancellationWindow: inWindow,
       scheduled: false,
       tenants,
-    })
+    }, { status: anyIncompleteScan ? 503 : 200 })
   } catch (e) {
     console.error('[cron/route-auto-cancel] fatal', e)
     try {
