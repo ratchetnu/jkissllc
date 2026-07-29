@@ -98,8 +98,9 @@ active funnel; `refunded` is absorbing. The matrix was derived from an audit of 
 pre-existing call sites, so every workflow that previously worked still does — what changed
 is that anything outside them is now refused rather than silently written.
 
-**Remaining before this sprint is in service:** enable `BOOKING_ASSIGNMENT_ENABLED` in
-Production. That is an owner decision and is deliberately not part of the closeout.
+**Production activation status:** independently confirm the encrypted
+`BOOKING_ASSIGNMENT_ENABLED` value. Any enable/disable change remains an owner decision
+and is deliberately not part of this closeout.
 
 **Verification:** assignment and conflict tests; authorization tests; duplicate-action idempotency; real mobile crew flow; mixed route/booking pay statement fixture; Preview data inspection.
 
@@ -278,5 +279,5 @@ Production. That is an owner decision and is deliberately not part of the closeo
    phone widths and inspect audit history for exactly-once events.
 4. Keep route auto-cancellation unscheduled and flag-off pending tenant fan-out and
    Preview dry reports.
-5. Keep `BOOKING_ASSIGNMENT_ENABLED` off in Production until the owner approves the
-   separate activation and rollback plan.
+5. Confirm the current Production `BOOKING_ASSIGNMENT_ENABLED` value; do not change it
+   until the owner approves the separate activation or rollback plan.
