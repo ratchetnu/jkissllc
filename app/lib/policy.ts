@@ -78,7 +78,15 @@ export async function getCurrentPolicy(): Promise<Policy> {
     const raw = await redis.get(`${KEY_VERSION}${cur}`)
     if (!raw) return DEFAULT_POLICY
     return JSON.parse(raw) as Policy
-  } catch {
+  } catch (e) {
+    // WAVE 6D-C. "No policy stored" and "I could not tell which tenant to ask" are
+    // different answers and must not share a fallback. A missing record legitimately
+    // means the built-in default applies. A missing TENANT CONTEXT means we do not
+    // know whose policy this is — and silently serving the default would show a
+    // customer the wrong legal agreement text on a page they are about to accept.
+    // That one rethrows so the caller fails loudly instead of quietly mis-stating
+    // terms. Callers already inside a tenant scope are unaffected.
+    if (e instanceof Error && /tenant context required/.test(e.message)) throw e
     return DEFAULT_POLICY
   }
 }
