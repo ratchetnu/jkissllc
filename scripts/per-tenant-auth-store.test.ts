@@ -19,6 +19,7 @@ import { createUser, getUserByEmail, listUsers, backfillUserDirectory } from '..
 import { runWave6Backfill } from '../app/lib/platform/tenancy/wave6-migration'
 import { redis } from '../app/lib/redis'
 import { DEFAULT_TENANT_ID } from '../app/lib/platform/tenancy/types'
+import { getTenant } from '../app/lib/platform/tenancy/tenant-registry'
 
 // A high, per-run port so concurrent test runs cannot collide.
 const PORT = 6400 + (process.pid % 500)
@@ -182,6 +183,26 @@ test('BACKFILL: re-running never overwrites a deliberately changed membership', 
   const again = await runWave6Backfill()
   assert.equal(again.memberships.created, 0, 'nothing re-created')
   assert.equal((await getMembership('u_legacyonly', DEFAULT_TENANT_ID))?.role, 'manager', 'the change survived')
+})
+
+test('BACKFILL: seeds the reference tenant REGISTRY record, not just memberships', async () => {
+  // Regression: a live Preview login found that POST /api/auth/tenant and
+  // requireMemberSession both check `getTenant(...)` exists, so a user holding a
+  // valid ACTIVE membership was still refused entry to the reference tenant because
+  // no registry record had been seeded. A membership does not imply a tenant.
+  const report = await runWave6Backfill()
+  assert.equal(report.referenceTenantSeeded, true)
+  const tenant = await getTenant(DEFAULT_TENANT_ID)
+  assert.ok(tenant, 'the reference tenant exists in the registry')
+  assert.equal(tenant!.id, DEFAULT_TENANT_ID)
+  assert.equal(tenant!.status, 'active', 'and is not suspended, so the existence check passes')
+})
+
+test('BACKFILL: re-seeding the reference tenant is idempotent', async () => {
+  const before = await getTenant(DEFAULT_TENANT_ID)
+  await runWave6Backfill()
+  const after = await getTenant(DEFAULT_TENANT_ID)
+  assert.deepEqual(after, before, 'a re-run never mutates the live tenant record')
 })
 
 test('BACKFILL: a dry run writes nothing', async () => {
