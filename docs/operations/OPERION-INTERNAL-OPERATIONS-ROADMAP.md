@@ -1,6 +1,6 @@
 # Operion Internal Operations Completion Roadmap
 
-**Updated:** 2026-07-26
+**Updated:** 2026-07-29
 **Customers:** J KISS LLC and Supercharged  
 **Scope:** Daily internal operations. Enterprise tenancy, editions, subscriptions, and self-service onboarding remain deferred.
 
@@ -19,8 +19,9 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
 - Booking status transitions are governed by one authoritative matrix in
   `app/lib/booking-status.ts`; all eleven mutation sites route through `canTransition`
   and fail closed on an illegal pair.
-- Full suite: **2195/2195 passing**. AI regression: **2/2 passing**. TypeScript, ESLint on
-  changed files, and the production build pass (170/170 pages).
+- Current PR #128 candidate: **2856/2856 tests passing**; TypeScript passes; ESLint has
+  zero errors and one pre-existing warning in untouched `pay-statements.ts`. Exact-SHA
+  CI and Preview provenance remain required before merge.
 - `BOOKING_ASSIGNMENT_ENABLED` is **false in Production**. The whole Sprint 1 feature set is
   merged and Preview-validated but not yet serving; enabling it is a separate owner decision.
 
@@ -103,6 +104,9 @@ Production. That is an owner decision and is deliberately not part of the closeo
 
 **Objective:** Give dispatch one simple daily view for bookings, routes, crew, equipment, conflicts, and work requiring attention.
 
+**Status:** In progress. PR #128 is open and unmerged; automatic route cancellation
+remains inactive.
+
 **Affected files/components:**
 
 - `app/admin/operations/page.tsx`
@@ -113,6 +117,32 @@ Production. That is an owner decision and is deliberately not part of the closeo
 - admin schedule, booking, staff, and equipment APIs
 
 **Dependencies:** Sprint 1 lifecycle and assignment source of truth.
+
+**Current implementation:**
+
+- Schedule conflicts and Attention totals use the same selected-day boundary; historical
+  conflicts are hidden without rewriting historical routes.
+- Vehicle/equipment readiness is opt-in per route through `requiresVehicle`; existing
+  routes and route types remain compatible.
+- Admin confirmation refuses a route that explicitly requires equipment but has none.
+  Crew acceptance remains separate from owner-controlled dispatch readiness.
+- A protected route auto-cancel endpoint exists for routes that reach their Central-time
+  route day with no crew. It is fail-closed on incomplete scans, rechecks full eligibility
+  under the route lock, and records one attributed lifecycle event.
+- `ROUTE_AUTO_CANCEL_ENABLED` defaults off. No Vercel cron schedules the endpoint, and
+  merging PR #128 does not activate automatic cancellation or change Production data.
+- Tenancy-enabled execution remains blocked until a complete tenant registry can be
+  proven; the job will not sweep one tenant and claim platform-wide success.
+
+**Remaining before Sprint 2 closes:**
+
+- Independent delta review and merge decision for PR #128.
+- Issue #129: make dispatch readiness an explicit workflow state instead of only a
+  derived signal, then gate dispatch actions consistently.
+- Add the owner-facing control for whether a route requires company vehicle/equipment.
+- Design and verify complete tenant fan-out before scheduling the cancellation endpoint.
+- Run Preview-only dry reports across representative route days before any separate
+  activation proposal.
 
 **Verification:** desktop and 320/375/390/430 px layouts; search/filter state; one-click navigation from alerts to records; no hidden conflicts; role checks for owner/admin/manager; empty/loading/error states.
 
@@ -209,12 +239,16 @@ Production. That is an owner decision and is deliberately not part of the closeo
 
 ## Immediate next action
 
-Sprint 1 is code-complete. The two previously listed actions are done: the pay-snapshot
-connection shipped, and Supercharged's Preview Redis was separated in Sprint 0 (recorded in
-the baseline above).
+Finish Sprint 2 safely before opening a broad Sprint 3 implementation:
 
-The next decision is **activation, not construction** — `BOOKING_ASSIGNMENT_ENABLED` is off
-in Production, so none of Sprint 1 is serving yet. Turning it on is worth more than starting
-Sprint 2, which would add a second unshipped layer on top of the first.
+1. Complete the independent delta review of PR #128 and merge only if its exact head,
+   CI, and Preview provenance remain clean.
+2. Implement issue #129's explicit dispatch-readiness state and the owner-facing
+   vehicle/equipment requirement control.
+3. Keep route auto-cancellation unscheduled and flag-off until complete tenant fan-out
+   and multiple Preview dry reports are approved.
+4. Make the separate owner decision on `BOOKING_ASSIGNMENT_ENABLED`; updating this
+   roadmap or merging Sprint 2 work does not authorize Production activation.
 
-Sprint 2 (dispatch dashboard) remains the next build item once assignment is live.
+Once those Sprint 2 gates are closed, Sprint 3's crew mobile reliability work is the next
+construction milestone.

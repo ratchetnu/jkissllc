@@ -187,14 +187,19 @@ export function detectConflicts(items: ScheduleItem[]): Conflict[] {
       })
     }
 
-    // Confirmed work for a day with no vehicle/equipment picked. Routes always
-    // qualify. A booking qualifies only once it is ROSTER-staffed (some crew member
-    // carries a staffId) — that is what says the job is being run under the
-    // assignment model and therefore has an equipment answer to give. Bookings
-    // still crewed by hand-typed names are left alone, so turning this on adds no
-    // warnings to work that predates the model.
-    const equippable = it.kind === 'route' || it.crew.some(c => c.staffId)
-    if (equippable && it.lane === 'confirmed' && it.scheduled && !it.vehicle && !it.equipmentId) {
+    // Confirmed work for a day with no vehicle/equipment picked.
+    //
+    // This is now an EXPLICIT, opt-in route setting (`RouteRecord.requiresVehicle`),
+    // not an inference. It used to fire for every route unconditionally, plus any
+    // roster-staffed booking — which meant routes that legitimately run without a
+    // company asset (crew-own-equipment, client-supplied truck, ride-along days)
+    // were permanently reported as broken and could never be resolved. A warning
+    // nobody can clear trains the owner to ignore the panel.
+    //
+    // Only a route someone deliberately marked can raise this, and the same
+    // predicate blocks the Confirm transition (routes.ts:needsVehicleAssignment),
+    // so the warning and the block can never disagree.
+    if (it.requiresVehicle && it.lane === 'confirmed' && it.scheduled && !it.vehicle && !it.equipmentId) {
       out.push({
         type: 'missing_vehicle', severity: 'warning', day: it.date, resource: it.number,
         message: `${it.number} (${it.title}) is confirmed for ${it.date} with no vehicle or equipment.`,
@@ -241,6 +246,33 @@ export function detectConflicts(items: ScheduleItem[]): Conflict[] {
   }
 
   return out
+}
+
+// ── Date scoping ─────────────────────────────────────────────────────────────
+//
+// `detectConflicts` stays clock-free (see the header): it reports every conflict in
+// the projected set, whenever it falls. Deciding which of those are worth showing
+// is a VIEW concern, so it lives here as a separate pure function that takes the
+// reference day as an argument rather than reading a clock.
+//
+// Why: the schedule feed projects every booking and route in the store, so a Day
+// view for today was listing unresolved conflicts from weeks earlier. A conflict on
+// a day that has already passed is not something the owner can still act on for
+// that day — it is history, and it drowns the ones that matter.
+//
+// Undated conflicts (`accepted_not_scheduled` has no `day` — that is the whole
+// point of it) are ALWAYS kept: they are not in the past, they are nowhere yet.
+
+/**
+ * Keep conflicts on or after `fromDay` (yyyy-mm-dd), plus every undated conflict.
+ *
+ * Pure and total: an empty/absent `fromDay` disables filtering and returns the input
+ * unchanged, so a caller that cannot determine a reference day degrades to today's
+ * behaviour rather than silently hiding everything.
+ */
+export function filterConflictsFrom(conflicts: Conflict[], fromDay: string | undefined): Conflict[] {
+  if (!fromDay) return conflicts
+  return conflicts.filter(c => !c.day || c.day >= fromDay)
 }
 
 // Attach the conflicts that reference each item back onto a lookup by item id —
