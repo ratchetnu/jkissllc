@@ -2,7 +2,8 @@ import type { Metadata } from 'next'
 import { COMPANY, CREDENTIALS_DOT } from '../lib/company';
 import Link from 'next/link'
 import { getReviews } from '../lib/reviews'
-import { listReviews, displayName, aggregate } from '../lib/site-reviews'
+import { listReviews, displayName, aggregate, type SiteReview } from '../lib/site-reviews'
+import { withReferenceTenantScope } from '../lib/platform/tenancy/public-render-scope'
 
 const SITE_URL = COMPANY.siteUrl
 
@@ -41,8 +42,13 @@ function Stars({ rating }: { rating: number }) {
 export default async function ReviewsPage() {
   // On-site reviews (collected from paid receipts) are the primary source. If a
   // Google Business Profile is configured later, those are used as a fallback.
-  const site = (await listReviews()).filter(r => !r.hidden)
-  const google = site.length === 0 ? await getReviews() : null
+  // Same reason as the homepage: a server component has no tenant context even when
+  // force-dynamic, because withTenantRoute wraps API handlers, not pages.
+  const { site, google } = await withReferenceTenantScope(async () => {
+    const site = (await listReviews()).filter((r: SiteReview) => !r.hidden)
+    const google = site.length === 0 ? await getReviews() : null
+    return { site, google }
+  })
 
   const data: { reviews: DisplayReview[]; rating: number; totalRatings: number; source: 'site' | 'google' } | null =
     site.length > 0
