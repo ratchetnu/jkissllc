@@ -24,6 +24,8 @@ type SessionPayload = {
   role?: Role        // absent on legacy tokens → resolves to 'admin'
   staffId?: string   // crew principals only — the Staff record they may read
   tid?: string       // tenant id — absent on pre-tenancy tokens → resolves to the reference tenant
+  mid?: string       // membership id the tenant+role were derived from (Wave 6)
+  pend?: 1           // TENANT SELECTION PENDING — authenticated, but NOT yet a session
 }
 
 // The resolved caller. Guards return this instead of a bare boolean so every
@@ -33,13 +35,14 @@ export type Principal = {
   role: Role
   staffId?: string
   tenantId: string   // the reference tenant for pre-tenancy tokens (DEFAULT_TENANT_ID)
+  membershipId?: string  // Wave 6 — absent on legacy/owner sessions
 }
 
 // Turn a live payload into a principal. Legacy tokens (no role) → owner admin;
 // pre-tenancy tokens (no tid) → the reference tenant (single-tenant continuity).
 function toPrincipal(p: SessionPayload): Principal {
   const role: Role = isRole(p.role) ? p.role : 'admin'
-  return { sub: p.sub || 'owner', role, staffId: p.staffId, tenantId: p.tid || DEFAULT_TENANT_ID }
+  return { sub: p.sub || 'owner', role, staffId: p.staffId, tenantId: p.tid || DEFAULT_TENANT_ID, membershipId: p.mid }
 }
 
 function b64url(bytes: ArrayBuffer | Uint8Array): string {
@@ -126,7 +129,7 @@ export async function createSessionToken(): Promise<string> {
 // that RBAC and the crew portal scope on. `tenantId` defaults to the reference
 // tenant (single-tenant today); named per-tenant users pass it explicitly later.
 export async function createUserSessionToken(
-  user: { id: string; role: Role; staffId?: string; tenantId?: string },
+  user: { id: string; role: Role; staffId?: string; tenantId?: string; membershipId?: string },
 ): Promise<string> {
   const now = Date.now()
   return signPayload({
@@ -137,12 +140,34 @@ export async function createUserSessionToken(
     role: user.role,
     staffId: user.staffId,
     tid: user.tenantId || DEFAULT_TENANT_ID,
+    mid: user.membershipId,
   })
+}
+
+// ── Tenant selection (Wave 6) ────────────────────────────────────────────────
+// A user with MORE THAN ONE active membership has proven who they are but not yet
+// which tenant they are acting as. This mints a short-lived PENDING token: it is
+// signed (so the selection step cannot be reached without a valid password) but it
+// carries `pend: 1` and NO role, and `getPrincipal` refuses it. It is therefore
+// useless as a session — it only unlocks POST /api/auth/tenant.
+const SELECTION_TTL_MS = 5 * 60 * 1000
+
+export async function createTenantSelectionToken(userId: string): Promise<string> {
+  const now = Date.now()
+  return signPayload({ iat: now, exp: now + SELECTION_TTL_MS, idleExp: now + SELECTION_TTL_MS, sub: userId, pend: 1 })
+}
+
+/** The user id behind a live PENDING token, or null. Never returns a Principal —
+ *  a pending token must never satisfy an authorization guard. */
+export async function getPendingUserId(req: NextRequest): Promise<string | null> {
+  const p = await parseToken(req.cookies.get(COOKIE_NAME)?.value)
+  if (!p || !isLive(p) || p.pend !== 1) return null
+  return p.sub ?? null
 }
 
 export async function verifySessionToken(token: string | undefined | null): Promise<boolean> {
   const p = await parseToken(token)
-  return !!p && isLive(p)
+  return !!p && isLive(p) && p.pend !== 1
 }
 
 // The resolved principal for a request, or null if there is no live session.
@@ -151,12 +176,14 @@ export async function getPrincipal(req: NextRequest): Promise<Principal | null> 
   const token = req.cookies.get(COOKIE_NAME)?.value
   const p = await parseToken(token)
   if (!p || !isLive(p)) return null
+  if (p.pend === 1) return null   // tenant selection pending — not a session
   return toPrincipal(p)
 }
 
 export async function getPrincipalFromToken(token: string | undefined | null): Promise<Principal | null> {
   const p = await parseToken(token)
   if (!p || !isLive(p)) return null
+  if (p.pend === 1) return null   // tenant selection pending — not a session
   return toPrincipal(p)
 }
 
@@ -167,8 +194,9 @@ export async function getPrincipalFromToken(token: string | undefined | null): P
 export async function slideSessionToken(token: string | undefined | null): Promise<string | null> {
   const p = await parseToken(token)
   if (!p || !isLive(p)) return null
+  if (p.pend === 1) return null   // a pending selection token is never slid into a session
   const idleExp = Math.min(p.exp, Date.now() + IDLE_TTL_MS)
-  return signPayload({ iat: p.iat, exp: p.exp, idleExp, sub: p.sub, role: p.role, staffId: p.staffId, tid: p.tid })
+  return signPayload({ iat: p.iat, exp: p.exp, idleExp, sub: p.sub, role: p.role, staffId: p.staffId, tid: p.tid, mid: p.mid })
 }
 
 export function setSessionCookie(res: NextResponse, token: string): void {

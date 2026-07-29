@@ -89,6 +89,26 @@ export async function listTenantIdsForUser(userId: string): Promise<string[]> {
   }
 }
 
+/**
+ * Every membership record this user holds — the input to the login tenant-selection
+ * flow. Returns FULL records (not just ids) so the caller never has to re-read, and
+ * so it can filter on status without a second round trip. Order is stable
+ * (tenantId) so a selection list does not shuffle between requests.
+ */
+export async function listMembershipsForUser(userId: string): Promise<Membership[]> {
+  const tenantIds = await listTenantIdsForUser(userId)
+  if (!tenantIds.length) return []
+  const records = await Promise.all(tenantIds.map((t) => getMembership(userId, t)))
+  return records
+    .filter((m): m is Membership => m !== null)
+    .sort((a, b) => a.tenantId.localeCompare(b.tenantId))
+}
+
+/** Only the ACTIVE memberships — what a login may actually choose between. */
+export async function listActiveMembershipsForUser(userId: string): Promise<Membership[]> {
+  return (await listMembershipsForUser(userId)).filter((m) => m.status === 'active')
+}
+
 export async function listUserIdsForTenant(tenantId: string): Promise<string[]> {
   try {
     return await redis.zrange(byTenantKey(tenantId), 0, -1)
@@ -103,6 +123,8 @@ export type MembershipInput = {
   userId: string
   role: Role
   status?: MembershipStatus
+  /** Crew only: the Staff roster record in THIS tenant. */
+  staffId?: string
   createdAt?: number
 }
 
@@ -120,6 +142,7 @@ export async function upsertMembership(input: MembershipInput): Promise<Membersh
     userId,
     role: input.role,
     status: input.status ?? 'active',
+    staffId: input.staffId,
     createdAt: input.createdAt ?? 0,
   }
   await redis.set(recordKey(tenantId, userId), JSON.stringify(membership))
