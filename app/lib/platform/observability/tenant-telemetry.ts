@@ -17,6 +17,7 @@ export type TenantEvent =
   | 'migration-conflict'
   | 'background-tenant-resolution'
   | 'unauthorized-global-access'
+  | 'session-tenant-bound'   // Wave 6: a session was bound/switched to a tenant
 
 export type TenantEventCtx = {
   tenantId?: string

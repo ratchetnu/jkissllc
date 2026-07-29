@@ -37,13 +37,22 @@ export type Tenant = {
 
 export type MembershipStatus = 'active' | 'invited' | 'suspended'
 
-/** A User's belonging to a Tenant with a Role. The unit RBAC will scope on. */
+/**
+ * A User's belonging to a Tenant with a Role. The unit RBAC scopes on.
+ *
+ * WAVE 6: `role` and `staffId` are PER-MEMBERSHIP, not per-user. The same person can
+ * be an admin in one tenant and crew in another, and their crew roster link differs
+ * per tenant — carrying a single global `user.role`/`user.staffId` across tenants
+ * would leak one tenant's authority (and one tenant's Staff id) into another.
+ */
 export type Membership = {
   id: string
   tenantId: string
   userId: string
   role: Role
   status: MembershipStatus
+  /** Crew only: the Staff roster record IN THIS TENANT. Never valid cross-tenant. */
+  staffId?: string
   createdAt: number
 }
 

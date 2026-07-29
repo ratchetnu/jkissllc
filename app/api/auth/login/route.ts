@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createUserSessionToken, setSessionCookie } from '../../admin/_lib/session'
+import { createUserSessionToken, createTenantSelectionToken, setSessionCookie } from '../../admin/_lib/session'
+import { listActiveMembershipsForUser } from '../../../lib/platform/tenancy/membership'
+import { resolveLogin, toTenantChoices } from '../../../lib/platform/tenancy/login-resolution'
+import { isEnabled } from '../../../lib/platform/flags'
 import { getUserByEmail, recordUserLogin, normalizeEmail } from '../../../lib/users'
 import { verifyPassword } from '../../../lib/password'
 import { parseDevice } from '../../../lib/admin-login-log'
@@ -81,12 +84,55 @@ export async function POST(req: NextRequest) {
   try { await recordUserLogin(user.id, Date.now(), device) } catch { /* non-fatal */ }
 
   try {
-    const token = await createUserSessionToken({ id: user.id, role: user.role, staffId: user.staffId })
+    // ── Wave 6: the session's tenant comes from a VALIDATED MEMBERSHIP ─────────
+    // Note what is absent: nothing here reads a tenant id from the request. A
+    // forged `tenantId` in the body is not rejected so much as never consulted.
+    const memberships = await listActiveMembershipsForUser(user.id)
+    const decision = resolveLogin(
+      memberships,
+      { id: user.id, role: user.role, staffId: user.staffId },
+      { tenancyEnabled: isEnabled('TENANCY_ENABLED') },
+    )
+
+    if (decision.kind === 'no-membership') {
+      // Authenticated but belongs to no tenant. A controlled state — and NOT a
+      // credential hint: the password was already verified to reach here.
+      return NextResponse.json(
+        { ok: false, error: 'This account is not assigned to an organization. Contact your administrator.', code: 'NO_MEMBERSHIP' },
+        { status: 403 },
+      )
+    }
+
+    if (decision.kind === 'select') {
+      // Several tenants — the user chooses. The cookie set here is a PENDING token:
+      // signed, short-lived, carries no role, and `getPrincipal` refuses it, so it
+      // unlocks POST /api/auth/tenant and nothing else.
+      const pending = await createTenantSelectionToken(user.id)
+      const res = NextResponse.json({
+        ok: true,
+        needsTenantSelection: true,
+        tenants: toTenantChoices(decision.choices),
+        redirect: '/login/organization',
+      })
+      setSessionCookie(res, pending)
+      return res
+    }
+
+    // Exactly one active membership → straight in.
+    const m = decision.membership
+    const token = await createUserSessionToken({
+      id: user.id,
+      role: m.role,                       // the MEMBERSHIP's role, not the global one
+      staffId: m.staffId ?? user.staffId, // tenant-specific roster link when present
+      tenantId: m.tenantId,
+      membershipId: m.id,
+    })
     const res = NextResponse.json({
       ok: true,
-      role: user.role,
+      role: m.role,
+      tenantId: m.tenantId,
       // Where the client should land after login.
-      redirect: user.role === 'crew' ? '/portal' : '/admin/operations',
+      redirect: m.role === 'crew' ? '/portal' : '/admin/operations',
     })
     setSessionCookie(res, token)
     return res
