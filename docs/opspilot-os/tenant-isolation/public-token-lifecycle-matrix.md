@@ -57,18 +57,49 @@ Recommendation: bind the existing id. The id is already public by design, and br
 issued verification links to gain a distinction customers cannot observe is a poor
 trade.
 
-## Open questions that must be answered before wiring
+## Decisions (owner, 2026-07-29) — these are settled
 
-1. **Ack retention (#7).** No revocation path exists. Are ack tokens one-time,
-   repeat-use, or indefinite? The binding's lifetime must match, or it either outlives
-   the capability or kills it early.
-2. **Route-token indirection (#4).** `rt:atok:{assignee}` maps to a *route* token; the
-   public page then loads the route. The binding should point at the route, but
-   rotation deletes per-assignee atoks — so bindings must be revoked in lockstep at
-   `routes.ts:434` or a rotated-out assignee keeps a working link.
-3. **Invoice/Stripe boundary (#6).** Stripe callbacks must stay
-   metadata/signature-based. The invoice token binding must not become an alternative
-   trust path into payment marking.
+### 1. Acknowledgement tokens: repeat-use while active
+Not one-time — a user may reopen the link before completing the acknowledgement — and
+not indefinite without lifecycle control.
+
+- the same link may be reopened and reused **while the acknowledgement is active**
+- the binding points at the exact tenant + acknowledgement resource
+- **revoke** on: completed · cancelled · superseded/replaced · expired under the
+  existing retention contract
+- unknown / revoked / completed / expired / mismatched all fail identically, revealing
+  neither tenant nor resource existence
+- making them one-time would change the product workflow and belongs in a separate
+  reviewed feature, not here
+
+### 2. Pay-statement verification: bind the existing `ps_...` id
+The current opaque id **is** the public capability. Binding it preserves every printed,
+emailed and saved verification link.
+
+- `platform:token:{payStatementId}` → `{tenantId, resourceType: 'pay-statement', resourceId}`
+- resolve the binding **before** reading `paystmt:*`
+- **no** second customer-visible token this wave — revisit only if a security review
+  finds the current entropy insufficient
+- `paystmt:` does **not** join `PLATFORM_GLOBAL_PREFIXES`
+- existing unbound links need a controlled backfill/compatibility path
+- conflicting ownership fails and never overwrites
+
+### 3. Route-token rotation: old links die immediately
+- revoke the old binding **in the same protected mutation** that rotates or removes the
+  assignee token
+- bind the replacement only to the intended tenant + route + assignee contract
+- no window where both old and new links work, unless the route workflow explicitly
+  requires overlap
+- a stale caller must not restore the previous binding; rotation stays idempotent
+- a failed rotation must leave neither a live old token (once revocation committed),
+  nor an unbound new token, nor two unintended active bindings
+
+## Delivery split
+
+| PR | Scope |
+|---|---|
+| **6D-A** (lower risk) | route access · client portal · acknowledgement · quote resume/status wrapper swaps · `/api/track` host mapping · shared backfill · tests |
+| **6D-B** (financial, reviewed separately) | route invoice · pay-statement verification · financial backfill · tests |
 
 ## What must NOT happen
 
