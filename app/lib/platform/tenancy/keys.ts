@@ -20,6 +20,18 @@ export const PLATFORM_GLOBAL_PREFIXES = [
   'platform:', // tenant records + platform billing/analytics (future)
   'ai:',       // AI telemetry/cost/prompts — platform-managed; cost already embeds the tenant
   'rl:',       // rate limits — pre-auth, per-IP infrastructure
+  // Liveness self-test only: `health:ping:{buildId}` holds the literal '1' with a 10s
+  // TTL and is written by pingKv() (lib/health.ts) — the ONLY health:* Redis key in
+  // the codebase. It carries no tenant, customer or business payload, and it is keyed
+  // by BUILD, not by anything a tenant owns, so two tenants cannot collide in it.
+  //
+  // It belongs here for the same reason as `rl:`: /api/health runs PRE-AUTH, with no
+  // session and no tenant context, so a tenant-owned classification made the
+  // chokepoint fail closed and the endpoint answer 503 with tenancy on — an uptime
+  // monitor reporting the platform down because tenancy was enabled. Scoping a
+  // liveness probe per tenant would also be meaningless: the thing being tested is
+  // whether the STORE answers at all.
+  'health:',   // KV liveness probe — pre-auth infrastructure, no tenant payload
 ] as const
 
 const TENANT_PREFIX_RE = /^t:[a-z0-9][a-z0-9-]{0,63}:/

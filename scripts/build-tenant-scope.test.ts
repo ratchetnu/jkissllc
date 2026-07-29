@@ -131,8 +131,8 @@ test('nested async reads inside one scope all resolve to the reference tenant', 
 
 // 12 ────────────────────────────────────────────────────────────────────────────
 test('NO tenant-owned key family was reclassified as platform-global', () => {
-  assert.deepEqual([...PLATFORM_GLOBAL_PREFIXES], ['opspilot:', 'platform:', 'ai:', 'rl:'],
-    'the allowlist is unchanged — the fix did not take the shortcut of globalising rv:')
+  assert.deepEqual([...PLATFORM_GLOBAL_PREFIXES], ['opspilot:', 'platform:', 'ai:', 'rl:', 'health:'],
+    'rv: was NOT globalised; health: is the one deliberate pre-auth-infra addition (Wave 6B)')
   assert.ok(!isPlatformGlobal('rv:index'), 'reviews are still tenant-owned')
   assert.ok(!isPlatformGlobal('rv:some-token'))
 })

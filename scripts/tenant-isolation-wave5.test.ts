@@ -127,7 +127,7 @@ test('TEN-2: the platform-global allowlist is exactly the reviewed set', () => {
   // A guard, not a restatement: adding a prefix here exempts a whole key family from
   // the tenancy chokepoint, which is how TEN-2 happened. Changing this list should
   // require changing this test, deliberately.
-  assert.deepEqual([...PLATFORM_GLOBAL_PREFIXES], ['opspilot:', 'platform:', 'ai:', 'rl:'])
+  assert.deepEqual([...PLATFORM_GLOBAL_PREFIXES], ['opspilot:', 'platform:', 'ai:', 'rl:', 'health:'])
 })
 
 test('TEN-2: tenant-owned families across every audited subsystem are namespaced', () => {
