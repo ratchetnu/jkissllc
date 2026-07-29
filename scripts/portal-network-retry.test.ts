@@ -85,8 +85,9 @@ test('Retry-After is honored but capped so a tap cannot hang indefinitely', asyn
 
 test('booking job actions retry only the proven-idempotent verbs', () => {
   const src = readFileSync(new URL('../app/portal/jobs/[id]/JobDetailClient.tsx', import.meta.url), 'utf8')
-  assert.match(src, /allowMutationRetry: body\.action !== 'complete'/)
-  assert.match(src, /Completion proof is not/)
+  assert.match(src, /RETRY_SAFE_ACTIONS = new Set\(\['accept', 'decline', 'clock_in', 'clock_out'\]\)/)
+  assert.match(src, /RETRY_SAFE_ACTIONS\.has\(body\.action\)/)
+  assert.doesNotMatch(src, /body\.action !== 'complete'/)
   assert.match(src, /Connection dropped — retrying this action safely/)
 })
 

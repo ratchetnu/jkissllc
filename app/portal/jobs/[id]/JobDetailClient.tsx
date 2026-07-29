@@ -63,6 +63,8 @@ const bigBtn = (tone: string): React.CSSProperties => ({
   border: `1px solid ${tone}`, background: `${tone}1a`, color: tone, cursor: 'pointer',
 })
 
+const RETRY_SAFE_ACTIONS = new Set(['accept', 'decline', 'clock_in', 'clock_out'])
+
 function JobDetail({ id }: { id: string }) {
   const [job, setJob] = useState<Job | null>(null)
   const [loading, setLoading] = useState(true)
@@ -111,9 +113,10 @@ function JobDetail({ id }: { id: string }) {
           body: JSON.stringify(body),
         },
         {
-          // These actions are idempotent on the server. Completion proof is not
-          // automatically retried until its audit write has its own dedupe key.
-          allowMutationRetry: body.action !== 'complete',
+          // Only these four actions are proven idempotent on the server. An explicit
+          // allowlist keeps every future mutation single-attempt by default.
+          allowMutationRetry:
+            typeof body.action === 'string' && RETRY_SAFE_ACTIONS.has(body.action),
           onRetry: () => setNetworkMsg('Connection dropped — retrying this action safely…'),
         },
       )
