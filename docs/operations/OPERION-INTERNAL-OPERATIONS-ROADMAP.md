@@ -26,8 +26,9 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
   weak-network layer for crew job reads, accept/decline, and clock punches.
 - The integrated Sprint 3 candidate passes **2877/2877 tests**, TypeScript, and lint
   with zero errors (one pre-existing warning in untouched `pay-statements.ts`).
-- `BOOKING_ASSIGNMENT_ENABLED` is **false in Production**. The whole Sprint 1 feature set is
-  merged and Preview-validated but not yet serving; enabling it is a separate owner decision.
+- A Production `BOOKING_ASSIGNMENT_ENABLED` variable exists, but its encrypted value
+  has not been independently confirmed in this sprint. Activation status must be
+  verified explicitly before relying on it; no flag change is authorized here.
 
 ## Sprint 0 — Foundation cleanup
 

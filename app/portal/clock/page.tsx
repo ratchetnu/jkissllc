@@ -57,10 +57,11 @@ function Timeclock() {
       const d = await res.json()
       setEnabled(!!d.enabled)
       setRoutes(d.routes ?? [])
+      setErr('')
       setNetworkMsg('')
     } catch {
-      setEnabled(true)
-      setRoutes([])
+      setEnabled(current => current ?? true)
+      setRoutes(current => current ?? [])
       setErr('Could not load the timeclock. Check your connection and try again.')
     }
   }, [])
@@ -95,7 +96,7 @@ function Timeclock() {
           }),
         },
         {
-          allowMutationRetry: true,
+          allowMutationRetry: action === 'clock_in' || action === 'clock_out',
           onRetry: () => setNetworkMsg('Connection dropped — retrying this punch safely…'),
         },
       )
@@ -201,13 +202,13 @@ function Timeclock() {
 
             {r.phase === 'not_started' && (
               <button onClick={() => punch(r, 'clock_in')} disabled={punching || offline} className="os-tap"
-                style={{ width: '100%', padding: '13px', borderRadius: 12, border: '1px solid rgba(34,197,94,.4)', background: 'rgba(34,197,94,.1)', color: '#22c55e', fontWeight: 800, fontSize: 14.5, cursor: 'pointer', opacity: punching ? 0.7 : 1 }}>
+                style={{ width: '100%', padding: '13px', borderRadius: 12, border: '1px solid rgba(34,197,94,.4)', background: 'rgba(34,197,94,.1)', color: '#22c55e', fontWeight: 800, fontSize: 14.5, cursor: punching || offline ? 'not-allowed' : 'pointer', opacity: punching || offline ? 0.6 : 1 }}>
                 {punching ? 'Locating…' : 'Clock In'}
               </button>
             )}
             {r.phase === 'clocked_in' && (
               <button onClick={() => punch(r, 'clock_out')} disabled={punching || offline} className="os-tap"
-                style={{ width: '100%', padding: '13px', borderRadius: 12, border: '1px solid rgba(224,0,42,.4)', background: 'rgba(224,0,42,.1)', color: '#ff6680', fontWeight: 800, fontSize: 14.5, cursor: 'pointer', opacity: punching ? 0.7 : 1 }}>
+                style={{ width: '100%', padding: '13px', borderRadius: 12, border: '1px solid rgba(224,0,42,.4)', background: 'rgba(224,0,42,.1)', color: '#ff6680', fontWeight: 800, fontSize: 14.5, cursor: punching || offline ? 'not-allowed' : 'pointer', opacity: punching || offline ? 0.6 : 1 }}>
                 {punching ? 'Locating…' : 'Clock Out'}
               </button>
             )}

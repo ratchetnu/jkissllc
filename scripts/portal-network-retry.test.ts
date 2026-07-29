@@ -100,7 +100,12 @@ test('both crew action screens visibly fail closed while offline', () => {
     assert.match(src, /aria-live="polite"/)
   }
   assert.match(job, /const actionDisabled = !!busy \|\| offline/)
+  assert.match(job, /setBusy\(''\)\s+return false/)
+  assert.match(job, /Reconnect to load this job/)
+  assert.match(job, /Try again/)
+  assert.match(job, /opacity: actionDisabled \? \.55 : 1/)
   assert.match(clock, /disabled=\{punching \|\| offline\}/)
+  assert.match(clock, /setRoutes\(current => current \?\? \[\]\)/)
 })
 
 test('My Jobs retries reads, reloads on reconnect, and offers a real retry button', () => {
@@ -114,7 +119,7 @@ test('My Jobs retries reads, reloads on reconnect, and offers a real retry butto
 test('clock retries preserve the exact action body and rely on server idempotency', () => {
   const client = readFileSync(new URL('../app/portal/clock/page.tsx', import.meta.url), 'utf8')
   const server = readFileSync(new URL('../app/lib/crew-timeclock.ts', import.meta.url), 'utf8')
-  assert.match(client, /allowMutationRetry: true/)
+  assert.match(client, /allowMutationRetry: action === 'clock_in' \|\| action === 'clock_out'/)
   assert.match(server, /if \(assignee\.clockInAt\) return \{ ok: true, changed: false, already: true/)
   assert.match(server, /if \(assignee\.clockOutAt\) return \{ ok: true, changed: false, already: true/)
 })

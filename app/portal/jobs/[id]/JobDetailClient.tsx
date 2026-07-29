@@ -77,6 +77,7 @@ function JobDetail({ id }: { id: string }) {
   const { offline } = useConnectivity()
 
   const load = useCallback(async () => {
+    setErr('')
     try {
       const res = await fetchWithRetry(
         `/api/portal/jobs/${id}`,
@@ -97,10 +98,12 @@ function JobDetail({ id }: { id: string }) {
     if (!offline) void load().finally(() => setLoading(false))
   }, [offline, load])
 
-  const act = async (body: Record<string, unknown>, tag: string) => {
+  const act = async (body: Record<string, unknown>, tag: string): Promise<boolean> => {
     if (offline) {
       setErr('You’re offline. Reconnect before saving this action.')
-      return
+      setNetworkMsg('')
+      setBusy('')
+      return false
     }
     setBusy(tag); setErr(''); setNetworkMsg('')
     try {
@@ -121,10 +124,12 @@ function JobDetail({ id }: { id: string }) {
         },
       )
       const d = await res.json().catch(() => null)
-      if (!res.ok) { setErr(d?.message ?? 'That did not work.'); return }
+      if (!res.ok) { setErr(d?.message ?? 'That did not work.'); return false }
       await load()
+      return true
     } catch {
       setErr('Network error — try again.')
+      return false
     } finally {
       setNetworkMsg('')
       setBusy('')
@@ -149,8 +154,11 @@ function JobDetail({ id }: { id: string }) {
         })
         urls.push(blob.url)
       }
-      await act({ action: 'complete', photos: urls, note: note || undefined }, 'photos')
-      setNote('')
+      const saved = await act({ action: 'complete', photos: urls, note: note || undefined }, 'photos')
+      if (saved) {
+        setNote('')
+        if (fileRef.current) fileRef.current.value = ''
+      }
     } catch (e) {
       // "Check your signal" is wrong — and wastes the crew member's time — when the
       // deployment simply cannot mint an upload token. The broker returns a stable
@@ -161,7 +169,6 @@ function JobDetail({ id }: { id: string }) {
         : 'Upload failed — check your signal and try again.')
       setBusy('')
     }
-    if (fileRef.current) fileRef.current.value = ''
   }
 
   if (loading) return <p style={{ color: 'var(--muted)', fontSize: 14 }}>Loading…</p>
@@ -176,11 +183,29 @@ function JobDetail({ id }: { id: string }) {
       </Link>
     </div>
   )
-  if (!job) return <p role="alert" style={{ color: '#f87171', fontSize: 14 }}>{err || 'Could not load this job.'}</p>
+  if (!job) return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {offline && (
+        <div role="status" className="os-card" style={{ padding: '11px 13px', display: 'flex', gap: 9, alignItems: 'center', color: '#fcd34d', border: '1px solid rgba(245,158,11,.35)' }}>
+          <WifiOff size={16} /> <span style={{ fontSize: 13 }}>You’re offline. Reconnect to load this job.</span>
+        </div>
+      )}
+      <p role="alert" style={{ color: '#f87171', fontSize: 14 }}>{err || 'Could not load this job.'}</p>
+      <button type="button" onClick={() => void load()} disabled={offline}
+        className="os-tap" style={{ minHeight: 44, alignSelf: 'flex-start', padding: '9px 13px', borderRadius: 10, border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--text)', fontWeight: 700, opacity: offline ? .55 : 1, cursor: offline ? 'not-allowed' : 'pointer' }}>
+        Try again
+      </button>
+    </div>
+  )
 
   const { me } = job
   const accepted = !!me.confirmedAt && !me.declinedAt
   const actionDisabled = !!busy || offline
+  const actionBtn = (tone: string): React.CSSProperties => ({
+    ...bigBtn(tone),
+    opacity: actionDisabled ? .55 : 1,
+    cursor: actionDisabled ? 'not-allowed' : 'pointer',
+  })
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -244,11 +269,11 @@ function JobDetail({ id }: { id: string }) {
       {!accepted && !me.declinedAt && (
         <div className="os-card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
           <p style={{ fontSize: 13.5, color: 'var(--muted)' }}>Can you take this job?</p>
-          <button type="button" disabled={actionDisabled} onClick={() => act({ action: 'accept' }, 'accept')} style={bigBtn('#34d399')}>
+          <button type="button" disabled={actionDisabled} onClick={() => act({ action: 'accept' }, 'accept')} style={actionBtn('#34d399')}>
             <Check size={18} /> {busy === 'accept' ? 'Saving…' : "I'm on it"}
           </button>
           <button type="button" disabled={actionDisabled} onClick={() => act({ action: 'decline' }, 'decline')}
-            style={{ ...bigBtn('#f87171'), minHeight: 44, fontSize: 13.5 }}>
+            style={{ ...actionBtn('#f87171'), minHeight: 44, fontSize: 13.5 }}>
             <X size={16} /> Can&apos;t make it
           </button>
         </div>
@@ -259,7 +284,7 @@ function JobDetail({ id }: { id: string }) {
           <p style={{ fontSize: 13.5, color: '#f87171', fontWeight: 700 }}>You declined this job.</p>
           <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>Dispatch has been shown this. Tap below if that was a mistake.</p>
           <button type="button" disabled={actionDisabled} onClick={() => act({ action: 'accept' }, 'accept')}
-            style={{ ...bigBtn('#34d399'), minHeight: 44, fontSize: 13.5, marginTop: 10 }}>
+            style={{ ...actionBtn('#34d399'), minHeight: 44, fontSize: 13.5, marginTop: 10 }}>
             <Check size={16} /> Actually, I can make it
           </button>
         </div>
@@ -276,12 +301,12 @@ function JobDetail({ id }: { id: string }) {
             </p>
           )}
           {!me.clockInAt && (
-            <button type="button" disabled={actionDisabled} onClick={() => punch('clock_in')} style={bigBtn('#34d399')}>
+            <button type="button" disabled={actionDisabled} onClick={() => punch('clock_in')} style={actionBtn('#34d399')}>
               <Clock size={18} /> {busy === 'clock_in' ? 'Clocking in…' : 'Clock in'}
             </button>
           )}
           {me.clockInAt && !me.clockOutAt && (
-            <button type="button" disabled={actionDisabled} onClick={() => punch('clock_out')} style={bigBtn('#fcd34d')}>
+            <button type="button" disabled={actionDisabled} onClick={() => punch('clock_out')} style={actionBtn('#fcd34d')}>
               <Clock size={18} /> {busy === 'clock_out' ? 'Clocking out…' : 'Clock out'}
             </button>
           )}
@@ -316,7 +341,7 @@ function JobDetail({ id }: { id: string }) {
               (WCAG 2.1.1). `.file-label:focus-within` puts the focus ring on the
               visible label. Same shape as every other upload in the app — see
               app/globals.css and scripts/wizard-a11y.test.ts. */}
-          <label className="file-label" style={{ ...bigBtn('#60a5fa'), opacity: busy ? 0.6 : 1, cursor: busy ? 'not-allowed' : 'pointer' }}>
+          <label className="file-label" style={actionBtn('#60a5fa')}>
             <Camera size={18} /> {busy === 'photos' ? 'Sending…' : 'Add finished photos'}
             <input ref={fileRef} type="file" accept="image/*" multiple capture="environment"
               aria-label="Add finished photos of this job" className="file-input-a11y" disabled={actionDisabled}
