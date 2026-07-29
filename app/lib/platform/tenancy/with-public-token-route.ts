@@ -26,10 +26,8 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { runWithTenant } from './context'
-import { isEnabled } from '../flags'
-import { DEFAULT_TENANT_ID } from './types'
-import { resolveTokenBinding, isValidPublicToken, type TokenResourceType } from './token-binding'
-import { recordTenantEvent } from '../observability/tenant-telemetry'
+import { resolvePublicToken } from './public-token-scope'
+import type { TokenResourceType } from './token-binding'
 
 type Ctx<P> = { params: Promise<P> }
 type Handler<P> = (req: NextRequest, ctx: Ctx<P>) => Response | Promise<Response>
@@ -60,29 +58,19 @@ export function withPublicTokenRoute<P extends Record<string, string>>(
     const params = await ctx.params
     const token = params?.[paramName]
 
-    if (!isValidPublicToken(token)) return notFound()
+    // Delegates to the SHARED resolver (public-token-scope.ts) so the handler path and
+    // the server-component path can never drift apart in what they accept.
+    //
+    // NOTE: resourceId is deliberately NOT asserted to equal the token here. Route
+    // ASSIGNEE tokens bind resourceId to the ROUTE's token, not to themselves — that
+    // indirection is the whole point of `rt:atok:` — so a blanket
+    // `expectResourceId: token` would refuse every assignee link. Callers that know
+    // their resource id pass it explicitly (see the booking page).
+    const resolved = await resolvePublicToken(token, opts.expect)
+    if (resolved.kind === 'refused') return notFound()
 
-    const binding = await resolveTokenBinding(token)
-
-    if (!binding) {
-      if (isEnabled('TENANCY_ENABLED')) {
-        // Fail closed. An unbound token under tenancy is unattributable, and the
-        // reference tenant is a guess, not an answer.
-        recordTenantEvent('missing-tenant-context', { detail: 'public token has no tenant binding', keyFamily: 'platform:token' })
-        return notFound()
-      }
-      // Single-tenant: unchanged behaviour for tokens issued before this wave.
-      return runWithTenant({ tenantId: DEFAULT_TENANT_ID }, async () => handler(req, { ...ctx, params: Promise.resolve(params) }))
-    }
-
-    if (opts.expect && binding.resourceType !== opts.expect) {
-      // A booking token presented to the invoice route resolves to a real tenant but
-      // the wrong surface. Refuse rather than let the handler look it up.
-      recordTenantEvent('cross-tenant-denial', { detail: 'public token used on the wrong surface', keyFamily: 'platform:token' })
-      return notFound()
-    }
-
-    return runWithTenant({ tenantId: binding.tenantId }, async () =>
+    const tenantId = resolved.kind === 'bound' ? resolved.binding.tenantId : resolved.tenantId
+    return runWithTenant({ tenantId }, async () =>
       handler(req, { ...ctx, params: Promise.resolve(params) }),
     )
   }
