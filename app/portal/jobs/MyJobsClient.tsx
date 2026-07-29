@@ -1,9 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowRight, CheckCircle2, MapPin, Package, Truck } from 'lucide-react'
+import { ArrowRight, CheckCircle2, MapPin, Package, RefreshCw, Truck, WifiOff } from 'lucide-react'
 import { money, fmtDay } from '../ui'
+import { fetchWithRetry } from '../network'
+import { useConnectivity } from '../useConnectivity'
 
 // My Jobs — every piece of work assigned to this crew member, from BOTH lanes.
 // The portal used to read routes only, so a crew member on a moving or junk job
@@ -91,20 +93,51 @@ function MyJobs() {
   const [past, setPast] = useState<Job[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [retrying, setRetrying] = useState(false)
+  const { offline } = useConnectivity()
+
+  const load = useCallback(async () => {
+    setError('')
+    try {
+      const res = await fetchWithRetry(
+        '/api/portal/jobs',
+        { credentials: 'same-origin' },
+        { onRetry: () => setRetrying(true) },
+      )
+      if (!res.ok) throw new Error('failed')
+      const d = await res.json()
+      setUpcoming(d.upcoming ?? [])
+      setPast(d.past ?? [])
+    } catch {
+      setError('Could not load your jobs. Check your connection and try again.')
+    } finally {
+      setRetrying(false)
+      setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
-    fetch('/api/portal/jobs', { credentials: 'same-origin' })
-      .then(r => r.ok ? r.json() : Promise.reject(new Error('failed')))
-      .then(d => { setUpcoming(d.upcoming ?? []); setPast(d.past ?? []) })
-      .catch(() => setError('Could not load your jobs. Pull down to retry.'))
-      .finally(() => setLoading(false))
-  }, [])
+    if (!offline) void load()
+  }, [offline, load])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <h1 className="jkos-h" style={{ fontSize: 24 }}>My Jobs</h1>
+      {offline && (
+        <div role="status" className="os-card" style={{ padding: '11px 13px', display: 'flex', gap: 9, alignItems: 'center', color: '#fcd34d', border: '1px solid rgba(245,158,11,.35)' }}>
+          <WifiOff size={16} /> <span style={{ fontSize: 13 }}>You’re offline. Reconnect to refresh your jobs.</span>
+        </div>
+      )}
+      {retrying && <p role="status" aria-live="polite" style={{ color: '#fcd34d', fontSize: 13 }}>Connection is shaky — retrying…</p>}
       {loading && <p style={{ color: 'var(--muted)', fontSize: 14 }}>Loading…</p>}
-      {error && <p role="alert" style={{ color: '#f87171', fontSize: 14 }}>{error}</p>}
+      {error && (
+        <div>
+          <p role="alert" style={{ color: '#f87171', fontSize: 14 }}>{error}</p>
+          <button type="button" onClick={() => void load()} disabled={offline || loading} className="os-tap" style={{ marginTop: 10, minHeight: 44, padding: '9px 13px', borderRadius: 10, border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--text)', fontWeight: 700 }}>
+            <RefreshCw size={15} style={{ marginRight: 6, verticalAlign: -2 }} /> Try again
+          </button>
+        </div>
+      )}
 
       {!loading && !error && (
         <>

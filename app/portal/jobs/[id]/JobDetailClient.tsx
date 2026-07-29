@@ -4,8 +4,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { uploadPresigned } from '@vercel/blob/client'
-import { AlertTriangle, ArrowLeft, Camera, Check, Clock, MapPin, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Camera, Check, Clock, MapPin, WifiOff, X } from 'lucide-react'
 import { fmtLongDay, mapsUrl, money } from '../../ui'
+import { fetchWithRetry } from '../../network'
+import { useConnectivity } from '../../useConnectivity'
 
 // One booking job, from the crew member's phone: accept it, clock in and out, and
 // send completion photos from the driveway.
@@ -67,34 +69,61 @@ function JobDetail({ id }: { id: string }) {
   const [gone, setGone] = useState(false)
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
+  const [networkMsg, setNetworkMsg] = useState('')
   const [note, setNote] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
+  const { offline } = useConnectivity()
 
   const load = useCallback(async () => {
-    const res = await fetch(`/api/portal/jobs/${id}`, { credentials: 'same-origin' })
-    if (res.status === 404) { setGone(true); return }
-    if (!res.ok) { setErr('Could not load this job.'); return }
-    const d = await res.json()
-    setJob(d.job)
+    try {
+      const res = await fetchWithRetry(
+        `/api/portal/jobs/${id}`,
+        { credentials: 'same-origin' },
+        { onRetry: () => setNetworkMsg('Connection is shaky — retrying…') },
+      )
+      if (res.status === 404) { setGone(true); return }
+      if (!res.ok) { setErr('Could not load this job.'); return }
+      const d = await res.json()
+      setJob(d.job)
+      setNetworkMsg('')
+    } catch {
+      setErr('Could not load this job. Check your connection and try again.')
+    }
   }, [id])
 
-  useEffect(() => { load().finally(() => setLoading(false)) }, [load])
+  useEffect(() => {
+    if (!offline) void load().finally(() => setLoading(false))
+  }, [offline, load])
 
   const act = async (body: Record<string, unknown>, tag: string) => {
-    setBusy(tag); setErr('')
+    if (offline) {
+      setErr('You’re offline. Reconnect before saving this action.')
+      return
+    }
+    setBusy(tag); setErr(''); setNetworkMsg('')
     try {
-      const res = await fetch(`/api/portal/jobs/${id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify(body),
-      })
+      const res = await fetchWithRetry(
+        `/api/portal/jobs/${id}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(body),
+        },
+        {
+          // These actions are idempotent on the server. Completion proof is not
+          // automatically retried until its audit write has its own dedupe key.
+          allowMutationRetry: body.action !== 'complete',
+          onRetry: () => setNetworkMsg('Connection dropped — retrying this action safely…'),
+        },
+      )
       const d = await res.json().catch(() => null)
       if (!res.ok) { setErr(d?.message ?? 'That did not work.'); return }
       await load()
     } catch {
       setErr('Network error — try again.')
     } finally {
+      setNetworkMsg('')
       setBusy('')
     }
   }
@@ -148,12 +177,20 @@ function JobDetail({ id }: { id: string }) {
 
   const { me } = job
   const accepted = !!me.confirmedAt && !me.declinedAt
+  const actionDisabled = !!busy || offline
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <Link href="/portal/jobs" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--muted)', fontSize: 13, textDecoration: 'none' }}>
         <ArrowLeft size={15} /> My Jobs
       </Link>
+
+      {offline && (
+        <div role="status" className="os-card" style={{ padding: '11px 13px', display: 'flex', gap: 9, alignItems: 'center', color: '#fcd34d', border: '1px solid rgba(245,158,11,.35)' }}>
+          <WifiOff size={16} /> <span style={{ fontSize: 13 }}>You’re offline. Job details stay visible, but actions wait until you reconnect.</span>
+        </div>
+      )}
+      {networkMsg && <p role="status" aria-live="polite" style={{ color: '#fcd34d', fontSize: 13 }}>{networkMsg}</p>}
 
       <div>
         <h1 className="jkos-h" style={{ fontSize: 23 }}>{job.title}</h1>
@@ -204,10 +241,10 @@ function JobDetail({ id }: { id: string }) {
       {!accepted && !me.declinedAt && (
         <div className="os-card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
           <p style={{ fontSize: 13.5, color: 'var(--muted)' }}>Can you take this job?</p>
-          <button type="button" disabled={!!busy} onClick={() => act({ action: 'accept' }, 'accept')} style={bigBtn('#34d399')}>
+          <button type="button" disabled={actionDisabled} onClick={() => act({ action: 'accept' }, 'accept')} style={bigBtn('#34d399')}>
             <Check size={18} /> {busy === 'accept' ? 'Saving…' : "I'm on it"}
           </button>
-          <button type="button" disabled={!!busy} onClick={() => act({ action: 'decline' }, 'decline')}
+          <button type="button" disabled={actionDisabled} onClick={() => act({ action: 'decline' }, 'decline')}
             style={{ ...bigBtn('#f87171'), minHeight: 44, fontSize: 13.5 }}>
             <X size={16} /> Can&apos;t make it
           </button>
@@ -218,7 +255,7 @@ function JobDetail({ id }: { id: string }) {
         <div className="os-card" style={{ padding: 16 }}>
           <p style={{ fontSize: 13.5, color: '#f87171', fontWeight: 700 }}>You declined this job.</p>
           <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>Dispatch has been shown this. Tap below if that was a mistake.</p>
-          <button type="button" disabled={!!busy} onClick={() => act({ action: 'accept' }, 'accept')}
+          <button type="button" disabled={actionDisabled} onClick={() => act({ action: 'accept' }, 'accept')}
             style={{ ...bigBtn('#34d399'), minHeight: 44, fontSize: 13.5, marginTop: 10 }}>
             <Check size={16} /> Actually, I can make it
           </button>
@@ -236,12 +273,12 @@ function JobDetail({ id }: { id: string }) {
             </p>
           )}
           {!me.clockInAt && (
-            <button type="button" disabled={!!busy} onClick={() => punch('clock_in')} style={bigBtn('#34d399')}>
+            <button type="button" disabled={actionDisabled} onClick={() => punch('clock_in')} style={bigBtn('#34d399')}>
               <Clock size={18} /> {busy === 'clock_in' ? 'Clocking in…' : 'Clock in'}
             </button>
           )}
           {me.clockInAt && !me.clockOutAt && (
-            <button type="button" disabled={!!busy} onClick={() => punch('clock_out')} style={bigBtn('#fcd34d')}>
+            <button type="button" disabled={actionDisabled} onClick={() => punch('clock_out')} style={bigBtn('#fcd34d')}>
               <Clock size={18} /> {busy === 'clock_out' ? 'Clocking out…' : 'Clock out'}
             </button>
           )}
@@ -279,7 +316,7 @@ function JobDetail({ id }: { id: string }) {
           <label className="file-label" style={{ ...bigBtn('#60a5fa'), opacity: busy ? 0.6 : 1, cursor: busy ? 'not-allowed' : 'pointer' }}>
             <Camera size={18} /> {busy === 'photos' ? 'Sending…' : 'Add finished photos'}
             <input ref={fileRef} type="file" accept="image/*" multiple capture="environment"
-              aria-label="Add finished photos of this job" className="file-input-a11y" disabled={!!busy}
+              aria-label="Add finished photos of this job" className="file-input-a11y" disabled={actionDisabled}
               onChange={e => sendPhotos(e.target.files)} />
           </label>
 

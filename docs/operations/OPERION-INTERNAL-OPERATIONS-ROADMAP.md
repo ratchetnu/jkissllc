@@ -19,8 +19,12 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
 - Booking status transitions are governed by one authoritative matrix in
   `app/lib/booking-status.ts`; all eleven mutation sites route through `canTransition`
   and fail closed on an illegal pair.
-- Full suite: **2195/2195 passing**. AI regression: **2/2 passing**. TypeScript, ESLint on
-  changed files, and the production build pass (170/170 pages).
+- Sprint 2 is in review across PR #128 (schedule conflict/cancellation safety) and
+  stacked PR #130 (explicit dispatch readiness). Both remain unmerged and inactive.
+- Sprint 3 construction has started independently from `main` with a bounded,
+  retry-safe weak-network layer for crew job reads, accept/decline, and clock punches.
+- Current Sprint 3 candidate: **2784/2784 tests passing**; TypeScript and lint pass
+  with zero errors and one pre-existing warning in untouched `pay-statements.ts`.
 - `BOOKING_ASSIGNMENT_ENABLED` is **false in Production**. The whole Sprint 1 feature set is
   merged and Preview-validated but not yet serving; enabling it is a separate owner decision.
 
@@ -103,6 +107,9 @@ Production. That is an owner decision and is deliberately not part of the closeo
 
 **Objective:** Give dispatch one simple daily view for bookings, routes, crew, equipment, conflicts, and work requiring attention.
 
+**Status:** In review. PRs #128 and #130 are open and unmerged; automatic route
+cancellation remains flag-off and unscheduled.
+
 **Affected files/components:**
 
 - `app/admin/operations/page.tsx`
@@ -122,6 +129,8 @@ Production. That is an owner decision and is deliberately not part of the closeo
 
 **Objective:** Make the crew portal dependable in a truck or at a job site, including weak-network behavior.
 
+**Status:** In progress.
+
 **Affected files/components:**
 
 - `app/portal/*`
@@ -131,6 +140,31 @@ Production. That is an owner decision and is deliberately not part of the closeo
 - client-side pending-action storage/queue
 
 **Dependencies:** Sprint 1 state matrix and Sprint 0 isolated upload transport.
+
+**Current implementation:**
+
+- My Jobs, booking-job details, and the shared timeclock detect offline state,
+  preserve already-loaded details, reload after reconnect, and show a real retry action.
+- Reads retry a bounded three times on dropped connections and transient HTTP failures.
+- Accept, decline, clock-in, and clock-out use the same bounded retry because their
+  server mutators are already idempotent; an unknown first response cannot create a
+  duplicate event or punch on retry.
+- Completion proof is deliberately excluded from automatic mutation retry until its
+  audit event has a request-level dedupe key.
+- No punch is stored for later delivery: replaying a payroll action after reconnect
+  would incorrectly stamp server receipt time as work time. Offline punches fail
+  visibly instead of silently changing the time.
+
+**Remaining before Sprint 3 closes:**
+
+- Add request-level idempotency for completion proof, then provide explicit photo
+  upload retry that preserves selected files while the page remains open.
+- Apply the same connection-state treatment to the legacy public route-confirmation
+  surface or retire that split surface in favor of the portal.
+- Verify accept/decline, punches, duplicate taps, and photo recovery at
+  320/375/390/430 px on representative iPhone and Android browsers.
+- Run an authenticated Preview mobile flow with forced request interruption and
+  inspect the resulting audit history for exactly-once events.
 
 **Verification:** iPhone and Android widths; accept/decline; clock in/out; retry after network interruption; duplicate taps; photo retry; assigned-only authorization; no pricing/internal-note leakage.
 
@@ -209,12 +243,11 @@ Production. That is an owner decision and is deliberately not part of the closeo
 
 ## Immediate next action
 
-Sprint 1 is code-complete. The two previously listed actions are done: the pay-snapshot
-connection shipped, and Supercharged's Preview Redis was separated in Sprint 0 (recorded in
-the baseline above).
-
-The next decision is **activation, not construction** — `BOOKING_ASSIGNMENT_ENABLED` is off
-in Production, so none of Sprint 1 is serving yet. Turning it on is worth more than starting
-Sprint 2, which would add a second unshipped layer on top of the first.
-
-Sprint 2 (dispatch dashboard) remains the next build item once assignment is live.
+1. Independently review PR #128, then rebase/review stacked PR #130; merge neither
+   unless its exact head, CI, and Preview provenance remain clean.
+2. Keep route auto-cancellation unscheduled and flag-off pending tenant fan-out and
+   Preview dry reports.
+3. Independently review the Sprint 3 weak-network slice, then continue with
+   completion-proof idempotency and in-page photo retry.
+4. Keep `BOOKING_ASSIGNMENT_ENABLED` off in Production until the owner approves the
+   separate activation and rollback plan.
