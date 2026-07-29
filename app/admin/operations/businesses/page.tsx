@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Building2, ChevronDown, Link2, FileText, Plus, Check, Repeat, Pencil, Wallet, History, CalendarClock } from 'lucide-react'
+import { Building2, ChevronDown, Link2, FileText, Plus, Check, Repeat, Pencil, Wallet, History, CalendarClock, Ban, RotateCcw } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { invalidateOps } from '../useOps'
 import { money, ymd, fmtDay, fmtTs, weekdaysLabel, onActivate, MoneyInput, Toggle, centsToInput, looksLikeMoney, osLabel, DOW, Avatar } from '../ui'
@@ -23,6 +23,7 @@ type RateHistoryEntry = { at: number; contractRateCents?: number; effectiveDate?
 type BusinessRec = {
   key: string; name: string; contactName?: string; contactPhone?: string; contactEmail?: string; address?: string; notes?: string; requiresHelper?: boolean
   contractRateCents?: number; billingNotes?: string; rateEffectiveDate?: string; pricingActive?: boolean; rateHistory?: RateHistoryEntry[]
+  contractEndedAt?: number; contractEndReason?: string
 }
 
 type Biz = {
@@ -47,6 +48,7 @@ function Hub() {
   const [loading, setLoading] = useState(true)
   const [openKey, setOpenKey] = useState('')
   const [msg, setMsg] = useState('')
+  const [showEnded, setShowEnded] = useState(false)
 
   // A manager DOES hold `businesses:manage`, so this page is theirs by design. What they
   // do not hold is `invoices:manage` — /api/admin/route-invoices refuses them. That 403
@@ -102,6 +104,8 @@ function Hub() {
     for (const b of map.values()) b.upcoming.sort((a, c) => a.routeDate.localeCompare(c.routeDate))
     return [...map.values()].sort((a, b) => (b.lastDate || '').localeCompare(a.lastDate || '') || a.name.localeCompare(b.name))
   }, [routes, portals, invoices, templates, records, today])
+  const endedCount = businesses.filter(b => b.record?.contractEndedAt).length
+  const visibleBusinesses = showEnded ? businesses : businesses.filter(b => !b.record?.contractEndedAt)
 
   async function createPortal(name: string) {
     try {
@@ -114,15 +118,20 @@ function Hub() {
   return (
     <div>
       <div className="os-rise" style={{ marginBottom: 20 }}>
-        <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)' }}>{businesses.length} {businesses.length === 1 ? 'client' : 'clients'}</p>
+        <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)' }}>{visibleBusinesses.length} active {visibleBusinesses.length === 1 ? 'client' : 'clients'}</p>
         <h1 className="jkos-h" style={{ fontSize: 'clamp(28px,6vw,40px)' }}>Businesses</h1>
       </div>
 
       {msg && <div className="os-card" style={{ padding: '10px 14px', marginBottom: 16, fontSize: 13.5, color: '#86efac' }}>{msg}</div>}
+      {endedCount > 0 && (
+        <button onClick={() => setShowEnded(v => !v)} className="os-tap" style={{ margin: '0 0 14px', padding: 0, border: 0, background: 'none', color: 'var(--muted)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
+          {showEnded ? 'Hide ended contracts' : `Show ended contracts (${endedCount})`}
+        </button>
+      )}
 
       {loading ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>{[0, 1, 2].map(i => <div key={i} className="os-card" style={{ padding: 16, display: 'flex', gap: 13, alignItems: 'center' }}><div className="skeleton" style={{ width: 46, height: 46, borderRadius: 12 }} /><div style={{ flex: 1 }}><div className="skeleton" style={{ width: '45%', height: 15, borderRadius: 7 }} /><div className="skeleton" style={{ width: '30%', height: 11, borderRadius: 6, marginTop: 8 }} /></div></div>)}</div>
-      ) : businesses.length === 0 ? (
+      ) : visibleBusinesses.length === 0 ? (
         <div className="os-card os-rise" style={{ padding: 34, textAlign: 'center' }}>
           <p className="jkos-h" style={{ fontSize: 18 }}>No clients yet</p>
           <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 6 }}>Businesses appear here once you create routes for them.</p>
@@ -130,7 +139,7 @@ function Hub() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {businesses.map((b, i) => <BizCard key={b.key} b={b} staff={staff} invoicesDenied={invoicesDenied} open={openKey === b.key} onToggle={() => setOpenKey(o => o === b.key ? '' : b.key)} onOpen={() => setOpenKey(b.key)} onCreatePortal={() => createPortal(b.name)} onReload={load} setMsg={setMsg} delay={i} />)}
+          {visibleBusinesses.map((b, i) => <BizCard key={b.key} b={b} staff={staff} invoicesDenied={invoicesDenied} open={openKey === b.key} onToggle={() => setOpenKey(o => o === b.key ? '' : b.key)} onOpen={() => setOpenKey(b.key)} onCreatePortal={() => createPortal(b.name)} onReload={load} setMsg={setMsg} delay={i} />)}
         </div>
       )}
     </div>
@@ -470,6 +479,7 @@ function BizCard({ b, staff, invoicesDenied, open, onToggle, onOpen, onCreatePor
   // Which recurring contract's schedule is being edited ('' = none, 'new' = create).
   const [schedFor, setSchedFor] = useState('')
   const rec = b.record
+  const ended = !!rec?.contractEndedAt
   const activeTmpl = b.templates.find(t => t.active)
   function copyPortal() { if (b.portal) { navigator.clipboard?.writeText(`${location.origin}/client/${b.portal.token}`); setMsg('Client portal link copied.') } }
 
@@ -480,6 +490,31 @@ function BizCard({ b, staff, invoicesDenied, open, onToggle, onOpen, onCreatePor
       else { const d = await fetch(`/api/admin/route-templates/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(body) }).then(r => r.json()); if (body.action === 'generate') { setMsg(d.created?.length ? `Generated ${d.created.length} route(s).` : 'Upcoming dates already generated.'); if (d.created?.length) invalidateOps() } }   // newly generated routes show on Home/List immediately
       onReload()
     } finally { setBusy('') }
+  }
+
+  async function changeContract(action: 'end_contract' | 'reopen_contract') {
+    const warning = action === 'end_contract'
+      ? `End the contract with ${b.name}? This cancels ${b.upcoming.length} future operation${b.upcoming.length === 1 ? '' : 's'} and pauses recurring schedules. Completed history, invoices, pay, and claims stay.`
+      : `Restore ${b.name} to active clients? Cancelled operations and paused schedules stay stopped.`
+    if (!confirm(warning)) return
+    setBusy('contract')
+    try {
+      const res = await fetch('/api/admin/businesses', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ action, businessKey: b.key, businessName: b.name, reason: action === 'end_contract' ? 'Contract expired' : undefined }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) setMsg(data.error || 'Could not update the contract.')
+      else if (action === 'end_contract') setMsg(`Contract ended — ${data.cancelledRouteCount ?? 0} future operation${data.cancelledRouteCount === 1 ? '' : 's'} cancelled.`)
+      else setMsg('Client restored. Cancelled operations and paused schedules remain stopped.')
+      if (res.ok) { invalidateOps(); onReload() }
+    } catch {
+      setMsg('Network error. Please try again.')
+    } finally {
+      setBusy('')
+    }
   }
 
   return (
@@ -496,6 +531,7 @@ function BizCard({ b, staff, invoicesDenied, open, onToggle, onOpen, onCreatePor
             {b.outstandingCents > 0 && <span style={{ color: '#fcd34d' }}>{money(b.outstandingCents)} due</span>}
             {b.portal && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#86efac' }}><Check size={11} /> portal</span>}
             {b.record?.requiresHelper && <span style={{ color: '#c4b5fd' }}>driver + helper</span>}
+            {ended && <span style={{ color: '#fca5a5', fontWeight: 700 }}>contract ended</span>}
           </div>
         </div>
         <button onClick={e => { e.stopPropagation(); onOpen(); setEditing(true) }} aria-label={`Edit ${b.name}`} className="os-tap" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 10, background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', color: 'var(--muted)', cursor: 'pointer', flexShrink: 0 }}><Pencil size={15} /></button>
@@ -508,7 +544,13 @@ function BizCard({ b, staff, invoicesDenied, open, onToggle, onOpen, onCreatePor
 
           {editing ? <BusinessForm b={b} onDone={() => { setEditing(false); setMsg('Business saved.'); onReload() }} onCancel={() => setEditing(false)} /> : <>
 
-          <RoutePricing b={b} onReload={onReload} setMsg={setMsg} />
+          {!ended && <RoutePricing b={b} onReload={onReload} setMsg={setMsg} />}
+
+          {ended && (
+            <div role="status" style={{ marginBottom: 14, padding: 11, borderRadius: 10, background: 'rgba(248,113,113,.08)', border: '1px solid rgba(248,113,113,.25)', color: '#fca5a5', fontSize: 13 }}>
+              Contract ended {new Date(rec!.contractEndedAt!).toLocaleDateString()}. Historical routes, invoices, pay, and claims are retained.
+            </div>
+          )}
 
           {rec && (rec.contactName || rec.contactPhone || rec.contactEmail || rec.address || rec.notes) && (
             <div style={{ marginBottom: 14, fontSize: 13.5 }}>
@@ -519,7 +561,7 @@ function BizCard({ b, staff, invoicesDenied, open, onToggle, onOpen, onCreatePor
             </div>
           )}
 
-          <div style={{ marginBottom: 14 }}>
+          {!ended && <div style={{ marginBottom: 14 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
               <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)' }}>Recurring schedule</div>
               {schedFor !== 'new' && (
@@ -568,7 +610,7 @@ function BizCard({ b, staff, invoicesDenied, open, onToggle, onOpen, onCreatePor
                 </div>
               ))}
             </div>
-          </div>
+          </div>}
 
           {b.upcoming.length > 0 && (
             <div style={{ marginBottom: 14 }}>
@@ -626,8 +668,11 @@ function BizCard({ b, staff, invoicesDenied, open, onToggle, onOpen, onCreatePor
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button onClick={() => setEditing(true)} className="btn-ghost os-tap" style={{ borderRadius: 10, height: 38, fontSize: 13 }}><Pencil size={14} /> Edit business</button>
-            <Link href="/admin/operations/new" className="btn os-tap" style={{ borderRadius: 10, height: 38, fontSize: 13 }}><Plus size={15} /> New assignment</Link>
+            {!ended && <Link href="/admin/operations/new" className="btn os-tap" style={{ borderRadius: 10, height: 38, fontSize: 13 }}><Plus size={15} /> New assignment</Link>}
             {!invoicesDenied && <Link href="/admin/routes/invoices" className="btn-ghost os-tap" style={{ borderRadius: 10, height: 38, fontSize: 13 }}><FileText size={15} /> Invoices</Link>}
+            {ended
+              ? <button onClick={() => changeContract('reopen_contract')} disabled={busy === 'contract'} className="btn-ghost os-tap" style={{ borderRadius: 10, height: 38, fontSize: 13 }}><RotateCcw size={14} /> Restore client</button>
+              : <button onClick={() => changeContract('end_contract')} disabled={busy === 'contract'} className="btn-ghost os-tap" style={{ borderRadius: 10, height: 38, fontSize: 13, color: '#fca5a5' }}><Ban size={14} /> End contract</button>}
           </div>
           </>}
         </div></div>

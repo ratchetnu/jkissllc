@@ -15,6 +15,16 @@ export type RateHistoryEntry = {
   notes?: string
 }
 
+export type BusinessContractEvent = {
+  at: number
+  action: 'ended' | 'reopened'
+  actorId: string
+  actorRole: string
+  reason?: string
+  cancelledRouteCount?: number
+  pausedTemplateCount?: number
+}
+
 export type Business = {
   key: string            // normalized name (join key)
   name: string           // display name
@@ -39,6 +49,17 @@ export type Business = {
   rateEffectiveDate?: string   // YYYY-MM-DD
   pricingActive?: boolean      // false = rate on file but not in force
   rateHistory?: RateHistoryEntry[]
+
+  // Contract lifecycle. Ending a contract archives the client from the active
+  // operations board, but deliberately preserves routes, invoices, claims, and
+  // rate history. Reopening only restores the client; it never silently revives
+  // cancelled routes or paused recurring schedules.
+  contractEndedAt?: number
+  contractEndReason?: string
+  contractEndedBy?: string
+  contractEndedByRole?: string
+  pricingActiveBeforeContractEnd?: boolean
+  contractHistory?: BusinessContractEvent[]
 
   createdAt: number
   updatedAt: number
