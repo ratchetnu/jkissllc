@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
+import { withPublicTokenRoute } from '../../../../lib/platform/tenancy/with-public-token-route'
 import { getStripe, stripeConfigured } from '../../../../lib/stripe'
 import { getInvoiceByToken, recordStripeInvoicePayment } from '../../../../lib/route-invoices'
 import { siteUrl } from '../../../../lib/booking-emails'
-import { resolveTenantFromResource } from '../../../../lib/platform/tenancy/tenant-resolve'
-import { runWithTenant } from '../../../../lib/platform/tenancy/context'
 
 export const runtime = 'nodejs'
 
 // Stripe success redirect. Retrieve the session, mark the invoice paid
 // (idempotent), then bounce back to the invoice page.
-export const GET = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
+export const GET = withPublicTokenRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   const base = siteUrl()
   const sessionId = new URL(req.url).searchParams.get('session_id')
@@ -20,23 +18,25 @@ export const GET = withTenantRoute(async (req: NextRequest, { params }: { params
       const stripe = getStripe()
       const session = await stripe.checkout.sessions.retrieve(sessionId)
       const inv = await getInvoiceByToken(token)
-      // Tenant is derived from the loaded invoice RECORD (the token binds to exactly
-      // one invoice) — never from a client value. Fail closed when tenancy is on and
-      // the record has no binding; reference tenant (no-op) while TENANCY_ENABLED=
-      // false → the mark-paid write runs exactly as today. Invoice has no tenantId
-      // field yet; the cast lets the resolver read it once bindings exist.
-      const resolution = inv ? resolveTenantFromResource(inv as { tenantId?: string | null }, { kind: 'invoice', correlationId: token }) : null
-      // Guard that this session belongs to THIS invoice URL, then apply the SAME
-      // idempotent transition the webhook backstop uses (recordStripeInvoicePayment):
-      // it no-ops on void / already-paid / unpaid / replayed sessions.
-      if (inv && resolution && session.metadata?.invoiceToken === token) {
-        await runWithTenant({ tenantId: resolution.tenantId }, async () => {
-          await recordStripeInvoicePayment(session)
-        })
+      // WAVE 6D-B — the tenant now comes from the TOKEN BINDING, which
+      // withPublicTokenRoute has already resolved and entered before this handler ran.
+      // It used to call resolveTenantFromResource(inv), but an invoice record has no
+      // tenantId field, so under tenancy that resolved to null and the mark-paid was
+      // silently SKIPPED — a paid invoice would never have been marked. Reading the
+      // ambient context instead is both correct and the only trusted source here.
+      //
+      // The Stripe trust boundary is UNCHANGED and must stay that way: the session is
+      // fetched from Stripe with our secret key (so its contents are Stripe-verified,
+      // never caller-supplied), it must NAME this invoice in metadata, and
+      // recordStripeInvoicePayment is idempotent — no-op on void / already-paid /
+      // unpaid / replayed. The public token alone authorizes nothing: without a real
+      // Stripe session naming this invoice, no financial state changes.
+      if (inv && session.metadata?.invoiceToken === token) {
+        await recordStripeInvoicePayment(session)
       }
     } catch (err) {
       console.error('[invoice stripe-return]', err)
     }
   }
   return NextResponse.redirect(`${base}/invoice/${token}?paid=1`)
-})
+}, { expect: 'route-invoice' })
