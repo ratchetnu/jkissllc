@@ -22,7 +22,19 @@ import type { AiJob, Booking } from './bookings' // type-only → no runtime cyc
 //   terminal/none/archived/test → removed  (never due)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const DUE_KEY = 'ai:due'
+// WAVE 5 (tenant-isolation audit), defect TEN-2. This was `ai:due` — and `ai:` is a
+// PLATFORM-GLOBAL prefix (keys.ts PLATFORM_GLOBAL_PREFIXES), so the chokepoint left
+// it un-namespaced. That put TENANT-OWNED state (booking tokens + each job's due
+// time) in ONE physical ZSET shared by every tenant: a cross-tenant existence/timing
+// leak via ZCARD/ZRANGEBYSCORE, a shared mutable structure any tenant's
+// maintainDueIndex could ZREM from, and per-tick work for tokens the current tenant
+// can never resolve. Unlike `ai:log`/`ai:call` — whose global placement is deliberate
+// and documented, with read filtering in scopeAiRecords — nothing here was scoped.
+// `aidue:` is NOT on the allowlist, so the index is now tenant-namespaced like every
+// other tenant-owned family. Safe to rename: both flags default off (the index is
+// unwritten today), it is a cache of derivable truth, the full scan stays
+// authoritative, and rebuildDueIndex repopulates it.
+export const DUE_KEY = 'aidue:index'
 const DEFAULT_LEASE_MS = 5 * 60_000
 
 /** The stale-processing lease (must match book-now-ai.processingLeaseMs — both read

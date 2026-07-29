@@ -6,7 +6,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-process.env.TENANT_ID = 'test-tenant.example'   // read by tenantId() at call time
+// WAVE 5 (TEN-1): a tenant id is an OPAQUE slug, never a host/display string —
+// tenantId() now normalizes and rejects dotted values, so the fixture uses a real one.
+process.env.TENANT_ID = 'test-tenant'   // read by tenantId() at call time
 
 import { runAiTask, type AiTaskDeps } from '../app/lib/ai/service'
 import { getPrompt, hasPrompt, listPrompts } from '../app/lib/ai/prompts'
@@ -103,7 +105,7 @@ test('a role without ai:use is refused before any model call', async () => {
 test('every AI record is stamped with the tenant id', async () => {
   const { deps, records } = harness(okGen('{"targetId":"ops"}'))
   await runAiTask(baseInput(), deps)
-  assert.equal(records[0].tenantId, 'test-tenant.example')
+  assert.equal(records[0].tenantId, 'test-tenant')
 })
 
 // ── 6. Audit-log creation + 9. token/latency recording ──────────────────────
