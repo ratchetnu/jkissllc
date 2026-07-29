@@ -147,6 +147,12 @@ export type RouteRecord = {
   // Only when an owner explicitly marks a route does the requirement apply.
   requiresVehicle?: boolean
 
+  // Operational readiness is a separate axis from crew acceptance. A contractor
+  // may confirm while an owner-controlled equipment decision is still pending.
+  // Stored on every write; legacy records are derived on read.
+  dispatchReadiness?: DispatchReadiness
+  dispatchReadinessUpdatedAt?: number
+
   // What the client pays for this route. Snapshotted at create; see RouteFinancials.
   financials?: RouteFinancials
 
@@ -209,6 +215,8 @@ export type PublicRoute = {
   description?: string
   payRate?: string
   vehicle?: string
+  dispatchReady: boolean
+  dispatchHold?: 'crew' | 'equipment'
   specialNotes?: string
   assignedStaffName?: string
   confirmedAt?: number
@@ -294,6 +302,9 @@ function normalize(r: RouteRecord): RouteRecord {
       if (cents != null) a.payCents = cents
     }
   }
+  if (!isDispatchReadiness(r.dispatchReadiness)) {
+    r.dispatchReadiness = deriveDispatchReadiness(r)
+  }
   return r
 }
 
@@ -336,11 +347,9 @@ export function crewGap(r: RouteRecord): { needsDriver: boolean; needsHelper: bo
 //   • the `blocked_dispatch` attention flag on the route's own card, and
 //   • the `missing_vehicle` conflict, which persists until equipment is assigned.
 //
-// TEMPORARY. The route model has one status axis, so "crew accepted" and
-// "operationally ready" currently share it and readiness is derived rather than
-// stored. Splitting them into an explicit dispatch state is tracked separately and
-// is deliberately NOT attempted here. Until then, never read `status === 'confirmed'`
-// as "ready to run" — read `isDispatchReady()`.
+// Never read `status === 'confirmed'` as "ready to run". Dispatch readiness is a
+// separate stored state, refreshed on every route write and derived for legacy
+// records during read normalization.
 //
 // Pinned by scripts/schedule-conflict-scope.test.ts ("CREW ROLLUP INVARIANT").
 
@@ -383,21 +392,47 @@ export function needsVehicleAssignment(
 export const VEHICLE_REQUIRED_MESSAGE =
   'This route is marked as needing a vehicle or equipment. Assign one before confirming it, or turn off “Vehicle/equipment required” for this route.'
 
-/**
- * Is this route actually ready to DISPATCH — as opposed to merely accepted?
- *
- * Deliberately distinct from `status === 'confirmed'`. A crew member can (and must
- * be able to) confirm a route whose owner has not yet assigned required equipment —
- * see the INVARIANT block above `rollupStatus`. This is the predicate that stays
- * false in that window, so "somebody agreed to run it" never silently reads as
- * "it can go out".
- *
- * Narrow on purpose: today the only readiness gate is the equipment requirement.
- * Crew sufficiency already has its own signals (`crewGap`, the `missing_crew`
- * conflict) and is not folded in here.
- */
-export function isDispatchReady(r: Pick<RouteRecord, 'requiresVehicle' | 'vehicle' | 'equipmentId'>): boolean {
-  return !needsVehicleAssignment(r)
+export type DispatchReadiness =
+  | 'needs_crew'
+  | 'awaiting_crew'
+  | 'needs_equipment'
+  | 'ready'
+  | 'closed'
+
+const DISPATCH_READINESS = new Set<DispatchReadiness>([
+  'needs_crew', 'awaiting_crew', 'needs_equipment', 'ready', 'closed',
+])
+
+function isDispatchReadiness(value: unknown): value is DispatchReadiness {
+  return typeof value === 'string' && DISPATCH_READINESS.has(value as DispatchReadiness)
+}
+
+/** Derive the operational state without mutating the route. */
+export function deriveDispatchReadiness(
+  r: Pick<RouteRecord, 'status' | 'assignees' | 'requiresHelper' | 'requiresVehicle' | 'vehicle' | 'equipmentId'>,
+): DispatchReadiness {
+  if (r.status === 'cancelled' || r.status === 'completed' || r.status === 'no_show') return 'closed'
+  const active = (r.assignees ?? []).filter(a => !a.declinedAt)
+  if (!active.length || crewGap({ ...r, assignees: active } as RouteRecord).incomplete) return 'needs_crew'
+  if (active.some(a => !a.confirmedAt)) return 'awaiting_crew'
+  if (needsVehicleAssignment(r)) return 'needs_equipment'
+  return 'ready'
+}
+
+/** Refresh the stored state and stamp only real transitions. */
+export function syncDispatchReadiness(r: RouteRecord, now = Date.now()): DispatchReadiness {
+  const next = deriveDispatchReadiness(r)
+  if (r.dispatchReadiness !== next) {
+    r.dispatchReadiness = next
+    r.dispatchReadinessUpdatedAt = now
+  }
+  return next
+}
+
+export function isDispatchReady(
+  r: Pick<RouteRecord, 'status' | 'assignees' | 'requiresHelper' | 'requiresVehicle' | 'vehicle' | 'equipmentId' | 'dispatchReadiness'>,
+): boolean {
+  return (isDispatchReadiness(r.dispatchReadiness) ? r.dispatchReadiness : deriveDispatchReadiness(r)) === 'ready'
 }
 
 /** Operator-facing reason a route is accepted but cannot be dispatched. */
@@ -512,6 +547,7 @@ export async function saveRoute(r: RouteRecord): Promise<void> {
   // decides which stale tokens to revoke, and after the write it would compare the
   // record to itself and revoke nothing.
   const prior = await getRouteByToken(r.token).catch(() => null)
+  syncDispatchReadiness(r)
   r.updatedAt = Date.now()
   await redis.set(KEY(r.token), JSON.stringify(r))
   await redis.set(KEY_NUM(r.routeNumber.toUpperCase()), r.token)
@@ -759,6 +795,9 @@ export function setStatus(r: RouteRecord, to: RouteStatus, actor: AuditEntry['ac
 
 // ── Public projection ────────────────────────────────────────────────────────
 export function toPublicRoute(r: RouteRecord): PublicRoute {
+  const readiness = isDispatchReadiness(r.dispatchReadiness)
+    ? r.dispatchReadiness
+    : deriveDispatchReadiness(r)
   return {
     token: r.token,
     routeNumber: r.routeNumber,
@@ -772,6 +811,10 @@ export function toPublicRoute(r: RouteRecord): PublicRoute {
     description: r.description,
     payRate: r.payRate,
     vehicle: r.vehicle,
+    dispatchReady: readiness === 'ready',
+    dispatchHold: readiness === 'needs_equipment'
+      ? 'equipment'
+      : readiness === 'needs_crew' || readiness === 'awaiting_crew' ? 'crew' : undefined,
     specialNotes: r.specialNotes,
     assignedStaffName: r.assignedStaffName,
     confirmedAt: r.confirmedAt,

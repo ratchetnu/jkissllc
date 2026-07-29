@@ -4,7 +4,7 @@ import { requirePermission } from '../../_lib/session'
 import {
   getRouteByToken, saveRoute, deleteRoute, setStatus, pushAudit,
   confirmVerbally, undoVerbalConfirm,
-  needsVehicleAssignment, VEHICLE_REQUIRED_MESSAGE,
+  needsVehicleAssignment, VEHICLE_REQUIRED_MESSAGE, DISPATCH_BLOCKED_MESSAGE,
   ROUTE_STATUS_LABEL, type RouteStatus,
 } from '../../../../lib/routes'
 import { addCrew, removeCrew, sendAssignmentText } from '../../../../lib/route-notify'
@@ -125,6 +125,12 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
     const sid = S(body.staffId, 80) || route.assignees?.[0]?.staffId
     if (sid) removeCrew(route, sid)
   } else if (action === 'send' || action === 'resend') {
+    // Texting the assignment is the owner's dispatch action. Crew acceptance is
+    // never blocked, but owners must finish their equipment decision before
+    // inviting crew to a route that explicitly requires an asset.
+    if (needsVehicleAssignment(route)) {
+      return NextResponse.json({ error: DISPATCH_BLOCKED_MESSAGE }, { status: 409 })
+    }
     const list = route.assignees ?? []
     if (!list.length) return NextResponse.json({ error: 'Assign a contractor first.' }, { status: 400 })
     const sid = S(body.staffId, 80)
