@@ -5,6 +5,9 @@
 // deleting the invoice frees its routes again.
 import type Stripe from 'stripe'
 import { redis } from './redis'
+import { bindToken, revokeTokenBinding } from './platform/tenancy/token-binding'
+import { currentTenantId } from './platform/tenancy/context'
+import { DEFAULT_TENANT_ID } from './platform/tenancy/types'
 import { listRoutes } from './routes'
 import { mutateRoute } from './route-mutex'
 import { parsePayCents } from './route-pay'
@@ -86,6 +89,22 @@ export async function saveInvoice(inv: RouteInvoice): Promise<void> {
   await redis.set(KEY(inv.token), JSON.stringify(inv))
   await redis.set(KEY_NUM(inv.invoiceNumber.toUpperCase()), inv.token)
   await redis.zadd(KEY_INDEX, inv.updatedAt, inv.token)
+  // WAVE 6D-B. Bind AFTER the record persists, so the public token is never
+  // resolvable before the invoice it names exists. Idempotent on re-save (the same
+  // tenant re-binding is a no-op), and a conflict — the token already belongs to
+  // another tenant — is refused rather than overwritten.
+  //
+  // Deliberately NOT revoked on `void` or `paid`: the customer-facing contract lets
+  // someone reopen a paid or voided invoice link to see its state, and the route
+  // itself already returns 404 for void. Killing the binding would turn "this invoice
+  // was voided" into "this link is broken".
+  try {
+    await bindToken(inv.token, {
+      tenantId: currentTenantId() ?? DEFAULT_TENANT_ID,
+      resourceType: 'route-invoice',
+      resourceId: inv.token,
+    })
+  } catch { /* conflict: never overwrite another tenant's binding */ }
 }
 export async function listInvoices(limit = 500): Promise<RouteInvoice[]> {
   const tokens = await redis.zrevrange(KEY_INDEX, 0, limit - 1)
@@ -123,6 +142,8 @@ export async function deleteInvoice(token: string): Promise<void> {
   await redis.del(KEY(token))
   if (inv) await redis.del(KEY_NUM(inv.invoiceNumber.toUpperCase()))
   await redis.zrem(KEY_INDEX, token)
+  // The capability dies with the resource — no dangling platform binding.
+  await revokeTokenBinding(token)
 }
 
 // Completed, not-yet-billed routes for a business in a date window — what an

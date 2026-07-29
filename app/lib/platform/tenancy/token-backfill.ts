@@ -18,11 +18,13 @@ import { bindToken, TokenBindingConflictError, isValidPublicToken } from './toke
 import { listBookings } from '../../bookings'
 import { listRoutes } from '../../routes'
 import { listClientPortals } from '../../client-portal'
+import { listInvoices } from '../../route-invoices'
+import { listStatements } from '../../pay-statements'
 
 export type TokenBackfillReport = {
   tenantId: string
   dryRun: boolean
-  scanned: { bookings: number; routes: number; assigneeTokens: number; clientPortals: number }
+  scanned: { bookings: number; routes: number; assigneeTokens: number; clientPortals: number; invoices: number; payStatements: number }
   bound: number
   alreadyBound: number
   conflicts: { token: string; reason: string }[]
@@ -41,7 +43,7 @@ export async function backfillTokenBindings(
   const limit = opts.limit ?? 5000
   const report: TokenBackfillReport = {
     tenantId, dryRun,
-    scanned: { bookings: 0, routes: 0, assigneeTokens: 0, clientPortals: 0 },
+    scanned: { bookings: 0, routes: 0, assigneeTokens: 0, clientPortals: 0, invoices: 0, payStatements: 0 },
     bound: 0, alreadyBound: 0, conflicts: [], skippedInvalid: 0,
   }
 
@@ -67,6 +69,25 @@ export async function backfillTokenBindings(
       }
     }
 
+    // ── Financial families (Wave 6D-B) ──────────────────────────────────────
+    const invoices = await listInvoices(limit).catch(() => [])
+    report.scanned.invoices = invoices.length
+    for (const inv of invoices) {
+      // Voided invoices keep their binding: the customer-facing contract lets someone
+      // reopen the link and see that it was voided, and the route already 404s on
+      // void. Deleted invoices are simply absent from this list.
+      await bindOne(inv.token, 'route-invoice', inv.token, tenantId, dryRun, report)
+    }
+
+    const statements = await listStatements(limit).catch(() => [])
+    report.scanned.payStatements = statements.length
+    for (const st of statements) {
+      // Void statements ARE bound: /api/verify/[id] answers `verified: false` for them,
+      // which is a meaningful response a lender may be checking. Skipping them would
+      // turn "this was voided" into "no such statement".
+      await bindOne(st.id, 'pay-statement', st.id, tenantId, dryRun, report)
+    }
+
     const portals = await listClientPortals(limit).catch(() => [])
     report.scanned.clientPortals = portals.length
     for (const c of portals) {
@@ -86,7 +107,7 @@ export async function backfillTokenBindings(
 
 async function bindOne(
   token: string | undefined,
-  resourceType: 'booking' | 'route' | 'client-portal',
+  resourceType: 'booking' | 'route' | 'client-portal' | 'route-invoice' | 'pay-statement',
   resourceId: string,
   tenantId: string,
   dryRun: boolean,

@@ -1,4 +1,7 @@
 import { redis } from './redis'
+import { bindToken, revokeTokenBinding } from './platform/tenancy/token-binding'
+import { currentTenantId } from './platform/tenancy/context'
+import { DEFAULT_TENANT_ID } from './platform/tenancy/types'
 
 // Contractor Pay Statements (Part 5). A statement is an ISSUED, immutable snapshot
 // of one crew member's pay for a period — gross, claim-recovery deductions, and net
@@ -75,6 +78,24 @@ async function persist(s: PayStatement): Promise<void> {
   await redis.zadd(INDEX, s.issuedAt, s.id)
   await redis.zadd(STAFF_INDEX(s.staffId), s.issuedAt, s.id)
   if (s.status !== 'void') await redis.set(PERIOD_KEY(s.staffId, s.periodStart, s.periodEnd), s.id)
+
+  // WAVE 6D-B — the opaque ps_ id IS the public capability (owner decision 2), so the
+  // binding is keyed by the id itself and every printed, emailed and saved
+  // verification link keeps working untouched.
+  //
+  // A VOID statement keeps its binding on purpose. /api/verify/[id] deliberately
+  // answers `verified: false` with the same non-sensitive fields for a voided
+  // statement — that is the product telling a lender "this document is real but was
+  // voided". Revoking the binding would turn that meaningful answer into a bare 404,
+  // i.e. "no such statement", which is both less true and less useful. The reader,
+  // not the binding, decides what a void statement discloses.
+  try {
+    await bindToken(s.id, {
+      tenantId: currentTenantId() ?? DEFAULT_TENANT_ID,
+      resourceType: 'pay-statement',
+      resourceId: s.id,
+    })
+  } catch { /* conflict: never overwrite another tenant's binding */ }
 }
 
 export async function saveStatement(s: PayStatement): Promise<void> {
