@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../_lib/session'
 import { listBusinesses, getBusiness, saveBusiness, deleteBusiness, bizKey, type Business, type RateHistoryEntry } from '../../../lib/businesses'
-import { endBusinessContract, isFutureContractRoute, reopenBusinessContract } from '../../../lib/business-contract-lifecycle'
+import { endBusinessContract, isFutureContractRoute, reopenBusinessContract, routeScanFetchSize } from '../../../lib/business-contract-lifecycle'
 import { parseMoneyCents } from '../../../lib/finance'
 import { repriceBusinessRoutes, repriceCandidates, isApplyTo, type ApplyTo } from '../../../lib/route-reprice'
 import { centralToday } from '../../../lib/dates'
@@ -155,16 +155,17 @@ export const PATCH = withTenantRoute(async (req: NextRequest) => {
     now,
     today,
     actor: who,
-    routeScanLimit: 2000,
   }
 
   const result = await endBusinessContract(input, {
     getBusiness,
     saveBusiness,
-    // Fetch one beyond the supported completeness boundary. If the extra record
-    // exists, the lifecycle service refuses to archive instead of silently
-    // leaving older live work behind an ended contract.
-    listRoutes: () => listRoutes(2001),
+    // Fetch one beyond the supported completeness boundary, from the SAME source of
+    // truth as the limit itself. If that extra record exists the lifecycle service
+    // refuses to archive rather than silently leave older live work behind an ended
+    // contract. The limit is the service's fail-closed default, so it is not repeated
+    // here — the two numbers can no longer drift apart.
+    listRoutes: () => listRoutes(routeScanFetchSize()),
     listTemplates: () => listTemplates(500),
     saveTemplate,
     cancelRoute: async (token, contractInput) => {

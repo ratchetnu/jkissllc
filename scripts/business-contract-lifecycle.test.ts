@@ -4,9 +4,11 @@ import test from 'node:test'
 
 import {
   CONTRACT_ENDABLE_ROUTE_STATUSES,
+  DEFAULT_ROUTE_SCAN_LIMIT,
   endBusinessContract,
   isFutureContractRoute,
   reopenBusinessContract,
+  routeScanFetchSize,
   type BusinessContractDeps,
   type EndContractInput,
 } from '../app/lib/business-contract-lifecycle'
@@ -248,6 +250,136 @@ test('API requires all three mutation permissions and the UI exposes end/restore
   assert.match(detail, /Completed work, invoices, pay, and claims will stay in history/)
   assert.match(list, /Show ended contracts/)
   assert.match(list, /showEnded \|\| !endedKeys\.has\(g\.bizKey\)/)
-  assert.match(api, /routeScanLimit: 2000/)
-  assert.match(api, /listRoutes\(2001\)/)
+  // The caller no longer restates the limit or the fetch size as literals — the limit
+  // is the service's fail-closed default and the fetch size is derived from it, so the
+  // two can no longer drift apart. Pinned by "the fetch size is one beyond the limit".
+  assert.match(api, /listRoutes\(routeScanFetchSize\(\)\)/)
+})
+
+
+// ── Follow-ups from the #126 delta review ────────────────────────────────────
+//
+// Two defects the earlier fixes left behind: an over-limit refusal still paused every
+// recurring schedule first (a permanently half-applied state no retry could finish),
+// and the scan limit defaulted to Number.MAX_SAFE_INTEGER, so a caller that forgot to
+// pass it silently lost the guarantee entirely.
+
+/** A fixture whose route list is exactly `total` records, none of them matching the
+ *  business under test — so any refusal is attributable to the count, not the work. */
+function bulkFixture(total: number) {
+  const routes = Array.from({ length: total }, (_, i) => route(`bulk-${i}`, 'assigned', '2026-08-01', 'JW Logistics'))
+  const pausedTemplates: string[] = []
+  const savedBusinesses: Business[] = []
+  const cancelled: string[] = []
+  const deps: BusinessContractDeps = {
+    getBusiness: async () => null,
+    saveBusiness: async b => { savedBusinesses.push(structuredClone(b)) },
+    listRoutes: async () => routes,
+    listTemplates: async () => [template('active'), template('second')],
+    saveTemplate: async t => { pausedTemplates.push(t.id) },
+    cancelRoute: async token => { cancelled.push(token); return 'cancelled' },
+  }
+  return { deps, pausedTemplates, savedBusinesses, cancelled }
+}
+
+test('an over-limit refusal is completely side-effect-free: no template paused, no route cancelled, no archive', async () => {
+  const f = bulkFixture(DEFAULT_ROUTE_SCAN_LIMIT + 1)
+  const result = await endBusinessContract(input(), f.deps)
+
+  assert.equal(result.ok, false)
+  assert.match(result.incompleteReason ?? '', /completeness cannot be proven/)
+  // The point of the reorder: nothing was written before we knew we could finish.
+  assert.deepEqual(f.pausedTemplates, [], 'recurring schedules must NOT be paused when we cannot finish')
+  assert.equal(result.pausedTemplateCount, 0)
+  assert.deepEqual(f.cancelled, [], 'no route may be cancelled')
+  assert.equal(result.cancelledRouteCount, 0)
+  assert.deepEqual(f.savedBusinesses, [], 'the business must not be archived')
+})
+
+test('the scan limit is enforced even when the caller omits routeScanLimit (fail closed)', async () => {
+  const f = bulkFixture(DEFAULT_ROUTE_SCAN_LIMIT + 1)
+  // input() deliberately does NOT set routeScanLimit — the old default was
+  // Number.MAX_SAFE_INTEGER and this archived 2,001 routes' worth of work happily.
+  const result = await endBusinessContract(input(), f.deps)
+  assert.equal(result.ok, false)
+  assert.match(result.incompleteReason ?? '', /More than 2,000 operations exist/)
+  assert.deepEqual(f.savedBusinesses, [])
+})
+
+test('exactly the limit is provably complete and still archives', async () => {
+  const f = bulkFixture(DEFAULT_ROUTE_SCAN_LIMIT)
+  const result = await endBusinessContract(input(), f.deps)
+  assert.equal(result.ok, true, 'seeing exactly the limit means we saw everything')
+  assert.equal(result.incompleteReason, undefined)
+  assert.equal(f.savedBusinesses.length, 1)
+  assert.deepEqual(f.pausedTemplates, ['active', 'second'], 'schedules pause on the success path')
+})
+
+test('the fetch size is one beyond the limit, from a single source of truth', () => {
+  // The limit and the fetch size used to be separate magic numbers in separate files
+  // (2000 here, 2001 in the route); changing one alone disabled the guard silently.
+  assert.equal(routeScanFetchSize(), DEFAULT_ROUTE_SCAN_LIMIT + 1)
+  assert.equal(routeScanFetchSize(10), 11)
+  const routeSrc = readFileSync('app/api/admin/businesses/route.ts', 'utf8')
+  assert.match(routeSrc, /listRoutes\(routeScanFetchSize\(\)\)/, 'the caller derives its fetch size, never hardcodes it')
+  assert.ok(!/listRoutes\(2001\)/.test(routeSrc), 'no hardcoded 2001 may reappear')
+  assert.ok(!/routeScanLimit:\s*2000/.test(routeSrc), 'the limit comes from the fail-closed default, not a literal')
+})
+
+test('the completeness check runs BEFORE schedules are paused', async () => {
+  // Ordering, asserted by observation rather than by reading: the first write of any
+  // kind must not happen until the count has been proven.
+  const order: string[] = []
+  const routes = Array.from({ length: DEFAULT_ROUTE_SCAN_LIMIT + 1 }, (_, i) =>
+    route(`bulk-${i}`, 'assigned', '2026-08-01', 'JW Logistics'))
+  const deps: BusinessContractDeps = {
+    getBusiness: async () => null,
+    saveBusiness: async () => { order.push('saveBusiness') },
+    listRoutes: async () => { order.push('listRoutes'); return routes },
+    listTemplates: async () => [template('active')],
+    saveTemplate: async () => { order.push('saveTemplate') },
+    cancelRoute: async () => { order.push('cancelRoute'); return 'cancelled' },
+  }
+  const result = await endBusinessContract(input(), deps)
+  assert.equal(result.ok, false)
+  assert.deepEqual(order, ['listRoutes'], 'the scan happened, and then nothing else did')
+})
+
+test('the reorder did not break pause-before-sweep on the success path', async () => {
+  // The original ordering guarantee still has to hold: schedules must stop before the
+  // working set is read, or a generator can add a route mid-sweep.
+  const order: string[] = []
+  const f = fixture()
+  const deps: BusinessContractDeps = {
+    ...f.deps,
+    listRoutes: async () => { order.push('listRoutes'); return f.routes },
+    saveTemplate: async t => { order.push('saveTemplate'); await f.deps.saveTemplate(t) },
+  }
+  await endBusinessContract(input(), deps)
+  const firstSave = order.indexOf('saveTemplate')
+  const sweepRead = order.indexOf('listRoutes', firstSave)
+  assert.equal(order[0], 'listRoutes', 'preflight count comes first')
+  assert.ok(firstSave > 0, 'schedules are paused')
+  assert.ok(sweepRead > firstSave, 'the working set is re-read only AFTER schedules are paused')
+})
+
+test('retry after a template failure remains idempotent and never archives', async () => {
+  const f = fixture()
+  let failNext = true
+  const deps: BusinessContractDeps = {
+    ...f.deps,
+    saveTemplate: async t => {
+      if (failNext && t.id === 'active') { failNext = false; throw new Error('store down') }
+      await f.deps.saveTemplate(t)
+    },
+  }
+  const first = await endBusinessContract(input(), deps)
+  assert.equal(first.ok, false)
+  assert.deepEqual(first.failedTemplates, ['active'])
+  assert.equal(f.savedBusinesses.length, 0, 'no archive on the failed attempt')
+
+  const second = await endBusinessContract(input(), deps)
+  assert.equal(second.ok, true, 'the retry completes')
+  assert.equal(f.savedBusinesses.length, 1, 'archived exactly once')
+  assert.equal(f.savedBusinesses[0].contractHistory?.length, 1, 'one lifecycle event, not two')
 })
