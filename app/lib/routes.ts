@@ -138,6 +138,15 @@ export type RouteRecord = {
   assignees?: Assignee[]
   requiresHelper?: boolean       // stamped from the client's setting — needs a driver + helper
 
+  // Does this route need a COMPANY vehicle or a roster equipment asset before it can
+  // be run? OPT-IN, and deliberately so. Plenty of legitimate work needs no company
+  // asset at all — crew-own-equipment routes, ride-along/supervision days, routes
+  // where the client supplies the truck — and those must never be nagged for a
+  // vehicle they will never have. Absent/false (every route that exists today) means
+  // "no vehicle needed": no missing-vehicle conflict, no confirm-time validation.
+  // Only when an owner explicitly marks a route does the requirement apply.
+  requiresVehicle?: boolean
+
   // What the client pays for this route. Snapshotted at create; see RouteFinancials.
   financials?: RouteFinancials
 
@@ -313,6 +322,33 @@ export function rollupStatus(r: RouteRecord): RouteStatus {
   if (pending.length) return pending.some(x => x.smsSentAt) ? 'text_sent' : 'assigned'
   return a.some(x => x.confirmedAt) ? 'confirmed' : 'declined'  // no pending: some mix / all declined
 }
+
+// ── Vehicle / equipment requirement ──────────────────────────────────────────
+// ONE rule, shared by the schedule conflict detector and the confirm-time
+// validation, so the warning a route shows and the reason it is blocked can never
+// disagree. Both read `requiresVehicle`; neither infers the requirement from crew
+// shape, service type, or anything else.
+
+/** A company vehicle OR a roster equipment asset has been picked. Either satisfies. */
+export function hasVehicleOrEquipment(r: Pick<RouteRecord, 'vehicle' | 'equipmentId'>): boolean {
+  return Boolean((r.vehicle ?? '').trim() || (r.equipmentId ?? '').trim())
+}
+
+/**
+ * True when this route was explicitly marked as needing a vehicle/equipment and
+ * still has neither. Returns false for every route that has not opted in — which is
+ * every route that exists today, so turning this on adds no warnings to historical
+ * work and never blocks a route that legitimately runs without a company asset.
+ */
+export function needsVehicleAssignment(
+  r: Pick<RouteRecord, 'requiresVehicle' | 'vehicle' | 'equipmentId'>,
+): boolean {
+  return r.requiresVehicle === true && !hasVehicleOrEquipment(r)
+}
+
+/** Owner-facing reason a Confirm was refused. Names the fix, not the rule. */
+export const VEHICLE_REQUIRED_MESSAGE =
+  'This route is marked as needing a vehicle or equipment. Assign one before confirming it, or turn off “Vehicle/equipment required” for this route.'
 
 // Mirror the lead assignee (assignees[0]) onto the legacy route-level fields and
 // recompute the route status. Call after any crew mutation.

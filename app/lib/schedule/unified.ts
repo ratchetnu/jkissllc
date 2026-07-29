@@ -109,6 +109,11 @@ export type ScheduleItem = {
   vehicle?: string               // route vehicle snapshot (bookings have none)
   equipmentId?: string           // route equipment-roster link, when a specific asset was picked
   equipment: string[]            // display labels (vehicle + explicit equipment)
+  // Was this item EXPLICITLY marked as needing a company vehicle / roster asset?
+  // Opt-in and route-only. False for every booking and for every route that has not
+  // opted in, so a missing vehicle is only ever a conflict where someone said it
+  // should be. See RouteRecord.requiresVehicle.
+  requiresVehicle: boolean
 
   valueCents?: number            // quoted amount (booking) / contract price (route) — caller gates by auth
   paymentState?: PaymentSummaryStatus | 'n/a'
@@ -247,6 +252,10 @@ export function bookingToScheduleItem(b: Booking): ScheduleItem {
     vehicle,
     equipmentId,
     equipment,
+    // Bookings never opt in: the requirement is a ROUTE-level setting. A booking is
+    // therefore never reported as missing a vehicle, which is what it did before
+    // this rule existed for any booking without roster crew.
+    requiresVehicle: false,
 
     valueCents: netInvoiceCents(b) || undefined,
     paymentState: paymentSummaryStatus(b),
@@ -317,6 +326,7 @@ export function routeToScheduleItem(r: RouteRecord): ScheduleItem {
     vehicle: r.vehicle || undefined,
     equipmentId: r.equipmentId,
     equipment,
+    requiresVehicle: r.requiresVehicle === true,
 
     valueCents: r.financials?.businessPriceCents,
     paymentState: 'n/a',

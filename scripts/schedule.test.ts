@@ -330,8 +330,12 @@ test('booking and route missing-crew detection are independent in one merged sch
 
 test('vehicle/equipment conflicts are untouched by the missing-crew fix', () => {
   const day = '2026-07-20'
+  // UPDATED: the vehicle requirement is now an explicit per-route setting rather
+  // than an assumption about every route, so this fixture opts in. The unchanged
+  // part is what this test was always about: given the requirement applies, having
+  // no vehicle flags and having one does not.
   const shortHanded = (o: Partial<RouteRecord> = {}) => routeToScheduleItem(route({
-    status: 'assigned', routeDate: day, requiresHelper: true,
+    status: 'assigned', routeDate: day, requiresHelper: true, requiresVehicle: true,
     assignees: [assignee({ staffId: 's1', name: 'Alex', role: 'driver' })],
     ...o,
   }))

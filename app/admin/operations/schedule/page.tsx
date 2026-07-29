@@ -15,7 +15,7 @@ import {
 import OperationsShell from '../OperationsShell'
 import { ymd, fmtDay, fmtLongDay, money } from '../ui'
 import type { ScheduleItem, ScheduleSource } from '../../../lib/schedule/unified'
-import type { Conflict } from '../../../lib/schedule/conflicts'
+import { filterConflictsFrom, summarizeConflicts, type Conflict } from '../../../lib/schedule/conflicts'
 
 type Feed = {
   items: ScheduleItem[]
@@ -72,13 +72,30 @@ function Schedule() {
   }, [])
 
   const items = feed?.items ?? []
+  const todayIso = ymd(new Date())
+
+  // The earliest day the current view is looking at. Conflicts before it are history
+  // the owner cannot act on for the day in front of them, so they are not shown.
+  // Day → the day on screen; Week → that week's Sunday; the two list views have no
+  // date axis, so they scope from today.
+  const viewFromDay = view === 'today' ? anchor
+    : view === 'week' ? weekStart(anchor)
+    : todayIso
+
+  // ONE filtered set feeds both the Conflicts tile and the banner, so the number on
+  // the tile is always the number of rows underneath it. Computing them from
+  // different sources is how a "7" ends up over a list of 3.
+  const visibleConflicts = useMemo(
+    () => filterConflictsFrom(feed?.conflicts ?? [], viewFromDay),
+    [feed, viewFromDay],
+  )
+  const visibleSummary = useMemo(() => summarizeConflicts(visibleConflicts), [visibleConflicts])
+
   const conflictsByItem = useMemo(() => {
     const m = new Map<string, Conflict[]>()
-    for (const c of feed?.conflicts ?? []) for (const id of c.itemIds) (m.get(id) ?? m.set(id, []).get(id)!).push(c)
+    for (const c of visibleConflicts) for (const id of c.itemIds) (m.get(id) ?? m.set(id, []).get(id)!).push(c)
     return m
-  }, [feed])
-
-  const todayIso = ymd(new Date())
+  }, [visibleConflicts])
 
   return (
     <div>
@@ -122,8 +139,8 @@ function Schedule() {
         : error ? <div className="os-card" style={{ padding: 22, color: '#f87171' }}>{error}</div>
         : feed && (
         <>
-          <CountsRow c={feed.counts} conflicts={feed.conflictSummary} />
-          {feed.conflictSummary.total > 0 && <ConflictBanner conflicts={feed.conflicts} />}
+          <CountsRow c={feed.counts} conflicts={visibleSummary} />
+          {visibleSummary.total > 0 && <ConflictBanner conflicts={visibleConflicts} />}
 
           {view === 'today' && <DayView items={items} day={anchor} conflictsByItem={conflictsByItem} canSeeValue={feed.canSeeValue} />}
           {view === 'week' && <WeekView items={items} start={weekStart(anchor)} today={todayIso} onPick={(d) => { setAnchor(d); setView('today') }} />}
