@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { redis } from './redis'
+import { bindToken, revokeTokenBinding } from './platform/tenancy/token-binding'
+import { currentTenantId } from './platform/tenancy/context'
+import { DEFAULT_TENANT_ID } from './platform/tenancy/types'
 import type { ReminderChannel, AckKind, SegmentId } from './reminder-templates'
 import { ACK_IS_DONE } from './reminder-templates'
 
@@ -226,6 +229,16 @@ export async function saveInstance(i: ReminderInstance): Promise<void> {
   if (i.reminderId) await redis.zadd(iReminder(i.reminderId), i.sentAt, i.id)
   await redis.zadd(iStaff(i.staffId), i.sentAt, i.id)
   await redis.set(tokKey(i.token), i.id)
+  // Wave 6D-A: REPEAT-USE while the acknowledgement is active (owner decision). The
+  // binding is created at send and lives until the ack completes, is cancelled or
+  // superseded — see revokeAckCapability, called from ackInstance.
+  try {
+    await bindToken(i.token, {
+      tenantId: currentTenantId() ?? DEFAULT_TENANT_ID,
+      resourceType: 'acknowledgement',
+      resourceId: i.id,
+    })
+  } catch { /* conflict: never overwrite another tenant's binding */ }
   // Track in the open set only while it still needs an acknowledgement.
   const settled = !!i.completedAt || (!!i.ackAt && isDoneAck(i.ackKind))
   if (i.requireAck && !settled) await redis.zadd(I_OPEN, i.sentAt, i.id)
@@ -301,6 +314,13 @@ export async function markInstanceOpened(id: string, device?: string): Promise<R
   return i
 }
 
+/** Revoke a public ack link. Call when the acknowledgement completes, is cancelled,
+ *  is superseded by a re-send, or expires under the retention contract. Idempotent. */
+export async function revokeAckCapability(token: string | undefined | null): Promise<void> {
+  if (!token) return
+  await revokeTokenBinding(token)
+}
+
 // Record an acknowledgement (request Part 5). A "done" ack also stamps completedAt
 // and drops the instance from the open (escalation) set.
 export async function ackInstance(id: string, kind: AckKind, device?: string): Promise<ReminderInstance | null> {
@@ -314,6 +334,10 @@ export async function ackInstance(id: string, kind: AckKind, device?: string): P
   if (device) i.device = device
   if (ACK_IS_DONE[kind]) i.completedAt = now
   await saveInstance(i)
+  // Repeat-use ENDS here. A "done" ack closes the acknowledgement, so the public
+  // capability is revoked — the link may be reopened freely while active, but not
+  // after it completes. A non-done ack (e.g. "snooze") leaves it live on purpose.
+  if (ACK_IS_DONE[kind]) await revokeAckCapability(i.token)
   if (i.reminderId && firstAck) {
     await bumpReminderStats(i.reminderId, { acked: 1, ...(ACK_IS_DONE[kind] ? { completed: 1 } : {}) })
   }

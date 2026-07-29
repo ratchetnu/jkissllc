@@ -17,11 +17,12 @@ import { runWithTenant } from './context'
 import { bindToken, TokenBindingConflictError, isValidPublicToken } from './token-binding'
 import { listBookings } from '../../bookings'
 import { listRoutes } from '../../routes'
+import { listClientPortals } from '../../client-portal'
 
 export type TokenBackfillReport = {
   tenantId: string
   dryRun: boolean
-  scanned: { bookings: number; routes: number }
+  scanned: { bookings: number; routes: number; assigneeTokens: number; clientPortals: number }
   bound: number
   alreadyBound: number
   conflicts: { token: string; reason: string }[]
@@ -40,7 +41,7 @@ export async function backfillTokenBindings(
   const limit = opts.limit ?? 5000
   const report: TokenBackfillReport = {
     tenantId, dryRun,
-    scanned: { bookings: 0, routes: 0 },
+    scanned: { bookings: 0, routes: 0, assigneeTokens: 0, clientPortals: 0 },
     bound: 0, alreadyBound: 0, conflicts: [], skippedInvalid: 0,
   }
 
@@ -55,15 +56,37 @@ export async function backfillTokenBindings(
     report.scanned.routes = routes.length
     for (const r of routes) {
       await bindOne(r.token, 'route', r.token, tenantId, dryRun, report)
+      // Each live assignee confirm-token is its own capability pointing at the SAME
+      // route. Rotated-out tokens are already gone from the record, so walking the
+      // stored assignees binds exactly the links that should still work.
+      for (const a of r.assignees ?? []) {
+        if (a.token && a.token !== r.token) {
+          report.scanned.assigneeTokens++
+          await bindOne(a.token, 'route', r.token, tenantId, dryRun, report)
+        }
+      }
+    }
+
+    const portals = await listClientPortals(limit).catch(() => [])
+    report.scanned.clientPortals = portals.length
+    for (const c of portals) {
+      await bindOne(c.token, 'client-portal', c.token, tenantId, dryRun, report)
     }
   })
+
+  // NOTE — acknowledgement tokens are deliberately NOT backfilled. They are
+  // repeat-use only while the acknowledgement is ACTIVE (owner decision), and the
+  // reminder instance store has no listing API that distinguishes active from
+  // completed. Binding them blindly would resurrect links for acknowledgements that
+  // have already closed — the opposite of the decided lifecycle. New sends bind at
+  // issue; historical ack links expire with their reminder retention.
 
   return report
 }
 
 async function bindOne(
   token: string | undefined,
-  resourceType: 'booking' | 'route',
+  resourceType: 'booking' | 'route' | 'client-portal',
   resourceId: string,
   tenantId: string,
   dryRun: boolean,

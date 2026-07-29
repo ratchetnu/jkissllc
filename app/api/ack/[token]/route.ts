@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
+import { withPublicTokenRoute } from '../../../lib/platform/tenancy/with-public-token-route'
 import { getInstanceByToken, ackInstance, markInstanceOpened } from '../../../lib/reminders'
 import { getMessage, saveMessage } from '../../../lib/messages'
 import { ACK_LABEL, type AckKind } from '../../../lib/reminder-templates'
@@ -14,7 +14,7 @@ const ALL_ACKS: AckKind[] = ['acknowledged', 'completed', 'calling', 'need_help'
 // Public one-tap acknowledgement (request Part 5). The instance token is the
 // capability — no login — so a crew member can respond straight from an SMS/email
 // link. GET marks it opened + returns what to render; POST records the ack.
-export const GET = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
+export const GET = withPublicTokenRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   const inst = await markInstanceOpened((await getInstanceByToken(token))?.id || '', req.headers.get('user-agent') || undefined)
   if (!inst) return NextResponse.json({ error: 'not_found' }, { status: 404 })
@@ -24,9 +24,9 @@ export const GET = withTenantRoute(async (req: NextRequest, { params }: { params
     ackedKind: inst.ackKind ?? null, completedAt: inst.completedAt ?? null,
     staffName: inst.staffName, sentAt: inst.sentAt,
   })
-})
+}, { expect: 'acknowledgement' })
 
-export const POST = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
+export const POST = withPublicTokenRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   if (await rateLimit(req, 'ack', 30, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many requests. Please wait a moment.' }, { status: 429 })
   }
@@ -52,4 +52,4 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
     meta: { kind, reminderId: inst.reminderId },
   })
   return NextResponse.json({ ok: true, ackedKind: kind, completed: !!inst.completedAt })
-})
+}, { expect: 'acknowledgement' })

@@ -3,6 +3,9 @@
 // public confirmation-link key. Everything is one JSON blob + a sorted-set index.
 // Workers are 1099 contractors, drawn from the existing crew roster (lib/staff).
 import { redis } from './redis'
+import { bindToken, revokeTokenBinding } from './platform/tenancy/token-binding'
+import { currentTenantId } from './platform/tenancy/context'
+import { DEFAULT_TENANT_ID } from './platform/tenancy/types'
 import { COMPANY } from './company'
 
 // ── Status ───────────────────────────────────────────────────────────────────
@@ -415,14 +418,41 @@ export async function getRouteByToken(token: string): Promise<RouteRecord | null
 }
 
 export async function saveRoute(r: RouteRecord): Promise<void> {
+  // Read the stored copy BEFORE overwriting it — the assignee diff below is what
+  // decides which stale tokens to revoke, and after the write it would compare the
+  // record to itself and revoke nothing.
+  const prior = await getRouteByToken(r.token).catch(() => null)
   r.updatedAt = Date.now()
   await redis.set(KEY(r.token), JSON.stringify(r))
   await redis.set(KEY_NUM(r.routeNumber.toUpperCase()), r.token)
   await redis.zadd(KEY_INDEX, r.updatedAt, r.token)
   // Map each assignee's own confirm token → this route (the route token maps to
   // itself implicitly, so skip it).
-  for (const a of r.assignees ?? []) {
-    if (a.token && a.token !== r.token) await redis.set(KEY_ATOK(a.token), r.token)
+  //
+  // WAVE 6D-A. Two things happen here that did not before.
+  //
+  // (1) ROTATION REVOKES. An assignee removed or re-tokened used to keep a working
+  //     `rt:atok:` mapping forever — only deleteRoute cleaned them up, so a
+  //     rotated-out driver retained a live public link to the route indefinitely.
+  //     The diff against the PREVIOUS assignee set now deletes the stale mapping and
+  //     its tenant binding in the SAME write that issues the replacement, so there is
+  //     no window where both links work.
+  // (2) BINDING. Each live token is bound to the owning tenant so the public route
+  //     page can resolve a tenant with no session (see token-binding.ts).
+  const live = new Set((r.assignees ?? []).map(a => a.token).filter((t): t is string => !!t && t !== r.token))
+  for (const stale of (prior?.assignees ?? []).map(a => a.token)) {
+    if (stale && stale !== r.token && !live.has(stale)) {
+      await redis.del(KEY_ATOK(stale))
+      await revokeTokenBinding(stale)
+    }
+  }
+  for (const t of live) await redis.set(KEY_ATOK(t), r.token)
+
+  // Bind the route token itself plus every live assignee token. All point at the same
+  // route resource; the atok indirection is resolved by the handler, not the binding.
+  const tenantId = currentTenantId() ?? DEFAULT_TENANT_ID
+  for (const t of [r.token, ...live]) {
+    try { await bindToken(t, { tenantId, resourceType: 'route', resourceId: r.token }) } catch { /* conflict: never overwrite */ }
   }
 }
 
@@ -431,9 +461,13 @@ export async function deleteRoute(token: string): Promise<void> {
   await redis.del(KEY(token))
   if (r) {
     await redis.del(KEY_NUM(r.routeNumber.toUpperCase()))
-    for (const a of r.assignees ?? []) if (a.token && a.token !== token) await redis.del(KEY_ATOK(a.token))
+    for (const a of r.assignees ?? []) {
+      if (a.token && a.token !== token) { await redis.del(KEY_ATOK(a.token)); await revokeTokenBinding(a.token) }
+    }
   }
   await redis.zrem(KEY_INDEX, token)
+  // The capability dies with the resource.
+  await revokeTokenBinding(token)
 }
 
 export async function listRoutes(limit = 500): Promise<RouteRecord[]> {
