@@ -20,12 +20,15 @@
 
 import { listUsers, backfillUserDirectory } from '../../users'
 import { getMembership, upsertMembership, ensureReferenceMembership } from './membership'
+import { ensureReferenceTenant } from './tenant-registry'
 import { DEFAULT_TENANT_ID } from './types'
 
 export type Wave6BackfillReport = {
   directory: { scanned: number; copied: number; skipped: number }
   memberships: { scanned: number; created: number; existing: number }
   ownerSeeded: boolean
+  /** The reference tenant's REGISTRY record — not the same thing as a membership. */
+  referenceTenantSeeded: boolean
   dryRun: boolean
 }
 
@@ -61,15 +64,25 @@ export async function runWave6Backfill(opts: { dryRun?: boolean } = {}): Promise
   }
 
   let ownerSeeded = false
+  let referenceTenantSeeded = false
   if (!dryRun) {
     await ensureReferenceMembership()
     ownerSeeded = true
+    // The tenant REGISTRY record, which memberships do not imply. Found by a live
+    // Preview login test: `POST /api/auth/tenant` and `requireMemberSession` both
+    // verify the destination tenant still EXISTS and is not suspended
+    // (`getTenant(...)`), so without this record a user was refused entry to a tenant
+    // they legitimately held an active membership in — a 403 for the reference tenant
+    // itself. Idempotent: returns the existing record untouched.
+    await ensureReferenceTenant()
+    referenceTenantSeeded = true
   }
 
   return {
     directory,
     memberships: { scanned: users.length, created, existing },
     ownerSeeded,
+    referenceTenantSeeded,
     dryRun,
   }
 }

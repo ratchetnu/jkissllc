@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { ArrowRight, Star } from 'lucide-react';
 import { getReviews } from '../../lib/reviews';
 import { listReviews, displayName, aggregate } from '../../lib/site-reviews';
+import { withReferenceTenantScope } from '../../lib/platform/tenancy/public-render-scope';
 import Reveal from '../Reveal';
 
 function Stars({ rating }: { rating: number }) {
@@ -21,8 +22,15 @@ function Stars({ rating }: { rating: number }) {
  * renders (never fabricated testimonials).
  */
 export default async function Reviews() {
-  const site = (await listReviews()).filter((r) => !r.hidden);
-  const google = site.length === 0 ? await getReviews() : null;
+  // Reference-tenant scope: this is jkissllc.com's own published marketing content,
+  // rendered for anonymous visitors during STATIC PRERENDER — there is no request and
+  // therefore no session to resolve a tenant from. Without this the key chokepoint
+  // fails closed and `next build` aborts (Wave 6B). See public-render-scope.ts.
+  const { site, google } = await withReferenceTenantScope(async () => {
+    const site = (await listReviews()).filter((r) => !r.hidden);
+    const google = site.length === 0 ? await getReviews() : null;
+    return { site, google };
+  });
 
   let reviews: { name: string; rating: number; text?: string }[] = [];
   let rating = 0;
