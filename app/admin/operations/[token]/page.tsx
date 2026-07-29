@@ -25,8 +25,9 @@ type Financials = { businessPriceCents?: number; priceSource: 'contract' | 'manu
 type Op = {
   token: string; routeNumber: string; status: string
   businessName: string; reportAddress: string; reportTime: string; routeDate: string
-  vehicle?: string; payRate?: string; description?: string; specialNotes?: string; contactPerson?: string; contactPhone?: string
-  requiresHelper?: boolean
+  vehicle?: string; equipmentId?: string; payRate?: string; description?: string; specialNotes?: string; contactPerson?: string; contactPhone?: string
+  requiresHelper?: boolean; requiresVehicle?: boolean
+  dispatchReadiness?: 'needs_crew' | 'awaiting_crew' | 'needs_equipment' | 'ready' | 'closed'
   assignees?: Assignee[]
   financials?: Financials
   completedAt?: number; completionNote?: string; completionPhotos?: string[]
@@ -172,6 +173,7 @@ function Detail({ token }: { token: string }) {
   const chip = statusOf(op.status)
   const canComplete = op.status === 'confirmed'
   const live = !['completed', 'cancelled'].includes(op.status)
+  const equipmentBlocked = op.requiresVehicle === true && !op.vehicle?.trim() && !op.equipmentId?.trim()
 
   return (
     <div style={{ maxWidth: 620, margin: '0 auto' }}>
@@ -196,7 +198,24 @@ function Detail({ token }: { token: string }) {
       {/* Details */}
       <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
         <Row Icon={MapPin} label="Report to" val={op.reportAddress} href={mapsUrl(op.reportAddress)} />
-        <Row Icon={Truck} label="Equipment" val={op.vehicle || 'Box truck'} />
+        <Row Icon={Truck} label="Equipment" val={op.vehicle || (op.equipmentId ? 'Assigned equipment' : op.requiresVehicle ? 'Required — not assigned' : 'Not required')} />
+        {live && (
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', borderRadius: 10, background: equipmentBlocked ? 'rgba(245,158,11,.1)' : 'rgba(255,255,255,.03)', border: `1px solid ${equipmentBlocked ? 'rgba(245,158,11,.35)' : 'var(--line)'}`, cursor: busy ? 'wait' : 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={op.requiresVehicle === true}
+              disabled={busy !== ''}
+              onChange={e => patch({ action: 'update', requiresVehicle: e.target.checked }, 'vehicle-rule')}
+              style={{ marginTop: 2 }}
+            />
+            <span>
+              <span style={{ display: 'block', fontSize: 13.5, fontWeight: 750 }}>Vehicle/equipment required before dispatch</span>
+              <span style={{ display: 'block', marginTop: 2, fontSize: 12, color: equipmentBlocked ? '#fcd34d' : 'var(--muted)', lineHeight: 1.45 }}>
+                {equipmentBlocked ? 'Assign equipment before texting crew. Crew can still accept an existing link.' : 'Leave this off when the crew or client supplies the equipment.'}
+              </span>
+            </span>
+          </label>
+        )}
         {op.contactPerson && <Row Icon={User} label="On-site contact" val={`${op.contactPerson}${op.contactPhone ? ` · ${op.contactPhone}` : ''}`} />}
         {(op.description || op.specialNotes) && <Row Icon={FileText} label="Instructions" val={[op.description, op.specialNotes].filter(Boolean).join(' · ')} />}
       </div>
@@ -253,7 +272,7 @@ function Detail({ token }: { token: string }) {
                         <button onClick={() => patch({ action: 'unconfirm', staffId: a.staffId }, `nook-${a.staffId}`)} disabled={busy !== ''} title="Undo verbal confirmation" className="os-tap" style={{ ...iconBtn, color: '#fcd34d' }}><XCircle size={14} /></button>
                       )}
                       <button onClick={() => { navigator.clipboard?.writeText(`${location.origin}/route/${a.token}`); setMsg(`${a.name}'s link copied.`) }} title="Copy link" className="os-tap" style={iconBtn}><Link2 size={14} /></button>
-                      <button onClick={() => patch({ action: 'send', staffId: a.staffId }, `send-${a.staffId}`)} disabled={busy !== ''} title={a.smsSentAt ? 'Resend text' : 'Send text'} className="os-tap" style={iconBtn}><Send size={14} /></button>
+                      <button onClick={() => patch({ action: 'send', staffId: a.staffId }, `send-${a.staffId}`)} disabled={busy !== '' || equipmentBlocked} title={equipmentBlocked ? 'Assign required equipment before texting crew' : a.smsSentAt ? 'Resend text' : 'Send text'} className="os-tap" style={iconBtn}><Send size={14} /></button>
                       <button onClick={() => patch({ action: 'unassign', staffId: a.staffId }, `rm-${a.staffId}`)} disabled={busy !== ''} title="Remove" className="os-tap" style={{ ...iconBtn, color: '#fca5a5' }}><X size={14} /></button>
                     </div>
                   )}
@@ -334,7 +353,7 @@ function Detail({ token }: { token: string }) {
       {live && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {(op.assignees ?? []).some(a => !a.confirmedAt && !a.declinedAt) && <button onClick={confirmRoute} disabled={busy !== ''} title="They told you they're taking it — mark the route confirmed" className="btn os-tap" style={{ borderRadius: 11, height: 40, background: '#16a34a' }}><CheckCircle2 size={16} /> Mark confirmed</button>}
-          {(op.assignees ?? []).some(a => a.phone && !a.smsSentAt) && <button onClick={() => patch({ action: 'send' }, 'sendall')} disabled={busy !== ''} className="btn os-tap" style={{ borderRadius: 11, height: 40 }}><Send size={15} /> Text all crew</button>}
+          {(op.assignees ?? []).some(a => a.phone && !a.smsSentAt) && <button onClick={() => patch({ action: 'send' }, 'sendall')} disabled={busy !== '' || equipmentBlocked} title={equipmentBlocked ? 'Assign required equipment before texting crew' : undefined} className="btn os-tap" style={{ borderRadius: 11, height: 40 }}><Send size={15} /> Text all crew</button>}
           {canComplete && <button onClick={() => patch({ action: 'status', status: 'completed' }, 'complete')} disabled={busy !== ''} className="btn os-tap" style={{ borderRadius: 11, height: 40, background: '#16a34a' }}><CheckCircle2 size={16} /> Mark complete</button>}
           {op.status === 'confirmed' && <button onClick={() => { if (confirm("Mark this route as a no-show? It counts against the crew member's reliability score.")) patch({ action: 'status', status: 'no_show' }, 'noshow') }} disabled={busy !== ''} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40, color: '#fca5a5' }}>No-show</button>}
           <button onClick={() => { if (confirm('Cancel this operation?')) patch({ action: 'status', status: 'cancelled' }, 'cancel') }} disabled={busy !== ''} className="btn-ghost os-tap" style={{ borderRadius: 11, height: 40, color: '#f87171' }}><XCircle size={15} /> Cancel</button>

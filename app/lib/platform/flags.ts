@@ -120,6 +120,12 @@ export type FeatureFlag =
   // existing static "Analyzing your photos" view (byte-identical to today), no
   // calibration/metric reads or writes. Changes NO backend behaviour and NO price.
   | 'OPERION_PROGRESS_UX'
+  // Stale-route auto-cancellation. Gates the WRITE only: with it off the midnight
+  // cron still runs, still computes the exact candidate list, and still reports it —
+  // it simply cancels nothing. That is the dry run. Turning it on is the single
+  // decision that lets a scheduled job mutate real route records, so it defaults OFF
+  // everywhere and must be enabled per-environment, Preview first.
+  | 'ROUTE_AUTO_CANCEL_ENABLED'
 
 export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   TENANCY_ENABLED: false,
@@ -199,6 +205,10 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   // Progress display — OFF everywhere by default. OFF = today's static analyzing
   // view; ON = the calibrated six-stage progress UI. Presentational only.
   OPERION_PROGRESS_UX: false,
+  // OFF everywhere. OFF = the midnight cron reports its candidates and writes
+  // NOTHING (byte-identical route records). ON = those same candidates are actually
+  // cancelled. Enable in Preview only until a real dry-run report has been read.
+  ROUTE_AUTO_CANCEL_ENABLED: false,
 }
 
 export const ALL_FLAGS = Object.keys(FLAG_DEFAULTS) as FeatureFlag[]

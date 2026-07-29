@@ -4,6 +4,7 @@ import { requirePermission } from '../../_lib/session'
 import {
   getRouteByToken, saveRoute, deleteRoute, setStatus, pushAudit,
   confirmVerbally, undoVerbalConfirm,
+  needsVehicleAssignment, VEHICLE_REQUIRED_MESSAGE, DISPATCH_BLOCKED_MESSAGE,
   ROUTE_STATUS_LABEL, type RouteStatus,
 } from '../../../../lib/routes'
 import { addCrew, removeCrew, sendAssignmentText } from '../../../../lib/route-notify'
@@ -103,6 +104,13 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
       }, { status: 409 })
     }
   } else if (action === 'confirm') {
+    // A route the owner marked as needing a vehicle/equipment cannot be confirmed
+    // with neither assigned. Same predicate the schedule conflict uses, so the
+    // warning on the board and the reason this is refused are literally one rule.
+    // Opt-in only: a route that never set requiresVehicle is unaffected.
+    if (needsVehicleAssignment(route)) {
+      return NextResponse.json({ error: VEHICLE_REQUIRED_MESSAGE }, { status: 409 })
+    }
     // "I talked to them and they said they're taking it." Recorded as a verbal
     // confirmation — see confirmVerbally: it never forges the disclaimer signature.
     const r = confirmVerbally(route, S(body.staffId, 80), S(body.note, 300) || undefined)
@@ -117,6 +125,12 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
     const sid = S(body.staffId, 80) || route.assignees?.[0]?.staffId
     if (sid) removeCrew(route, sid)
   } else if (action === 'send' || action === 'resend') {
+    // Texting the assignment is the owner's dispatch action. Crew acceptance is
+    // never blocked, but owners must finish their equipment decision before
+    // inviting crew to a route that explicitly requires an asset.
+    if (needsVehicleAssignment(route)) {
+      return NextResponse.json({ error: DISPATCH_BLOCKED_MESSAGE }, { status: 409 })
+    }
     const list = route.assignees ?? []
     if (!list.length) return NextResponse.json({ error: 'Assign a contractor first.' }, { status: 400 })
     const sid = S(body.staffId, 80)
@@ -128,6 +142,12 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
   } else if (action === 'status') {
     const status = S(body.status, 40) as RouteStatus
     if (!(status in ROUTE_STATUS_LABEL)) return NextResponse.json({ error: 'Invalid status.' }, { status: 400 })
+    // Moving INTO confirmed is the gated transition (see the 'confirm' action). Every
+    // other target — including cancelled, completed and no_show — stays open, so a
+    // route that is missing its vehicle can always still be closed out or called off.
+    if (status === 'confirmed' && needsVehicleAssignment(route)) {
+      return NextResponse.json({ error: VEHICLE_REQUIRED_MESSAGE }, { status: 409 })
+    }
     // Stamp completion metadata when an admin closes a route out by hand.
     if (status === 'completed' && !route.completedAt) {
       route.completedAt = Date.now()
@@ -143,6 +163,25 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
     ]
     for (const [k, max] of fields) {
       if (body[k] !== undefined) (route as Record<string, unknown>)[k] = S(body[k], max) || undefined
+    }
+    // "Does this route need a company vehicle/equipment?" — only touched when the
+    // client actually sends the field, so an unrelated edit never flips it.
+    //
+    // STRICT booleans only. This used to coerce anything unrecognised to "not
+    // required", so `1`, `"yes"` or `"TRUE"` would SILENTLY TURN OFF a safety
+    // setting the owner had deliberately switched on. A rejected request the caller
+    // can see beats a quietly discarded intention.
+    if (body.requiresVehicle !== undefined) {
+      if (typeof body.requiresVehicle !== 'boolean') {
+        return NextResponse.json(
+          { error: 'requiresVehicle must be true or false.' },
+          { status: 400 },
+        )
+      }
+      // Stored as true or cleared entirely: `false` and absent both mean "not
+      // required", and one representation stops a legacy route and a deliberately
+      // unset one from looking different.
+      route.requiresVehicle = body.requiresVehicle ? true : undefined
     }
     // Equipment assignment (additive). Only touched when the client sends equipmentId,
     // so an edit that doesn't change equipment is byte-identical to before. Unassigning

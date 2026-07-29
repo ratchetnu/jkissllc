@@ -1,6 +1,6 @@
 # Operion Internal Operations Completion Roadmap
 
-**Updated:** 2026-07-26
+**Updated:** 2026-07-29
 **Customers:** J KISS LLC and Supercharged  
 **Scope:** Daily internal operations. Enterprise tenancy, editions, subscriptions, and self-service onboarding remain deferred.
 
@@ -19,12 +19,13 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
 - Booking status transitions are governed by one authoritative matrix in
   `app/lib/booking-status.ts`; all eleven mutation sites route through `canTransition`
   and fail closed on an illegal pair.
-- Sprint 2 is in review across PR #128 (schedule conflict/cancellation safety) and
-  stacked PR #130 (explicit dispatch readiness). Both remain unmerged and inactive.
-- Sprint 3 construction has started independently from `main` with a bounded,
-  retry-safe weak-network layer for crew job reads, accept/decline, and clock punches.
-- Current Sprint 3 candidate: **2784/2784 tests passing**; TypeScript and lint pass
-  with zero errors and one pre-existing warning in untouched `pay-statements.ts`.
+- Sprint 2 code is merged through PRs #128 and #130. Schedule scoping, explicit
+  dispatch readiness, and the owner-side vehicle rule are now on `main`; automatic
+  route cancellation remains flag-off and unscheduled.
+- Sprint 3 construction is in review in PR #131 with a bounded, retry-safe
+  weak-network layer for crew job reads, accept/decline, and clock punches.
+- The integrated Sprint 3 candidate passes **2877/2877 tests**, TypeScript, and lint
+  with zero errors (one pre-existing warning in untouched `pay-statements.ts`).
 - `BOOKING_ASSIGNMENT_ENABLED` is **false in Production**. The whole Sprint 1 feature set is
   merged and Preview-validated but not yet serving; enabling it is a separate owner decision.
 
@@ -107,8 +108,7 @@ Production. That is an owner decision and is deliberately not part of the closeo
 
 **Objective:** Give dispatch one simple daily view for bookings, routes, crew, equipment, conflicts, and work requiring attention.
 
-**Status:** In review. PRs #128 and #130 are open and unmerged; automatic route
-cancellation remains flag-off and unscheduled.
+**Status:** Complete (code); route auto-cancellation activation remains separately gated.
 
 **Affected files/components:**
 
@@ -120,6 +120,33 @@ cancellation remains flag-off and unscheduled.
 - admin schedule, booking, staff, and equipment APIs
 
 **Dependencies:** Sprint 1 lifecycle and assignment source of truth.
+
+**Current implementation:**
+
+- Schedule conflicts and Attention totals use the same selected-day boundary; historical
+  conflicts are hidden without rewriting historical routes.
+- Vehicle/equipment readiness is opt-in per route through `requiresVehicle`; existing
+  routes and route types remain compatible.
+- Admin confirmation refuses a route that explicitly requires equipment but has none.
+  Crew acceptance remains separate from owner-controlled dispatch readiness.
+- The stacked closeout stores `dispatchReadiness` independently from route status,
+  distinguishes crew/equipment/closed states, and stamps real readiness transitions.
+  Owner assignment texts fail closed while required equipment is missing; crew may
+  still accept an existing link and sees a clear “confirmed—waiting on equipment”
+  message. The owner route screen now exposes the opt-in requirement control.
+- A protected route auto-cancel endpoint exists for routes that reach their Central-time
+  route day with no crew. It is fail-closed on incomplete scans, rechecks full eligibility
+  under the route lock, and records one attributed lifecycle event.
+- `ROUTE_AUTO_CANCEL_ENABLED` defaults off. No Vercel cron schedules the endpoint, and
+  merging PR #128 does not activate automatic cancellation or change Production data.
+- Tenancy-enabled execution remains blocked until a complete tenant registry can be
+  proven; the job will not sweep one tenant and claim platform-wide success.
+
+**Remaining before automatic route cancellation can be activated:**
+
+- Design and verify complete tenant fan-out before scheduling the cancellation endpoint.
+- Run Preview-only dry reports across representative route days before any separate
+  activation proposal.
 
 **Verification:** desktop and 320/375/390/430 px layouts; search/filter state; one-click navigation from alerts to records; no hidden conflicts; role checks for owner/admin/manager; empty/loading/error states.
 
@@ -243,11 +270,12 @@ cancellation remains flag-off and unscheduled.
 
 ## Immediate next action
 
-1. Independently review PR #128, then rebase/review stacked PR #130; merge neither
-   unless its exact head, CI, and Preview provenance remain clean.
-2. Keep route auto-cancellation unscheduled and flag-off pending tenant fan-out and
+1. Complete the independent review of PR #131 against the merged Sprint 2 baseline.
+2. Add request-level idempotency for completion proof and an explicit in-page photo
+   retry that never invents a field-work timestamp.
+3. Run the authenticated Preview mobile interruption/reconnect flow at representative
+   phone widths and inspect audit history for exactly-once events.
+4. Keep route auto-cancellation unscheduled and flag-off pending tenant fan-out and
    Preview dry reports.
-3. Independently review the Sprint 3 weak-network slice, then continue with
-   completion-proof idempotency and in-page photo retry.
-4. Keep `BOOKING_ASSIGNMENT_ENABLED` off in Production until the owner approves the
+5. Keep `BOOKING_ASSIGNMENT_ENABLED` off in Production until the owner approves the
    separate activation and rollback plan.

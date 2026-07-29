@@ -17,6 +17,8 @@ type PublicRoute = {
   description?: string
   payRate?: string   // THIS crew member's own pay, and only if the owner enabled it
   vehicle?: string
+  dispatchReady: boolean
+  dispatchHold?: 'crew' | 'equipment'
   specialNotes?: string
   assignedStaffName?: string
   confirmedAt?: number
@@ -250,7 +252,13 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
     <div style={card('rgba(34,197,94,.08)', 'rgba(34,197,94,.3)')}>
       <CheckCircle2 size={28} color="#22c55e" />
       <h1 style={{ fontSize: 20, fontWeight: 800, marginTop: 10 }}>You’re confirmed ✓</h1>
-      <p style={{ color: 'var(--muted)', marginTop: 6, fontSize: 14 }}>Thanks{route.assignedStaffName ? `, ${route.assignedStaffName.split(' ')[0]}` : ''} — you’re set for this route. Please report on time.</p>
+      <p style={{ color: 'var(--muted)', marginTop: 6, fontSize: 14 }}>
+        {route.dispatchReady
+          ? `Thanks${route.assignedStaffName ? `, ${route.assignedStaffName.split(' ')[0]}` : ''} — you’re set for this route. Please report on time.`
+          : route.dispatchHold === 'equipment'
+            ? `Thanks${route.assignedStaffName ? `, ${route.assignedStaffName.split(' ')[0]}` : ''} — your spot is confirmed. Dispatch is assigning the required equipment; you do not need to confirm again.`
+            : `Thanks${route.assignedStaffName ? `, ${route.assignedStaffName.split(' ')[0]}` : ''} — your spot is confirmed. Dispatch is finalizing the remaining crew details; you do not need to confirm again.`}
+      </p>
       <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--line)' }}><Details /></div>
 
       {/* Timeclock — punch in on arrival, out when done. Captures GPS to verify
