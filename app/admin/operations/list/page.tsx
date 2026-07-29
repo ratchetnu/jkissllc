@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Plus, Search, ChevronRight, Building2, Users, AlertTriangle } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
@@ -10,6 +10,7 @@ import { groupOpsByBusiness, type OpsRoute } from '../../../lib/ops-groups'
 import RouteRow from '../RouteRow'
 
 type Op = OpsRoute & { status: RouteStatus; reportAddress?: string }
+type BusinessRec = { key: string; contractEndedAt?: number }
 
 // Two drivers count as a driver + helper: a spare driver fills the helper seat.
 const crewGap = (o: Op) => {
@@ -42,8 +43,20 @@ function List() {
   const [view, setView] = useState<'business' | 'routes'>(initialView)
   const [filter, setFilter] = useState<Filter>(initialFilter)
   const [q, setQ] = useState('')
+  const [businessRecords, setBusinessRecords] = useState<BusinessRec[]>([])
+  const [showEnded, setShowEnded] = useState(false)
   const today = ymd(new Date())
   const query = q.trim().toLowerCase()
+  useEffect(() => {
+    fetch('/api/admin/businesses', { credentials: 'same-origin' })
+      .then(r => r.json())
+      .then(d => setBusinessRecords(Array.isArray(d.items) ? d.items : []))
+      .catch(() => {})
+  }, [])
+  const endedKeys = useMemo(
+    () => new Set(businessRecords.filter(b => b.contractEndedAt).map(b => b.key)),
+    [businessRecords],
+  )
 
   const counts = useMemo(() => ({
     attention: ops.filter(o => crewGap(o) ? o.routeDate >= today : (o.status === 'declined' || o.status === 'no_response' || (o.status === 'draft' && o.routeDate >= today) || ((o.status === 'assigned' || o.status === 'text_sent') && o.routeDate < today))).length,
@@ -51,8 +64,11 @@ function List() {
 
   const groups = useMemo(() => {
     const all = groupOpsByBusiness(ops, today)
-    return query ? all.filter(g => g.businessName.toLowerCase().includes(query)) : all
-  }, [ops, today, query])
+    return all.filter(g =>
+      (showEnded || !endedKeys.has(g.bizKey))
+      && (!query || g.businessName.toLowerCase().includes(query)),
+    )
+  }, [ops, today, query, endedKeys, showEnded])
 
   const shown = useMemo(() => {
     let list = ops
@@ -86,6 +102,16 @@ function List() {
           style={{ width: '100%', padding: '12px 14px 12px 40px', background: 'color-mix(in srgb, var(--card) 90%, transparent)', border: '1px solid var(--line)', borderRadius: 13, color: 'var(--text)', fontSize: 15, outline: 'none' }} />
       </div>
 
+      {view === 'business' && endedKeys.size > 0 && (
+        <button
+          onClick={() => setShowEnded(v => !v)}
+          className="os-tap"
+          style={{ margin: '0 0 14px', padding: 0, border: 0, background: 'none', color: 'var(--muted)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}
+        >
+          {showEnded ? 'Hide ended contracts' : `Show ended contracts (${endedKeys.size})`}
+        </button>
+      )}
+
       {/* Filters — only in the flat routes view */}
       {view === 'routes' && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 18, overflowX: 'auto' }}>
@@ -104,11 +130,11 @@ function List() {
         groups.length === 0 ? <Empty title="No businesses yet" sub="Create an assignment to get started." /> : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {/* Recurring/active clients first, one-time customers grouped after. */}
-            {groups.filter(g => !g.isOneTime).map((g, i) => <BizCard key={g.bizKey} g={g} i={i} />)}
+            {groups.filter(g => !g.isOneTime).map((g, i) => <BizCard key={g.bizKey} g={g} i={i} ended={endedKeys.has(g.bizKey)} />)}
             {groups.some(g => g.isOneTime) && (
               <>
                 <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)', margin: '10px 2px 2px' }}>One-time & ad-hoc</div>
-                {groups.filter(g => g.isOneTime).map((g, i) => <BizCard key={g.bizKey} g={g} i={i} />)}
+                {groups.filter(g => g.isOneTime).map((g, i) => <BizCard key={g.bizKey} g={g} i={i} ended={endedKeys.has(g.bizKey)} />)}
               </>
             )}
           </div>
@@ -124,7 +150,7 @@ function List() {
   )
 }
 
-function BizCard({ g, i }: { g: ReturnType<typeof groupOpsByBusiness>[number]; i: number }) {
+function BizCard({ g, i, ended }: { g: ReturnType<typeof groupOpsByBusiness>[number]; i: number; ended: boolean }) {
   const chips: [string, number][] = [['Upcoming', g.counts.upcoming], ['Pending', g.counts.pending], ['Confirmed', g.counts.confirmed], ['Active', g.counts.active], ['Completed', g.counts.completed]]
   return (
     <Link href={`/admin/operations/business/${encodeURIComponent(g.bizKey)}`} className="os-card os-tap os-rise" style={{ padding: 16, display: 'block', textDecoration: 'none', color: 'var(--text)', animationDelay: `${Math.min(i * 30, 240)}ms` }}>
@@ -132,7 +158,9 @@ function BizCard({ g, i }: { g: ReturnType<typeof groupOpsByBusiness>[number]; i
         <div style={{ width: 40, height: 40, borderRadius: 11, background: 'rgba(224,0,42,.12)', display: 'grid', placeItems: 'center', flexShrink: 0, color: 'var(--red-glow)' }}><Building2 size={20} /></div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 16, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.businessName}</div>
-          {g.nextRoute && <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 2 }}>Next: {fmtDay(g.nextRoute.routeDate)} · {g.nextRoute.reportTime}</div>}
+          {ended
+            ? <div style={{ fontSize: 12.5, color: '#fca5a5', marginTop: 2 }}>Contract ended · history retained</div>
+            : g.nextRoute && <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 2 }}>Next: {fmtDay(g.nextRoute.routeDate)} · {g.nextRoute.reportTime}</div>}
         </div>
         {g.counts.attention > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 800, padding: '3px 9px', borderRadius: 99, background: 'rgba(251,191,36,.15)', color: '#fbbf24', flexShrink: 0 }}><AlertTriangle size={12} /> {g.counts.attention}</span>}
         <ChevronRight size={18} style={{ color: 'var(--muted)', flexShrink: 0 }} />

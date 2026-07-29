@@ -2,8 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../_lib/session'
 import { listBusinesses, getBusiness, saveBusiness, deleteBusiness, bizKey, type Business, type RateHistoryEntry } from '../../../lib/businesses'
+import { endBusinessContract, isFutureContractRoute, reopenBusinessContract, routeScanFetchSize } from '../../../lib/business-contract-lifecycle'
 import { parseMoneyCents } from '../../../lib/finance'
 import { repriceBusinessRoutes, repriceCandidates, isApplyTo, type ApplyTo } from '../../../lib/route-reprice'
+import { centralToday } from '../../../lib/dates'
+import { listRoutes, getRouteByToken, pushAuditFor, saveRoute } from '../../../lib/routes'
+import { withRouteLock } from '../../../lib/route-mutex'
+import { listTemplates, saveTemplate } from '../../../lib/route-templates'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s)
@@ -75,6 +80,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
 
   const rec: Business = {
     key, name,
+    stableId: existing?.stableId,
     contactName: S(b.contactName, 160) || undefined,
     contactPhone: S(b.contactPhone, 40) || undefined,
     contactEmail: S(b.contactEmail, 200) || undefined,
@@ -86,6 +92,12 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     rateEffectiveDate,
     pricingActive,
     rateHistory: history.length ? history : undefined,
+    contractEndedAt: existing?.contractEndedAt,
+    contractEndReason: existing?.contractEndReason,
+    contractEndedBy: existing?.contractEndedBy,
+    contractEndedByRole: existing?.contractEndedByRole,
+    pricingActiveBeforeContractEnd: existing?.pricingActiveBeforeContractEnd,
+    contractHistory: existing?.contractHistory,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   }
@@ -103,6 +115,87 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   }
 
   return NextResponse.json({ ok: true, business: rec, reprice })
+})
+
+export const PATCH = withTenantRoute(async (req: NextRequest) => {
+  const who = await requirePermission(req, 'businesses:manage')
+  if (who instanceof NextResponse) return who
+  const routesWho = await requirePermission(req, 'routes:manage')
+  if (routesWho instanceof NextResponse) return routesWho
+  const recurringWho = await requirePermission(req, 'recurring:manage')
+  if (recurringWho instanceof NextResponse) return recurringWho
+
+  const body = await req.json().catch(() => ({}))
+  const action = S(body.action, 40)
+  const name = S(body.businessName, 200)
+  const key = S(body.businessKey, 220) || (name ? bizKey(name) : '')
+  if (!key) return NextResponse.json({ error: 'Business is required.' }, { status: 400 })
+  if (name && key !== bizKey(name)) return NextResponse.json({ error: 'Business identity does not match its name.' }, { status: 409 })
+
+  if (action === 'reopen_contract') {
+    const business = await getBusiness(key)
+    if (!business) return NextResponse.json({ error: 'Business record not found.' }, { status: 404 })
+    const reopened = await reopenBusinessContract(business, who, Date.now(), saveBusiness)
+    return NextResponse.json({
+      ok: true,
+      business: reopened,
+      warning: 'Recurring schedules and cancelled operations were not restarted.',
+    })
+  }
+
+  if (action !== 'end_contract') return NextResponse.json({ error: 'Unknown action.' }, { status: 400 })
+  if (!name) return NextResponse.json({ error: 'Business name is required.' }, { status: 400 })
+
+  const now = Date.now()
+  const today = centralToday(now)
+  const input = {
+    businessKey: key,
+    businessName: name,
+    reason: S(body.reason, 500) || undefined,
+    now,
+    today,
+    actor: who,
+  }
+
+  const result = await endBusinessContract(input, {
+    getBusiness,
+    saveBusiness,
+    // Fetch one beyond the supported completeness boundary, from the SAME source of
+    // truth as the limit itself. If that extra record exists the lifecycle service
+    // refuses to archive rather than silently leave older live work behind an ended
+    // contract. The limit is the service's fail-closed default, so it is not repeated
+    // here — the two numbers can no longer drift apart.
+    listRoutes: () => listRoutes(routeScanFetchSize()),
+    listTemplates: () => listTemplates(500),
+    saveTemplate,
+    cancelRoute: async (token, contractInput) => {
+      return withRouteLock(token, async () => {
+        const route = await getRouteByToken(token)
+        if (!route || !isFutureContractRoute(route, contractInput.businessKey, contractInput.today)) return 'skipped'
+        const from = route.status
+        route.status = 'cancelled'
+        pushAuditFor(route, contractInput.actor, contractInput.actor.role, 'Contract ended — operation cancelled', {
+          from,
+          to: 'cancelled',
+          note: contractInput.reason,
+        })
+        await saveRoute(route)
+        return 'cancelled'
+      })
+    },
+  })
+
+  if (!result.ok) {
+    const error = result.incompleteReason
+      ?? (result.failedTemplates.length
+        ? `The contract was not archived because ${result.failedTemplates.length} recurring schedule${result.failedTemplates.length === 1 ? '' : 's'} could not be paused. Retry to finish.`
+        : `The contract was not archived because ${result.failedRoutes.length} operation${result.failedRoutes.length === 1 ? '' : 's'} could not be cancelled. Retry to finish.`)
+    return NextResponse.json({
+      error,
+      ...result,
+    }, { status: 409 })
+  }
+  return NextResponse.json(result)
 })
 
 export const DELETE = withTenantRoute(async (req: NextRequest) => {
