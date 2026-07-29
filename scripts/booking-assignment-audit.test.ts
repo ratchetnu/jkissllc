@@ -41,7 +41,7 @@ globalThis.fetch = (async (url: string, init: { body?: string }) => {
   return { ok: true, status: 200, json: async () => ({ result }) }
 }) as unknown as typeof fetch
 
-import { getBookingByToken, saveBooking, type Booking, type BookingEventAction } from '../app/lib/bookings'
+import { customerView, getBookingByToken, saveBooking, type Booking, type BookingEventAction } from '../app/lib/bookings'
 import { saveStaff } from '../app/lib/staff'
 import { saveEquipment } from '../app/lib/equipment'
 import {
@@ -124,4 +124,69 @@ test('flag off writes neither assignment data nor audit history', async () => {
   } finally {
     process.env.BOOKING_ASSIGNMENT_ENABLED = 'true'
   }
+})
+
+test('completion request IDs make an unknown-response retry exactly once', async () => {
+  await seed()
+  assert.equal((await assignCrewToBooking(TOKEN, 'crew-1', { actor: ADMIN })).ok, true)
+
+  const requestId = 'completion-request-0001'
+  assert.equal((await recordBookingCompletion(TOKEN, {
+    by: 'crew', staffId: 'crew-1', requestId, note: 'First attempt', at: 300,
+  })).ok, true)
+  assert.equal((await recordBookingCompletion(TOKEN, {
+    by: 'crew', staffId: 'crew-1', requestId, note: 'Response was lost', at: 999,
+  })).ok, true)
+
+  const afterRetry = await getBookingByToken(TOKEN)
+  assert.equal(afterRetry?.jobCompletedAt, 300, 'retry keeps the first completion time')
+  assert.equal(afterRetry?.completionNote, 'First attempt', 'retry cannot replace the first note')
+  assert.deepEqual(afterRetry?.completionRequestIds, [requestId])
+  assert.equal((afterRetry?.events ?? []).filter(e => e.action === 'assignment.completion_recorded').length, 1)
+
+  assert.equal((await recordBookingCompletion(TOKEN, {
+    by: 'crew', staffId: 'crew-1', requestId: 'completion-request-0002', note: 'New proof', at: 500,
+  })).ok, true)
+  const afterNewRequest = await getBookingByToken(TOKEN)
+  assert.equal(afterNewRequest?.jobCompletedAt, 500, 'a genuinely new request still records')
+  assert.equal((afterNewRequest?.events ?? []).filter(e => e.action === 'assignment.completion_recorded').length, 2)
+
+  const projected = customerView(afterNewRequest as Booking) as unknown as Record<string, unknown>
+  assert.equal('completionRequestIds' in projected, false, 'internal dedupe keys never reach customers')
+})
+
+test('concurrent completion retries converge on one stored event', async () => {
+  await seed()
+  assert.equal((await assignCrewToBooking(TOKEN, 'crew-1', { actor: ADMIN })).ok, true)
+  const requestId = 'completion-concurrent-0001'
+  const results = await Promise.all([
+    recordBookingCompletion(TOKEN, { by: 'crew', staffId: 'crew-1', requestId, note: 'One', at: 700 }),
+    recordBookingCompletion(TOKEN, { by: 'crew', staffId: 'crew-1', requestId, note: 'Two', at: 701 }),
+  ])
+  assert.equal(results.every(result => result.ok), true)
+  const booking = await getBookingByToken(TOKEN)
+  assert.equal((booking?.events ?? []).filter(e => e.action === 'assignment.completion_recorded').length, 1)
+  assert.deepEqual(booking?.completionRequestIds, [requestId])
+})
+
+test('completion request IDs are validated and the internal ledger stays bounded', async () => {
+  await seed()
+  assert.equal((await assignCrewToBooking(TOKEN, 'crew-1', { actor: ADMIN })).ok, true)
+  assert.deepEqual(
+    await recordBookingCompletion(TOKEN, { by: 'crew', staffId: 'crew-1', requestId: 'too-short' }),
+    { ok: false, error: 'invalid' },
+  )
+
+  for (let index = 0; index < 55; index++) {
+    const result = await recordBookingCompletion(TOKEN, {
+      by: 'crew',
+      staffId: 'crew-1',
+      requestId: `completion-ledger-${String(index).padStart(4, '0')}`,
+      at: 1_000 + index,
+    })
+    assert.equal(result.ok, true)
+  }
+  const booking = await getBookingByToken(TOKEN)
+  assert.equal(booking?.completionRequestIds?.length, 50)
+  assert.equal(booking?.completionRequestIds?.[0], 'completion-ledger-0005')
 })

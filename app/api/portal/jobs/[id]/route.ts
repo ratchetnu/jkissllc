@@ -141,12 +141,22 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
       // orchestrator refuses unless that crew member is actually on this booking
       // and has not declined it — so a booking token alone grants nothing here,
       // exactly as it grants nothing to accept / decline / clock_in / clock_out.
-      return respond(await recordBookingCompletion(id, {
-        note: str(body.note, 2000),
-        photos: body.photos,
-        by: 'crew',
-        staffId: who.staffId,
-      }))
+      {
+        const requestId = str(body.requestId, 100)
+        if (!requestId || !/^[A-Za-z0-9_-]{16,100}$/.test(requestId)) {
+          return NextResponse.json(
+            { error: 'invalid', message: 'This upload attempt is missing its retry key. Choose the photos again.' },
+            { status: 400 },
+          )
+        }
+        return respond(await recordBookingCompletion(id, {
+          note: str(body.note, 2000),
+          photos: body.photos,
+          requestId,
+          by: 'crew',
+          staffId: who.staffId,
+        }))
+      }
 
     default:
       return NextResponse.json({ error: 'invalid', message: 'Unknown action.' }, { status: 400 })

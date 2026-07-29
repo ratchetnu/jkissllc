@@ -22,9 +22,10 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
 - Sprint 2 code is merged through PRs #128 and #130. Schedule scoping, explicit
   dispatch readiness, and the owner-side vehicle rule are now on `main`; automatic
   route cancellation remains flag-off and unscheduled.
-- Sprint 3 construction is in review in PR #131 with a bounded, retry-safe
-  weak-network layer for crew job reads, accept/decline, and clock punches.
-- The integrated Sprint 3 candidate passes **2877/2877 tests**, TypeScript, and lint
+- Sprint 3 weak-network handling is merged through PR #131. Crew job reads,
+  accept/decline, and clock punches now have bounded, retry-safe behavior; the
+  completion-proof idempotency and visible photo-retry increment is the next review.
+- The integrated Sprint 3 candidate passes **2882/2882 tests**, TypeScript, and lint
   with zero errors (one pre-existing warning in untouched `pay-statements.ts`).
 - A Production `BOOKING_ASSIGNMENT_ENABLED` variable exists, but its encrypted value
   has not been independently confirmed in this sprint. Activation status must be
@@ -178,16 +179,20 @@ and is deliberately not part of this closeout.
 - Accept, decline, clock-in, and clock-out use the same bounded retry because their
   server mutators are already idempotent; an unknown first response cannot create a
   duplicate event or punch on retry.
-- Completion proof is deliberately excluded from automatic mutation retry until its
-  audit event has a request-level dedupe key.
+- Completion proof remains excluded from automatic mutation retry: recovery is an
+  explicit crew action, while the server-side request key makes that action safe.
+- Completion proof now carries a bounded request-level dedupe key. A lost response
+  can be retried without replacing the first timestamp/note or adding another audit
+  event, and those internal keys are excluded from every customer projection.
+- The job screen keeps selected files and each successful Blob URL in page memory
+  after a failed attempt, then offers a visible 44 px **Retry upload** action. It
+  retries only unfinished files and reuses the original completion request ID.
 - No punch is stored for later delivery: replaying a payroll action after reconnect
   would incorrectly stamp server receipt time as work time. Offline punches fail
   visibly instead of silently changing the time.
 
 **Remaining before Sprint 3 closes:**
 
-- Add request-level idempotency for completion proof, then provide explicit photo
-  upload retry that preserves selected files while the page remains open.
 - Apply the same connection-state treatment to the legacy public route-confirmation
   surface or retire that split surface in favor of the portal.
 - Verify accept/decline, punches, duplicate taps, and photo recovery at
@@ -272,11 +277,11 @@ and is deliberately not part of this closeout.
 
 ## Immediate next action
 
-1. Complete the independent review of PR #131 against the merged Sprint 2 baseline.
-2. Add request-level idempotency for completion proof and an explicit in-page photo
-   retry that never invents a field-work timestamp.
-3. Run the authenticated Preview mobile interruption/reconnect flow at representative
+1. Independently review the completion-proof idempotency and explicit in-page photo
+   retry increment against the merged Sprint 2 baseline.
+2. Run the authenticated Preview mobile interruption/reconnect flow at representative
    phone widths and inspect audit history for exactly-once events.
+3. Resolve or retire the legacy public route-confirmation split before closing Sprint 3.
 4. Keep route auto-cancellation unscheduled and flag-off pending tenant fan-out and
    Preview dry reports.
 5. Confirm the current Production `BOOKING_ASSIGNMENT_ENABLED` value; do not change it

@@ -228,13 +228,17 @@ export type CompletionActor =
 // The booking token is the CUSTOMER's link key and is not a crew credential.
 export async function recordBookingCompletion(
   token: string,
-  input: { note?: string; photos?: unknown; at?: number } & CompletionActor,
+  input: { note?: string; photos?: unknown; at?: number; requestId?: string } & CompletionActor,
 ): Promise<AssignmentResult> {
   if (!enabled()) return { ok: false, error: 'disabled' }
 
   const policy = photoPolicy()
   const note = input.note?.trim().slice(0, 2000)
   const at = input.at ?? Date.now()
+  const requestId = input.requestId?.trim()
+  if (requestId && !/^[A-Za-z0-9_-]{16,100}$/.test(requestId)) {
+    return { ok: false, error: 'invalid' }
+  }
 
   return persist(token, (b) => {
     if (input.by === 'crew') {
@@ -244,6 +248,12 @@ export async function recordBookingCompletion(
       if (!me || me.declinedAt) return { abort: 'not_assigned' as const }
     }
 
+    // A retry after an unknown response must be observationally identical to the
+    // first success: no second event, timestamp, note replacement, or photo pass.
+    // The check runs inside the CAS mutator, so concurrent retries converge after
+    // the winner commits and the loser reloads the stored request ID.
+    if (requestId && (b.completionRequestIds ?? []).includes(requestId)) return null
+
     // Photos ACCUMULATE — a second upload from the field adds to the set rather
     // than replacing what the first crew member already sent. Existing entries are
     // preserved as stored; only NEW ones must satisfy the current store policy.
@@ -252,7 +262,15 @@ export async function recordBookingCompletion(
     if (note) b.completionNote = note
     b.jobCompletedAt = at
     b.jobCompletedBy = input.by
-    pushBookingEvent(b, { actor: input.by === 'crew' ? `crew:${input.staffId}` : input.actor, action: 'assignment.completion_recorded', result: input.by, meta: { photoCount: photos.length, hasNote: !!note } })
+    if (requestId) {
+      b.completionRequestIds = [...(b.completionRequestIds ?? []), requestId].slice(-50)
+    }
+    pushBookingEvent(b, {
+      actor: input.by === 'crew' ? `crew:${input.staffId}` : input.actor,
+      action: 'assignment.completion_recorded',
+      result: input.by,
+      meta: { photoCount: photos.length, hasNote: !!note, requestId },
+    })
     return null
   })
 }

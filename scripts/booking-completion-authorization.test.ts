@@ -108,8 +108,15 @@ function post(id: string, body: unknown, cookie: string): NextRequest {
   })
 }
 
+let completionRequestSeq = 0
 const complete = (id: string, cookie: string, extra: Record<string, unknown> = {}) =>
-  jobPOST(post(id, { action: 'complete', photos: [PREVIEW_PHOTO], note: 'done', ...extra }, cookie), CTX(id))
+  jobPOST(post(id, {
+    action: 'complete',
+    photos: [PREVIEW_PHOTO],
+    note: 'done',
+    requestId: `completion-request-${String(++completionRequestSeq).padStart(4, '0')}`,
+    ...extra,
+  }, cookie), CTX(id))
 
 // ── The assigned crew member CAN complete their own job ──────────────────────
 test('an assigned crew member completes their own job and the proof persists', async () => {
@@ -122,6 +129,16 @@ test('an assigned crew member completes their own job and the proof persists', a
   assert.equal(after?.completionNote, 'done')
   assert.equal(after?.jobCompletedBy, 'crew')
   assert.ok(after?.jobCompletedAt, 'completion is stamped')
+})
+
+test('the crew completion route requires a retry key', async () => {
+  const id = await seedBooking([assignee('crewA')])
+  const res = await jobPOST(post(id, {
+    action: 'complete', photos: [PREVIEW_PHOTO], note: 'done',
+  }, await crewCookie('crewA')), CTX(id))
+  assert.equal(res.status, 400)
+  assert.equal((await res.json()).error, 'invalid')
+  assert.equal((await getBookingByToken(id))?.jobCompletedAt, undefined)
 })
 
 // ── The bug this file was written for ────────────────────────────────────────

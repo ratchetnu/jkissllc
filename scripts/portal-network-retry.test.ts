@@ -91,6 +91,25 @@ test('booking job actions retry only the proven-idempotent verbs', () => {
   assert.match(src, /Connection dropped — retrying this action safely/)
 })
 
+test('completion upload retry preserves files, successful URLs, and one request ID', () => {
+  const client = readFileSync(new URL('../app/portal/jobs/[id]/JobDetailClient.tsx', import.meta.url), 'utf8')
+  const route = readFileSync(new URL('../app/api/portal/jobs/[id]/route.ts', import.meta.url), 'utf8')
+  const orchestrator = readFileSync(new URL('../app/lib/booking-assignment.ts', import.meta.url), 'utf8')
+
+  assert.match(client, /pendingCompletionRef/)
+  assert.match(client, /if \(pending\.urls\[index\]\) continue/)
+  assert.match(client, /requestId: pending\.requestId/)
+  assert.match(client, /Retry upload/)
+  assert.match(client, /selected .*kept on this page/)
+  assert.doesNotMatch(client, /RETRY_SAFE_ACTIONS.*complete/)
+
+  assert.match(route, /missing its retry key/)
+  assert.match(route, /requestId,/)
+  assert.match(orchestrator, /completionRequestIds/)
+  assert.match(orchestrator, /slice\(-50\)/)
+  assert.match(orchestrator, /includes\(requestId\)/)
+})
+
 test('both crew action screens visibly fail closed while offline', () => {
   const job = readFileSync(new URL('../app/portal/jobs/[id]/JobDetailClient.tsx', import.meta.url), 'utf8')
   const clock = readFileSync(new URL('../app/portal/clock/page.tsx', import.meta.url), 'utf8')

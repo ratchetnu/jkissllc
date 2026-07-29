@@ -41,6 +41,13 @@ type Job = {
   completion: { completedAt: number | null; note: string | null; photos: string[] }
 }
 
+type PendingCompletion = {
+  files: File[]
+  urls: Array<string | null>
+  requestId: string
+  note?: string
+}
+
 const fmtClock = (ts: number) => new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 
 // Ask the phone where it is. Best-effort by design: no geolocation, a denied
@@ -73,7 +80,10 @@ function JobDetail({ id }: { id: string }) {
   const [err, setErr] = useState('')
   const [networkMsg, setNetworkMsg] = useState('')
   const [note, setNote] = useState('')
+  const [pendingPhotoCount, setPendingPhotoCount] = useState(0)
+  const [photoRetryReady, setPhotoRetryReady] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const pendingCompletionRef = useRef<PendingCompletion | null>(null)
   const { offline } = useConnectivity()
 
   const load = useCallback(async () => {
@@ -142,22 +152,43 @@ function JobDetail({ id }: { id: string }) {
     await act({ action, ...(pos ?? {}), locationDenied: !pos }, action)
   }
 
-  const sendPhotos = async (files: FileList | null) => {
-    if (!files?.length) return
+  const submitPendingPhotos = async () => {
+    const pending = pendingCompletionRef.current
+    if (!pending) return
+    if (offline) {
+      setErr('You’re offline. Your selected photos are kept on this page — reconnect, then retry.')
+      setPhotoRetryReady(true)
+      return
+    }
+
     setBusy('photos'); setErr('')
+    setPhotoRetryReady(false)
     try {
-      const urls: string[] = []
-      for (const f of Array.from(files).slice(0, 10)) {
+      // Preserve each successful Blob URL immediately. A later failure retries
+      // only unfinished files rather than uploading the successful ones again.
+      for (let index = 0; index < pending.files.length; index++) {
+        if (pending.urls[index]) continue
+        const f = pending.files[index]
         const blob = await uploadPresigned(f.name, f, {
           access: 'public',
           handleUploadUrl: '/api/portal/upload',
         })
-        urls.push(blob.url)
+        pending.urls[index] = blob.url
       }
-      const saved = await act({ action: 'complete', photos: urls, note: note || undefined }, 'photos')
+      const saved = await act({
+        action: 'complete',
+        photos: pending.urls.filter((url): url is string => !!url),
+        note: pending.note,
+        requestId: pending.requestId,
+      }, 'photos')
       if (saved) {
+        pendingCompletionRef.current = null
+        setPendingPhotoCount(0)
+        setPhotoRetryReady(false)
         setNote('')
         if (fileRef.current) fileRef.current.value = ''
+      } else {
+        setPhotoRetryReady(true)
       }
     } catch (e) {
       // "Check your signal" is wrong — and wastes the crew member's time — when the
@@ -166,9 +197,24 @@ function JobDetail({ id }: { id: string }) {
       const cause = e instanceof Error ? e.message : String(e ?? '')
       setErr(/blob_store_(not_configured|mismatch)/.test(cause)
         ? 'Photo uploads aren’t set up yet. Tell the office — retrying won’t help.'
-        : 'Upload failed — check your signal and try again.')
+        : 'Upload paused. Your selected photos are kept on this page — check your signal and retry.')
+      setPhotoRetryReady(true)
       setBusy('')
     }
+  }
+
+  const sendPhotos = async (files: FileList | null) => {
+    if (!files?.length) return
+    const selected = Array.from(files).slice(0, 10)
+    pendingCompletionRef.current = {
+      files: selected,
+      urls: Array<string | null>(selected.length).fill(null),
+      requestId: crypto.randomUUID(),
+      note: note.trim() || undefined,
+    }
+    setPendingPhotoCount(selected.length)
+    setPhotoRetryReady(false)
+    await submitPendingPhotos()
   }
 
   if (loading) return <p style={{ color: 'var(--muted)', fontSize: 14 }}>Loading…</p>
@@ -334,6 +380,19 @@ function JobDetail({ id }: { id: string }) {
             placeholder="Anything dispatch should know?" aria-label="Note for dispatch"
             style={{ background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 10, padding: 10, fontSize: 13.5, color: 'var(--text)', resize: 'vertical' }} />
 
+          {photoRetryReady && pendingPhotoCount > 0 && (
+            <div role="status" style={{ padding: 12, borderRadius: 10, border: '1px solid rgba(245,158,11,.35)', background: 'rgba(245,158,11,.08)' }}>
+              <p style={{ color: '#fcd34d', fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+                {pendingPhotoCount} selected {pendingPhotoCount === 1 ? 'photo is' : 'photos are'} kept on this page.
+              </p>
+              <button type="button" className="os-tap" onClick={() => void submitPendingPhotos()}
+                disabled={actionDisabled}
+                style={{ minHeight: 44, width: '100%', borderRadius: 10, border: '1px solid #f59e0b', background: 'rgba(245,158,11,.14)', color: '#fcd34d', fontWeight: 800, opacity: actionDisabled ? .55 : 1, cursor: actionDisabled ? 'not-allowed' : 'pointer' }}>
+                {busy === 'photos' ? 'Retrying…' : 'Retry upload'}
+              </button>
+            </div>
+          )}
+
           {/* `.file-input-a11y` + `.file-label` — the house upload pattern. The input
               is visually hidden but STILL FOCUSABLE and still in the tab order;
               `display:none` (what this was) drops it from the accessibility tree
@@ -345,7 +404,7 @@ function JobDetail({ id }: { id: string }) {
             <Camera size={18} /> {busy === 'photos' ? 'Sending…' : 'Add finished photos'}
             <input ref={fileRef} type="file" accept="image/*" multiple capture="environment"
               aria-label="Add finished photos of this job" className="file-input-a11y" disabled={actionDisabled}
-              onChange={e => sendPhotos(e.target.files)} />
+              onChange={e => void sendPhotos(e.target.files)} />
           </label>
 
           {job.completion.note && (
