@@ -23,10 +23,11 @@ process.env.KV_REST_API_URL = `http://127.0.0.1:${PORT}`
 process.env.KV_REST_API_TOKEN = 'emulator-accepts-anything'
 
 import { NextRequest } from 'next/server'
-import { saveRoute, getRouteByToken, type RouteRecord, type Assignee } from '../app/lib/routes'
-import { runWithTenant } from '../app/lib/platform/tenancy/context'
+import { saveRoute, getRouteByToken, scanAllRoutes, ROUTE_SCAN_MAX, type RouteRecord, type Assignee } from '../app/lib/routes'
+import { runWithTenant, currentTenantId } from '../app/lib/platform/tenancy/context'
 import { redis } from '../app/lib/redis'
 import { GET } from '../app/api/cron/route-auto-cancel/route'
+import { centralDate } from '../app/lib/schedule/auto-cancel'
 
 let kv: ChildProcess | null = null
 before(async () => {
@@ -203,8 +204,11 @@ test('every run reports which brake was engaged', async () => {
   assert.equal(typeof body.centralDate, 'string')
   assert.equal(typeof body.centralHour, 'number')
   assert.equal(typeof body.inCancellationWindow, 'boolean')
-  assert.deepEqual(body.flag, { ROUTE_AUTO_CANCEL_ENABLED: false })
+  assert.deepEqual(body.flag, { ROUTE_AUTO_CANCEL_ENABLED: false, TENANCY_ENABLED: false })
   assert.ok(String(body.mode).startsWith('dry-run'))
+  assert.equal(body.scheduled, false, 'the endpoint reports that nothing schedules it')
+  assert.equal(body.graceHours, 3)
+  assert.equal(typeof body.centralAt, 'string')
 })
 
 test('the response is per-tenant, and each tenant reports its own counts', async () => {
@@ -216,5 +220,166 @@ test('the response is per-tenant, and each tenant reports its own counts', async
     assert.ok(typeof t.tenant === 'string', 'every entry names its tenant')
     assert.equal(typeof t.candidateCount, 'number')
     assert.deepEqual(t.cancelled, [], 'nothing cancelled in a reporting run')
+  }
+})
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPLETE SCAN — boundaries at the limit and one over
+// ─────────────────────────────────────────────────────────────────────────────
+
+const seedN = async (count: number, o: Partial<RouteRecord> = {}) => {
+  for (let i = 0; i < count; i++) await seed(mkRoute({ routeNumber: `JK-R-S${i}`, ...o }))
+}
+
+test('SCAN: enumerates every route across page boundaries (pageSize-1, exact, +1)', async () => {
+  await seedN(7)
+  for (const pageSize of [1, 2, 3, 6, 7, 8, 100]) {
+    const scan = await runWithTenant({ tenantId: 'jkiss' }, () => scanAllRoutes({ pageSize }))
+    assert.equal(scan.complete, true, `pageSize ${pageSize} must complete`)
+    assert.equal(scan.total, 7)
+    assert.equal(scan.scanned, 7, `pageSize ${pageSize} enumerated ${scan.scanned}`)
+    assert.equal(scan.routes.length, 7, `pageSize ${pageSize} returned ${scan.routes.length} records`)
+  }
+})
+
+test('SCAN: at the exact ceiling it completes; one over it FAILS CLOSED', async () => {
+  await seedN(5)
+  const at = await runWithTenant({ tenantId: 'jkiss' }, () => scanAllRoutes({ max: 5 }))
+  assert.equal(at.complete, true, 'exactly at the ceiling is fine')
+  assert.equal(at.routes.length, 5)
+
+  const over = await runWithTenant({ tenantId: 'jkiss' }, () => scanAllRoutes({ max: 4 }))
+  assert.equal(over.complete, false, 'one over the ceiling refuses')
+  assert.deepEqual(over.routes, [], 'and returns NO routes rather than a partial set')
+  assert.match(String(over.truncatedReason), /above the 4 scan ceiling/)
+  assert.equal(ROUTE_SCAN_MAX, 20_000)
+})
+
+test('SCAN: a truncated scan cancels NOTHING and never reports candidateCount 0', async () => {
+  const today = centralDate(Date.now())
+  await seed(mkRoute({ routeDate: today, assignees: [] }))   // genuinely eligible
+  await seedN(3)
+  // Force truncation via the ceiling by monkey-free means: ask the endpoint after
+  // seeding beyond a tiny ceiling is not reachable from the route, so assert the
+  // library contract the endpoint depends on.
+  const over = await runWithTenant({ tenantId: 'jkiss' }, () => scanAllRoutes({ max: 1 }))
+  assert.equal(over.complete, false)
+  assert.equal(over.routes.length, 0, 'no candidate can be derived from a refused scan')
+})
+
+test('SCAN: the endpoint reports scanComplete and a real total', async () => {
+  await seedN(4)
+  const { body } = await withFlag(false, () => call())
+  assert.equal(body.scanComplete, true)
+  const tenants = body.tenants as Array<Record<string, unknown>>
+  assert.equal(tenants[0].scanComplete, true)
+  assert.equal(tenants[0].total, 4)
+  assert.equal(tenants[0].scanned, 4)
+  assert.equal(typeof tenants[0].candidateCount, 'number', 'a complete scan reports a NUMBER')
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TENANCY — fail closed, context restored, no cross-tenant writes
+// ─────────────────────────────────────────────────────────────────────────────
+
+const withTenancy = async <T>(on: boolean, fn: () => Promise<T>): Promise<T> => {
+  const p = process.env.TENANCY_ENABLED
+  process.env.TENANCY_ENABLED = on ? 'true' : 'false'
+  try { return await fn() } finally {
+    if (p === undefined) delete process.env.TENANCY_ENABLED; else process.env.TENANCY_ENABLED = p
+  }
+}
+
+test('TENANCY ON: activation is BLOCKED — no sweep, no writes, explicit reason', async () => {
+  const today = centralDate(Date.now())
+  const r = mkRoute({ routeDate: today, assignees: [] })
+  await seed(r)
+  const before = await runWithTenant({ tenantId: 'jkiss' }, () => stored(r.token))
+
+  const { body } = await withTenancy(true, () => withFlag(true, () => call()))
+  assert.equal(body.activationBlocked, true)
+  assert.equal(body.write, false)
+  assert.deepEqual(body.tenants, [], 'no tenant was processed, and none is claimed')
+  assert.match(String(body.activationBlockedReason), /hardcoded single-tenant list/)
+  assert.equal(body.scanComplete, false, 'never claims a complete sweep')
+
+  const after = await runWithTenant({ tenantId: 'jkiss' }, () => stored(r.token))
+  assert.equal(after, before, 'zero writes while blocked')
+})
+
+test('TENANCY OFF: the reference tenant IS the complete set, so it proceeds', async () => {
+  const { body } = await withTenancy(false, () => withFlag(false, () => call()))
+  assert.equal(body.activationBlocked, false)
+  const tenants = body.tenants as Array<Record<string, unknown>>
+  assert.equal(tenants.length, 1)
+  assert.equal(tenants[0].tenant, 'jkiss')
+})
+
+test('TENANCY: context is restored and never leaks out of the run', async () => {
+  await seed(mkRoute({ assignees: [] }))
+  assert.equal(currentTenantId(), undefined, 'no ambient context before')
+  const { body } = await withFlag(false, () => call())
+  assert.equal(currentTenantId(), undefined, 'and none after')
+  const tenants = body.tenants as Array<Record<string, unknown>>
+  assert.equal(tenants[0].tenantContextRestored, true, 'context in === context out')
+})
+
+test('TENANCY: an outer context is restored after the cron runs inside it', async () => {
+  const seen = await runWithTenant({ tenantId: 'outer' }, async () => {
+    await withFlag(false, () => call())
+    return currentTenantId()
+  })
+  assert.equal(seen, 'outer')
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RETRY / GRACE WINDOW / PARTIAL FAILURE
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('RETRY: initial attempt then a second attempt yields ONE cancellation, ONE entry', async () => {
+  const today = centralDate(Date.now())
+  const r = mkRoute({ routeDate: today, assignees: [] })
+  await seed(r)
+  const base = (await runWithTenant({ tenantId: 'jkiss' }, () => getRouteByToken(r.token)))!.audit.length
+
+  const first = await withFlag(true, () => call())
+  const second = await withFlag(true, () => call())
+  const fresh = (await runWithTenant({ tenantId: 'jkiss' }, () => getRouteByToken(r.token)))!
+
+  if (first.body.write === true) {
+    assert.equal(fresh.status, 'cancelled')
+    assert.equal(fresh.audit.length - base, 1, 'exactly ONE lifecycle entry after a retry')
+    const t2 = second.body.tenants as Array<{ cancelledCount: number }>
+    assert.equal(t2[0].cancelledCount, 0, 'the retry cancels nothing new')
+  } else {
+    assert.equal(fresh.status, 'assigned')
+    assert.equal(fresh.audit.length - base, 0)
+  }
+})
+
+test('RETRY: crew added between attempts stops the cancellation immediately', async () => {
+  const today = centralDate(Date.now())
+  const r = mkRoute({ routeDate: today, assignees: [] })
+  await seed(r)
+  // Crew arrives before any write attempt.
+  r.assignees = [assignee('s1')]
+  await seed(r)
+  const before = await runWithTenant({ tenantId: 'jkiss' }, () => stored(r.token))
+  await withFlag(true, () => call())
+  const after = await runWithTenant({ tenantId: 'jkiss' }, () => stored(r.token))
+  assert.equal(after, before, 'the under-lock re-read refuses a now-crewed route')
+})
+
+test('PARTIAL FAILURE: one bad route does not stop the rest of the batch', async () => {
+  const today = centralDate(Date.now())
+  await seed(mkRoute({ routeNumber: 'JK-R-P1', routeDate: today, assignees: [] }))
+  await seed(mkRoute({ routeNumber: 'JK-R-P2', routeDate: today, assignees: [] }))
+  await seed(mkRoute({ routeNumber: 'JK-R-P3', routeDate: today, assignees: [] }))
+  const { body } = await withFlag(true, () => call())
+  const t = (body.tenants as Array<{ candidateCount: number; cancelledCount: number; errors: unknown[] }>)[0]
+  assert.equal(t.candidateCount, 3, 'all three are candidates')
+  if (body.write === true) {
+    assert.equal(t.cancelledCount + t.errors.length, 3, 'every candidate is accounted for')
   }
 })

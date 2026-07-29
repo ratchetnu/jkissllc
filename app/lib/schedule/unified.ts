@@ -32,7 +32,7 @@ import {
 } from '../bookings'
 import {
   type RouteRecord, type RouteStatus,
-  ROUTE_STATUS_LABEL, rollupStatus, crewGap,
+  ROUTE_STATUS_LABEL, rollupStatus, crewGap, needsVehicleAssignment, isDispatchReady,
 } from '../routes'
 import { type JobCrewGap, activeCrew, jobCrewGap } from '../job-assignment'
 import { isEnabled } from '../platform/flags'
@@ -114,6 +114,11 @@ export type ScheduleItem = {
   // opted in, so a missing vehicle is only ever a conflict where someone said it
   // should be. See RouteRecord.requiresVehicle.
   requiresVehicle: boolean
+  // Can this actually go out? Distinct from `lane === 'confirmed'`: a crew member may
+  // confirm a route whose owner has not yet assigned required equipment (see the
+  // INVARIANT above rollupStatus in routes.ts), and this is the flag that stays false
+  // in that window. Always true for bookings and for anything with no requirement.
+  dispatchReady: boolean
 
   valueCents?: number            // quoted amount (booking) / contract price (route) — caller gates by auth
   paymentState?: PaymentSummaryStatus | 'n/a'
@@ -256,6 +261,8 @@ export function bookingToScheduleItem(b: Booking): ScheduleItem {
     // therefore never reported as missing a vehicle, which is what it did before
     // this rule existed for any booking without roster crew.
     requiresVehicle: false,
+    // Bookings have no equipment requirement, so nothing here can block dispatch.
+    dispatchReady: true,
 
     valueCents: netInvoiceCents(b) || undefined,
     paymentState: paymentSummaryStatus(b),
@@ -327,6 +334,7 @@ export function routeToScheduleItem(r: RouteRecord): ScheduleItem {
     equipmentId: r.equipmentId,
     equipment,
     requiresVehicle: r.requiresVehicle === true,
+    dispatchReady: isDispatchReady(r),
 
     valueCents: r.financials?.businessPriceCents,
     paymentState: 'n/a',
@@ -371,7 +379,16 @@ function attentionForRoute(r: RouteRecord, gap: ReturnType<typeof crewGap>): str
   const out: string[] = []
   if ((r.assignees?.length ?? 0) === 0) out.push('no_crew')
   else if (gap.incomplete) out.push(gap.needsDriver ? 'needs_driver' : 'needs_helper')
-  if (!r.vehicle && !r.equipmentId) out.push('no_vehicle')
+  // Aligned with the conflict detector: only a route that EXPLICITLY opted in can be
+  // flagged for a missing vehicle. This previously fired for every route without one,
+  // including every route that legitimately never has one — a permanent chip nobody
+  // could clear. Same predicate, so the card chip and the conflict panel agree.
+  if (needsVehicleAssignment(r)) out.push('no_vehicle')
+  // Crew has accepted, but required equipment is still missing, so the route is NOT
+  // ready to go out. This is what keeps the state visible when a crew confirmation
+  // legitimately advanced the status past the owner's equipment gap — see the
+  // INVARIANT above rollupStatus in routes.ts.
+  if (!isDispatchReady(r) && rollupStatus(r) === 'confirmed') out.push('blocked_dispatch')
   if (r.status === 'no_response') out.push('no_response')
   if (r.status === 'no_show') out.push('no_show')
   return out
@@ -436,6 +453,22 @@ export type ScheduleCounts = {
   total: number; confirmed: number; pending: number; unscheduled: number
   completed: number; cancelled: number; needsAttention: number
 }
+/**
+ * Items on or after `fromDay`, plus every UNDATED item.
+ *
+ * The same rule `filterConflictsFrom` applies to conflicts, so a tile counting items
+ * and a panel listing conflicts describe the same slice of the schedule instead of
+ * two different ones. Undated work (an accepted booking with no service date, a
+ * pending request) is kept deliberately: it is not history, it is unplaced, and it is
+ * exactly the work the Pending / Unscheduled views exist to surface.
+ *
+ * An empty/absent `fromDay` disables filtering, matching filterConflictsFrom.
+ */
+export function itemsFrom(items: ScheduleItem[], fromDay: string | undefined): ScheduleItem[] {
+  if (!fromDay) return items
+  return items.filter(it => { const d = itemDay(it); return !d || d >= fromDay })
+}
+
 export function scheduleCounts(items: ScheduleItem[]): ScheduleCounts {
   const live = items.filter(it => !it.cancelled)
   return {

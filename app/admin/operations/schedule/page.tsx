@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { ymd, fmtDay, fmtLongDay, money } from '../ui'
-import type { ScheduleItem, ScheduleSource } from '../../../lib/schedule/unified'
+import { itemsFrom, scheduleCounts, type ScheduleItem, type ScheduleSource } from '../../../lib/schedule/unified'
 import { filterConflictsFrom, summarizeConflicts, type Conflict } from '../../../lib/schedule/conflicts'
 
 type Feed = {
@@ -40,6 +40,7 @@ const SOURCE_STYLE: Record<ScheduleSource, { label: string; fg: string; bg: stri
 const ATTENTION_LABEL: Record<string, string> = {
   needs_review: 'Needs review', zelle_review: 'Zelle review', manual_review: 'Manual review',
   balance_due: 'Balance due', no_crew: 'No crew', needs_driver: 'Needs driver',
+  blocked_dispatch: 'Not ready to dispatch',
   needs_helper: 'Needs helper', no_vehicle: 'No vehicle', no_response: 'No response', no_show: 'No show',
 }
 const PAYMENT_LABEL: Record<string, string> = {
@@ -71,7 +72,9 @@ function Schedule() {
     return () => { alive = false }
   }, [])
 
-  const items = feed?.items ?? []
+  // Memoized so the `?? []` fallback is not a fresh array identity on every render —
+  // the counts/conflict memos below depend on it.
+  const items = useMemo(() => feed?.items ?? [], [feed])
   const todayIso = ymd(new Date())
 
   // The earliest day the current view is looking at. Conflicts before it are history
@@ -90,6 +93,16 @@ function Schedule() {
     [feed, viewFromDay],
   )
   const visibleSummary = useMemo(() => summarizeConflicts(visibleConflicts), [visibleConflicts])
+
+  // The tiles are scoped to the SAME boundary as the conflicts. Previously they were
+  // whole-store while Conflicts was day-scoped, so a past route could show
+  // "Attention: 7" above an empty conflict panel — two numbers describing different
+  // schedules, sitting next to each other. Undated items survive the filter, so
+  // Pending / Unscheduled counts still include work that has no date yet.
+  const visibleCounts = useMemo(
+    () => scheduleCounts(itemsFrom(items, viewFromDay)),
+    [items, viewFromDay],
+  )
 
   const conflictsByItem = useMemo(() => {
     const m = new Map<string, Conflict[]>()
@@ -139,7 +152,7 @@ function Schedule() {
         : error ? <div className="os-card" style={{ padding: 22, color: '#f87171' }}>{error}</div>
         : feed && (
         <>
-          <CountsRow c={feed.counts} conflicts={visibleSummary} />
+          <CountsRow c={visibleCounts} conflicts={visibleSummary} />
           {visibleSummary.total > 0 && <ConflictBanner conflicts={visibleConflicts} />}
 
           {view === 'today' && <DayView items={items} day={anchor} conflictsByItem={conflictsByItem} canSeeValue={feed.canSeeValue} />}

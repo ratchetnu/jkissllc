@@ -18,13 +18,17 @@ process.env.ADMIN_SESSION_SECRET ||= 'test-secret-at-least-16-chars-long'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import type { Booking } from '../app/lib/bookings'
 import type { RouteRecord, Assignee } from '../app/lib/routes'
-import { needsVehicleAssignment, hasVehicleOrEquipment, VEHICLE_REQUIRED_MESSAGE } from '../app/lib/routes'
-import { routeToScheduleItem, mergeSchedule } from '../app/lib/schedule/unified'
+import {
+  needsVehicleAssignment, hasVehicleOrEquipment, VEHICLE_REQUIRED_MESSAGE,
+  isDispatchReady, autoCancelRoute, syncLead, rollupStatus, SYSTEM_AUTO_CANCEL_PRINCIPAL,
+} from '../app/lib/routes'
+import { routeToScheduleItem, mergeSchedule, itemsFrom, scheduleCounts } from '../app/lib/schedule/unified'
 import { detectConflicts, filterConflictsFrom, summarizeConflicts, type Conflict } from '../app/lib/schedule/conflicts'
 import {
-  selectAutoCancelCandidates, isCancellationWindow, centralDate, centralHour,
-  isLiveRoute, hasNoCrew, autoCancelAuditNote, OPS_TIMEZONE,
+  selectAutoCancelCandidates, isCancellationWindow, centralDate, centralHour, centralStamp,
+  isLiveRoute, hasNoCrew, autoCancelAuditNote, OPS_TIMEZONE, CANCELLATION_GRACE_HOURS,
 } from '../app/lib/schedule/auto-cancel'
 import { isEnabled, FLAG_DEFAULTS } from '../app/lib/platform/flags'
 
@@ -45,6 +49,16 @@ const route = (o: Partial<RouteRecord> = {}): RouteRecord => ({
   createdAt: 1, updatedAt: 1,
   ...o,
 } as RouteRecord)
+
+const booking = (o: Partial<Booking> = {}): Booking => ({
+  token: (o.token ?? `bk${n++}`).padEnd(16, '0'),
+  bookingNumber: o.bookingNumber ?? `JK-B-${n}`,
+  customerName: 'Jane Doe', serviceType: 'junk-removal', items: [],
+  invoiceAmountCents: 0, depositAmountCents: 0, amountPaidCents: 0,
+  availableDates: [], availableWindows: [], status: 'quote_received',
+  payments: [], source: 'online', createdAt: 1, updatedAt: 1,
+  ...o,
+} as Booking)
 
 const conflict = (o: Partial<Conflict> = {}): Conflict => ({
   type: 'missing_crew', severity: 'warning', message: 'x', itemIds: ['route:a'], ...o,
@@ -203,30 +217,53 @@ test('centralDate/centralHour follow America/Chicago, not UTC', () => {
   assert.equal(centralHour(Date.parse('2026-07-29T05:00:00Z')), 0)
 })
 
-test('DST: in SUMMER (CDT, UTC-5) the window is 05:00Z and 06:00Z is NOT', () => {
-  assert.equal(isCancellationWindow(Date.parse('2026-07-29T05:00:00Z')), true)
-  assert.equal(isCancellationWindow(Date.parse('2026-07-29T06:00:00Z')), false, 'that is 01:00 CDT')
+test('DST: in SUMMER (CDT, UTC-5) 05:00Z is midnight and 06:00Z is the grace retry', () => {
+  assert.equal(isCancellationWindow(Date.parse('2026-07-29T05:00:00Z')), true, '00:00 CDT')
+  assert.equal(isCancellationWindow(Date.parse('2026-07-29T06:00:00Z')), true, '01:00 CDT — inside the grace window')
+  // Both are the SAME Central date, so the retry can only ever re-attempt today.
+  assert.equal(centralDate(Date.parse('2026-07-29T05:00:00Z')), '2026-07-29')
+  assert.equal(centralDate(Date.parse('2026-07-29T06:00:00Z')), '2026-07-29')
 })
 
-test('DST: in WINTER (CST, UTC-6) the window is 06:00Z and 05:00Z is NOT', () => {
-  assert.equal(isCancellationWindow(Date.parse('2026-01-15T06:00:00Z')), true)
+test('DST: in WINTER (CST, UTC-6) 06:00Z is midnight and 05:00Z is the PREVIOUS day', () => {
+  assert.equal(isCancellationWindow(Date.parse('2026-01-15T06:00:00Z')), true, '00:00 CST')
   assert.equal(isCancellationWindow(Date.parse('2026-01-15T05:00:00Z')), false, 'that is 23:00 the previous day')
   assert.equal(centralDate(Date.parse('2026-01-15T05:00:00Z')), '2026-01-14')
 })
 
-test('exactly ONE of the two UTC firings is a write window on any given date', () => {
-  for (const day of ['2026-01-15', '2026-03-10', '2026-07-29', '2026-11-05', '2026-12-25']) {
-    const hits = ['05', '06'].filter(h => isCancellationWindow(Date.parse(`${day}T${h}:00:00Z`)))
-    assert.equal(hits.length, 1, `${day} must have exactly one write window, got ${hits.length}`)
+test('every day of the year has at least one write window across both UTC firings', () => {
+  const days: string[] = []
+  for (let d = new Date(Date.UTC(2026, 0, 1)); d < new Date(Date.UTC(2027, 0, 1)); d.setUTCDate(d.getUTCDate() + 1)) {
+    days.push(d.toISOString().slice(0, 10))
   }
+  const dead = days.filter(day =>
+    !['05', '06'].some(h => isCancellationWindow(Date.parse(`${day}T${h}:00:00Z`))))
+  assert.deepEqual(dead, [], `every day needs a window; dead days: ${dead.join(',')}`)
 })
 
-test('the spring-forward and fall-back weekends do not double- or zero-fire', () => {
+test('the spring-forward and fall-back weekends still have a window', () => {
   // US DST 2026: forward Sun Mar 8, back Sun Nov 1.
   for (const day of ['2026-03-07', '2026-03-08', '2026-03-09', '2026-10-31', '2026-11-01', '2026-11-02']) {
     const hits = ['05', '06'].filter(h => isCancellationWindow(Date.parse(`${day}T${h}:00:00Z`)))
-    assert.equal(hits.length, 1, `${day} produced ${hits.length} windows`)
+    assert.ok(hits.length >= 1, `${day} produced no window`)
   }
+})
+
+test('GRACE WINDOW: midnight through the grace period writes; after it does not', () => {
+  assert.equal(CANCELLATION_GRACE_HOURS, 3)
+  assert.equal(isCancellationWindow(Date.parse('2026-07-29T05:00:00Z')), true, '00:00 CDT')
+  assert.equal(isCancellationWindow(Date.parse('2026-07-29T06:00:00Z')), true, '01:00 CDT — the retry')
+  assert.equal(isCancellationWindow(Date.parse('2026-07-29T07:00:00Z')), true, '02:00 CDT')
+  assert.equal(isCancellationWindow(Date.parse('2026-07-29T08:00:00Z')), false, '03:00 CDT — closed')
+})
+
+test('GRACE WINDOW can never reach back into history', () => {
+  // Eligibility is pinned to routeDate === today Central, so a 02:00 retry sees only
+  // today's routes no matter how wide the window gets.
+  const late = Date.parse('2026-07-29T07:00:00Z') // 02:00 CDT on 07-29
+  assert.equal(centralDate(late), '2026-07-29')
+  const yesterday = route({ routeDate: '2026-07-28', status: 'assigned', assignees: [] })
+  assert.deepEqual(selectAutoCancelCandidates([yesterday], late), [], 'yesterday is never swept')
 })
 
 test('midday is never a write window', () => {
@@ -384,16 +421,27 @@ test('dry-run still reports the exact candidates and reasons it would act on', (
   assert.ok(report[0].detail.length > 0, 'a reason an owner can read, not just an id')
 })
 
-test('the cron is registered at both UTC hours that cover Central midnight', () => {
+test('the cron is deliberately NOT scheduled in this PR', () => {
   const cfg = JSON.parse(
     new TextDecoder().decode(
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       require('node:fs').readFileSync(new URL('../vercel.json', import.meta.url)),
     ),
   ) as { crons: { path: string; schedule: string }[] }
-  const entry = cfg.crons.find(c => c.path === '/api/cron/route-auto-cancel')
-  assert.ok(entry, 'the cron must be registered')
-  assert.equal(entry!.schedule, '0 5,6 * * *', 'both CDT and CST midnight')
+  assert.equal(
+    cfg.crons.some(c => c.path === '/api/cron/route-auto-cancel'), false,
+    'scheduling is a SEPARATE rollout change, made only after a Preview dry run is approved')
+  // ...and the other crons are untouched by this PR.
+  assert.ok(cfg.crons.some(c => c.path === '/api/cron/daily'))
+})
+
+test('the DST rationale for the eventual 0 5,6 schedule still holds', () => {
+  // Both 05:00Z and 06:00Z fall inside the grace window in their respective offsets,
+  // so when the schedule IS registered the second firing is an idempotent retry.
+  for (const day of ['2026-01-15', '2026-07-29']) {
+    const hits = ['05', '06'].filter(h => isCancellationWindow(Date.parse(`${day}T${h}:00:00Z`)))
+    assert.ok(hits.length >= 1, `${day} must have at least one window`)
+  }
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -420,7 +468,135 @@ test('the cron handler wires per-tenant context and gates the write', () => {
   assert.match(src, /for \(const tenantId of activeTenantIds\(\)\)/, 'per-tenant fan-out')
   assert.match(src, /isEnabled\('ROUTE_AUTO_CANCEL_ENABLED'\)/, 'flag-gated')
   assert.match(src, /withRouteLock/, 'writes hold the per-route lock')
-  assert.match(src, /if \(!write\) return out/, 'no write path when reporting only')
+  assert.match(src, /if \(!write\)/, 'no write path when reporting only')
   assert.match(src, /getRouteByToken\(c\.token\)/, 're-reads under the lock (idempotency)')
   assert.match(src, /CRON_SECRET/, 'authenticated')
+  assert.match(src, /scanAllRoutes\(\)/, 'uses the COMPLETE scan, not a windowed list')
+  assert.match(src, /if \(!scan\.complete\)/, 'a truncated scan cancels nothing')
+  assert.match(src, /candidateCount: null/, 'never reports 0 candidates for a truncated scan')
+  assert.match(src, /autoCancelRoute\(/, 'single attributed lifecycle write')
+  assert.ok(!/setStatus\(/.test(src), 'the old two-entry setStatus+pushAudit pair is gone')
+  assert.match(src, /if \(tenancyOn\)/, 'fails closed when a complete tenant sweep cannot be proven')
+})
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. CREW ROLLUP INVARIANT (documented beside rollupStatus in routes.ts)
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('CREW ROLLUP INVARIANT: a crew member CAN confirm without the owner\u2019s equipment', () => {
+  const r = crewed({ requiresVehicle: true })
+  r.assignees![0].confirmedAt = Date.now()
+  syncLead(r)  // exactly what the public crew-confirm handler does
+  assert.equal(r.status, 'confirmed', 'crew acceptance is never blocked by an owner-controlled field')
+})
+
+test('CREW ROLLUP INVARIANT: ...but the route is NOT dispatch-ready', () => {
+  const r = crewed({ requiresVehicle: true })
+  r.assignees![0].confirmedAt = Date.now()
+  syncLead(r)
+  assert.equal(isDispatchReady(r), false, 'accepted \u2260 ready to run')
+  const item = routeToScheduleItem(r)
+  assert.equal(item.dispatchReady, false)
+  assert.ok(item.attention.includes('blocked_dispatch'), 'the card carries a visible block')
+  assert.ok(detectConflicts([item]).some(c => c.type === 'missing_vehicle'),
+    'and the conflict persists until equipment is assigned')
+})
+
+test('CREW ROLLUP INVARIANT: assigning equipment clears the block', () => {
+  const r = crewed({ requiresVehicle: true, vehicle: 'Truck 1' })
+  r.assignees![0].confirmedAt = Date.now()
+  syncLead(r)
+  assert.equal(rollupStatus(r), 'confirmed')
+  assert.equal(isDispatchReady(r), true)
+  const item = routeToScheduleItem(r)
+  assert.ok(!item.attention.includes('blocked_dispatch'))
+  assert.ok(!detectConflicts([item]).some(c => c.type === 'missing_vehicle'))
+})
+
+test('a route with NO requirement is always dispatch-ready', () => {
+  const r = crewed()
+  assert.equal(isDispatchReady(r), true)
+  assert.equal(routeToScheduleItem(r).dispatchReady, true)
+  assert.ok(!routeToScheduleItem(r).attention.includes('blocked_dispatch'))
+})
+
+test('the no_vehicle attention chip now respects the opt-in rule too', () => {
+  assert.ok(!routeToScheduleItem(crewed()).attention.includes('no_vehicle'),
+    'a route that never opted in gets no permanent unclearable chip')
+  assert.ok(routeToScheduleItem(crewed({ requiresVehicle: true })).attention.includes('no_vehicle'))
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. ATTENTION + CONFLICTS SHARE ONE BOUNDARY
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('a PAST route cannot produce Attention > 0 while the visible conflict set is empty', () => {
+  const past = route({ routeDate: '2026-07-10', status: 'assigned', requiresVehicle: true, assignees: [] })
+  const items = mergeSchedule({ bookings: [], routes: [past] })
+  assert.ok(scheduleCounts(items).needsAttention >= 1, 'unfiltered, it does raise attention')
+
+  const from = '2026-07-29'
+  const visibleItems = itemsFrom(items, from)
+  const visibleConflicts = filterConflictsFrom(detectConflicts(items), from)
+  assert.equal(summarizeConflicts(visibleConflicts).total, 0)
+  assert.equal(scheduleCounts(visibleItems).needsAttention, 0,
+    'THE FIX: Attention and Conflicts describe the same slice')
+})
+
+test('itemsFrom keeps UNDATED work so Pending / Unscheduled stay intact', () => {
+  const acceptedNoDate = booking({ status: 'confirmed' })      // confirmed lane, no date
+  const pendingIntake = booking({ status: 'quote_received' })  // pending lane, no date
+  const items = mergeSchedule({ bookings: [acceptedNoDate, pendingIntake], routes: [] })
+  const kept = itemsFrom(items, '2099-01-01')
+  assert.equal(kept.length, items.length, 'undated work is never filtered out as "past"')
+  const c = scheduleCounts(kept)
+  assert.ok(c.unscheduled >= 1, 'Unscheduled still sees accepted-but-undated work')
+  assert.ok(c.pending >= 1, 'Pending still sees undated intake')
+})
+
+test('itemsFrom mirrors filterConflictsFrom exactly (same boundary, same edge cases)', () => {
+  const items = mergeSchedule({ bookings: [], routes: [route({ routeDate: '2026-07-20' })] })
+  assert.equal(itemsFrom(items, '2026-07-20').length, 1, 'inclusive on the day itself')
+  assert.equal(itemsFrom(items, '2026-07-21').length, 0)
+  assert.equal(itemsFrom(items, undefined).length, 1, 'absent day disables filtering')
+  assert.equal(itemsFrom(items, '').length, 1)
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. ONE ATTRIBUTED LIFECYCLE EVENT
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('autoCancelRoute writes exactly ONE attributed entry with everything needed', () => {
+  const r = route({ routeDate: '2026-07-29', status: 'assigned', assignees: [] })
+  const [c] = selectAutoCancelCandidates([r], MIDNIGHT_JUL29)
+  const ok = autoCancelRoute(r, { reason: c.detail, routeDate: c.routeDate, centralAt: centralStamp(MIDNIGHT_JUL29) })
+  assert.equal(ok, true)
+  assert.equal(r.status, 'cancelled')
+  assert.equal(r.audit.length, 1, 'ONE entry, not two')
+
+  const e = r.audit[0]
+  assert.equal(e.actor, 'system')
+  assert.equal(e.actorId, SYSTEM_AUTO_CANCEL_PRINCIPAL.sub, 'attributed path used')
+  assert.equal(e.actorRole, 'system')
+  assert.equal(e.from, 'assigned', 'previous status')
+  assert.equal(e.to, 'cancelled', 'new status')
+  assert.match(e.action, /Auto-cancelled/)
+  assert.match(String(e.note), /No crew assigned/, 'reason')
+  assert.match(String(e.note), /Route date 2026-07-29/, 'route date')
+  assert.match(String(e.note), /Executed 2026-07-29 00:00 America\/Chicago/, 'Central execution stamp')
+})
+
+test('autoCancelRoute is a no-op on an already-terminal route (retry safety)', () => {
+  for (const status of ['cancelled', 'completed', 'no_show'] as const) {
+    const r = route({ routeDate: '2026-07-29', status, assignees: [] })
+    assert.equal(autoCancelRoute(r, { reason: 'x', routeDate: '2026-07-29', centralAt: 'y' }), false)
+    assert.equal(r.audit.length, 0, 'no second entry on retry')
+    assert.equal(r.status, status)
+  }
+})
+
+test('centralStamp renders a Central wall-clock date and time', () => {
+  assert.match(centralStamp(Date.parse('2026-07-29T05:00:00Z')), /^2026-07-29 00:00$/)
+  assert.match(centralStamp(Date.parse('2026-01-15T06:30:00Z')), /^2026-01-15 00:30$/)
 })

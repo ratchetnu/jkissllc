@@ -159,12 +159,23 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
       if (body[k] !== undefined) (route as Record<string, unknown>)[k] = S(body[k], max) || undefined
     }
     // "Does this route need a company vehicle/equipment?" — only touched when the
-    // client actually sends the field, so an unrelated edit never flips it. Stored
-    // as true or cleared entirely: `false` and absent mean the same thing (not
-    // required), and keeping one representation stops a legacy route and a
-    // deliberately-unset one from looking different.
+    // client actually sends the field, so an unrelated edit never flips it.
+    //
+    // STRICT booleans only. This used to coerce anything unrecognised to "not
+    // required", so `1`, `"yes"` or `"TRUE"` would SILENTLY TURN OFF a safety
+    // setting the owner had deliberately switched on. A rejected request the caller
+    // can see beats a quietly discarded intention.
     if (body.requiresVehicle !== undefined) {
-      route.requiresVehicle = body.requiresVehicle === true || body.requiresVehicle === 'true' ? true : undefined
+      if (typeof body.requiresVehicle !== 'boolean') {
+        return NextResponse.json(
+          { error: 'requiresVehicle must be true or false.' },
+          { status: 400 },
+        )
+      }
+      // Stored as true or cleared entirely: `false` and absent both mean "not
+      // required", and one representation stops a legacy route and a deliberately
+      // unset one from looking different.
+      route.requiresVehicle = body.requiresVehicle ? true : undefined
     }
     // Equipment assignment (additive). Only touched when the client sends equipmentId,
     // so an edit that doesn't change equipment is byte-identical to before. Unassigning

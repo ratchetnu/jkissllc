@@ -57,15 +57,40 @@ export function centralHour(ts: number): number {
 }
 
 /**
- * Is `ts` inside the first hour of a Central day — the cancellation window?
+ * How long after Central midnight the cancellation may still run.
  *
- * The cron is scheduled in UTC (Vercel offers nothing else), so it is fired at both
- * 05:00 and 06:00 UTC to cover CDT and CST. Exactly one of those two firings lands
- * in hour 0 Central on any given date; this predicate is what makes the other one a
- * no-op instead of a second cancellation pass.
+ * A single instant (hour 0 only) meant exactly ONE attempt per day: if that attempt
+ * was missed — a deploy in flight, a cold start that timed out, a platform hiccup —
+ * the route rolled past its date the next day and became permanently ineligible,
+ * silently. The rule simply would not have happened, and nothing said so.
+ *
+ * A short grace window turns that single point of failure into a retry. It is safe
+ * precisely because eligibility is pinned to `routeDate === today Central`: a run at
+ * 02:00 can only ever touch routes for TODAY, never yesterday's or anything older.
+ * Widening this window can never reach back into history.
+ */
+export const CANCELLATION_GRACE_HOURS = 3
+
+/**
+ * Is `ts` inside the cancellation window — Central midnight through the end of the
+ * grace period (00:00–02:59:59 America/Chicago)?
+ *
+ * Multiple firings inside the window are EXPECTED and safe: the write path re-reads
+ * each record under its lock and `autoCancelRoute` refuses an already-terminal route,
+ * so the second and later attempts are no-ops rather than second cancellations.
  */
 export function isCancellationWindow(ts: number): boolean {
-  return centralHour(ts) === 0
+  const h = centralHour(ts)
+  return Number.isFinite(h) && h >= 0 && h < CANCELLATION_GRACE_HOURS
+}
+
+/** Central wall-clock stamp (yyyy-mm-dd HH:mm) — recorded on the audit entry. */
+const STAMP_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: OPS_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hour12: false,
+})
+export function centralStamp(ts: number): string {
+  return STAMP_FMT.format(new Date(ts)).replace(',', '')
 }
 
 export type AutoCancelReason = 'no_crew_at_route_day_start'

@@ -311,6 +311,39 @@ export function crewGap(r: RouteRecord): { needsDriver: boolean; needsHelper: bo
   return { needsDriver, needsHelper, incomplete: needsDriver || needsHelper }
 }
 
+// ── INVARIANT: crew confirmation is NEVER blocked by an owner-controlled field ─
+//
+// `rollupStatus` can return 'confirmed' the moment every assignee has confirmed,
+// and `syncLead` writes that straight onto the record. The public crew link
+// (app/api/route/[token]) goes through exactly that path, so a crew member tapping
+// "I'll be there" moves the route to Confirmed WITHOUT passing the vehicle check
+// that `PATCH action:'confirm'` enforces for an admin.
+//
+// THIS IS DELIBERATE, AND IT IS THE DESIGNED BEHAVIOUR — not an oversight.
+//
+//   `requiresVehicle` is an OWNER's setting. A contractor has no ability to assign a
+//   truck and no visibility into why one is missing. Refusing their confirmation
+//   would strand them on a dead link over a decision they cannot make, and the
+//   operational cost of that (a crew member who cannot accept work, and an owner who
+//   never learns they were trying to) is far worse than a route that is accepted but
+//   not yet equipped.
+//
+// SO THE INVARIANT IS: crew acceptance and operational readiness are SEPARATE facts.
+// Confirmation records "a person has agreed to run this". It does NOT assert the
+// route is ready to dispatch. Readiness is `isDispatchReady()` below, which stays
+// false while required equipment is missing, and which the schedule surfaces two
+// ways that a confirmed status cannot hide:
+//   • the `blocked_dispatch` attention flag on the route's own card, and
+//   • the `missing_vehicle` conflict, which persists until equipment is assigned.
+//
+// TEMPORARY. The route model has one status axis, so "crew accepted" and
+// "operationally ready" currently share it and readiness is derived rather than
+// stored. Splitting them into an explicit dispatch state is tracked separately and
+// is deliberately NOT attempted here. Until then, never read `status === 'confirmed'`
+// as "ready to run" — read `isDispatchReady()`.
+//
+// Pinned by scripts/schedule-conflict-scope.test.ts ("CREW ROLLUP INVARIANT").
+
 // Route-level status rolled up from the crew (best-effort, for board chips).
 // Explicit terminal statuses set by an admin (completed/cancelled/no_show) win.
 export function rollupStatus(r: RouteRecord): RouteStatus {
@@ -349,6 +382,27 @@ export function needsVehicleAssignment(
 /** Owner-facing reason a Confirm was refused. Names the fix, not the rule. */
 export const VEHICLE_REQUIRED_MESSAGE =
   'This route is marked as needing a vehicle or equipment. Assign one before confirming it, or turn off “Vehicle/equipment required” for this route.'
+
+/**
+ * Is this route actually ready to DISPATCH — as opposed to merely accepted?
+ *
+ * Deliberately distinct from `status === 'confirmed'`. A crew member can (and must
+ * be able to) confirm a route whose owner has not yet assigned required equipment —
+ * see the INVARIANT block above `rollupStatus`. This is the predicate that stays
+ * false in that window, so "somebody agreed to run it" never silently reads as
+ * "it can go out".
+ *
+ * Narrow on purpose: today the only readiness gate is the equipment requirement.
+ * Crew sufficiency already has its own signals (`crewGap`, the `missing_crew`
+ * conflict) and is not folded in here.
+ */
+export function isDispatchReady(r: Pick<RouteRecord, 'requiresVehicle' | 'vehicle' | 'equipmentId'>): boolean {
+  return !needsVehicleAssignment(r)
+}
+
+/** Operator-facing reason a route is accepted but cannot be dispatched. */
+export const DISPATCH_BLOCKED_MESSAGE =
+  'Crew accepted, but this route still needs its required vehicle or equipment before it can go out.'
 
 // Mirror the lead assignee (assignees[0]) onto the legacy route-level fields and
 // recompute the route status. Call after any crew mutation.
@@ -506,6 +560,83 @@ export async function deleteRoute(token: string): Promise<void> {
   await revokeTokenBinding(token)
 }
 
+// ── Complete scan (for jobs that MUTATE based on what they find) ─────────────
+//
+// `listRoutes(n)` is a WINDOW: `zrevrange(rt:index, 0, n-1)` over an index scored by
+// `updatedAt`. That is fine for a dashboard — you want the most recently touched
+// work — but it is dangerous for a job that acts on what it sees, because a route
+// dated today that simply has not been edited lately can fall outside the window and
+// be silently skipped. The job then reports "0 candidates", which is indistinguishable
+// from "nothing to do". A truncated scan that looks like a clean scan is the failure
+// mode worth engineering against.
+//
+// This enumerates the WHOLE index in pages and reports whether it managed to. It
+// never raises a limit and hopes; it proves coverage or admits it could not.
+
+export type RouteScan = {
+  routes: RouteRecord[]
+  /** True only when every index entry in the opening snapshot was enumerated. */
+  complete: boolean
+  /** Index entries enumerated. */
+  scanned: number
+  /** `zcard` at the start of the scan — the target `scanned` must reach. */
+  total: number
+  /** Set when `complete` is false; safe to log. */
+  truncatedReason?: string
+}
+
+/** Hard ceiling. A scan larger than this refuses rather than running unbounded. */
+export const ROUTE_SCAN_MAX = 20_000
+const ROUTE_SCAN_PAGE = 500
+
+/**
+ * Enumerate every route in the index, in pages.
+ *
+ * `complete` is the contract: it is true ONLY when the number of index entries
+ * enumerated equals the `zcard` taken at the start. Callers that mutate must refuse
+ * to act when it is false.
+ *
+ * Snapshot semantics: `total` is read once, up front. Routes written DURING the scan
+ * may or may not be included, which is why the auto-cancel path re-reads each record
+ * under its lock before acting — the scan proposes, the locked record decides.
+ */
+export async function scanAllRoutes(opts?: { pageSize?: number; max?: number }): Promise<RouteScan> {
+  const pageSize = Math.max(1, opts?.pageSize ?? ROUTE_SCAN_PAGE)
+  const max = Math.max(1, opts?.max ?? ROUTE_SCAN_MAX)
+  const total = await redis.zcard(KEY_INDEX)
+
+  if (total > max) {
+    return {
+      routes: [], complete: false, scanned: 0, total,
+      truncatedReason: `route index holds ${total} entries, above the ${max} scan ceiling`,
+    }
+  }
+
+  const tokens: string[] = []
+  for (let start = 0; start < total; start += pageSize) {
+    const page = await redis.zrange(KEY_INDEX, start, Math.min(start + pageSize, total) - 1)
+    if (!page.length) break // index shrank mid-scan — stop and report incomplete below
+    tokens.push(...page)
+  }
+
+  const unique = Array.from(new Set(tokens))
+  const complete = tokens.length >= total
+
+  const raws = await Promise.all(unique.map(t => redis.get(KEY(t))))
+  const routes = raws
+    .filter(Boolean)
+    .map(r => { try { return normalize(JSON.parse(r as string) as RouteRecord) } catch { return null } })
+    .filter((r): r is RouteRecord => r !== null)
+
+  return {
+    routes,
+    complete,
+    scanned: tokens.length,
+    total,
+    truncatedReason: complete ? undefined : `enumerated ${tokens.length} of ${total} index entries`,
+  }
+}
+
 export async function listRoutes(limit = 500): Promise<RouteRecord[]> {
   const tokens = await redis.zrevrange(KEY_INDEX, 0, limit - 1)
   if (!tokens.length) return []
@@ -542,6 +673,43 @@ export function pushAuditFor(
 export function pushEvent(r: RouteRecord, type: ConfirmEventType, ip?: string, ua?: string): void {
   r.events.push({ at: Date.now(), type, ip, ua: ua?.slice(0, 300) })
   if (r.events.length > 100) r.events = r.events.slice(-100)
+}
+
+/** The synthetic principal every automatic route action is attributed to. */
+export const SYSTEM_AUTO_CANCEL_PRINCIPAL = { sub: 'system:route-auto-cancel', role: 'system' } as const
+
+/**
+ * Cancel a route automatically, writing exactly ONE attributed lifecycle entry.
+ *
+ * Why not `setStatus` + a second `pushAudit`: that produced two rows for one event —
+ * a bare "status → Cancelled" and a separate reason — and an investigator reading the
+ * trail had to know they belonged together. One event, one row, everything needed to
+ * explain it in that row:
+ *
+ *   actor      'system' (coarse bucket) + actorId/actorRole via the ATTRIBUTED path,
+ *              so it is unambiguous that a machine did this and which machine
+ *   from / to  the previous status and 'cancelled'
+ *   note       the reason, the ROUTE date, and the CENTRAL execution date+time
+ *
+ * Returns false without touching the record if it is already terminal, so a retry is
+ * a no-op rather than a second entry.
+ */
+export function autoCancelRoute(
+  r: RouteRecord,
+  ctx: { reason: string; routeDate: string; centralAt: string },
+): boolean {
+  if (r.status === 'cancelled' || r.status === 'completed' || r.status === 'no_show') return false
+  const from = r.status
+  r.status = 'cancelled'
+  pushAuditFor(
+    r, SYSTEM_AUTO_CANCEL_PRINCIPAL, 'system',
+    'Auto-cancelled — no crew assigned at route day start',
+    {
+      from, to: 'cancelled',
+      note: `${ctx.reason} Route date ${ctx.routeDate}. Executed ${ctx.centralAt} America/Chicago.`,
+    },
+  )
+  return true
 }
 
 // Change status with an audit trail in one call.
