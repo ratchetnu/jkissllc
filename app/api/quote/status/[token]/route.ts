@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
+import { withPublicTokenRoute } from '../../../../lib/platform/tenancy/with-public-token-route'
 import { rateLimit } from '../../../../lib/rate-limit'
 import { getBookingByToken } from '../../../../lib/bookings'
 import { projectCustomerFinalState } from '../../../../lib/ai/confirmation-ui'
@@ -18,7 +18,7 @@ export const dynamic = 'force-dynamic'
 // The token IS the booking's secure random token (unguessable, tenant-scoped
 // through the redis chokepoint). Returns ONLY customer-safe data — never the
 // internal pricing breakdown, cost basis, model names, or provider errors.
-export const GET = withTenantRoute(async (req: NextRequest, ctx: { params: Promise<{ token: string }> }) => {
+export const GET = withPublicTokenRoute(async (req: NextRequest, ctx: { params: Promise<{ token: string }> }) => {
   if (await rateLimit(req, 'quotestatus', 60, 5 * 60_000)) {
     return NextResponse.json({ error: 'Too many requests.' }, { status: 429 })
   }
@@ -53,4 +53,4 @@ export const GET = withTenantRoute(async (req: NextRequest, ctx: { params: Promi
     followUps: b.aiEstimate ? selectFollowUpQuestions({ serviceFamily: serviceFamily(b.serviceType), analysis: b.aiEstimate.analysis, estate: b.serviceType === 'estate-cleanout' || b.serviceType === 'garage-cleanout' || b.serviceType === 'eviction' }) : [],
   })
   })
-})
+}, { expect: 'booking' })

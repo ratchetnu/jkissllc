@@ -2,7 +2,7 @@
 // Returns only the scrubbed PublicRoute; never exposes audit/IPs/SMS ids/other
 // contractors. Handles expired, cancelled, and already-actioned (idempotent).
 import { NextRequest, NextResponse } from 'next/server'
-import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
+import { withPublicTokenRoute } from '../../../lib/platform/tenancy/with-public-token-route'
 import {
   getRouteByConfirmToken, saveRoute, toPublicRouteFor, setStatus, syncLead, pushEvent, pushAudit, isExpired,
   CONFIRM_DISCLAIMER,
@@ -37,7 +37,7 @@ async function usesTimeclock(staffId: string): Promise<boolean> {
   try { return staffUsesTimeclock(await getStaff(staffId)) } catch { return true }
 }
 
-export const GET = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
+export const GET = withPublicTokenRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   const found = await getRouteByConfirmToken(token)
   if (!found) return NextResponse.json({ error: 'not_found' }, { status: 404 })
@@ -60,7 +60,7 @@ export const GET = withTenantRoute(async (req: NextRequest, { params }: { params
     } catch { /* busy or save failed — still show the page */ }
   }
   return NextResponse.json({ route: toPublicRouteFor(route, assignee, { showPay: await showPay(), timeclock: await usesTimeclock(assignee.staffId) }), disclaimer: CONFIRM_DISCLAIMER })
-})
+}, { expect: 'route' })
 
 // Every mutation runs INSIDE the route lock (reloading the route fresh) so two crew
 // members — or a crew member and the admin — acting on the same route at the same
@@ -69,7 +69,7 @@ export const GET = withTenantRoute(async (req: NextRequest, { params }: { params
 // releases so a text send never holds the route or risks the lock's TTL.
 type PostOutcome = { response: NextResponse; notify?: () => Promise<void> }
 
-export const POST = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
+export const POST = withPublicTokenRoute(async (req: NextRequest, { params }: { params: Promise<{ token: string }> }) => {
   const { token } = await params
   const first = await getRouteByConfirmToken(token)
   if (!first) return NextResponse.json({ error: 'not_found' }, { status: 404 })
@@ -189,4 +189,4 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
 
   if (outcome.notify) { try { await outcome.notify() } catch { /* non-fatal */ } }
   return outcome.response
-})
+}, { expect: 'route' })

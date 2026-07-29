@@ -4,6 +4,9 @@
 // or phone, no internal churn states (declines / no-response / drafts) — just a
 // clean schedule of assigned/confirmed routes plus recent completions.
 import { redis } from './redis'
+import { bindToken, revokeTokenBinding } from './platform/tenancy/token-binding'
+import { currentTenantId } from './platform/tenancy/context'
+import { DEFAULT_TENANT_ID } from './platform/tenancy/types'
 import { listRoutes } from './routes'
 
 export type ClientPortal = {
@@ -42,11 +45,16 @@ export async function saveClientPortal(p: ClientPortal): Promise<void> {
   p.updatedAt = Date.now()
   await redis.set(KEY(p.token), JSON.stringify(p))
   await redis.zadd(KEY_INDEX, p.updatedAt, p.token)
+  // Wave 6D-A: bind AFTER the record persists, so a token can never be usable before
+  // the resource it points at exists. Conflicts are never overwritten.
+  const tenantId = currentTenantId() ?? DEFAULT_TENANT_ID
+  try { await bindToken(p.token, { tenantId, resourceType: 'client-portal', resourceId: p.token }) } catch { /* conflict */ }
 }
 
 export async function deleteClientPortal(token: string): Promise<void> {
   await redis.del(KEY(token))
   await redis.zrem(KEY_INDEX, token)
+  await revokeTokenBinding(token)   // the capability dies with the resource
 }
 
 export async function listClientPortals(limit = 200): Promise<ClientPortal[]> {
