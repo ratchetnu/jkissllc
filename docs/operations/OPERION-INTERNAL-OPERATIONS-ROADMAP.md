@@ -19,9 +19,10 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
 - Booking status transitions are governed by one authoritative matrix in
   `app/lib/booking-status.ts`; all eleven mutation sites route through `canTransition`
   and fail closed on an illegal pair.
-- Current PR #128 candidate: **2856/2856 tests passing**; TypeScript passes; ESLint has
-  zero errors and one pre-existing warning in untouched `pay-statements.ts`. Exact-SHA
-  CI and Preview provenance remain required before merge.
+- PR #128 correction head: **2856/2856 tests passing** with exact-SHA CI and Preview
+  provenance. A separate stacked Sprint 2 closeout candidate adds explicit dispatch
+  readiness and currently passes **2867/2867** tests, TypeScript, and lint with zero
+  errors (one pre-existing warning in untouched `pay-statements.ts`).
 - `BOOKING_ASSIGNMENT_ENABLED` is **false in Production**. The whole Sprint 1 feature set is
   merged and Preview-validated but not yet serving; enabling it is a separate owner decision.
 
@@ -126,6 +127,11 @@ remains inactive.
   routes and route types remain compatible.
 - Admin confirmation refuses a route that explicitly requires equipment but has none.
   Crew acceptance remains separate from owner-controlled dispatch readiness.
+- The stacked closeout stores `dispatchReadiness` independently from route status,
+  distinguishes crew/equipment/closed states, and stamps real readiness transitions.
+  Owner assignment texts fail closed while required equipment is missing; crew may
+  still accept an existing link and sees a clear “confirmed—waiting on equipment”
+  message. The owner route screen now exposes the opt-in requirement control.
 - A protected route auto-cancel endpoint exists for routes that reach their Central-time
   route day with no crew. It is fail-closed on incomplete scans, rechecks full eligibility
   under the route lock, and records one attributed lifecycle event.
@@ -137,9 +143,7 @@ remains inactive.
 **Remaining before Sprint 2 closes:**
 
 - Independent delta review and merge decision for PR #128.
-- Issue #129: make dispatch readiness an explicit workflow state instead of only a
-  derived signal, then gate dispatch actions consistently.
-- Add the owner-facing control for whether a route requires company vehicle/equipment.
+- Independent review and merge decision for the stacked issue #129 closeout.
 - Design and verify complete tenant fan-out before scheduling the cancellation endpoint.
 - Run Preview-only dry reports across representative route days before any separate
   activation proposal.
@@ -243,8 +247,8 @@ Finish Sprint 2 safely before opening a broad Sprint 3 implementation:
 
 1. Complete the independent delta review of PR #128 and merge only if its exact head,
    CI, and Preview provenance remain clean.
-2. Implement issue #129's explicit dispatch-readiness state and the owner-facing
-   vehicle/equipment requirement control.
+2. Review and merge the stacked issue #129 closeout only after exact-head CI and
+   Preview provenance pass.
 3. Keep route auto-cancellation unscheduled and flag-off until complete tenant fan-out
    and multiple Preview dry reports are approved.
 4. Make the separate owner decision on `BOOKING_ASSIGNMENT_ENABLED`; updating this

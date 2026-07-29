@@ -514,8 +514,10 @@ test('CREW ROLLUP INVARIANT: assigning equipment clears the block', () => {
   assert.ok(!detectConflicts([item]).some(c => c.type === 'missing_vehicle'))
 })
 
-test('a route with NO requirement is always dispatch-ready', () => {
+test('a crew-confirmed route with NO equipment requirement is dispatch-ready', () => {
   const r = crewed()
+  r.assignees![0].confirmedAt = Date.now()
+  syncLead(r)
   assert.equal(isDispatchReady(r), true)
   assert.equal(routeToScheduleItem(r).dispatchReady, true)
   assert.ok(!routeToScheduleItem(r).attention.includes('blocked_dispatch'))
