@@ -1,6 +1,9 @@
 import { redis } from './redis'
 import { timeStage } from './observability/pipeline-trace'
 import { maintainDueIndex } from './ai-due-index'
+import { bindToken } from './platform/tenancy/token-binding'
+import { currentTenantId } from './platform/tenancy/context'
+import { DEFAULT_TENANT_ID } from './platform/tenancy/types'
 import { optimisticUpdate, type Mutate, type UpdateOutcome } from './booking-concurrency'
 import { withLock, type KvLock } from './kv-lock'
 import type { JobAssignee } from './job-assignment'
@@ -558,7 +561,25 @@ export async function saveBooking(b: Booking): Promise<void> {
     // (Phase 2, flag-gated + fail-soft; a complete no-op when off). Centralized here
     // — the single booking write path — so every job transition is captured once.
     await maintainDueIndex(b)
+    // Wave 6C: bind this booking's PUBLIC token to the tenant that owns it, in the
+    // platform-global index. Written here — the single booking write path — so every
+    // token that exists has a binding from the moment it does. Without it a customer
+    // link cannot be attributed to a tenant and, under tenancy, fails closed.
+    // Fail-soft: the binding is a lookup aid, and losing it must never fail the write
+    // that created the booking. The backfill repairs anything missed.
+    await bindBookingToken(b.token)
   })
+}
+
+/** Bind a booking token to the ACTIVE tenant. Fail-soft by design (see saveBooking). */
+async function bindBookingToken(token: string): Promise<void> {
+  try {
+    const tenantId = currentTenantId() ?? DEFAULT_TENANT_ID
+    await bindToken(token, { tenantId, resourceType: 'booking', resourceId: token })
+  } catch {
+    // A conflict here means the token is already owned by ANOTHER tenant. Refusing to
+    // overwrite is the correct outcome; the write itself still stands.
+  }
 }
 
 // ── Protected write paths (per-booking concurrency control) ──────────────────
