@@ -151,6 +151,36 @@ test('a route cancellation failure prevents the client from being hidden and lea
   assert.equal(f.routes.find(r => r.token === 'future-assigned')?.status, 'assigned')
 })
 
+test('an incomplete route scan refuses to archive instead of silently claiming all work was cancelled', async () => {
+  const f = fixture()
+  const result = await endBusinessContract(input({ routeScanLimit: 2 }), f.deps)
+
+  assert.equal(result.ok, false)
+  assert.match(result.incompleteReason ?? '', /completeness cannot be proven/)
+  assert.equal(f.savedBusinesses.length, 0)
+  assert.equal(f.cancelled.length, 0, 'no partial route cancellation begins from an incomplete inventory')
+})
+
+test('a recurring-schedule store failure is a structured retryable refusal, not an unhandled error', async () => {
+  const f = fixture()
+  f.deps.saveTemplate = async changed => {
+    if (changed.id === 'active') throw new Error('store unavailable')
+  }
+
+  const result = await endBusinessContract(input(), f.deps)
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.failedTemplates, ['active'])
+  assert.equal(f.cancelled.length, 0, 'routes remain untouched until every schedule is safely paused')
+  assert.equal(f.savedBusinesses.length, 0)
+})
+
+test('a malformed legacy route with no business name cannot crash the sweep', async () => {
+  const f = fixture()
+  f.routes.push({ ...route('legacy', 'assigned', '2026-07-30'), businessName: undefined } as unknown as RouteRecord)
+  await assert.doesNotReject(() => endBusinessContract(input(), f.deps))
+  assert.equal(f.routes.find(r => r.token === 'legacy')?.status, 'assigned')
+})
+
 test('a second sweep catches a future route created by an already in-flight generator', async () => {
   const f = fixture()
   const originalList = f.deps.listRoutes
@@ -218,4 +248,6 @@ test('API requires all three mutation permissions and the UI exposes end/restore
   assert.match(detail, /Completed work, invoices, pay, and claims will stay in history/)
   assert.match(list, /Show ended contracts/)
   assert.match(list, /showEnded \|\| !endedKeys\.has\(g\.bizKey\)/)
+  assert.match(api, /routeScanLimit: 2000/)
+  assert.match(api, /listRoutes\(2001\)/)
 })

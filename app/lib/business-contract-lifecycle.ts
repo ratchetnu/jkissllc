@@ -15,6 +15,7 @@ export type EndContractInput = {
   now: number
   today: string
   actor: Actor
+  routeScanLimit?: number
 }
 
 export type EndContractResult = {
@@ -23,6 +24,8 @@ export type EndContractResult = {
   cancelledRouteCount: number
   pausedTemplateCount: number
   failedRoutes: string[]
+  failedTemplates: string[]
+  incompleteReason?: string
 }
 
 export type BusinessContractDeps = {
@@ -34,7 +37,7 @@ export type BusinessContractDeps = {
   saveTemplate: (template: RouteTemplate) => Promise<void>
 }
 
-const sameBusiness = (name: string, key: string) => bizKey(name) === key
+const sameBusiness = (name: unknown, key: string) => typeof name === 'string' && bizKey(name) === key
 
 export function isFutureContractRoute(route: RouteRecord, businessKey: string, today: string): boolean {
   return sameBusiness(route.businessName, businessKey)
@@ -62,19 +65,42 @@ export async function endBusinessContract(input: EndContractInput, deps: Busines
 
   const matchingTemplates = templates.filter(t => t.active && sameBusiness(t.businessName, input.businessKey))
   let pausedTemplateCount = 0
+  const failedTemplates: string[] = []
   for (const template of matchingTemplates) {
-    await deps.saveTemplate({ ...template, active: false })
-    pausedTemplateCount++
+    try {
+      await deps.saveTemplate({ ...template, active: false })
+      pausedTemplateCount++
+    } catch {
+      failedTemplates.push(template.label || template.id)
+    }
+  }
+  if (failedTemplates.length) {
+    return { ok: false, cancelledRouteCount: 0, pausedTemplateCount, failedRoutes: [], failedTemplates }
   }
 
   let cancelledRouteCount = 0
   const failedRoutes = new Set<string>()
+  const scanLimit = input.routeScanLimit ?? Number.MAX_SAFE_INTEGER
+  const scan = async (): Promise<{ routes: RouteRecord[]; incompleteReason?: string }> => {
+    const routes = await deps.listRoutes()
+    if (routes.length > scanLimit) {
+      return {
+        routes,
+        incompleteReason: `More than ${scanLimit.toLocaleString('en-US')} operations exist; completeness cannot be proven.`,
+      }
+    }
+    return { routes }
+  }
 
   // Read routes only after schedules are paused. Re-check once more after the
   // first sweep so a generator that was already in flight cannot leave a late
   // route alive behind an archived contract.
   for (let sweep = 0; sweep < 2; sweep++) {
-    const matchingRoutes = (await deps.listRoutes()).filter(r => isFutureContractRoute(r, input.businessKey, input.today))
+    const scanned = await scan()
+    if (scanned.incompleteReason) {
+      return { ok: false, cancelledRouteCount, pausedTemplateCount, failedRoutes: [], failedTemplates: [], incompleteReason: scanned.incompleteReason }
+    }
+    const matchingRoutes = scanned.routes.filter(r => isFutureContractRoute(r, input.businessKey, input.today))
     if (!matchingRoutes.length) break
     for (const route of matchingRoutes) {
       try {
@@ -86,10 +112,14 @@ export async function endBusinessContract(input: EndContractInput, deps: Busines
     }
   }
 
-  const stillLive = (await deps.listRoutes()).filter(r => isFutureContractRoute(r, input.businessKey, input.today))
+  const finalScan = await scan()
+  if (finalScan.incompleteReason) {
+    return { ok: false, cancelledRouteCount, pausedTemplateCount, failedRoutes: [], failedTemplates: [], incompleteReason: finalScan.incompleteReason }
+  }
+  const stillLive = finalScan.routes.filter(r => isFutureContractRoute(r, input.businessKey, input.today))
   for (const route of stillLive) failedRoutes.add(route.routeNumber)
   if (failedRoutes.size) {
-    return { ok: false, cancelledRouteCount, pausedTemplateCount, failedRoutes: [...failedRoutes] }
+    return { ok: false, cancelledRouteCount, pausedTemplateCount, failedRoutes: [...failedRoutes], failedTemplates: [] }
   }
 
   const pricingWasActive = existing?.pricingActive ?? existing?.contractRateCents !== undefined
@@ -136,7 +166,7 @@ export async function endBusinessContract(input: EndContractInput, deps: Busines
       : appendContractEvent(existing?.contractHistory, event),
   }
   await deps.saveBusiness(business)
-  return { ok: true, business, cancelledRouteCount, pausedTemplateCount, failedRoutes: [] }
+  return { ok: true, business, cancelledRouteCount, pausedTemplateCount, failedRoutes: [], failedTemplates: [] }
 }
 
 export async function reopenBusinessContract(

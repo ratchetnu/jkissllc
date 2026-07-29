@@ -155,12 +155,16 @@ export const PATCH = withTenantRoute(async (req: NextRequest) => {
     now,
     today,
     actor: who,
+    routeScanLimit: 2000,
   }
 
   const result = await endBusinessContract(input, {
     getBusiness,
     saveBusiness,
-    listRoutes: () => listRoutes(1000),
+    // Fetch one beyond the supported completeness boundary. If the extra record
+    // exists, the lifecycle service refuses to archive instead of silently
+    // leaving older live work behind an ended contract.
+    listRoutes: () => listRoutes(2001),
     listTemplates: () => listTemplates(500),
     saveTemplate,
     cancelRoute: async (token, contractInput) => {
@@ -181,8 +185,12 @@ export const PATCH = withTenantRoute(async (req: NextRequest) => {
   })
 
   if (!result.ok) {
+    const error = result.incompleteReason
+      ?? (result.failedTemplates.length
+        ? `The contract was not archived because ${result.failedTemplates.length} recurring schedule${result.failedTemplates.length === 1 ? '' : 's'} could not be paused. Retry to finish.`
+        : `The contract was not archived because ${result.failedRoutes.length} operation${result.failedRoutes.length === 1 ? '' : 's'} could not be cancelled. Retry to finish.`)
     return NextResponse.json({
-      error: `The contract was not archived because ${result.failedRoutes.length} operation${result.failedRoutes.length === 1 ? '' : 's'} could not be cancelled. Retry to finish.`,
+      error,
       ...result,
     }, { status: 409 })
   }
