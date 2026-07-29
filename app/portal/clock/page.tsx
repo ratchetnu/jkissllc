@@ -1,8 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Clock, MapPin, AlertTriangle, CheckCircle2, Navigation } from 'lucide-react'
+import { Clock, MapPin, AlertTriangle, CheckCircle2, Navigation, WifiOff } from 'lucide-react'
 import { mapsUrl, fmtLongDay } from '../ui'
+import { fetchWithRetry } from '../network'
+import { useConnectivity } from '../useConnectivity'
 
 type Phase = 'not_started' | 'clocked_in' | 'clocked_out'
 type Clockable = {
@@ -41,40 +43,63 @@ function Timeclock() {
   const [busy, setBusy] = useState('') // assigneeToken currently punching
   const [err, setErr] = useState('')
   const [note, setNote] = useState('')
+  const [networkMsg, setNetworkMsg] = useState('')
+  const { offline } = useConnectivity()
 
   const load = useCallback(async () => {
     try {
-      const d = await fetch('/api/portal/clock', { credentials: 'same-origin' }).then((r) => r.json())
+      const res = await fetchWithRetry(
+        '/api/portal/clock',
+        { credentials: 'same-origin' },
+        { onRetry: () => setNetworkMsg('Connection is shaky — retrying…') },
+      )
+      if (!res.ok) throw new Error('clock_load_failed')
+      const d = await res.json()
       setEnabled(!!d.enabled)
       setRoutes(d.routes ?? [])
+      setErr('')
+      setNetworkMsg('')
     } catch {
-      setEnabled(true)
-      setRoutes([])
+      setEnabled(current => current ?? true)
+      setRoutes(current => current ?? [])
+      setErr('Could not load the timeclock. Check your connection and try again.')
     }
   }, [])
   useEffect(() => {
-    load()
-  }, [load])
+    if (!offline) void load()
+  }, [offline, load])
 
   async function punch(r: Clockable, action: 'clock_in' | 'clock_out') {
+    if (offline) {
+      setErr('You’re offline. Reconnect before clocking in or out.')
+      return
+    }
     setErr('')
     setNote('')
+    setNetworkMsg('')
     setBusy(r.assigneeToken)
     try {
       const pos = await getPosition()
-      const res = await fetch('/api/portal/clock', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({
-          action,
-          token: r.assigneeToken,
-          lat: pos?.lat,
-          lng: pos?.lng,
-          accuracy: pos?.accuracy,
-          locationDenied: pos === null,
-        }),
-      })
+      const res = await fetchWithRetry(
+        '/api/portal/clock',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            action,
+            token: r.assigneeToken,
+            lat: pos?.lat,
+            lng: pos?.lng,
+            accuracy: pos?.accuracy,
+            locationDenied: pos === null,
+          }),
+        },
+        {
+          allowMutationRetry: action === 'clock_in' || action === 'clock_out',
+          onRetry: () => setNetworkMsg('Connection dropped — retrying this punch safely…'),
+        },
+      )
       const d = await res.json()
       if (!res.ok || !d.ok) {
         setErr(d.error ?? 'Could not clock — please try again.')
@@ -85,6 +110,7 @@ function Timeclock() {
     } catch {
       setErr('Connection error — try again.')
     } finally {
+      setNetworkMsg('')
       setBusy('')
     }
   }
@@ -98,6 +124,13 @@ function Timeclock() {
           verify you were on-site — if your phone blocks location, the time is still saved.
         </p>
       </div>
+
+      {offline && (
+        <div role="status" className="os-card" style={{ padding: '11px 13px', display: 'flex', gap: 9, alignItems: 'center', color: '#fcd34d', border: '1px solid rgba(245,158,11,.35)' }}>
+          <WifiOff size={16} /> <span style={{ fontSize: 13 }}>You’re offline. Reconnect before clocking in or out.</span>
+        </div>
+      )}
+      {networkMsg && <p role="status" aria-live="polite" style={{ color: '#fcd34d', fontSize: 13 }}>{networkMsg}</p>}
 
       {enabled === false && (
         <div className="os-card" style={{ padding: 18, display: 'flex', gap: 11, alignItems: 'flex-start' }}>
@@ -168,14 +201,14 @@ function Timeclock() {
             )}
 
             {r.phase === 'not_started' && (
-              <button onClick={() => punch(r, 'clock_in')} disabled={punching} className="os-tap"
-                style={{ width: '100%', padding: '13px', borderRadius: 12, border: '1px solid rgba(34,197,94,.4)', background: 'rgba(34,197,94,.1)', color: '#22c55e', fontWeight: 800, fontSize: 14.5, cursor: 'pointer', opacity: punching ? 0.7 : 1 }}>
+              <button onClick={() => punch(r, 'clock_in')} disabled={punching || offline} className="os-tap"
+                style={{ width: '100%', padding: '13px', borderRadius: 12, border: '1px solid rgba(34,197,94,.4)', background: 'rgba(34,197,94,.1)', color: '#22c55e', fontWeight: 800, fontSize: 14.5, cursor: punching || offline ? 'not-allowed' : 'pointer', opacity: punching || offline ? 0.6 : 1 }}>
                 {punching ? 'Locating…' : 'Clock In'}
               </button>
             )}
             {r.phase === 'clocked_in' && (
-              <button onClick={() => punch(r, 'clock_out')} disabled={punching} className="os-tap"
-                style={{ width: '100%', padding: '13px', borderRadius: 12, border: '1px solid rgba(224,0,42,.4)', background: 'rgba(224,0,42,.1)', color: '#ff6680', fontWeight: 800, fontSize: 14.5, cursor: 'pointer', opacity: punching ? 0.7 : 1 }}>
+              <button onClick={() => punch(r, 'clock_out')} disabled={punching || offline} className="os-tap"
+                style={{ width: '100%', padding: '13px', borderRadius: 12, border: '1px solid rgba(224,0,42,.4)', background: 'rgba(224,0,42,.1)', color: '#ff6680', fontWeight: 800, fontSize: 14.5, cursor: punching || offline ? 'not-allowed' : 'pointer', opacity: punching || offline ? 0.6 : 1 }}>
                 {punching ? 'Locating…' : 'Clock Out'}
               </button>
             )}

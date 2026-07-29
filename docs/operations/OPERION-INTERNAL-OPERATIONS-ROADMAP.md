@@ -19,12 +19,16 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
 - Booking status transitions are governed by one authoritative matrix in
   `app/lib/booking-status.ts`; all eleven mutation sites route through `canTransition`
   and fail closed on an illegal pair.
-- PR #128 correction head: **2856/2856 tests passing** with exact-SHA CI and Preview
-  provenance. A separate stacked Sprint 2 closeout candidate adds explicit dispatch
-  readiness and currently passes **2867/2867** tests, TypeScript, and lint with zero
-  errors (one pre-existing warning in untouched `pay-statements.ts`).
-- `BOOKING_ASSIGNMENT_ENABLED` is **false in Production**. The whole Sprint 1 feature set is
-  merged and Preview-validated but not yet serving; enabling it is a separate owner decision.
+- Sprint 2 code is merged through PRs #128 and #130. Schedule scoping, explicit
+  dispatch readiness, and the owner-side vehicle rule are now on `main`; automatic
+  route cancellation remains flag-off and unscheduled.
+- Sprint 3 construction is in review in PR #131 with a bounded, retry-safe
+  weak-network layer for crew job reads, accept/decline, and clock punches.
+- The integrated Sprint 3 candidate passes **2877/2877 tests**, TypeScript, and lint
+  with zero errors (one pre-existing warning in untouched `pay-statements.ts`).
+- A Production `BOOKING_ASSIGNMENT_ENABLED` variable exists, but its encrypted value
+  has not been independently confirmed in this sprint. Activation status must be
+  verified explicitly before relying on it; no flag change is authorized here.
 
 ## Sprint 0 — Foundation cleanup
 
@@ -94,8 +98,9 @@ active funnel; `refunded` is absorbing. The matrix was derived from an audit of 
 pre-existing call sites, so every workflow that previously worked still does — what changed
 is that anything outside them is now refused rather than silently written.
 
-**Remaining before this sprint is in service:** enable `BOOKING_ASSIGNMENT_ENABLED` in
-Production. That is an owner decision and is deliberately not part of the closeout.
+**Production activation status:** independently confirm the encrypted
+`BOOKING_ASSIGNMENT_ENABLED` value. Any enable/disable change remains an owner decision
+and is deliberately not part of this closeout.
 
 **Verification:** assignment and conflict tests; authorization tests; duplicate-action idempotency; real mobile crew flow; mixed route/booking pay statement fixture; Preview data inspection.
 
@@ -105,8 +110,7 @@ Production. That is an owner decision and is deliberately not part of the closeo
 
 **Objective:** Give dispatch one simple daily view for bookings, routes, crew, equipment, conflicts, and work requiring attention.
 
-**Status:** In progress. PR #128 is open and unmerged; automatic route cancellation
-remains inactive.
+**Status:** Complete (code); route auto-cancellation activation remains separately gated.
 
 **Affected files/components:**
 
@@ -140,10 +144,8 @@ remains inactive.
 - Tenancy-enabled execution remains blocked until a complete tenant registry can be
   proven; the job will not sweep one tenant and claim platform-wide success.
 
-**Remaining before Sprint 2 closes:**
+**Remaining before automatic route cancellation can be activated:**
 
-- Independent delta review and merge decision for PR #128.
-- Independent review and merge decision for the stacked issue #129 closeout.
 - Design and verify complete tenant fan-out before scheduling the cancellation endpoint.
 - Run Preview-only dry reports across representative route days before any separate
   activation proposal.
@@ -156,6 +158,8 @@ remains inactive.
 
 **Objective:** Make the crew portal dependable in a truck or at a job site, including weak-network behavior.
 
+**Status:** In progress.
+
 **Affected files/components:**
 
 - `app/portal/*`
@@ -165,6 +169,31 @@ remains inactive.
 - client-side pending-action storage/queue
 
 **Dependencies:** Sprint 1 state matrix and Sprint 0 isolated upload transport.
+
+**Current implementation:**
+
+- My Jobs, booking-job details, and the shared timeclock detect offline state,
+  preserve already-loaded details, reload after reconnect, and show a real retry action.
+- Reads retry a bounded three times on dropped connections and transient HTTP failures.
+- Accept, decline, clock-in, and clock-out use the same bounded retry because their
+  server mutators are already idempotent; an unknown first response cannot create a
+  duplicate event or punch on retry.
+- Completion proof is deliberately excluded from automatic mutation retry until its
+  audit event has a request-level dedupe key.
+- No punch is stored for later delivery: replaying a payroll action after reconnect
+  would incorrectly stamp server receipt time as work time. Offline punches fail
+  visibly instead of silently changing the time.
+
+**Remaining before Sprint 3 closes:**
+
+- Add request-level idempotency for completion proof, then provide explicit photo
+  upload retry that preserves selected files while the page remains open.
+- Apply the same connection-state treatment to the legacy public route-confirmation
+  surface or retire that split surface in favor of the portal.
+- Verify accept/decline, punches, duplicate taps, and photo recovery at
+  320/375/390/430 px on representative iPhone and Android browsers.
+- Run an authenticated Preview mobile flow with forced request interruption and
+  inspect the resulting audit history for exactly-once events.
 
 **Verification:** iPhone and Android widths; accept/decline; clock in/out; retry after network interruption; duplicate taps; photo retry; assigned-only authorization; no pricing/internal-note leakage.
 
@@ -243,16 +272,12 @@ remains inactive.
 
 ## Immediate next action
 
-Finish Sprint 2 safely before opening a broad Sprint 3 implementation:
-
-1. Complete the independent delta review of PR #128 and merge only if its exact head,
-   CI, and Preview provenance remain clean.
-2. Review and merge the stacked issue #129 closeout only after exact-head CI and
-   Preview provenance pass.
-3. Keep route auto-cancellation unscheduled and flag-off until complete tenant fan-out
-   and multiple Preview dry reports are approved.
-4. Make the separate owner decision on `BOOKING_ASSIGNMENT_ENABLED`; updating this
-   roadmap or merging Sprint 2 work does not authorize Production activation.
-
-Once those Sprint 2 gates are closed, Sprint 3's crew mobile reliability work is the next
-construction milestone.
+1. Complete the independent review of PR #131 against the merged Sprint 2 baseline.
+2. Add request-level idempotency for completion proof and an explicit in-page photo
+   retry that never invents a field-work timestamp.
+3. Run the authenticated Preview mobile interruption/reconnect flow at representative
+   phone widths and inspect audit history for exactly-once events.
+4. Keep route auto-cancellation unscheduled and flag-off pending tenant fan-out and
+   Preview dry reports.
+5. Confirm the current Production `BOOKING_ASSIGNMENT_ENABLED` value; do not change it
+   until the owner approves the separate activation or rollback plan.
