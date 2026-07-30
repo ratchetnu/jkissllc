@@ -25,7 +25,7 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
 - Sprint 3 weak-network handling is merged through PR #131. Crew job reads,
   accept/decline, and clock punches now have bounded, retry-safe behavior; the
   completion-proof idempotency and visible photo-retry increment is the next review.
-- The integrated Sprint 3 candidate passes **2882/2882 tests**, TypeScript, and lint
+- The integrated Sprint 3 candidate passes **2889/2889 tests**, TypeScript, and lint
   with zero errors (one pre-existing warning in untouched `pay-statements.ts`).
 - A Production `BOOKING_ASSIGNMENT_ENABLED` variable exists, but its encrypted value
   has not been independently confirmed in this sprint. Activation status must be
@@ -191,12 +191,14 @@ and is deliberately not part of this closeout.
 - The job screen keeps selected files and each successful Blob URL in page memory
   after a failed attempt, then offers a visible 44 px **Retry upload** action. It
   retries only unfinished files and reuses the original completion request ID.
-- A pending attempt is IMMUTABLE. While photos are pending, the dispatch note and the
-  file picker are disabled, so a crew member cannot make an edit that looks accepted
-  and is then dropped when the original request id is replayed, and cannot abandon
-  Blob URLs that already uploaded. **Retry upload** stays live throughout. The note
-  and picker are restored only on success or on page navigation, and the retry card
-  says so.
+- A pending attempt is IMMUTABLE. While photos are pending, the dispatch note is
+  read-only and the file picker is disabled, so a crew member cannot make an edit that
+  looks accepted and is then dropped when the original request id is replayed, and
+  cannot abandon Blob URLs that already uploaded. The note stays focusable and keeps
+  its accessible name, and both controls are described by an always-rendered
+  explanation of the lock. **Retry upload** stays available whenever online and no
+  action is in flight. The note and picker are restored only on success or on page
+  navigation, and the retry card says so.
 - No punch is stored for later delivery: replaying a payroll action after reconnect
   would incorrectly stamp server receipt time as work time. Offline punches fail
   visibly instead of silently changing the time.

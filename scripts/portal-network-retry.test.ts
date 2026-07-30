@@ -124,8 +124,9 @@ test('a pending completion attempt is immutable: note and picker lock, Retry sta
   const src = readFileSync(new URL('../app/portal/jobs/[id]/JobDetailClient.tsx', import.meta.url), 'utf8')
 
   assert.match(src, /const photosPending = pendingPhotoCount > 0/)
-  // The note cannot be edited into a pending attempt it will never reach.
-  assert.match(src, /<textarea[\s\S]*?disabled=\{photosPending\}/)
+  // The note cannot be edited into a pending attempt it will never reach. readOnly,
+  // NOT disabled — see the accessibility test below.
+  assert.match(src, /<textarea[\s\S]*?readOnly=\{photosPending\}/)
   // A replacement file set cannot abandon already-uploaded Blob URLs.
   assert.match(src, /disabled=\{actionDisabled \|\| photosPending\}/)
   assert.match(src, /if \(pendingCompletionRef\.current\) return/)
@@ -135,11 +136,39 @@ test('a pending completion attempt is immutable: note and picker lock, Retry sta
   assert.match(retryButton.slice(0, 200), /disabled=\{actionDisabled\}/)
   assert.doesNotMatch(retryButton.slice(0, 200), /photosPending/)
 
-  // The locked state names its own way out.
-  assert.match(src, /Reload the page to start over with different photos/)
-
   // Success is still the thing that unlocks the controls.
   assert.match(src, /setPendingPhotoCount\(0\)/)
+})
+
+test('the locked note stays focusable and both locked controls are described', () => {
+  const src = readFileSync(new URL('../app/portal/jobs/[id]/JobDetailClient.tsx', import.meta.url), 'utf8')
+
+  // `disabled` on the note would drop it out of the tab order and strip its
+  // interactive affordance from the accessibility tree, leaving a screen-reader user
+  // with a field that silently vanished. readOnly refuses edits without that cost.
+  const textarea = src.slice(src.indexOf('<textarea'), src.indexOf('/>', src.indexOf('<textarea')))
+  assert.match(textarea, /readOnly=\{photosPending\}/)
+  assert.doesNotMatch(textarea, /disabled=/, 'the note must never be `disabled`')
+  assert.match(textarea, /aria-label="Note for dispatch"/, 'accessible name is preserved')
+
+  // One shared id, and BOTH locked controls point at it.
+  assert.match(src, /const PENDING_LOCK_ID = '([a-z-]+)'/)
+  const lockId = /const PENDING_LOCK_ID = '([a-z-]+)'/.exec(src)![1]
+  assert.match(textarea, /aria-describedby=\{photosPending \? PENDING_LOCK_ID : undefined\}/)
+  const fileInput = src.slice(src.indexOf('type="file"'), src.indexOf('</label>', src.indexOf('type="file"')))
+  assert.match(fileInput, /aria-describedby=\{photosPending \? PENDING_LOCK_ID : undefined\}/)
+
+  // The description element really carries that id, and is rendered on `photosPending`
+  // ALONE — never gated on photoRetryReady, or the very first in-flight upload would
+  // lock both controls with nothing explaining why.
+  assert.match(src, /\{photosPending && \(\s*<p id=\{PENDING_LOCK_ID\}/)
+  assert.doesNotMatch(src, /photoRetryReady && [\s\S]{0,80}id=\{PENDING_LOCK_ID\}/)
+  assert.ok(lockId.length > 0, 'lock id is a non-empty literal')
+
+  // The description is accurate: it must not promise the files survive a reload.
+  assert.match(src, /locked to the pending upload and will be sent with it/)
+  assert.match(src, /Reload the page to start over/)
+  assert.doesNotMatch(src, /saved for later|will be sent when|resume after reload/i)
 })
 
 test('both crew action screens visibly fail closed while offline', () => {

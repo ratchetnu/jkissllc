@@ -72,6 +72,10 @@ const bigBtn = (tone: string): React.CSSProperties => ({
 
 const RETRY_SAFE_ACTIONS = new Set(['accept', 'decline', 'clock_in', 'clock_out'])
 
+// One id, shared by the read-only note and the locked picker via aria-describedby,
+// so the element that explains the lock is the same element both controls point at.
+const PENDING_LOCK_ID = 'completion-pending-lock'
+
 function JobDetail({ id }: { id: string }) {
   const [job, setJob] = useState<Job | null>(null)
   const [loading, setLoading] = useState(true)
@@ -389,10 +393,26 @@ function JobDetail({ id }: { id: string }) {
             </div>
           )}
 
+          {/* readOnly, NOT disabled. `disabled` drops the field out of the tab order
+              and strips its interactive affordance from the accessibility tree, so a
+              screen-reader user would find the note simply gone with no explanation.
+              readOnly keeps it focusable, announced, and readable while still
+              refusing edits — and the PENDING_LOCK_ID paragraph below says why. */}
           <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
-            disabled={photosPending}
+            readOnly={photosPending}
+            aria-describedby={photosPending ? PENDING_LOCK_ID : undefined}
             placeholder="Anything dispatch should know?" aria-label="Note for dispatch"
             style={{ background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 10, padding: 10, fontSize: 13.5, color: 'var(--text)', resize: 'vertical', opacity: photosPending ? .55 : 1, cursor: photosPending ? 'not-allowed' : 'auto' }} />
+
+          {/* ALWAYS rendered while an attempt is pending — deliberately not gated on
+              `photoRetryReady`, so the lock is explained during the first in-flight
+              upload too, not only after a failure. */}
+          {photosPending && (
+            <p id={PENDING_LOCK_ID} style={{ color: 'var(--muted)', fontSize: 12 }}>
+              This note and photo set are locked to the pending upload and will be sent with it.
+              Reload the page to start over with a different note or different photos.
+            </p>
+          )}
 
           {photoRetryReady && pendingPhotoCount > 0 && (
             <div role="status" style={{ padding: 12, borderRadius: 10, border: '1px solid rgba(245,158,11,.35)', background: 'rgba(245,158,11,.08)' }}>
@@ -404,12 +424,9 @@ function JobDetail({ id }: { id: string }) {
                 style={{ minHeight: 44, width: '100%', borderRadius: 10, border: '1px solid #f59e0b', background: 'rgba(245,158,11,.14)', color: '#fcd34d', fontWeight: 800, opacity: actionDisabled ? .55 : 1, cursor: actionDisabled ? 'not-allowed' : 'pointer' }}>
                 {busy === 'photos' ? 'Retrying…' : 'Retry upload'}
               </button>
-              {/* The note and the picker are locked to this attempt, so name the way
-                  out. Without this, an error that retrying cannot fix (an unconfigured
-                  Blob store) would read as a dead end. */}
-              <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 8 }}>
-                This note and photo set are locked to this attempt. Reload the page to start over with different photos.
-              </p>
+              {/* The way out of an unrecoverable attempt is named by the always-rendered
+                  lock description below the note — which is linked to both controls by
+                  aria-describedby — so it is deliberately not repeated here. */}
             </div>
           )}
 
@@ -426,6 +443,7 @@ function JobDetail({ id }: { id: string }) {
             <input ref={fileRef} type="file" accept="image/*" multiple capture="environment"
               aria-label="Add finished photos of this job" className="file-input-a11y"
               disabled={actionDisabled || photosPending}
+              aria-describedby={photosPending ? PENDING_LOCK_ID : undefined}
               onChange={e => void sendPhotos(e.target.files)} />
           </label>
 
