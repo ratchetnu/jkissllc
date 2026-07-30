@@ -27,6 +27,7 @@ import { buildPunchOverlapReport } from '../app/lib/timeclock/punch-overlap-scan
 import { saveRoute, type RouteRecord } from '../app/lib/routes'
 import { saveBooking, type Booking } from '../app/lib/bookings'
 import { runWithTenant } from '../app/lib/platform/tenancy/context'
+import { appendCorrection, punchId, validateCorrection } from '../app/lib/time-corrections'
 import { GET as overlapsGET } from '../app/api/admin/punch-overlaps/route'
 import { createUserSessionToken } from '../app/api/admin/_lib/session'
 import type { TimeEntry } from '../app/lib/timesheets'
@@ -402,6 +403,157 @@ test('EMPTY COPY: the page uses the helper at both sites, with no bare em-dash f
   assert.doesNotMatch(src, /\? fmtTs\([^)]*\) : '\u2014'/, 'no inline em-dash fallback left behind')
   assert.match(src, /No open punches in this scan\./)
   assert.match(src, /No overlapping intervals in this scan\./)
+})
+
+// ── corrections are projected onto the punches (#137 follow-up) ──────────────
+// The audit shipped reading RAW stamps: `selectTimeEntries` was called without a
+// corrections map, so a corrected punch still counted as open and overlaps were
+// computed from superseded times. The first correction ever applied in Production
+// exposed it. These pin the fix.
+
+/** Seed a correction the way the API does, so the store shape is real. */
+const correct = async (
+  workType: 'route' | 'booking', jobToken: string, staffId: string,
+  original: { clockInAt: number | null; clockOutAt: number | null },
+  correctedClockIn: number, correctedClockOut: number | null,
+) => {
+  const pid = punchId(workType, jobToken, staffId)
+  const v = validateCorrection(
+    { correctedClockIn, correctedClockOut, correctionReason: 'test correction' },
+    { effectiveClockIn: original.clockInAt, effectiveClockOut: original.clockOutAt },
+  )
+  assert.equal(v.ok, true, `seed correction must validate: ${JSON.stringify(v.ok ? null : v.errors)}`)
+  await appendCorrection({
+    punchId: pid, staffId, workType, jobToken, original,
+    value: (v as { ok: true; value: never }).value,
+    actor: { userId: 'u_test', role: 'admin' },
+  } as never)
+  return pid
+}
+
+const routeWith = (token: string, assignees: unknown[], over: Partial<RouteRecord> = {}) =>
+  route({ token, routeNumber: `JK-R-${token.slice(0, 3)}`, assignees, ...over } as unknown as Partial<RouteRecord>)
+
+test('CORRECTIONS: an open punch corrected to closed is no longer open', async () => {
+  await runWithTenant({ tenantId: 'jkiss' }, async () => {
+    await saveRoute(routeWith('c1'.padEnd(16, '0'), [
+      { name: 'Cor One', token: 'k1'.padEnd(16, '0'), staffId: 'sc1', confirmedAt: T0, clockInAt: T0 },
+    ]))
+    await correct('route', 'c1'.padEnd(16, '0'), 'sc1', { clockInAt: T0, clockOutAt: null }, T0, T0 + H)
+  })
+  const rep = await runWithTenant({ tenantId: 'jkiss' }, () => buildPunchOverlapReport(NOW))
+  assert.equal(rep.summary.punches.open, 0, 'the correction closed it')
+  assert.equal(rep.summary.punches.complete, 1)
+  assert.equal(rep.summary.openDuplicates.contractorsGlobal, 0)
+  assert.equal(rep.coverage.corrections.entriesCorrected, 1)
+  assert.ok(rep.coverage.corrections.punchIdsQueried >= 1)
+})
+
+test('CORRECTIONS: a correction that RESOLVES an overlap removes it', async () => {
+  await runWithTenant({ tenantId: 'jkiss' }, async () => {
+    // Raw stamps overlap: both 09:00-11:00 and 10:00-12:00 for one contractor.
+    await saveRoute(routeWith('c2'.padEnd(16, '0'), [
+      { name: 'Cor Two', token: 'k2'.padEnd(16, '0'), staffId: 'sc2', confirmedAt: T0, clockInAt: T0, clockOutAt: T0 + 2 * H },
+    ]))
+    await saveRoute(routeWith('c3'.padEnd(16, '0'), [
+      { name: 'Cor Two', token: 'k3'.padEnd(16, '0'), staffId: 'sc2', confirmedAt: T0, clockInAt: T0 + H, clockOutAt: T0 + 3 * H },
+    ]))
+    // Move the SECOND punch clear of the first.
+    await correct('route', 'c3'.padEnd(16, '0'), 'sc2',
+      { clockInAt: T0 + H, clockOutAt: T0 + 3 * H }, T0 + 5 * H, T0 + 6 * H)
+  })
+  const rep = await runWithTenant({ tenantId: 'jkiss' }, () => buildPunchOverlapReport(NOW))
+  assert.equal(rep.summary.overlaps.pairsGlobal, 0, 'raw stamps overlapped; effective times do not')
+  assert.equal(rep.coverage.corrections.entriesCorrected, 1)
+})
+
+test('CORRECTIONS: a correction that CREATES an overlap surfaces it', async () => {
+  await runWithTenant({ tenantId: 'jkiss' }, async () => {
+    // Raw stamps are far apart and do not overlap.
+    await saveRoute(routeWith('c4'.padEnd(16, '0'), [
+      { name: 'Cor Four', token: 'k4'.padEnd(16, '0'), staffId: 'sc4', confirmedAt: T0, clockInAt: T0, clockOutAt: T0 + H },
+    ]))
+    await saveRoute(routeWith('c5'.padEnd(16, '0'), [
+      { name: 'Cor Four', token: 'k5'.padEnd(16, '0'), staffId: 'sc4', confirmedAt: T0, clockInAt: T0 + 8 * H, clockOutAt: T0 + 9 * H },
+    ]))
+    // Drag the second punch back on top of the first.
+    await correct('route', 'c5'.padEnd(16, '0'), 'sc4',
+      { clockInAt: T0 + 8 * H, clockOutAt: T0 + 9 * H }, T0, T0 + H)
+  })
+  const rep = await runWithTenant({ tenantId: 'jkiss' }, () => buildPunchOverlapReport(NOW))
+  assert.equal(rep.summary.overlaps.pairsGlobal, 1, 'raw stamps did NOT overlap; effective times do')
+  assert.equal(rep.summary.overlaps.byPairKind['route/route'], 1)
+})
+
+test('CORRECTIONS: clock-in and clock-out move independently', async () => {
+  await runWithTenant({ tenantId: 'jkiss' }, async () => {
+    await saveRoute(routeWith('c6'.padEnd(16, '0'), [
+      { name: 'Cor Six', token: 'k6'.padEnd(16, '0'), staffId: 'sc6', confirmedAt: T0, clockInAt: T0, clockOutAt: T0 + H },
+    ]))
+    // Clock-in moved earlier, clock-out left where it was.
+    await correct('route', 'c6'.padEnd(16, '0'), 'sc6', { clockInAt: T0, clockOutAt: T0 + H }, T0 - 2 * H, T0 + H)
+  })
+  const rep = await runWithTenant({ tenantId: 'jkiss' }, () => buildPunchOverlapReport(NOW))
+  assert.equal(rep.summary.punches.complete, 1)
+  assert.equal(rep.summary.punches.open, 0)
+  assert.equal(rep.coverage.corrections.entriesCorrected, 1)
+
+  // Now the reverse: leave the in, extend the out.
+  await runWithTenant({ tenantId: 'jkiss' }, async () => {
+    await saveRoute(routeWith('c7'.padEnd(16, '0'), [
+      { name: 'Cor Seven', token: 'k7'.padEnd(16, '0'), staffId: 'sc7', confirmedAt: T0, clockInAt: T0, clockOutAt: null },
+    ]))
+    await correct('route', 'c7'.padEnd(16, '0'), 'sc7', { clockInAt: T0, clockOutAt: null }, T0, T0 + 4 * H)
+  })
+  const rep2 = await runWithTenant({ tenantId: 'jkiss' }, () => buildPunchOverlapReport(NOW))
+  assert.equal(rep2.summary.punches.open, 0, 'the previously-open punch is closed by its correction')
+})
+
+test('CORRECTIONS: booking punches are correction-adjusted too', async () => {
+  await runWithTenant({ tenantId: 'jkiss' }, async () => {
+    await saveBooking({
+      token: 'e'.repeat(64), bookingNumber: 'JK-B-COR', serviceType: 'junk_removal', status: 'confirmed',
+      customerName: 'Cust', createdAt: 1, updatedAt: 1, selectedDate: '2030-01-01',
+      assignees: [{ staffId: 'sb1', name: 'Book Crew', confirmedAt: T0, clockInAt: T0 }],
+    } as unknown as Booking)
+    await correct('booking', 'e'.repeat(64), 'sb1', { clockInAt: T0, clockOutAt: null }, T0, T0 + 2 * H)
+  })
+  const rep = await runWithTenant({ tenantId: 'jkiss' }, () => buildPunchOverlapReport(NOW))
+  assert.equal(rep.summary.punches.open, 0, 'the booking punch was closed by its correction')
+  assert.equal(rep.summary.punches.complete, 1)
+  assert.equal(rep.coverage.corrections.entriesCorrected, 1)
+})
+
+test('CORRECTIONS: with none present, behaviour is unchanged', async () => {
+  await runWithTenant({ tenantId: 'jkiss' }, () => saveRoute(routeWith('c8'.padEnd(16, '0'), [
+    { name: 'No Corr', token: 'k8'.padEnd(16, '0'), staffId: 'sc8', confirmedAt: T0, clockInAt: T0 },
+  ])))
+  const rep = await runWithTenant({ tenantId: 'jkiss' }, () => buildPunchOverlapReport(NOW))
+  assert.equal(rep.summary.punches.open, 1, 'a raw open punch is still open')
+  assert.equal(rep.coverage.corrections.entriesCorrected, 0)
+  assert.equal(rep.coverage.corrections.punchesWithCorrections, 0)
+  assert.ok(rep.coverage.corrections.punchIdsQueried >= 1, 'ids are still queried')
+})
+
+test('CORRECTIONS: punch ids cover EVERY assignee, not only those who punched', async () => {
+  await runWithTenant({ tenantId: 'jkiss' }, () => saveRoute(routeWith('c9'.padEnd(16, '0'), [
+    { name: 'Punched', token: 'k9'.padEnd(16, '0'), staffId: 'sp1', confirmedAt: T0, clockInAt: T0 },
+    { name: 'Never Punched', token: 'ka'.padEnd(16, '0'), staffId: 'sp2', confirmedAt: T0 },
+  ])))
+  const rep = await runWithTenant({ tenantId: 'jkiss' }, () => buildPunchOverlapReport(NOW))
+  // Both assignees are queried; a correction can CREATE an entry for the one who
+  // never punched, so narrowing the id set would hide exactly that case.
+  assert.equal(rep.coverage.corrections.punchIdsQueried, 2)
+})
+
+test('CORRECTIONS: a failed load THROWS — it never falls back to raw punches', () => {
+  const src = readFileSync(new URL('../app/lib/timeclock/punch-overlap-scan.ts', import.meta.url), 'utf8')
+  assert.match(src, /listCorrectionsForPunches\(punchIds\)/)
+  assert.match(src, /refusing to report raw punches/)
+  // The corrections map must reach selectTimeEntries as the 4th argument.
+  assert.match(src, /selectTimeEntries\(scan\.routes, bookingRecords, \{\}, corrections\)/)
+  // And there must be no catch that swallows the failure and continues.
+  assert.doesNotMatch(src, /catch[\s\S]{0,120}corrections = new Map/, 'no silent fallback')
 })
 
 // ── read-only ────────────────────────────────────────────────────────────────

@@ -43,6 +43,7 @@ type Report = {
   }
   coverage: {
     routes: Lane; bookings: Lane; authoritative: boolean
+    corrections: { punchIdsQueried: number; punchesWithCorrections: number; entriesCorrected: number }
     caps: { routeScanMax: number; routeAuditCap: number; routeEventCap: number; bookingEventCap: number; bookingPageSize: number; bookingMaxPages: number }
   }
 }
@@ -104,7 +105,8 @@ function PunchOverlaps() {
         </h1>
         <p style={{ ...note, marginTop: 5 }}>
           Does anyone hold two punches at once? Measurement only — nothing here changes a punch
-          or enforces a rule. Totals only; no crew, job, or location detail is shown.
+          or enforces a rule. Times are effective (correction-adjusted). Totals only; no crew,
+          job, or location detail is shown.
         </p>
       </div>
 
@@ -209,6 +211,13 @@ function PunchOverlaps() {
               <h2 style={h2}>Scan coverage</h2>
               <LaneRow label="Routes" lane={c.routes} />
               <LaneRow label="Bookings" lane={c.bookings} />
+              <p style={note}>
+                All times are <strong>effective</strong> — time corrections are projected onto every punch before
+                anything is counted, so a corrected punch is measured at its corrected times, not its raw stamps.
+                {' '}{num(c.corrections.entriesCorrected)} of {num(c.corrections.punchIdsQueried)} punch records
+                carry a correction ({num(c.corrections.punchesWithCorrections)} with history). If corrections cannot
+                be loaded this report fails rather than showing raw punches.
+              </p>
               <p style={note}>
                 Totals are {c.authoritative ? <strong>authoritative</strong> : <strong>lower bounds</strong>} — both
                 lanes must scan completely to be authoritative. Caps: route scan {num(c.caps.routeScanMax)},
