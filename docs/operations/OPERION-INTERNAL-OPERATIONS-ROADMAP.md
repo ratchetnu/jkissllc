@@ -23,13 +23,15 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
   dispatch readiness, and the owner-side vehicle rule are now on `main`; automatic
   route cancellation remains flag-off and unscheduled.
 - Sprint 3 weak-network handling is merged through PR #131. Crew job reads,
-  accept/decline, and clock punches now have bounded, retry-safe behavior; the
-  completion-proof idempotency and visible photo-retry increment is the next review.
-- The integrated Sprint 3 candidate passes **2889/2889 tests**, TypeScript, and lint
-  with zero errors (one pre-existing warning in untouched `pay-statements.ts`).
-- A Production `BOOKING_ASSIGNMENT_ENABLED` variable exists, but its encrypted value
-  has not been independently confirmed in this sprint. Activation status must be
-  verified explicitly before relying on it; no flag change is authorized here.
+  accept/decline, and clock punches now have bounded, retry-safe behavior.
+- Completion-proof idempotency and the visible photo-retry increment are merged through
+  PR #132, live in Production as deployment `dpl_DNUCzre3V7LEJJvCCTdYykdUtzGr`.
+- Sprint 3 on `main` passes **2889/2889 tests**, TypeScript, and lint with zero errors
+  (one pre-existing warning in untouched `pay-statements.ts`).
+- `BOOKING_ASSIGNMENT_ENABLED` is **Production ON, independently verified on 2026-07-29
+  through the route-gate probe**. The crew booking surface is serving, not dormant. See
+  [Production activation decision](#booking_assignment_enabled--production-activation-decision).
+  No flag change is authorized without owner approval.
 
 ## Sprint 0 — Foundation cleanup
 
@@ -77,7 +79,8 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
 
 **Dependencies:** Sprint 0; existing staff, equipment, schedule, and finance records.
 
-**Status:** Complete (code); awaiting Production activation.
+**Status:** Complete (code); **Production ON, independently verified on 2026-07-29 through
+the route-gate probe** — this surface is serving.
 
 **Completed work:**
 
@@ -99,9 +102,10 @@ active funnel; `refunded` is absorbing. The matrix was derived from an audit of 
 pre-existing call sites, so every workflow that previously worked still does — what changed
 is that anything outside them is now refused rather than silently written.
 
-**Production activation status:** independently confirm the encrypted
-`BOOKING_ASSIGNMENT_ENABLED` value. Any enable/disable change remains an owner decision
-and is deliberately not part of this closeout.
+**Production activation status:** `BOOKING_ASSIGNMENT_ENABLED` is **Production ON,
+independently verified on 2026-07-29 through the route-gate probe**. Any enable/disable
+change remains an owner decision — see
+[Production activation decision](#booking_assignment_enabled--production-activation-decision).
 
 **Verification:** assignment and conflict tests; authorization tests; duplicate-action idempotency; real mobile crew flow; mixed route/booking pay statement fixture; Preview data inspection.
 
@@ -287,14 +291,113 @@ and is deliberately not part of this closeout.
 
 **Difficulty:** High.
 
+## `BOOKING_ASSIGNMENT_ENABLED` — Production activation decision
+
+### Current state
+
+**Production ON, independently verified on 2026-07-29 through the route-gate probe.**
+
+- The Production variable was created **2026-07-26 23:28:22 UTC** by the **account owner**
+  (Vercel `OWNER` role), typed `sensitive`. `updatedAt` equals `createdAt` and `updatedBy`
+  is null, so it has **never been modified since creation** — activation happened at
+  creation, not by a later flip. The Preview variable was created ~3h48m earlier the same
+  day, consistent with a deliberate Preview-then-Production sequence.
+- The first Production deployment after the variable existed was **2026-07-27 00:13:25 UTC**
+  (`11a7a9d`); the deployment before it predates the variable by ~10 minutes. The surface
+  has therefore been serving for roughly **73 hours** as of this audit.
+- Current Production deployment: `dpl_DNUCzre3V7LEJJvCCTdYykdUtzGr` (merge commit
+  `7f0ecd2`, PR #132). `/api/health` returns `healthy` with a matching `build` field.
+
+**How the probe proves it.** In `app/api/portal/jobs/[id]/route.ts` and
+`app/api/portal/jobs/route.ts` the flag gate runs *before* `requireCrew`, and
+`withTenantRoute` performs no authentication of its own. `scripts/booking-assignment-flag-off.test.ts`
+pins that ordering: with the flag off an anonymous probe must get `404` — *"not 401 — the
+surface is absent, not protected."* An unauthenticated `GET /api/portal/jobs/<dummy>` on
+`www.jkissllc.com` returns **`401 {"error":"unauthorized"}`**, so the gate was passed and
+the flag is enabled. A genuinely absent route (`/api/definitely-not-a-route`) returns the
+HTML 404 page, which distinguishes all three states. The secret value is never read; only
+the flag's *effect* is observed. Note `jkissllc.com` 308-redirects to `www.jkissllc.com`.
+
+### Evidence of usage
+
+**Not measurable from outside Production — no usage claim is made here, in either
+direction.** What was attempted, read-only:
+
+- **Booking audit events** (`assignment.accepted` / `.declined` / `.clock_in` / `.clock_out`
+  / `.completion_recorded`) live in Production KV. Every Production KV credential —
+  including `KV_REST_API_READ_ONLY_TOKEN` — returns the literal placeholder `[SENSITIVE]`
+  from the CLI, so the ledger could not be read. `.env.local` points at a local Redis
+  (`127.0.0.1:6390`), not Production.
+- **Vercel runtime logs** are retained only for the current deployment (~1h at time of
+  audit); older Production deployments return empty. In that window the only
+  `/api/portal/*` requests were this audit's own probes, alongside cron traffic and one
+  `GET /`. That window is far too short to characterize 73 hours.
+- **Vercel usage API** reports team-level cost by service with no per-route breakdown.
+
+Consequence: **whether crew members have actually used this surface is unknown**, and
+nobody can answer it without an authenticated admin session or a Production KV read-only
+token. Closing that observability gap is the first keep-on criterion below.
+
+### Keep-on criteria
+
+1. Owner confirms the 2026-07-26 activation was **intentional**. The metadata shows the
+   owner created it directly, which is consistent with intent but does not prove it.
+2. An authenticated admin review of the booking audit ledger shows assignment/clock/
+   completion events are well-formed and free of duplicates — the exactly-once property
+   PR #132 hardened, observed on real data rather than fixtures.
+3. No customer-visible defect attributable to the crew surface (stale crew names on the
+   confirmation page, wrong crew on a booking, pay/timeclock discrepancies).
+4. Pay statements sourced from bookings reconcile against the timeclock for the activation
+   window.
+
+### Rollback criteria
+
+Disable if any of the following holds:
+
+1. The activation was **not** intentional and no crew member has used the surface.
+2. Duplicate completion events, duplicate punches, or duplicate pay lines are observed on
+   real Production data.
+3. Any cross-tenant or cross-crew data exposure is found on the portal surface.
+4. Customer-facing booking data is being corrupted by crew-side writes.
+
+### Rollback procedure
+
+Disabling is **not** risk-free and is not the default safe action. With the flag off, the
+whole crew surface returns `404`: assigned jobs disappear from `/portal/jobs`, and an
+in-progress shift cannot be clocked out from the portal. Any crew member mid-job would be
+stranded with an open punch. Sequence:
+
+1. Confirm with the owner, and confirm no crew member is mid-shift (no assignee with
+   `clockInAt` set and `clockOutAt` unset).
+2. Set `BOOKING_ASSIGNMENT_ENABLED=false` in Production (or remove it — an absent flag
+   equals an explicit off, per `FLAG_DEFAULTS`).
+3. Redeploy Production, since the flag is read from the function environment.
+4. Verify: an unauthenticated `GET /api/portal/jobs/<dummy>` on `www.jkissllc.com` returns
+   **`404`**, not `401`.
+5. Verify `/api/health` still returns `healthy` and the `build` field matches the new
+   deployment.
+6. No data is deleted by disabling — assignment records, punches, and completion proof
+   persist and reappear if the flag is re-enabled.
+
+### Owner approval
+
+**Any change to `BOOKING_ASSIGNMENT_ENABLED` — enable, disable, or remove — requires
+explicit owner approval.** This audit is read-only and changed nothing. Updating this
+document does not authorize a flag change.
+
 ## Immediate next action
 
-1. Independently review the completion-proof idempotency and explicit in-page photo
-   retry increment against the merged Sprint 2 baseline.
-2. Run the authenticated Preview mobile interruption/reconnect flow at representative
-   phone widths and inspect audit history for exactly-once events.
-3. Resolve or retire the legacy public route-confirmation split before closing Sprint 3.
-4. Keep route auto-cancellation unscheduled and flag-off pending tenant fan-out and
+1. Owner: confirm whether the 2026-07-26 Production activation was intentional. Every
+   item below depends on that answer.
+2. Close the usage-observability gap: obtain an authenticated admin view (or a Production
+   KV read-only token) and report aggregate assignment/clock/completion event counts and
+   timestamps for the activation window. Until then no usage claim is defensible.
+3. With that data, inspect the booking audit ledger for exactly-once behavior on real
+   Production records — the property PR #132 hardened but which has only been proven
+   against fixtures.
+4. Run the authenticated Preview mobile interruption/reconnect flow at 320/375/390/430 px
+   and inspect audit history for exactly-once events.
+5. Resolve or retire the legacy public route-confirmation split before closing Sprint 3.
+6. Keep route auto-cancellation unscheduled and flag-off pending tenant fan-out and
    Preview dry reports.
-5. Confirm the current Production `BOOKING_ASSIGNMENT_ENABLED` value; do not change it
-   until the owner approves the separate activation or rollback plan.
+7. Make no `BOOKING_ASSIGNMENT_ENABLED` change without owner approval.

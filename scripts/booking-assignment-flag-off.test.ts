@@ -84,7 +84,12 @@ test('the unified jobs feed 404s when the flag is off — and is NOT a routes fe
   })
 })
 
-test('an ABSENT flag behaves exactly like an explicit off (Production has it unset)', async () => {
+// NOTE: this covers the ABSENT-flag code path, which is what FLAG_DEFAULTS gives you.
+// It is NOT a statement about Production. Production has the variable SET and enabled
+// (verified 2026-07-29 via the route-gate probe), so this path is not the live one — see
+// docs/operations/OPERION-INTERNAL-OPERATIONS-ROADMAP.md §"BOOKING_ASSIGNMENT_ENABLED —
+// Production activation decision".
+test('an ABSENT flag behaves exactly like an explicit off (code default, not Production)', async () => {
   await withFlag(undefined, async () => {
     assert.equal((await jobsGET(await crewReq('/api/portal/jobs'), CTX)).status, 404)
     assert.equal((await jobGET(await crewReq('/api/portal/jobs/x'), idCtx('x'))).status, 404)

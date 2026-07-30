@@ -3,8 +3,17 @@
 **Date:** 2026-07-21
 **Branch:** `feat/booking-job-assignment`
 **Preview deployment:** `dpl_75tqCBEv9vR3T1qg5UCk3uuzJhQH` (validation run) → redeployed with the fix
-**Flag:** `BOOKING_ASSIGNMENT_ENABLED` — **Preview only**
+**Flag:** `BOOKING_ASSIGNMENT_ENABLED` — **Preview only, as of this 2026-07-21 run**
 **Outcome:** **workflow confirmed, with one defect found and fixed**
+
+> **Superseded on 2026-07-29 — Production state has changed.** This report is a
+> point-in-time record of a 2026-07-21 Preview run and is preserved as written, including
+> "`BOOKING_ASSIGNMENT_ENABLED` is **absent from Production**" under *Production untouched*
+> below. That was true then. The variable was later created in Production on 2026-07-26
+> 23:28 UTC by the account owner, and the flag is now **Production ON, independently
+> verified on 2026-07-29 through the route-gate probe**. See
+> `OPERION-INTERNAL-OPERATIONS-ROADMAP.md` §"`BOOKING_ASSIGNMENT_ENABLED` — Production
+> activation decision".
 
 ---
 
