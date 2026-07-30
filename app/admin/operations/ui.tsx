@@ -98,6 +98,26 @@ export const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).p
 const parseIso = (iso: string) => new Date(`${iso}T12:00:00Z`)
 export const fmtDay = (iso: string) => { const d = parseIso(iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) }
 export const fmtLongDay = (iso: string) => { const d = parseIso(iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' }) }
+/**
+ * A timestamp range for a summary line, or a plain sentence when there is nothing
+ * to show.
+ *
+ * Rendering `null` endpoints as em-dashes produced "Earliest open punch — · latest —."
+ * on an empty report, which reads like a rendering glitch rather than "none found" —
+ * and the empty state is the one an audit surface shows most of the time. When BOTH
+ * endpoints are missing the caller gets `emptyText` instead; a half-open range still
+ * renders, because that is real information.
+ */
+export function timestampRange(
+  from: number | null | undefined,
+  to: number | null | undefined,
+  emptyText: string,
+  sep = '\u2192',
+): string {
+  if (from == null && to == null) return emptyText
+  return `${from == null ? '\u2014' : fmtTs(from)} ${sep} ${to == null ? '\u2014' : fmtTs(to)}`
+}
+
 export const fmtTs = (t: number) => new Date(t).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 export const money = (c: number) => (c / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 export const mapsUrl = (a: string) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a)}`

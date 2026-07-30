@@ -46,6 +46,9 @@ export const NAV_ITEMS: NavItem[] = [
   // same subject, different altitude (totals vs. individual entries) — and shares
   // its admin-only gate, because the API enforces `audit:view`.
   { href: '/admin/operations/crew-activity', label: 'Crew Activity', group: 'team', adminOnly: true },
+  // Sprint 3.1 Phase A measurement. Sits beside Crew Activity — same audit:view gate,
+  // same aggregate-only shape — and is read-only: it enforces nothing.
+  { href: '/admin/operations/punch-overlaps', label: 'Punch Overlaps', group: 'team', adminOnly: true },
   // ── More menu — Communication ──
   { href: '/admin/operations/communications', label: 'Communications', group: 'comms' },
   { href: '/admin/operations/analytics', label: 'Analytics', group: 'comms' },
