@@ -281,6 +281,11 @@ test('CLIENT: going offline keeps the route visible and disables every action', 
   assert.match(src, /aria-live="polite"/, 'the retry notice is announced')
   // Confirm, decline, both punches, the picker and the completion submit all refuse.
   assert.ok((src.match(/\|\| offline/g) ?? []).length >= 6, 'every action control is gated on offline')
-  // A dropped read must not be reported as a dead link.
-  assert.match(src, /Could not load this route\. Check your connection/)
+  // A dropped read must not be reported as a dead link. That classification moved
+  // into app/route/[token]/load.ts and is proven behaviourally against an injected
+  // fetcher in scripts/public-route-load-classification.test.ts — this string
+  // assertion used to vouch for a message the user never actually saw, because the
+  // render guard was `notFound || !route`.
+  assert.match(src, /if \(notFound\) return wrap\(/, 'missing-link card is gated on a real 404 alone')
+  assert.doesNotMatch(src, /if \(notFound \|\| !route\)/, 'the defect this replaced')
 })

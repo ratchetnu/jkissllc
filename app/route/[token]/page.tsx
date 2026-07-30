@@ -2,13 +2,14 @@
 
 import { use, useCallback, useEffect, useState } from 'react'
 import { COMPANY } from '../../lib/company';
-import { MapPin, Clock, CalendarDays, Building2, Truck, DollarSign, User, Phone, FileText, CheckCircle2, XCircle, AlertTriangle, Camera, WifiOff } from 'lucide-react'
+import { MapPin, Clock, CalendarDays, Building2, Truck, DollarSign, User, Phone, FileText, CheckCircle2, XCircle, AlertTriangle, Camera, WifiOff, RefreshCw } from 'lucide-react'
 // The weak-network helpers are shared with the crew portal. They contain nothing
 // portal-specific — `fetchWithRetry` is a plain bounded-retry wrapper and
 // `useConnectivity` reads navigator.onLine — so this public surface gets exactly the
 // same treatment rather than a second implementation that could drift.
 import { fetchWithRetry } from '../../portal/network'
 import { useConnectivity } from '../../portal/useConnectivity'
+import { applyLoadOutcome, loadPublicRoute, CONNECTION_ERROR, INITIAL_VIEW_STATE, type PublicRoute } from './load'
 
 // The four verbs this API implements idempotently: confirm/decline stamp the
 // assignee once (`assignee.confirmedAt || assignee.declinedAt` -> `already`), and
@@ -22,33 +23,6 @@ import { useConnectivity } from '../../portal/useConnectivity'
 // rather than relying on a second, differently-argued proof.
 const RETRY_SAFE_ACTIONS = new Set(['confirm', 'decline', 'clock_in', 'clock_out'])
 
-type PublicRoute = {
-  token: string
-  routeNumber: string
-  status: string
-  businessName: string
-  contactPerson?: string
-  contactPhone?: string
-  reportAddress: string
-  reportTime: string
-  routeDate: string
-  description?: string
-  payRate?: string   // THIS crew member's own pay, and only if the owner enabled it
-  vehicle?: string
-  dispatchReady: boolean
-  dispatchHold?: 'crew' | 'equipment'
-  specialNotes?: string
-  assignedStaffName?: string
-  confirmedAt?: number
-  declinedAt?: number
-  completedAt?: number
-  completionNote?: string
-  completionPhotos?: string[]
-  clockInAt?: number
-  clockOutAt?: number
-  timeclock?: boolean
-  expired: boolean
-}
 
 // Ask the phone where it is. Best-effort: if the browser has no geolocation, or
 // the crew member denies it / it times out, we resolve to null coordinates rather
@@ -75,10 +49,12 @@ const DECLINE_REASONS = ['Not available that day', 'Time doesn’t work', 'Too f
 
 export default function RouteConfirmPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params)
-  const [route, setRoute] = useState<PublicRoute | null>(null)
+  const [view, setView] = useState(INITIAL_VIEW_STATE)
+  const { route, notFound, loadError } = view
+  const setRoute = (r: PublicRoute | null) =>
+    setView(v => ({ ...v, route: r, loadError: r ? '' : v.loadError }))
   const [disclaimer, setDisclaimer] = useState('')
   const [loading, setLoading] = useState(true)
-  const [notFound, setNotFound] = useState(false)
   const [agreed, setAgreed] = useState(false)
   const [busy, setBusy] = useState<'' | 'confirm' | 'decline' | 'complete'>('')
   const [err, setErr] = useState('')
@@ -95,23 +71,15 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
   const { offline } = useConnectivity()
 
   const load = useCallback(async () => {
-    try {
-      const r = await fetchWithRetry(
-        `/api/route/${token}`,
-        { cache: 'no-store' },
-        { onRetry: () => setNetworkMsg('Connection is shaky — retrying…') },
-      )
-      if (r.status === 404) { setNotFound(true); return }
-      const d = await r.json()
-      setRoute(d.route)
-      setDisclaimer(d.disclaimer || '')
-      setNetworkMsg('')
-    } catch {
-      // A dropped read must NOT be reported as a dead link. `notFound` is reserved
-      // for a real 404 — telling a contractor their route does not exist because
-      // their signal faltered is the worst possible failure on this screen.
-      setErr('Could not load this route. Check your connection and try again.')
-    }
+    // `notFound` is set ONLY by a literal 404. Every other failure keeps whatever is
+    // already on screen and surfaces a retryable connection/service error, so a
+    // dropped signal is never reported as a dead link.
+    const outcome = await loadPublicRoute(token, {
+      onRetry: () => setNetworkMsg('Connection is shaky — retrying…'),
+    })
+    setView(v => applyLoadOutcome(v, outcome))
+    if (outcome.kind === 'ok') setDisclaimer(outcome.disclaimer)
+    setNetworkMsg('')
   }, [token])
 
   // Reload when the connection returns. Going offline deliberately does NOT clear
@@ -233,6 +201,15 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
           </div>
         )}
         {networkMsg && <p role="status" aria-live="polite" style={{ color: '#fcd34d', fontSize: 13, marginBottom: 12 }}>{networkMsg}</p>}
+        {loadError && route && (
+          <div role="status" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', padding: '11px 13px', marginBottom: 14, borderRadius: 10, border: '1px solid rgba(245,158,11,.35)', background: 'rgba(245,158,11,.08)' }}>
+            <span style={{ fontSize: 13, color: '#fcd34d', flex: '1 1 200px' }}>{loadError} Your route below is still the last known version.</span>
+            <button type="button" className="os-tap" onClick={() => void load()} disabled={offline}
+              style={{ minHeight: 44, padding: '0 14px', borderRadius: 10, border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--text)', fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, whiteSpace: 'nowrap', flexShrink: 0, opacity: offline ? .55 : 1, cursor: offline ? 'not-allowed' : 'pointer' }}>
+              <RefreshCw size={15} aria-hidden="true" /> Retry
+            </button>
+          </div>
+        )}
         {children}
       </div>
     </main>
@@ -240,11 +217,40 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
   const card = (bg: string, border: string): React.CSSProperties => ({ background: bg, border: `1px solid ${border}`, borderRadius: 18, padding: 22 })
 
   if (loading) return wrap(<div className="glass-card" style={{ borderRadius: 18, padding: 22, textAlign: 'center', color: 'var(--muted)' }}>Loading your route…</div>)
-  if (notFound || !route) return wrap(
+  // ONLY a real 404 says the link is invalid. This guard used to read
+  // `notFound || !route`, so every connection failure produced this card.
+  if (notFound) return wrap(
     <div style={card('rgba(255,255,255,.04)', 'var(--line)')}>
       <AlertTriangle size={26} color="#f59e0b" />
       <h1 style={{ fontSize: 18, fontWeight: 800, marginTop: 10 }}>Link not found</h1>
       <p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>This confirmation link isn’t valid. It may have been mistyped. Contact dispatch at {COMPANY.phoneDisplay}.</p>
+    </div>
+  )
+
+  // Nothing loaded yet AND the device is offline — say that, not that the route is
+  // missing. Reconnecting reloads on its own via the effect above.
+  if (!route && offline) return wrap(
+    <div style={card('rgba(255,255,255,.04)', 'var(--line)')}>
+      <WifiOff size={26} color="#fcd34d" />
+      <h1 style={{ fontSize: 18, fontWeight: 800, marginTop: 10 }}>You’re offline</h1>
+      <p style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>
+        Your route can’t load without a connection. It will appear on its own as soon as you’re back online — your link is still valid.
+      </p>
+    </div>
+  )
+
+  // Nothing loaded yet and the read failed for a reason that is NOT a 404.
+  if (!route) return wrap(
+    <div style={card('rgba(255,255,255,.04)', 'var(--line)')}>
+      <AlertTriangle size={26} color="#f59e0b" />
+      <h1 style={{ fontSize: 18, fontWeight: 800, marginTop: 10 }}>Couldn’t load your route</h1>
+      <p role="alert" style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>
+        {loadError || CONNECTION_ERROR} Your link is still valid — this is a connection problem, not a missing route.
+      </p>
+      <button type="button" className="os-tap" onClick={() => { setLoading(true); void load().finally(() => setLoading(false)) }}
+        style={{ minHeight: 44, marginTop: 14, padding: '0 16px', borderRadius: 10, border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--text)', fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, whiteSpace: 'nowrap', cursor: 'pointer' }}>
+        <RefreshCw size={15} aria-hidden="true" /> Try again
+      </button>
     </div>
   )
 

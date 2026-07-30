@@ -32,7 +32,7 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
   moved to `app/lib/schedule/auto-cancel-job.ts` so its clock is an ordinary parameter,
   and Production still passes `Date.now()` from the route. It fixed a red `main`
   (`dpl_382FhqAxfub2szYbnngjg2zQFfLc`).
-- Sprint 3 on `main` passes **2937/2937 tests**, TypeScript, and lint with zero errors
+- Sprint 3 on `main` passes **2952/2952 tests**, TypeScript, and lint with zero errors
   (one pre-existing warning in untouched `pay-statements.ts`).
 - `BOOKING_ASSIGNMENT_ENABLED` is **Production ON, independently verified on 2026-07-29
   through the route-gate probe**. The crew booking surface is serving, not dormant. See
@@ -233,6 +233,14 @@ stamp and answering `already` on replay), completion left single-attempt, an off
 banner that keeps the route readable, every action control disabled while offline, and a
 reload on reconnect. **No punch is queued** — an offline punch is refused outright,
 because a stored punch would record the reconnect moment as the work time.
+
+A failed read is never reported as a dead link. "Link not found" is now reserved for a
+literal 404 — which is the single, identical answer the API gives to an invalid,
+malformed, revoked, unknown, or foreign-tenant token. A dropped connection, exhausted
+retry, timeout, 408/425/429 or any 5xx produces a connection/service error instead:
+details already on screen are preserved with a non-blocking Retry beside them, and a
+first load with no data yet shows either an offline state or a connection-error state
+with a 44 px Try again.
 
 **Remaining before Sprint 3 closes:**
 
