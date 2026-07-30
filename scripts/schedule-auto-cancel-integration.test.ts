@@ -17,6 +17,7 @@ import assert from 'node:assert/strict'
 import test, { before, after, beforeEach } from 'node:test'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { readFileSync } from 'node:fs'
 
 const PORT = 8400 + (process.pid % 250)
 process.env.KV_REST_API_URL = `http://127.0.0.1:${PORT}`
@@ -30,7 +31,8 @@ import {
 import { runWithTenant, currentTenantId } from '../app/lib/platform/tenancy/context'
 import { redis } from '../app/lib/redis'
 import { GET } from '../app/api/cron/route-auto-cancel/route'
-import { centralDate } from '../app/lib/schedule/auto-cancel'
+import { runAutoCancelJob } from '../app/lib/schedule/auto-cancel-job'
+import { centralDate, centralHour, centralStamp, isCancellationWindow } from '../app/lib/schedule/auto-cancel'
 
 let kv: ChildProcess | null = null
 before(async () => {
@@ -43,6 +45,46 @@ before(async () => {
 after(() => { kv?.kill('SIGKILL') })
 beforeEach(async () => { await fetch(`http://127.0.0.1:${PORT}/__admin/flush`, { method: 'POST' }).catch(() => {}) })
 
+// ── The clock ────────────────────────────────────────────────────────────────
+// Every instant below is a FIXED UTC timestamp, and every calendar date is DERIVED
+// from one via centralDate(). Nothing here reads the real current date, so this
+// suite is meaningful on any day, in any host timezone. The instants are written as
+// Date.UTC(...) rather than date strings so no calendar literal exists to go stale.
+//
+// Central is UTC-5 in summer (CDT) and UTC-6 in winter (CST), so the same wall-clock
+// hour is a different UTC instant depending on the season; both are covered.
+
+/** Summer, 00:30 America/Chicago (CDT, UTC-5) — inside the cancellation window. */
+const IN_WINDOW_CDT = Date.UTC(2026, 6, 29, 5, 30)
+/** Summer, 03:30 Central — one hour past the 3h grace window. */
+const OUT_OF_WINDOW_CDT = Date.UTC(2026, 6, 29, 8, 30)
+/** Summer, 00:00 Central exactly — the first instant of the route day. */
+const MIDNIGHT_CDT = Date.UTC(2026, 6, 29, 5, 0)
+/** Summer, 23:59 Central — one minute BEFORE the next route day begins. */
+const BEFORE_MIDNIGHT_CDT = Date.UTC(2026, 6, 29, 4, 59)
+/** Winter, 00:30 America/Chicago (CST, UTC-6) — inside the window. */
+const IN_WINDOW_CST = Date.UTC(2026, 0, 15, 6, 30)
+/** Winter, 03:30 Central — outside the window. */
+const OUT_OF_WINDOW_CST = Date.UTC(2026, 0, 15, 9, 30)
+/** 00:30 Central on the spring-forward day (clocks jump 02:00 -> 03:00). */
+const SPRING_FORWARD = Date.UTC(2026, 2, 8, 6, 30)
+/** 00:30 Central on the fall-back day (01:00-02:00 occurs twice). */
+const FALL_BACK = Date.UTC(2026, 10, 1, 5, 30)
+
+/** Shift a Central calendar date by whole days. Anchored at UTC noon so the
+ *  arithmetic cannot be dragged across a boundary by a DST transition. */
+const shiftDays = (iso: string, days: number): string => {
+  const [y, m, d] = iso.split('-').map(Number)
+  const t = new Date(Date.UTC(y, m - 1, d, 12) + days * 86_400_000)
+  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(t.getUTCDate()).padStart(2, '0')}`
+}
+
+/** Central "today" for the default test clock, plus its neighbours. */
+const TODAY = centralDate(IN_WINDOW_CDT)
+const TOMORROW = shiftDays(TODAY, 1)
+const YESTERDAY = shiftDays(TODAY, -1)
+
+
 let n = 7000
 const assignee = (staffId: string): Assignee => ({ name: staffId, token: `t_${staffId}`, staffId }) as Assignee
 const mkRoute = (o: Partial<RouteRecord> = {}): RouteRecord => ({
@@ -52,16 +94,18 @@ const mkRoute = (o: Partial<RouteRecord> = {}): RouteRecord => ({
   businessName: 'JW Logistics',
   reportAddress: '1 Commerce St',
   reportTime: '7:00 AM',
-  routeDate: '2026-07-29',
+  routeDate: TODAY,
   events: [], audit: [],
   createdAt: 1, updatedAt: 1,
   ...o,
 } as RouteRecord)
 
-const call = async (qs = ''): Promise<{ status: number; body: Record<string, unknown> }> => {
-  const res = await GET(new NextRequest(`http://localhost/api/cron/route-auto-cancel${qs}`, {
+// `now` is passed through the job's own parameter — not a query string, header, or
+// env var. Defaults to an in-window instant so existing cases keep their meaning.
+const call = async (qs = '', now: number = IN_WINDOW_CDT): Promise<{ status: number; body: Record<string, unknown> }> => {
+  const res = await runAutoCancelJob(new NextRequest(`http://localhost/api/cron/route-auto-cancel${qs}`, {
     headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
-  }))
+  }), now)
   return { status: res.status, body: await res.json() }
 }
 
@@ -100,7 +144,7 @@ test('the cron fails CLOSED when CRON_SECRET is unset', async () => {
 // ── zero-write guarantees ────────────────────────────────────────────────────
 
 test('FLAG OFF: reports candidates and writes NOTHING', async () => {
-  const r = mkRoute({ routeDate: '2026-07-29', assignees: [] })
+  const r = mkRoute({ routeDate: TODAY, assignees: [] })
   await seed(r)
   const before = await runWithTenant({ tenantId: 'jkiss' }, () => stored(r.token))
 
@@ -116,7 +160,7 @@ test('FLAG OFF: reports candidates and writes NOTHING', async () => {
 })
 
 test('DRY RUN: flag on, but ?dryRun=1 writes NOTHING', async () => {
-  const r = mkRoute({ routeDate: '2026-07-29', assignees: [] })
+  const r = mkRoute({ routeDate: TODAY, assignees: [] })
   await seed(r)
   const before = await runWithTenant({ tenantId: 'jkiss' }, () => stored(r.token))
 
@@ -129,16 +173,15 @@ test('DRY RUN: flag on, but ?dryRun=1 writes NOTHING', async () => {
 })
 
 test('the dry-run report names the exact routes and the reason', async () => {
-  await seed(mkRoute({ token: 'dry1'.padEnd(16, '0'), routeNumber: 'JK-R-3001', routeDate: '2026-07-29', assignees: [] }))
-  await seed(mkRoute({ token: 'dry2'.padEnd(16, '0'), routeNumber: 'JK-R-3002', routeDate: '2026-07-29', assignees: [assignee('s1')] }))
-  await seed(mkRoute({ token: 'dry3'.padEnd(16, '0'), routeNumber: 'JK-R-3003', routeDate: '2026-07-30', assignees: [] }))
+  await seed(mkRoute({ token: 'dry1'.padEnd(16, '0'), routeNumber: 'JK-R-3001', routeDate: TODAY, assignees: [] }))
+  await seed(mkRoute({ token: 'dry2'.padEnd(16, '0'), routeNumber: 'JK-R-3002', routeDate: TODAY, assignees: [assignee('s1')] }))
+  await seed(mkRoute({ token: 'dry3'.padEnd(16, '0'), routeNumber: 'JK-R-3003', routeDate: TOMORROW, assignees: [] }))
 
   const { body } = await withFlag(false, () => call())
   const tenants = body.tenants as Array<{ candidates: { routeNumber: string; reason: string; detail: string }[] }>
   const cands = tenants[0].candidates
-  // Only the crewless route dated today. Note this asserts on the REAL Central date,
-  // so it is meaningful only when the suite runs on 2026-07-29; the date-independent
-  // selection rules are pinned in the unit suite with injected timestamps.
+  // Only the crewless route dated today, where "today" is derived from the pinned
+  // clock rather than the host's calendar.
   assert.ok(Array.isArray(cands), 'candidates are reported even with the flag off')
   for (const c of cands) {
     assert.ok(c.routeNumber, 'each candidate names its route')
@@ -150,23 +193,21 @@ test('the dry-run report names the exact routes and the reason', async () => {
 })
 
 test('OUTSIDE THE WINDOW: flag on at a non-midnight hour writes NOTHING', async () => {
-  const r = mkRoute({ routeDate: '2026-07-29', assignees: [] })
+  const r = mkRoute({ routeDate: TODAY, assignees: [] })
   await seed(r)
   const before = await runWithTenant({ tenantId: 'jkiss' }, () => stored(r.token))
-  const { body } = await withFlag(true, () => call())
+  // Pinned OUTSIDE the window, so this asserts one outcome instead of branching on
+  // whatever hour the suite happened to run at.
+  const { body } = await withFlag(true, () => call('', OUT_OF_WINDOW_CDT))
   const after = await runWithTenant({ tenantId: 'jkiss' }, () => stored(r.token))
-  // The suite almost never runs at 00:xx Central; when it does, the window is open
-  // and a write is correct. Assert the invariant that actually holds either way.
-  if (body.inCancellationWindow === false) {
-    assert.equal(body.write, false)
-    assert.equal(after, before, 'no write outside the window')
-  } else {
-    assert.equal(body.write, true, 'inside the window with the flag on, writing is correct')
-  }
+  assert.equal(body.inCancellationWindow, false)
+  assert.equal(body.write, false)
+  assert.match(String(body.mode), /outside the cancellation window/)
+  assert.equal(after, before, 'no write outside the window')
 })
 
 test('a route WITH crew is never written, even flag-on', async () => {
-  const r = mkRoute({ routeDate: '2026-07-29', assignees: [assignee('s1')] })
+  const r = mkRoute({ routeDate: TODAY, assignees: [assignee('s1')] })
   await seed(r)
   const before = await runWithTenant({ tenantId: 'jkiss' }, () => stored(r.token))
   await withFlag(true, () => call())
@@ -177,7 +218,7 @@ test('a route WITH crew is never written, even flag-on', async () => {
 // ── idempotency ──────────────────────────────────────────────────────────────
 
 test('IDEMPOTENT: repeated runs converge — no second cancellation, no drift', async () => {
-  const r = mkRoute({ routeDate: '2026-07-29', assignees: [] })
+  const r = mkRoute({ routeDate: TODAY, assignees: [] })
   await seed(r)
   await withFlag(false, () => call())
   const a = await runWithTenant({ tenantId: 'jkiss' }, () => stored(r.token))
@@ -188,7 +229,7 @@ test('IDEMPOTENT: repeated runs converge — no second cancellation, no drift', 
 })
 
 test('an already-cancelled route is never re-cancelled', async () => {
-  const r = mkRoute({ routeDate: '2026-07-29', status: 'cancelled', assignees: [] })
+  const r = mkRoute({ routeDate: TODAY, status: 'cancelled', assignees: [] })
   await seed(r)
   const before = await runWithTenant({ tenantId: 'jkiss' }, () => stored(r.token))
   const { body } = await withFlag(true, () => call())
@@ -215,7 +256,7 @@ test('every run reports which brake was engaged', async () => {
 })
 
 test('the response is per-tenant, and each tenant reports its own counts', async () => {
-  await seed(mkRoute({ routeDate: '2026-07-29', assignees: [] }))
+  await seed(mkRoute({ routeDate: TODAY, assignees: [] }))
   const { body } = await withFlag(false, () => call())
   const tenants = body.tenants as Array<Record<string, unknown>>
   assert.ok(tenants.length >= 1)
@@ -289,7 +330,7 @@ test('SCAN: at the exact ceiling it completes; one over it FAILS CLOSED', async 
 })
 
 test('SCAN: a truncated scan cancels NOTHING and never reports candidateCount 0', async () => {
-  const today = centralDate(Date.now())
+  const today = TODAY
   await seed(mkRoute({ routeDate: today, assignees: [] }))   // genuinely eligible
   await seedN(3)
   // Force truncation via the ceiling by monkey-free means: ask the endpoint after
@@ -324,7 +365,7 @@ const withTenancy = async <T>(on: boolean, fn: () => Promise<T>): Promise<T> => 
 }
 
 test('TENANCY ON: activation is BLOCKED — no sweep, no writes, explicit reason', async () => {
-  const today = centralDate(Date.now())
+  const today = TODAY
   const r = mkRoute({ routeDate: today, assignees: [] })
   await seed(r)
   const before = await runWithTenant({ tenantId: 'jkiss' }, () => stored(r.token))
@@ -388,7 +429,7 @@ test('TENANT FAILURE: a store exception reports 503, incomplete, and never a cle
 // ─────────────────────────────────────────────────────────────────────────────
 
 test('RETRY: initial attempt then a second attempt yields ONE cancellation, ONE entry', async () => {
-  const today = centralDate(Date.now())
+  const today = TODAY
   const r = mkRoute({ routeDate: today, assignees: [] })
   await seed(r)
   const base = (await runWithTenant({ tenantId: 'jkiss' }, () => getRouteByToken(r.token)))!.audit.length
@@ -397,19 +438,15 @@ test('RETRY: initial attempt then a second attempt yields ONE cancellation, ONE 
   const second = await withFlag(true, () => call())
   const fresh = (await runWithTenant({ tenantId: 'jkiss' }, () => getRouteByToken(r.token)))!
 
-  if (first.body.write === true) {
-    assert.equal(fresh.status, 'cancelled')
-    assert.equal(fresh.audit.length - base, 1, 'exactly ONE lifecycle entry after a retry')
-    const t2 = second.body.tenants as Array<{ cancelledCount: number }>
-    assert.equal(t2[0].cancelledCount, 0, 'the retry cancels nothing new')
-  } else {
-    assert.equal(fresh.status, 'assigned')
-    assert.equal(fresh.audit.length - base, 0)
-  }
+  assert.equal(first.body.write, true, 'the pinned clock is inside the window')
+  assert.equal(fresh.status, 'cancelled')
+  assert.equal(fresh.audit.length - base, 1, 'exactly ONE lifecycle entry after a retry')
+  const t2 = second.body.tenants as Array<{ cancelledCount: number }>
+  assert.equal(t2[0].cancelledCount, 0, 'the retry cancels nothing new')
 })
 
 test('RETRY: crew added between attempts stops the cancellation immediately', async () => {
-  const today = centralDate(Date.now())
+  const today = TODAY
   const r = mkRoute({ routeDate: today, assignees: [] })
   await seed(r)
   // Crew arrives before any write attempt.
@@ -422,15 +459,15 @@ test('RETRY: crew added between attempts stops the cancellation immediately', as
 })
 
 test('LOCKED RECHECK: a route returned to Draft after the scan is not cancelled', async () => {
-  const now = Date.parse('2026-07-29T05:30:00Z') // 00:30 America/Chicago (CDT)
-  const r = mkRoute({ routeDate: '2026-07-29', status: 'assigned', assignees: [] })
+  // The clock comes from the job parameter now, so this no longer has to reach in and
+  // replace the global Date.now — one less piece of shared mutable state in the suite.
+  const now = IN_WINDOW_CDT
+  const r = mkRoute({ routeDate: TODAY, status: 'assigned', assignees: [] })
   await seed(r)
 
-  const originalNow = Date.now
   const originalGet = redis.get.bind(redis)
   const originalSet = redis.set.bind(redis)
   let routeReads = 0
-  Date.now = () => now
   redis.get = (async (key: string) => {
     if (key === `rt:${r.token}` && ++routeReads === 2) {
       const draft = { ...r, status: 'draft' as const, updatedAt: now }
@@ -453,7 +490,6 @@ test('LOCKED RECHECK: a route returned to Draft after the scan is not cancelled'
     const fresh = await runWithTenant({ tenantId: 'jkiss' }, () => originalGet(`rt:${r.token}`))
     assert.equal(JSON.parse(String(fresh)).status, 'draft')
   } finally {
-    Date.now = originalNow
     redis.get = originalGet as typeof redis.get
   }
 })
@@ -464,20 +500,147 @@ test('DEFENCE IN DEPTH: autoCancelRoute itself refuses Draft', () => {
   assert.equal(autoCancelRoute(r, {
     reason: 'No crew assigned.',
     routeDate: r.routeDate,
-    centralAt: '2026-07-29 00:30',
+    centralAt: centralStamp(IN_WINDOW_CDT),
   }), false)
   assert.equal(JSON.stringify(r), before)
 })
 
 test('PARTIAL FAILURE: one bad route does not stop the rest of the batch', async () => {
-  const today = centralDate(Date.now())
+  const today = TODAY
   await seed(mkRoute({ routeNumber: 'JK-R-P1', routeDate: today, assignees: [] }))
   await seed(mkRoute({ routeNumber: 'JK-R-P2', routeDate: today, assignees: [] }))
   await seed(mkRoute({ routeNumber: 'JK-R-P3', routeDate: today, assignees: [] }))
   const { body } = await withFlag(true, () => call())
   const t = (body.tenants as Array<{ candidateCount: number; cancelledCount: number; errors: unknown[] }>)[0]
   assert.equal(t.candidateCount, 3, 'all three are candidates')
-  if (body.write === true) {
-    assert.equal(t.cancelledCount + t.errors.length, 3, 'every candidate is accounted for')
+  assert.equal(body.write, true, 'the pinned clock is inside the window')
+  assert.equal(t.cancelledCount + t.errors.length, 3, 'every candidate is accounted for')
+})
+
+// ── Date semantics, pinned to the injected clock ─────────────────────────────
+// These are the cases the suite previously could not state, because "today" meant
+// whatever day CI happened to run on. Each seeds all three days at once so the
+// selection is proven by exclusion, not by a single lucky fixture.
+
+const seedThreeDays = async () => {
+  await seed(mkRoute({ token: 'd-today'.padEnd(16, '0'), routeNumber: 'JK-R-TODAY', routeDate: TODAY, assignees: [] }))
+  await seed(mkRoute({ token: 'd-tmrw'.padEnd(16, '0'), routeNumber: 'JK-R-TOMORROW', routeDate: TOMORROW, assignees: [] }))
+  await seed(mkRoute({ token: 'd-yday'.padEnd(16, '0'), routeNumber: 'JK-R-YESTERDAY', routeDate: YESTERDAY, assignees: [] }))
+}
+const candidateNumbers = (body: Record<string, unknown>): string[] =>
+  ((body.tenants as Array<{ candidates?: { routeNumber: string }[] }>)[0].candidates ?? []).map(c => c.routeNumber)
+
+test('DATES: today is eligible; tomorrow and yesterday are not', async () => {
+  await seedThreeDays()
+  const { body } = await withFlag(false, () => call())
+  assert.equal(body.centralDate, TODAY, 'the job resolved today from the injected clock')
+  assert.deepEqual(candidateNumbers(body), ['JK-R-TODAY'],
+    'exactly the crewless route dated today — a future or past route is never a candidate')
+})
+
+test('DATES: a past route is never written, even flag-on inside the window', async () => {
+  const past = mkRoute({ routeDate: YESTERDAY, assignees: [] })
+  const future = mkRoute({ routeDate: TOMORROW, assignees: [] })
+  await seed(past); await seed(future)
+  const beforePast = await runWithTenant({ tenantId: 'jkiss' }, () => stored(past.token))
+  const beforeFuture = await runWithTenant({ tenantId: 'jkiss' }, () => stored(future.token))
+
+  const { body } = await withFlag(true, () => call())
+  assert.equal(body.write, true, 'the write path really did run')
+  assert.deepEqual((body.tenants as Array<{ cancelled: string[] }>)[0].cancelled, [],
+    'nothing was cancelled — neither day qualifies')
+  assert.equal(await runWithTenant({ tenantId: 'jkiss' }, () => stored(past.token)), beforePast,
+    "yesterday's record is byte-identical")
+  assert.equal(await runWithTenant({ tenantId: 'jkiss' }, () => stored(future.token)), beforeFuture,
+    "tomorrow's record is byte-identical")
+})
+
+// ── Central midnight ─────────────────────────────────────────────────────────
+
+test('MIDNIGHT: the route day flips exactly at 00:00 Central', async () => {
+  await seedThreeDays()
+
+  // One minute BEFORE midnight the Central date is still the previous day, so the
+  // route we call "today" is a future route and must not be selected. The window is
+  // also closed at 23:59, which is a second, independent reason nothing is written.
+  const beforeMidnight = await withFlag(false, () => call('', BEFORE_MIDNIGHT_CDT))
+  assert.equal(beforeMidnight.body.centralDate, YESTERDAY)
+  assert.equal(beforeMidnight.body.inCancellationWindow, false)
+  assert.deepEqual(candidateNumbers(beforeMidnight.body), ['JK-R-YESTERDAY'],
+    'at 23:59 the eligible day is still the previous one')
+
+  // At 00:00 exactly the day has flipped and the window has opened.
+  const atMidnight = await withFlag(false, () => call('', MIDNIGHT_CDT))
+  assert.equal(atMidnight.body.centralDate, TODAY)
+  assert.equal(atMidnight.body.inCancellationWindow, true, 'the window opens at the first instant')
+  assert.deepEqual(candidateNumbers(atMidnight.body), ['JK-R-TODAY'])
+})
+
+// ── Daylight saving ──────────────────────────────────────────────────────────
+// Central is UTC-5 (CDT) for part of the year and UTC-6 (CST) for the rest. A fixed
+// UTC offset would put the window on the wrong hour for roughly half the calendar,
+// so both seasons and both transition days are pinned here.
+
+test('DST: the window tracks Central wall-clock in CDT and in CST', async () => {
+  for (const [label, inWindow, outOfWindow] of [
+    ['CDT (summer)', IN_WINDOW_CDT, OUT_OF_WINDOW_CDT],
+    ['CST (winter)', IN_WINDOW_CST, OUT_OF_WINDOW_CST],
+  ] as const) {
+    assert.equal(centralHour(inWindow), 0, `${label}: 00:30 is hour 0`)
+    assert.equal(isCancellationWindow(inWindow), true, `${label}: 00:30 is inside`)
+    assert.equal(centralHour(outOfWindow), 3, `${label}: 03:30 is hour 3`)
+    assert.equal(isCancellationWindow(outOfWindow), false, `${label}: 03:30 is past the grace window`)
+
+    const { body } = await withFlag(false, () => call('', inWindow))
+    assert.equal(body.centralDate, centralDate(inWindow), `${label}: date derived in Central`)
+    assert.equal(body.inCancellationWindow, true, `${label}: the job agrees it is inside`)
   }
+})
+
+test('DST: the transition days still resolve one route day inside the window', async () => {
+  for (const [label, ts] of [['spring forward', SPRING_FORWARD], ['fall back', FALL_BACK]] as const) {
+    const day = centralDate(ts)
+    const r = mkRoute({ routeDate: day, assignees: [] })
+    await seed(r)
+    const { body } = await withFlag(false, () => call('', ts))
+    assert.equal(body.centralDate, day, `${label}: the Central date is unambiguous`)
+    assert.equal(body.inCancellationWindow, true, `${label}: 00:30 is inside the window`)
+    assert.equal(body.centralAt, centralStamp(ts), `${label}: the audit stamp is Central wall-clock`)
+    assert.ok(candidateNumbers(body).includes(r.routeNumber), `${label}: that day's crewless route is eligible`)
+    await fetch(`http://127.0.0.1:${PORT}/__admin/flush`, { method: 'POST' }).catch(() => {})
+  }
+})
+
+// ── The regression that made this suite expire ───────────────────────────────
+
+test('REGRESSION: this suite pins no calendar date and claims no single valid day', () => {
+  const src = readFileSync(new URL('./schedule-auto-cancel-integration.test.ts', import.meta.url), 'utf8')
+
+  // The original failure: fixtures pinned to one specific calendar day, with a
+  // comment conceding the assertions held on that day alone. It passed until Central
+  // rolled over to the next day, then failed on every run afterwards.
+  const dates = src.match(/\d{4}-\d{2}-\d{2}/g) ?? []
+  assert.deepEqual(dates, [], `no calendar literal may appear in this suite; found ${dates.join(', ')}`)
+
+  // Scan everything BEFORE this test: the patterns below are written out literally
+  // here, so scanning the whole file would match this assertion itself.
+  const body = src.slice(0, src.indexOf("test('REGRESSION:"))
+  assert.doesNotMatch(body, /meaningful only when/i, 'no comment may limit this suite to one day')
+  assert.doesNotMatch(body, /only when the suite runs on/i)
+  assert.doesNotMatch(body, /REAL Central date/i)
+  assert.ok(body.length > 1000 && body.length < src.length, 'the slice really covers the suite')
+
+  // The clock must be injected, never read from the host.
+  assert.doesNotMatch(src.replace(/Date\.UTC\(/g, ''), /Date\.now\(\)/, 'no test may read the real clock')
+  assert.match(src, /const TODAY = centralDate\(/, 'today is derived from a fixed instant')
+  assert.match(src, /runAutoCancelJob\(/, 'the job is driven through its injectable entry point')
+
+  // And Production must still default to the real clock at exactly one call site.
+  const route = readFileSync(new URL('../app/api/cron/route-auto-cancel/route.ts', import.meta.url), 'utf8')
+  assert.match(route, /runAutoCancelJob\(req, Date\.now\(\)\)/, 'Production passes the real clock')
+  const job = readFileSync(new URL('../app/lib/schedule/auto-cancel-job.ts', import.meta.url), 'utf8')
+  const jobCode = job.split('\n').filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n')
+  assert.doesNotMatch(jobCode, /Date\.now\(\)/, 'the job body never reads the clock itself')
+  // No public escape hatch may have been introduced for the clock.
+  assert.doesNotMatch(jobCode, /searchParams\.get\('now'\)|headers\.get\('x-now'\)|process\.env\.\w*NOW/i)
 })

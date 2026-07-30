@@ -26,7 +26,7 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
   accept/decline, and clock punches now have bounded, retry-safe behavior.
 - Completion-proof idempotency and the visible photo-retry increment are merged through
   PR #132, live in Production as deployment `dpl_DNUCzre3V7LEJJvCCTdYykdUtzGr`.
-- Sprint 3 on `main` passes **2915/2915 tests**, TypeScript, and lint with zero errors
+- Sprint 3 on `main` passes **2921/2921 tests**, TypeScript, and lint with zero errors
   (one pre-existing warning in untouched `pay-statements.ts`).
 - `BOOKING_ASSIGNMENT_ENABLED` is **Production ON, independently verified on 2026-07-29
   through the route-gate probe**. The crew booking surface is serving, not dormant. See

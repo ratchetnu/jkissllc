@@ -460,10 +460,22 @@ test('selection never reaches across tenants — it only sees what it is handed'
 })
 
 test('the cron handler wires per-tenant context and gates the write', () => {
-  const src = new TextDecoder().decode(
+  // The job body now lives in lib/schedule/auto-cancel-job so the clock can be passed
+  // in as a parameter; the route file is a thin entry point. These contracts follow
+  // the code.
+  const read = (rel: string) => new TextDecoder().decode(
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require('node:fs').readFileSync(new URL('../app/api/cron/route-auto-cancel/route.ts', import.meta.url)),
+    require('node:fs').readFileSync(new URL(rel, import.meta.url)),
   )
+  const src = read('../app/lib/schedule/auto-cancel-job.ts')
+  const route = read('../app/api/cron/route-auto-cancel/route.ts')
+
+  // The route reads the real clock exactly once and hands it to the job — the only
+  // Production clock read in this feature.
+  assert.match(route, /runAutoCancelJob\(req, Date\.now\(\)\)/, 'Production passes the real clock')
+  assert.match(src, /runAutoCancelJob\(req: NextRequest, now: number\)/, 'the clock is an ordinary parameter')
+  assert.ok(!/Date\.now\(\)/.test(src.split('\n').filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n')),
+    'the job body never reads the clock itself')
   assert.match(src, /withBackgroundTenant\('cron'/, 'each tenant runs in its own context')
   assert.match(src, /for \(const tenantId of activeTenantIds\(\)\)/, 'per-tenant fan-out')
   assert.match(src, /isEnabled\('ROUTE_AUTO_CANCEL_ENABLED'\)/, 'flag-gated')
