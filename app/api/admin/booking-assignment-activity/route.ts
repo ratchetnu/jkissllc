@@ -6,6 +6,17 @@
 // admin-only"). `time:view`, `routes:view` and `reports:view` all also reach
 // manager, so any of them would widen access for no reason.
 //
+// DELIBERATELY NOT GATED ON `BOOKING_ASSIGNMENT_ENABLED`. Every other booking-crew
+// surface 404s when that flag is off; this one does not, and that is intentional.
+// This is an AUDIT view, and the moment you most need to read the assignment history
+// is DURING or AFTER a rollback — to see what crew members did while the feature was
+// live, reconcile timeclock and pay against it, and decide whether to re-enable.
+// Gating it would make the evidence disappear exactly when it matters, and would also
+// make "no activity" ambiguous between "nothing happened" and "the surface is off".
+// The events are historical records, not a live feature, so reading them stays
+// available. Access is still restricted by `audit:view` (admin only) and scoped to
+// the active tenant. Pinned by a test.
+//
 // Read-only: no writes, no migrations, no backfills, no new flags. Tenant-scoped
 // through the redis chokepoint, which fails closed without a tenant context.
 //

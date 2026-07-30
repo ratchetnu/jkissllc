@@ -379,6 +379,64 @@ test('AUTHZ: an over-long range is refused with 400, not silently clamped', asyn
   assert.equal((await res.json()).error, 'range_too_long')
 })
 
+// ── Flag independence (intentional) ──────────────────────────────────────────
+
+test('the audit view is independent of BOOKING_ASSIGNMENT_ENABLED — history survives rollback', async () => {
+  kv.clear(); zsets.clear()
+  await seedBookings(2, 'default')
+  const prev = process.env.BOOKING_ASSIGNMENT_ENABLED
+  try {
+    // With the flag OFF every other booking-crew surface 404s. This one must not:
+    // the moment you most need the assignment history is during or after a rollback.
+    process.env.BOOKING_ASSIGNMENT_ENABLED = 'false'
+    const res = await activityGET(req(await sessionFor('admin')), { params: Promise.resolve({}) } as never)
+    assert.equal(res.status, 200, 'audit history stays readable with the flag off')
+    const body = await res.json()
+    assert.equal(body.summary.totals.accepted, 2, 'and still reports the real historical counts')
+  } finally {
+    process.env.BOOKING_ASSIGNMENT_ENABLED = prev
+  }
+
+  // And the route must not consult the flag at all — a future edit adding a gate
+  // would silently delete the evidence during a rollback.
+  const route = readFileSync(new URL('../app/api/admin/booking-assignment-activity/route.ts', import.meta.url), 'utf8')
+  const code = route.split('\n').filter(l => !l.trim().startsWith('//')).join('\n')
+  assert.doesNotMatch(code, /BOOKING_ASSIGNMENT_ENABLED/, 'no flag gate in the handler')
+  assert.doesNotMatch(code, /isEnabled/, 'no flag read at all')
+})
+
+// ── Refresh control layout contract ──────────────────────────────────────────
+
+test('the Refresh control is inline-flex, centered, non-wrapping, and 44px', () => {
+  const src = readFileSync(new URL('../app/admin/operations/crew-activity/page.tsx', import.meta.url), 'utf8')
+  // Isolate the Refresh button so these assertions cannot pass on some other control.
+  const start = src.indexOf('aria-label="Refresh crew activity"')
+  assert.ok(start > 0, 'Refresh button found')
+  const btn = src.slice(src.lastIndexOf('<button', start), src.indexOf('</button>', start))
+
+  // As a plain inline button with a margin-spaced SVG it wrapped onto two lines,
+  // putting the icon above the label. These four properties are the fix.
+  assert.match(btn, /display: 'inline-flex'/)
+  assert.match(btn, /alignItems: 'center'/)
+  assert.match(btn, /justifyContent: 'center'/)
+  assert.match(btn, /whiteSpace: 'nowrap'/)
+  assert.match(btn, /flexShrink: 0/, 'must not be squeezed again at narrow widths')
+  assert.match(btn, /minHeight: 44/, 'tap target preserved')
+  // Spacing now comes from flex gap, not an icon margin that inline layout could break.
+  assert.match(btn, /gap: 6/)
+  assert.doesNotMatch(btn, /marginRight/, 'no margin-based icon spacing')
+  assert.doesNotMatch(btn, /verticalAlign/, 'no inline-layout hacks left behind')
+  assert.match(btn, /aria-hidden="true"/, 'decorative icon stays out of the a11y tree')
+})
+
+test('every control in the range row keeps a 44px minimum tap target', () => {
+  const src = readFileSync(new URL('../app/admin/operations/crew-activity/page.tsx', import.meta.url), 'utf8')
+  const row = src.slice(src.indexOf('role="group" aria-label="Date range"'), src.indexOf('</fieldset>'))
+  const buttons = row.split('<button').slice(1)
+  assert.equal(buttons.length, 2, 'the mapped range pill plus Refresh')
+  for (const b of buttons) assert.match(b, /minHeight: 44/)
+})
+
 // ── No sensitive fields ──────────────────────────────────────────────────────
 
 test('NO LEAK: the response contains only numbers, booleans, and date strings', async () => {

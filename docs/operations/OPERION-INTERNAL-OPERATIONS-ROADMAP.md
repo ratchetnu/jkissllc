@@ -26,7 +26,7 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
   accept/decline, and clock punches now have bounded, retry-safe behavior.
 - Completion-proof idempotency and the visible photo-retry increment are merged through
   PR #132, live in Production as deployment `dpl_DNUCzre3V7LEJJvCCTdYykdUtzGr`.
-- Sprint 3 on `main` passes **2912/2912 tests**, TypeScript, and lint with zero errors
+- Sprint 3 on `main` passes **2915/2915 tests**, TypeScript, and lint with zero errors
   (one pre-existing warning in untouched `pay-statements.ts`).
 - `BOOKING_ASSIGNMENT_ENABLED` is **Production ON, independently verified on 2026-07-29
   through the route-gate probe**. The crew booking surface is serving, not dormant. See
@@ -338,6 +338,16 @@ first and most recent event, total events, distinct crew as a COUNT, and a compl
 idempotency split (with request id / distinct / duplicate / legacy-without-request-id).
 Default range seven days, bounded to 90. Counts, booleans and dates only — no customer,
 crew-identity, token, pay, note, photo, or per-booking data.
+
+**Crew Activity is deliberately NOT gated on `BOOKING_ASSIGNMENT_ENABLED`.** Every other
+booking-crew surface 404s when that flag is off; this one stays readable, on purpose. It is
+an audit view, and the moment the assignment history matters most is **during or after a
+rollback** — to see what crew members did while the feature was live, reconcile timeclock
+and pay against it, and decide whether to re-enable. Gating it would erase the evidence
+exactly when it is needed, and would make "no activity" ambiguous between *nothing
+happened* and *the surface is switched off*. Access is still restricted to `audit:view`
+(admin only) and scoped to the active tenant. A test asserts the handler never reads the
+flag, so a future edit cannot quietly reintroduce a gate.
 
 **Coverage is proven, not assumed.** The scan takes the authoritative index size (ZCARD)
 first, pages the index, dedupes tokens, and compares. If the traversal falls short for any

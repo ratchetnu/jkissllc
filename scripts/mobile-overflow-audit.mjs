@@ -127,6 +127,11 @@ const ROUTES = [
   { path: '/admin/operations/book-now', auth: 'admin', ready: 'h1, table' },
   { path: '/admin/operations/list', auth: 'admin', ready: 'h1, table' },
   { path: '/admin/operations/employees', auth: 'admin', ready: 'h1' },
+  // Crew Activity is admin-only (`audit:view`). Registered here so the aggregate
+  // panels and the range/Refresh control row stay overflow-free permanently — the
+  // Refresh button had already broken onto two lines once.
+  { path: '/admin/operations/crew-activity', auth: 'admin', ready: 'h1',
+    data: { required: ['/api/admin/booking-assignment-activity'] } },
   // A manager holds `businesses:manage` and this page IS theirs — only the invoice feed
   // (`invoices:manage`) refuses them, so route-invoices is required of admins and not of
   // managers. Narrowing it per role keeps the admin proof intact instead of deleting it.

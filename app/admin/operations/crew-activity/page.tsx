@@ -103,10 +103,16 @@ function CrewActivity() {
               </button>
             )
           })}
+          {/* inline-flex + nowrap, NOT an inline SVG with a margin. As a plain inline
+              button this shrank inside the flex row and broke onto two lines, dropping
+              the icon above the label while the three range pills stayed single-line.
+              `flexShrink: 0` keeps it from being squeezed again at narrow widths, and
+              minHeight 44 preserves the tap target. Covered by
+              scripts/booking-assignment-observability.test.ts. */}
           <button type="button" className="os-tap" onClick={() => void load(days)} disabled={loading}
             aria-label="Refresh crew activity"
-            style={{ minHeight: 44, padding: '0 15px', borderRadius: 10, fontSize: 13.5, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? .6 : 1, border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--text)' }}>
-            <RefreshCw size={14} aria-hidden="true" style={{ verticalAlign: -2, marginRight: 6 }} />
+            style={{ minHeight: 44, padding: '0 15px', borderRadius: 10, fontSize: 13.5, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? .6 : 1, border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--text)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, whiteSpace: 'nowrap', flexShrink: 0 }}>
+            <RefreshCw size={14} aria-hidden="true" />
             Refresh
           </button>
         </div>
