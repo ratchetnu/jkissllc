@@ -26,7 +26,7 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
   accept/decline, and clock punches now have bounded, retry-safe behavior.
 - Completion-proof idempotency and the visible photo-retry increment are merged through
   PR #132, live in Production as deployment `dpl_DNUCzre3V7LEJJvCCTdYykdUtzGr`.
-- Sprint 3 on `main` passes **2889/2889 tests**, TypeScript, and lint with zero errors
+- Sprint 3 on `main` passes **2912/2912 tests**, TypeScript, and lint with zero errors
   (one pre-existing warning in untouched `pay-statements.ts`).
 - `BOOKING_ASSIGNMENT_ENABLED` is **Production ON, independently verified on 2026-07-29
   through the route-gate probe**. The crew booking surface is serving, not dormant. See
@@ -297,6 +297,12 @@ change remains an owner decision — see
 
 **Production ON, independently verified on 2026-07-29 through the route-gate probe.**
 
+**Owner decision, 2026-07-30: the 2026-07-26 activation was INTENTIONAL, and
+`BOOKING_ASSIGNMENT_ENABLED` remains ON unless an explicit rollback criterion below is
+met.** Keep-on criterion 1 is therefore satisfied. This closes the question of whether the
+flag was set by accident; it does not pre-authorize any future change, which still requires
+owner approval.
+
 - The Production variable was created **2026-07-26 23:28:22 UTC** by the **account owner**
   (Vercel `OWNER` role), typed `sensitive`. `updatedAt` equals `createdAt` and `updatedBy`
   is null, so it has **never been modified since creation** — activation happened at
@@ -320,8 +326,31 @@ the flag's *effect* is observed. Note `jkissllc.com` 308-redirects to `www.jkiss
 
 ### Evidence of usage
 
-**Not measurable from outside Production — no usage claim is made here, in either
-direction.** What was attempted, read-only:
+**Crew Activity (`/admin/operations/crew-activity`) now answers this from inside the app.**
+A read-only admin page and `GET /api/admin/booking-assignment-activity`, gated on
+`audit:view` (admin only — the narrowest fitting capability, since `time:view`,
+`routes:view` and `reports:view` all also reach manager), aggregate the assignment audit
+ledger that `pushBookingEvent` was already writing. Nothing was instrumented, migrated, or
+backfilled.
+
+It reports counts for accepted / declined / clock-in / clock-out / completion-recorded,
+first and most recent event, total events, distinct crew as a COUNT, and a completion
+idempotency split (with request id / distinct / duplicate / legacy-without-request-id).
+Default range seven days, bounded to 90. Counts, booleans and dates only — no customer,
+crew-identity, token, pay, note, photo, or per-booking data.
+
+**Coverage is proven, not assumed.** The scan takes the authoritative index size (ZCARD)
+first, pages the index, dedupes tokens, and compares. If the traversal falls short for any
+reason — page ceiling, an indexed record that is gone, concurrent index churn — it returns
+`scanComplete: false` and the page refuses to present authoritative totals, labelling them
+lower bounds behind a warning instead.
+
+**Remaining limitation.** Each booking keeps at most 200 audit events
+(`BOOKING_MAX_EVENTS`), so a booking sitting at that cap may already have dropped older
+events; the page reports how many bookings are at the cap and states that their counts are
+a lower bound. The surface also cannot see anything outside the retained ledger, so it
+characterizes the ledger, not all history. Below is what was attempted BEFORE this existed,
+kept because it explains why external verification is not an option:
 
 - **Booking audit events** (`assignment.accepted` / `.declined` / `.clock_in` / `.clock_out`
   / `.completion_recorded`) live in Production KV. Every Production KV credential —
@@ -334,14 +363,13 @@ direction.** What was attempted, read-only:
   `GET /`. That window is far too short to characterize 73 hours.
 - **Vercel usage API** reports team-level cost by service with no per-route breakdown.
 
-Consequence: **whether crew members have actually used this surface is unknown**, and
-nobody can answer it without an authenticated admin session or a Production KV read-only
-token. Closing that observability gap is the first keep-on criterion below.
+Consequence: this cannot be answered from OUTSIDE Production, which is why the answer now
+lives inside the app as an authenticated admin surface rather than as an external probe.
 
 ### Keep-on criteria
 
-1. Owner confirms the 2026-07-26 activation was **intentional**. The metadata shows the
-   owner created it directly, which is consistent with intent but does not prove it.
+1. ~~Owner confirms the 2026-07-26 activation was **intentional**.~~ **SATISFIED
+   2026-07-30** — the owner confirmed the activation was intentional.
 2. An authenticated admin review of the booking audit ledger shows assignment/clock/
    completion events are well-formed and free of duplicates — the exactly-once property
    PR #132 hardened, observed on real data rather than fixtures.
@@ -387,14 +415,15 @@ document does not authorize a flag change.
 
 ## Immediate next action
 
-1. Owner: confirm whether the 2026-07-26 Production activation was intentional. Every
-   item below depends on that answer.
-2. Close the usage-observability gap: obtain an authenticated admin view (or a Production
-   KV read-only token) and report aggregate assignment/clock/completion event counts and
-   timestamps for the activation window. Until then no usage claim is defensible.
-3. With that data, inspect the booking audit ledger for exactly-once behavior on real
-   Production records — the property PR #132 hardened but which has only been proven
-   against fixtures.
+1. ~~Owner: confirm whether the 2026-07-26 Production activation was intentional.~~
+   **Done 2026-07-30 — intentional; the flag stays on absent a rollback criterion.**
+2. Review Crew Activity (`/admin/operations/crew-activity`) in Production over the
+   activation window and record the aggregate counts, so the usage question has a dated
+   answer rather than an open one.
+3. Read the completion idempotency panel on real Production records: **zero duplicate
+   request IDs** is the confirmation that the exactly-once property PR #132 hardened holds
+   outside fixtures. Legacy events without request IDs are outside that check and prove
+   nothing either way.
 4. Run the authenticated Preview mobile interruption/reconnect flow at 320/375/390/430 px
    and inspect audit history for exactly-once events.
 5. Resolve or retire the legacy public route-confirmation split before closing Sprint 3.
