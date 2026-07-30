@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, RefreshCw, Timer } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
-import { Stat, fmtTs } from '../ui'
+import { Stat, fmtTs, timestampRange } from '../ui'
 
 // Sprint 3.1 Phase A — measurement only. Read gated server-side on `audit:view`.
 // Nothing here enforces a rule or changes a punch; it answers one question: does a
@@ -158,8 +158,8 @@ function PunchOverlaps() {
                 <Stat label="Open punches" value={num(s.punches.open)} />
               </div>
               <p style={{ ...note, marginTop: 9 }}>
-                Earliest open punch {s.openDuplicates.earliestOpenAt ? fmtTs(s.openDuplicates.earliestOpenAt) : '—'} ·
-                latest {s.openDuplicates.latestOpenAt ? fmtTs(s.openDuplicates.latestOpenAt) : '—'}.
+                {timestampRange(s.openDuplicates.earliestOpenAt, s.openDuplicates.latestOpenAt,
+                  'No open punches in this scan.', '\u00b7 latest')}{' '}
                 The portal’s existing guard is <strong>day-scoped</strong>, so the same-date figure is
                 what today’s rule would have prevented; the global figure is what a stricter rule would catch.
               </p>
@@ -180,10 +180,10 @@ function PunchOverlaps() {
                 <Stat label="booking / booking" value={num(s.overlaps.byPairKind['booking/booking'])} />
               </div>
               <p style={{ ...note, marginTop: 9 }}>
-                Window {s.overlaps.earliestOverlapStartAt ? fmtTs(s.overlaps.earliestOverlapStartAt) : '—'} →{' '}
-                {s.overlaps.latestOverlapEndAt ? fmtTs(s.overlaps.latestOverlapEndAt) : '—'}. Open punches are
-                measured to {fmtTs(s.evaluatedAt)}, the moment this ran. Intervals that
-                merely touch end-to-end are not counted as overlapping.
+                {timestampRange(s.overlaps.earliestOverlapStartAt, s.overlaps.latestOverlapEndAt,
+                  'No overlapping intervals in this scan.')}{' '}
+                Open punches are measured to {fmtTs(s.evaluatedAt)}, the moment this ran.
+                Intervals that merely touch end-to-end are not counted as overlapping.
               </p>
             </section>
 

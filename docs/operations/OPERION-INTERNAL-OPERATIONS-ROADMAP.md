@@ -32,7 +32,7 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
   moved to `app/lib/schedule/auto-cancel-job.ts` so its clock is an ordinary parameter,
   and Production still passes `Date.now()` from the route. It fixed a red `main`
   (`dpl_382FhqAxfub2szYbnngjg2zQFfLc`).
-- Sprint 3 on `main` passes **2980/2980 tests**, TypeScript, and lint with zero errors
+- Sprint 3 on `main` passes **2984/2984 tests**, TypeScript, and lint with zero errors
   (one pre-existing warning in untouched `pay-statements.ts`).
 - `BOOKING_ASSIGNMENT_ENABLED` is **Production ON, independently verified on 2026-07-29
   through the route-gate probe**. The crew booking surface is serving, not dormant. See

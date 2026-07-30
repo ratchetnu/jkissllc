@@ -30,6 +30,7 @@ import { runWithTenant } from '../app/lib/platform/tenancy/context'
 import { GET as overlapsGET } from '../app/api/admin/punch-overlaps/route'
 import { createUserSessionToken } from '../app/api/admin/_lib/session'
 import type { TimeEntry } from '../app/lib/timesheets'
+import { timestampRange } from '../app/admin/operations/ui'
 
 let kv: ChildProcess | null = null
 before(async () => {
@@ -367,6 +368,40 @@ test('NO LEAK: no arrays anywhere ⇒ no per-record rows', async () => {
     Array.isArray(v) || (v !== null && typeof v === 'object' && Object.values(v as object).some(hasArray))
   assert.equal(hasArray(body.summary), false)
   assert.equal(hasArray(body.coverage), false)
+})
+
+// ── empty-state copy ─────────────────────────────────────────────────────────
+
+test('EMPTY COPY: both endpoints missing yields a sentence, not em-dash noise', () => {
+  // The defect: an empty report rendered "Earliest open punch — · latest —." and
+  // "Window — → —.", which reads as a rendering glitch on the state this surface
+  // shows most often.
+  assert.equal(timestampRange(null, null, 'No open punches in this scan.'), 'No open punches in this scan.')
+  assert.equal(timestampRange(undefined, undefined, 'None found.'), 'None found.')
+  assert.doesNotMatch(timestampRange(null, null, 'None found.'), /\u2014/, 'no em-dash when empty')
+})
+
+test('EMPTY COPY: a real or half-open range still renders', () => {
+  const a = timestampRange(T0, T0 + H, 'empty')
+  assert.notEqual(a, 'empty')
+  assert.match(a, /\u2192/, 'default separator is an arrow')
+  // A half-open range is real information and must NOT collapse to the empty text.
+  assert.notEqual(timestampRange(T0, null, 'empty'), 'empty')
+  assert.match(timestampRange(T0, null, 'empty'), /\u2014$/, 'the missing end shows as an em-dash')
+  assert.notEqual(timestampRange(null, T0, 'empty'), 'empty')
+  assert.match(timestampRange(null, T0, 'empty'), /^\u2014/)
+})
+
+test('EMPTY COPY: the separator is caller-chosen', () => {
+  assert.match(timestampRange(T0, T0 + H, 'empty', '\u00b7 latest'), /\u00b7 latest/)
+})
+
+test('EMPTY COPY: the page uses the helper at both sites, with no bare em-dash fallbacks', () => {
+  const src = readFileSync(new URL('../app/admin/operations/punch-overlaps/page.tsx', import.meta.url), 'utf8')
+  assert.equal((src.match(/timestampRange\(/g) ?? []).length, 2, 'both summary lines')
+  assert.doesNotMatch(src, /\? fmtTs\([^)]*\) : '\u2014'/, 'no inline em-dash fallback left behind')
+  assert.match(src, /No open punches in this scan\./)
+  assert.match(src, /No overlapping intervals in this scan\./)
 })
 
 // ── read-only ────────────────────────────────────────────────────────────────
