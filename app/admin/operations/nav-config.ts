@@ -42,6 +42,10 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/admin/operations/users', label: 'Team & Access', group: 'team', adminOnly: true },
   { href: '/admin/operations/permissions', label: 'Permissions', group: 'team' },
   { href: '/admin/operations/audit', label: 'Audit Log', group: 'team', adminOnly: true },
+  // Aggregate read of the booking assignment audit trail. Sits beside Audit Log —
+  // same subject, different altitude (totals vs. individual entries) — and shares
+  // its admin-only gate, because the API enforces `audit:view`.
+  { href: '/admin/operations/crew-activity', label: 'Crew Activity', group: 'team', adminOnly: true },
   // ── More menu — Communication ──
   { href: '/admin/operations/communications', label: 'Communications', group: 'comms' },
   { href: '/admin/operations/analytics', label: 'Analytics', group: 'comms' },

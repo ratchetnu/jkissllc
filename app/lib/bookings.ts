@@ -680,6 +680,41 @@ export async function listBookings(limit = 500): Promise<Booking[]> {
     .filter((b): b is Booking => b !== null)
 }
 
+// ── Read-only index primitives for complete, verifiable scans ────────────────
+// `listBookings` takes a single capped page, which is right for a UI list but
+// cannot tell a caller whether it saw everything. An aggregate that reports
+// totals MUST be able to prove its own coverage, so these two expose the index
+// size and one page at a time. Both go through the redis chokepoint, so both are
+// tenant-scoped and a missing tenant context fails closed.
+
+/** Authoritative size of the booking index for the ACTIVE tenant (ZCARD). */
+export async function countBookingIndex(): Promise<number> {
+  return redis.zcard(KEY_INDEX)
+}
+
+/** One page of index tokens, newest-updated first. Tokens only — no records. */
+export async function scanBookingIndexPage(offset: number, count: number): Promise<string[]> {
+  if (count <= 0 || offset < 0) return []
+  return redis.zrevrange(KEY_INDEX, offset, offset + count - 1)
+}
+
+/** Load records for specific tokens. Missing/corrupt records are reported, not
+ *  silently dropped, so a caller can decide whether its totals are complete. */
+export async function readBookingsByTokens(
+  tokens: string[],
+): Promise<{ bookings: Booking[]; missing: number }> {
+  if (!tokens.length) return { bookings: [], missing: 0 }
+  const raws = await Promise.all(tokens.map(t => redis.get(`${KEY_PREFIX}${t}`)))
+  const bookings: Booking[] = []
+  let missing = 0
+  for (const r of raws) {
+    if (!r) { missing++; continue }
+    try { bookings.push(normalize(JSON.parse(r as string) as Booking)) } catch { missing++ }
+  }
+  return { bookings, missing }
+}
+
+
 // Backfill defaults so older records never crash newer code.
 function normalize(b: Booking): Booking {
   b.items = Array.isArray(b.items) ? b.items : []
@@ -841,6 +876,11 @@ export function canMarkConfirmed(b: ConfirmableBooking): StatusGuard {
 // ── Audit + notification ledger helpers (pure mutations on the record) ───────
 const MAX_EVENTS = 200
 const MAX_NOTIFICATIONS = 100
+
+/** The per-booking event ledger cap. Exported so an aggregate over `events` can
+ *  warn that a booking sitting AT the cap may have dropped older events, and its
+ *  totals are therefore a lower bound for that booking. */
+export const BOOKING_MAX_EVENTS = MAX_EVENTS
 
 export function pushBookingEvent(b: Booking, e: Omit<BookingEvent, 'at'> & { at?: number }): BookingEvent {
   const entry: BookingEvent = { at: e.at ?? Date.now(), actor: e.actor, action: e.action, result: e.result, meta: e.meta }
