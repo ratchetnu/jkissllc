@@ -26,7 +26,13 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
   accept/decline, and clock punches now have bounded, retry-safe behavior.
 - Completion-proof idempotency and the visible photo-retry increment are merged through
   PR #132, live in Production as deployment `dpl_DNUCzre3V7LEJJvCCTdYykdUtzGr`.
-- Sprint 3 on `main` passes **2921/2921 tests**, TypeScript, and lint with zero errors
+- Crew Activity — the read-only aggregate over the assignment audit ledger, gated on
+  `audit:view` — is merged through PR #134 (`dpl_8UAqrrrZURtFrLdZJnuRaHYSTBrH`).
+- PR #135 unpinned the auto-cancel integration suite from the calendar: the cron job body
+  moved to `app/lib/schedule/auto-cancel-job.ts` so its clock is an ordinary parameter,
+  and Production still passes `Date.now()` from the route. It fixed a red `main`
+  (`dpl_382FhqAxfub2szYbnngjg2zQFfLc`).
+- Sprint 3 on `main` passes **2937/2937 tests**, TypeScript, and lint with zero errors
   (one pre-existing warning in untouched `pay-statements.ts`).
 - `BOOKING_ASSIGNMENT_ENABLED` is **Production ON, independently verified on 2026-07-29
   through the route-gate probe**. The crew booking surface is serving, not dormant. See
@@ -207,10 +213,37 @@ change remains an owner decision — see
   would incorrectly stamp server receipt time as work time. Offline punches fail
   visibly instead of silently changing the time.
 
+**Legacy public route-confirmation surface — decision: RETAIN AND HARDEN.**
+
+A read-only audit resolved the open "apply the treatment or retire it" question in
+favour of retaining it. The deciding evidence: **a route assignee is not guaranteed to
+have a login.** A `Staff` roster record and a `User` account are separate objects,
+`staff.email` is documented as "contact only", and creating a crew login is a distinct
+admin action (`POST /api/admin/users`, role `crew` + `staffId`). Assigning someone to a
+route creates no account, so for an account-less contractor the public token is the only
+way to act — and SMS delivers that link in the assignment, reminder, and details
+messages (`route-notify.confirmUrl`). Redirecting or retiring would strand exactly the
+population the surface exists for. `/portal/jobs` and `/portal/clock` already cover both
+lanes functionally; the gap is authentication, not capability.
+
+`/route/[token]` now carries the same connection treatment as the portal: bounded read
+retry, automatic mutation retry restricted to the four verbs that are idempotent
+server-side (`confirm`, `decline`, `clock_in`, `clock_out` — each guarded by its own
+stamp and answering `already` on replay), completion left single-attempt, an offline
+banner that keeps the route readable, every action control disabled while offline, and a
+reload on reconnect. **No punch is queued** — an offline punch is refused outright,
+because a stored punch would record the reconnect moment as the work time.
+
 **Remaining before Sprint 3 closes:**
 
-- Apply the same connection-state treatment to the legacy public route-confirmation
-  surface or retire that split surface in favor of the portal.
+- **Two divergences the audit found and this change deliberately did NOT touch**, because
+  both alter live contractor write behaviour and deserve their own owner-approved change:
+  1. The public surface does **not** enforce `hasOtherOpenPunch`. The portal refuses a
+     second concurrent clock-in on a different job; a contractor holding two route links
+     can hold two open punches at once. Payroll-relevant.
+  2. The public API implements `clock_in`/`clock_out` **inline** instead of using the
+     shared, tested `applyPunch` that both the portal and the booking lane use — two
+     copies of one rule.
 - Verify accept/decline, punches, duplicate taps, and photo recovery at
   320/375/390/430 px on representative iPhone and Android browsers.
 - Run an authenticated Preview mobile flow with forced request interruption and
@@ -436,7 +469,10 @@ document does not authorize a flag change.
    nothing either way.
 4. Run the authenticated Preview mobile interruption/reconnect flow at 320/375/390/430 px
    and inspect audit history for exactly-once events.
-5. Resolve or retire the legacy public route-confirmation split before closing Sprint 3.
+5. ~~Resolve or retire the legacy public route-confirmation split.~~ **Decided: retain
+   and harden** — see the Sprint 3 section. The connection treatment is applied; the two
+   remaining divergences (`hasOtherOpenPunch`, duplicated punch logic) are scoped there
+   and each need owner approval because they change live contractor write behaviour.
 6. Keep route auto-cancellation unscheduled and flag-off pending tenant fan-out and
    Preview dry reports.
 7. Make no `BOOKING_ASSIGNMENT_ENABLED` change without owner approval.

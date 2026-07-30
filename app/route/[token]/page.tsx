@@ -1,8 +1,26 @@
 'use client'
 
-import { use, useEffect, useState } from 'react'
+import { use, useCallback, useEffect, useState } from 'react'
 import { COMPANY } from '../../lib/company';
-import { MapPin, Clock, CalendarDays, Building2, Truck, DollarSign, User, Phone, FileText, CheckCircle2, XCircle, AlertTriangle, Camera } from 'lucide-react'
+import { MapPin, Clock, CalendarDays, Building2, Truck, DollarSign, User, Phone, FileText, CheckCircle2, XCircle, AlertTriangle, Camera, WifiOff } from 'lucide-react'
+// The weak-network helpers are shared with the crew portal. They contain nothing
+// portal-specific — `fetchWithRetry` is a plain bounded-retry wrapper and
+// `useConnectivity` reads navigator.onLine — so this public surface gets exactly the
+// same treatment rather than a second implementation that could drift.
+import { fetchWithRetry } from '../../portal/network'
+import { useConnectivity } from '../../portal/useConnectivity'
+
+// The four verbs this API implements idempotently: confirm/decline stamp the
+// assignee once (`assignee.confirmedAt || assignee.declinedAt` -> `already`), and
+// each punch is guarded by its own stamp (`assignee.clockInAt` / `clockOutAt`). A
+// dropped response can therefore be replayed without a second write.
+//
+// `complete` is deliberately ABSENT. It is in fact status-idempotent server-side
+// (`route.status === 'completed'` returns `already`), but completion carries photos
+// and a note, and the booking lane needed a request-level key before its completion
+// could be retried safely. Keeping this surface single-attempt matches that decision
+// rather than relying on a second, differently-argued proof.
+const RETRY_SAFE_ACTIONS = new Set(['confirm', 'decline', 'clock_in', 'clock_out'])
 
 type PublicRoute = {
   token: string
@@ -73,30 +91,54 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
   const [uploading, setUploading] = useState(false)
   const [clocking, setClocking] = useState<'' | 'clock_in' | 'clock_out'>('')
   const [clockWarn, setClockWarn] = useState('')
+  const [networkMsg, setNetworkMsg] = useState('')
+  const { offline } = useConnectivity()
 
-  useEffect(() => {
-    let alive = true
-    fetch(`/api/route/${token}`, { cache: 'no-store' })
-      .then(async r => { if (r.status === 404) { setNotFound(true); return null } return r.json() })
-      .then(d => { if (alive && d) { setRoute(d.route); setDisclaimer(d.disclaimer || '') } })
-      .catch(() => { if (alive) setNotFound(true) })
-      .finally(() => { if (alive) setLoading(false) })
-    return () => { alive = false }
+  const load = useCallback(async () => {
+    try {
+      const r = await fetchWithRetry(
+        `/api/route/${token}`,
+        { cache: 'no-store' },
+        { onRetry: () => setNetworkMsg('Connection is shaky — retrying…') },
+      )
+      if (r.status === 404) { setNotFound(true); return }
+      const d = await r.json()
+      setRoute(d.route)
+      setDisclaimer(d.disclaimer || '')
+      setNetworkMsg('')
+    } catch {
+      // A dropped read must NOT be reported as a dead link. `notFound` is reserved
+      // for a real 404 — telling a contractor their route does not exist because
+      // their signal faltered is the worst possible failure on this screen.
+      setErr('Could not load this route. Check your connection and try again.')
+    }
   }, [token])
+
+  // Reload when the connection returns. Going offline deliberately does NOT clear
+  // `route`, so the details stay readable in a basement or a dead zone.
+  useEffect(() => {
+    if (!offline) void load().finally(() => setLoading(false))
+  }, [offline, load])
 
   async function act(action: 'confirm' | 'decline', reason?: string) {
     if (action === 'confirm' && !agreed) { setErr('Please check the box to agree before confirming.'); return }
-    setBusy(action); setErr('')
+    // Offline is refused BEFORE the busy flag is set, so a refusal can never strand
+    // the buttons in a permanently-disabled state.
+    if (offline) { setErr('You’re offline. Reconnect before saving this.'); return }
+    setBusy(action); setErr(''); setNetworkMsg('')
     try {
-      const res = await fetch(`/api/route/${token}`, {
+      const res = await fetchWithRetry(`/api/route/${token}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(action === 'confirm' ? { action, disclaimerAccepted: true } : { action, reason: reason || undefined }),
+      }, {
+        allowMutationRetry: RETRY_SAFE_ACTIONS.has(action),
+        onRetry: () => setNetworkMsg('Connection dropped — retrying this safely…'),
       })
       const d = await res.json().catch(() => ({}))
       if (!res.ok && !d.route) { setErr(d.error === 'expired' ? 'This route link has expired.' : d.error === 'cancelled' ? 'This route was cancelled.' : (d.error || 'Something went wrong. Please try again.')) }
       if (d.route) setRoute(d.route)
     } catch { setErr('Network error — please try again.') }
-    finally { setBusy('') }
+    finally { setNetworkMsg(''); setBusy('') }
   }
 
   async function onPickPhotos(e: React.ChangeEvent<HTMLInputElement>) {
@@ -120,7 +162,11 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
   }
 
   async function clock(action: 'clock_in' | 'clock_out') {
-    setClocking(action); setErr(''); setClockWarn('')
+    // NO punch is ever stored for later delivery. If there is no connection the punch
+    // is refused outright and the crew member is told, because a queued punch would
+    // record the moment the network came back as the moment they arrived.
+    if (offline) { setErr('You’re offline. A punch can’t be saved until you reconnect — it would record the wrong time.'); return }
+    setClocking(action); setErr(''); setClockWarn(''); setNetworkMsg('')
     try {
       const pos = await getPosition()
       // GPS didn't pick up — warn the crew member before recording. If they turn
@@ -135,13 +181,19 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
         )
         if (!proceed) { setClocking(''); return }
       }
-      const res = await fetch(`/api/route/${token}`, {
+      const res = await fetchWithRetry(`/api/route/${token}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action,
           lat: pos?.lat, lng: pos?.lng, accuracy: pos?.accuracy,
           locationDenied: pos === null,
         }),
+      }, {
+        // Each punch is guarded by its own stamp server-side, so replaying a dropped
+        // response returns `already` instead of writing a second punch — and the
+        // FIRST timestamp is what persists.
+        allowMutationRetry: RETRY_SAFE_ACTIONS.has(action),
+        onRetry: () => setNetworkMsg('Connection dropped — retrying this punch safely…'),
       })
       const d = await res.json().catch(() => ({}))
       if (d.route) {
@@ -149,16 +201,18 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
         if (d.locationOff) setClockWarn('GPS couldn’t verify your location, so an alert was sent to the carrier. Turn on Location Services next time for a clean record.')
       } else if (!res.ok) setErr(d.error || 'Could not record that — please try again.')
     } catch { setErr('Network error — please try again.') }
-    finally { setClocking('') }
+    finally { setNetworkMsg(''); setClocking('') }
   }
 
   async function submitComplete() {
+    if (offline) { setErr('You’re offline. Reconnect before submitting completion.'); return }
     setBusy('complete'); setErr('')
     try {
-      const res = await fetch(`/api/route/${token}`, {
+      // Completion is NOT in RETRY_SAFE_ACTIONS, so this stays a single attempt.
+      const res = await fetchWithRetry(`/api/route/${token}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'complete', note: note.trim() || undefined, photos }),
-      })
+      }, { allowMutationRetry: RETRY_SAFE_ACTIONS.has('complete') })
       const d = await res.json().catch(() => ({}))
       if (d.route) setRoute(d.route)
       else if (!res.ok) setErr(d.error || 'Could not submit — please try again.')
@@ -172,6 +226,13 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
         <p style={{ fontWeight: 900, letterSpacing: '-0.03em', fontSize: 22, marginBottom: 18 }}>
           {COMPANY.nameLead} <span style={{ color: 'var(--red)' }}>{COMPANY.nameAccent}</span>
         </p>
+        {offline && (
+          <div role="status" style={{ display: 'flex', gap: 9, alignItems: 'center', padding: '11px 13px', marginBottom: 14, borderRadius: 10, color: '#fcd34d', border: '1px solid rgba(245,158,11,.35)', background: 'rgba(245,158,11,.08)' }}>
+            <WifiOff size={16} aria-hidden="true" />
+            <span style={{ fontSize: 13 }}>You’re offline. Your route stays visible, but confirming and clocking wait until you reconnect.</span>
+          </div>
+        )}
+        {networkMsg && <p role="status" aria-live="polite" style={{ color: '#fcd34d', fontSize: 13, marginBottom: 12 }}>{networkMsg}</p>}
         {children}
       </div>
     </main>
@@ -281,12 +342,12 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
           </div>
         )}
         {!route.clockInAt ? (
-          <button onClick={() => clock('clock_in')} disabled={clocking !== ''}
+          <button onClick={() => clock('clock_in')} disabled={clocking !== '' || offline}
             style={{ width: '100%', padding: '13px', borderRadius: 12, border: '1px solid rgba(34,197,94,.4)', background: 'rgba(34,197,94,.1)', color: '#22c55e', fontWeight: 800, fontSize: 14.5, cursor: 'pointer', opacity: clocking === 'clock_in' ? .7 : 1 }}>
             {clocking === 'clock_in' ? 'Locating…' : 'Clock In'}
           </button>
         ) : !route.clockOutAt ? (
-          <button onClick={() => clock('clock_out')} disabled={clocking !== ''}
+          <button onClick={() => clock('clock_out')} disabled={clocking !== '' || offline}
             style={{ width: '100%', padding: '13px', borderRadius: 12, border: '1px solid rgba(224,0,42,.4)', background: 'rgba(224,0,42,.1)', color: '#ff6680', fontWeight: 800, fontSize: 14.5, cursor: 'pointer', opacity: clocking === 'clock_out' ? .7 : 1 }}>
             {clocking === 'clock_out' ? 'Locating…' : 'Clock Out'}
           </button>
@@ -308,7 +369,7 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
               style={{ width: '100%', padding: '11px 12px', borderRadius: 10, background: 'rgba(255,255,255,.04)', border: '1px solid var(--line)', color: 'var(--text)', fontSize: 14, resize: 'vertical', fontFamily: 'inherit' }} />
             <label className="file-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 10, padding: '9px 13px', borderRadius: 10, border: '1px solid var(--line)', background: 'rgba(255,255,255,.03)', fontSize: 13.5, fontWeight: 600, cursor: photos.length >= 6 ? 'not-allowed' : 'pointer', color: 'var(--muted)', opacity: photos.length >= 6 ? .5 : 1 }}>
               <Camera size={16} /> {uploading ? 'Uploading…' : photos.length >= 6 ? 'Max 6 photos' : 'Add photo'}
-              <input type="file" aria-label="Add a photo to this route" accept="image/*" capture="environment" multiple onChange={onPickPhotos} className="file-input-a11y" disabled={uploading || photos.length >= 6} />
+              <input type="file" aria-label="Add a photo to this route" accept="image/*" capture="environment" multiple onChange={onPickPhotos} className="file-input-a11y" disabled={uploading || offline || photos.length >= 6} />
             </label>
             {photos.length > 0 && (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
@@ -324,7 +385,7 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
             )}
             {err && <p style={{ color: '#f87171', fontSize: 13, marginTop: 10 }}>{err}</p>}
             <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
-              <button onClick={submitComplete} disabled={busy === 'complete' || uploading}
+              <button onClick={submitComplete} disabled={busy === 'complete' || uploading || offline}
                 style={{ flex: 1, padding: '13px', borderRadius: 12, border: 'none', fontWeight: 800, fontSize: 14.5, color: '#fff', background: '#16a34a', cursor: 'pointer', opacity: busy === 'complete' ? .7 : 1 }}>
                 {busy === 'complete' ? 'Submitting…' : 'Submit — Route Done'}
               </button>
@@ -355,12 +416,12 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
       {err && <p style={{ color: '#f87171', fontSize: 13, marginTop: 12 }}>{err}</p>}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16 }}>
-        <button onClick={() => act('confirm')} disabled={busy !== '' || !agreed}
+        <button onClick={() => act('confirm')} disabled={busy !== '' || offline || !agreed}
           style={{ width: '100%', padding: '15px', borderRadius: 12, border: 'none', fontWeight: 800, fontSize: 15, color: '#fff', cursor: agreed ? 'pointer' : 'not-allowed', background: agreed ? 'var(--red)' : 'rgba(255,255,255,.1)', opacity: busy === 'confirm' ? .7 : 1 }}>
           {busy === 'confirm' ? 'Confirming…' : 'I Confirm I Will Be There'}
         </button>
         {!declineMode ? (
-          <button onClick={() => setDeclineMode(true)} disabled={busy !== ''}
+          <button onClick={() => setDeclineMode(true)} disabled={busy !== '' || offline}
             style={{ width: '100%', padding: '15px', borderRadius: 12, border: '1px solid var(--line)', fontWeight: 700, fontSize: 15, color: 'var(--muted)', background: 'transparent', cursor: 'pointer' }}>
             I Cannot Take This Route
           </button>
@@ -381,7 +442,7 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
               placeholder="Add a detail (optional) — e.g. free after 10am, out of town Friday…"
               style={{ width: '100%', marginTop: 11, padding: '10px 12px', borderRadius: 10, background: 'rgba(255,255,255,.04)', border: '1px solid var(--line)', color: 'var(--text)', fontSize: 13.5, resize: 'vertical', fontFamily: 'inherit' }} />
             <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-              <button onClick={() => act('decline', [declineReason, declineNote.trim()].filter(Boolean).join(' — '))} disabled={busy !== '' || !declineReason}
+              <button onClick={() => act('decline', [declineReason, declineNote.trim()].filter(Boolean).join(' — '))} disabled={busy !== '' || offline || !declineReason}
                 style={{ flex: 1, padding: '13px', borderRadius: 12, border: 'none', fontWeight: 800, fontSize: 14.5, color: '#fff', background: declineReason ? '#b91c1c' : 'rgba(255,255,255,.1)', cursor: declineReason ? 'pointer' : 'not-allowed', opacity: busy === 'decline' ? .7 : 1 }}>
                 {busy === 'decline' ? 'Sending…' : 'Send response'}
               </button>
