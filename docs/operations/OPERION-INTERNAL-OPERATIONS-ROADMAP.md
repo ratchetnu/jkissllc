@@ -32,7 +32,7 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
   moved to `app/lib/schedule/auto-cancel-job.ts` so its clock is an ordinary parameter,
   and Production still passes `Date.now()` from the route. It fixed a red `main`
   (`dpl_382FhqAxfub2szYbnngjg2zQFfLc`).
-- Sprint 3 on `main` passes **2952/2952 tests**, TypeScript, and lint with zero errors
+- Sprint 3 on `main` passes **2980/2980 tests**, TypeScript, and lint with zero errors
   (one pre-existing warning in untouched `pay-statements.ts`).
 - `BOOKING_ASSIGNMENT_ENABLED` is **Production ON, independently verified on 2026-07-29
   through the route-gate probe**. The crew booking surface is serving, not dormant. See
@@ -244,8 +244,23 @@ with a 44 px Try again.
 
 **Remaining before Sprint 3 closes:**
 
-- **Two divergences the audit found and this change deliberately did NOT touch**, because
-  both alter live contractor write behaviour and deserve their own owner-approved change:
+- **Sprint 3.1 Phase A (measurement) is built**: `/admin/operations/punch-overlaps`,
+  gated on `audit:view`, tenant-scoped, read-only and aggregate-only. It answers whether
+  D1 has actually happened — currently-open duplicate punches and historical overlapping
+  intervals, each reported both globally and restricted to a shared service date, split
+  by route/route, route/booking and booking/booking, with per-lane scan completeness.
+  It enforces nothing and changes no punch. Phases B (consolidate the duplicated punch
+  logic) and C (enforce one open punch) remain unstarted and unapproved.
+  - Note the portal's existing guard is **day-scoped** (`selectClockable` filters on
+    `routeDate`), so the same-date figure is what today's rule would have prevented and
+    the global figure is what a stricter rule would catch. That asymmetry is a decision
+    for Phase C, not an accident to fix silently.
+  - Surface attribution is **inferred, best-effort**: a punch record carries no marker
+    (`Assignee` has `confirmedVia` but no `clockedVia`), so it is read from the audit
+    trail, which is capped at 200 entries per route. Punches outlive that evidence, so
+    an `unattributable` bucket is reported as a real answer.
+- **Two divergences that remain deliberately untouched**, because both alter live
+  contractor write behaviour and need their own owner-approved change:
   1. The public surface does **not** enforce `hasOtherOpenPunch`. The portal refuses a
      second concurrent clock-in on a different job; a contractor holding two route links
      can hold two open punches at once. Payroll-relevant.

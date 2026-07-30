@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useState, useEffect, useRef } from 'react'
 import { useAdminSession } from '../useAdminSession'
-import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, ShieldCheck, Settings, LogOut, Search, Plus, Zap, Rocket, MoreHorizontal, X, Sparkles, Mail, CalendarDays, LayoutGrid, Bell, ChevronDown, CircleDollarSign, Layers, RefreshCw, KeyRound, Activity } from 'lucide-react'
+import { Home, ClipboardList, Users, Building2, Truck, MessageSquare, ShieldAlert, ShieldCheck, Settings, LogOut, Search, Plus, Zap, Rocket, MoreHorizontal, X, Sparkles, Mail, CalendarDays, LayoutGrid, Bell, ChevronDown, CircleDollarSign, Layers, RefreshCw, KeyRound, Activity, Timer } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import CommandPalette from './CommandPalette'
 import LastLogin from './LastLogin'
@@ -29,6 +29,7 @@ const ICONS: Record<string, LucideIcon> = {
   // Without an entry here Crew Activity would fall back to `Home`, putting a second
   // house icon in the Team group — the same defect Permissions had above.
   '/admin/operations/crew-activity': Activity,
+  '/admin/operations/punch-overlaps': Timer,
   '/admin/operations/book-now': Zap,
   '/admin/operations/communications': Mail,
   '/admin/operations/ai': Sparkles,
