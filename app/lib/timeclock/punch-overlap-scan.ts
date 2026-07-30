@@ -18,6 +18,7 @@ import {
   type Booking,
 } from '../bookings'
 import { selectTimeEntries } from '../timesheets'
+import { listCorrectionsForPunches, punchId } from '../time-corrections'
 import {
   analysePunchOverlaps, inferRoutePunchSurface, toPunchIntervals,
   BOOKING_PUNCH_SURFACE, type PunchOverlapSummary, type PunchSurface,
@@ -48,6 +49,13 @@ export type PunchOverlapReport = {
     bookings: LaneCoverage
     /** False ⇒ every count in `summary` is a LOWER BOUND. */
     authoritative: boolean
+    /** Corrections projected onto the punches. Loading these is mandatory: the
+     *  report throws rather than falling back to raw stamps. */
+    corrections: {
+      punchIdsQueried: number
+      punchesWithCorrections: number
+      entriesCorrected: number
+    }
     caps: {
       routeScanMax: number
       routeAuditCap: number
@@ -119,17 +127,32 @@ function buildAttribution(routes: RouteRecord[], bookings: Booking[]): Map<strin
   const map = new Map<string, PunchSurface>()
   for (const r of routes) {
     for (const a of r.assignees ?? []) {
-      if (!a.clockInAt) continue
-      map.set(`route:${r.token}:${a.staffId}`, inferRoutePunchSurface(r.audit ?? [], a.name ?? ''))
+      // A punch that exists ONLY because of a correction has no originating surface —
+      // an admin created it. Claiming one would be a guess, so it stays unattributable.
+      map.set(`route:${r.token}:${a.staffId}`,
+        a.clockInAt ? inferRoutePunchSurface(r.audit ?? [], a.name ?? '') : 'unattributable')
     }
   }
   for (const b of bookings) {
     for (const a of b.assignees ?? []) {
-      if (!a.clockInAt) continue
-      map.set(`booking:${b.token}:${a.staffId}`, BOOKING_PUNCH_SURFACE)
+      map.set(`booking:${b.token}:${a.staffId}`,
+        a.clockInAt ? BOOKING_PUNCH_SURFACE : 'unattributable')
     }
   }
   return map
+}
+
+/**
+ * Every punch id in the scan — for EVERY assignee, not only those with a raw
+ * clock-in. `selectTimeEntries` surfaces an entry that exists purely because of a
+ * correction (a crew member who forgot to punch), so narrowing this to punched
+ * assignees would hide exactly those.
+ */
+function allPunchIds(routes: RouteRecord[], bookings: Booking[]): string[] {
+  const ids: string[] = []
+  for (const r of routes) for (const a of r.assignees ?? []) ids.push(punchId('route', r.token, a.staffId))
+  for (const b of bookings) for (const a of b.assignees ?? []) ids.push(punchId('booking', b.token, a.staffId))
+  return ids
 }
 
 export async function buildPunchOverlapReport(
@@ -143,7 +166,24 @@ export async function buildPunchOverlapReport(
   const routes = routeLane(scan)
   const { bookings: bookingRecords, lane: bookingsLane } = await scanBookings(pageSize, maxPages)
 
-  const entries = selectTimeEntries(scan.routes, bookingRecords, {})
+  // CORRECTIONS ARE PART OF THE ANSWER, NOT A GARNISH. A time correction is exactly
+  // how a bad punch gets fixed, so an audit that read raw stamps would keep reporting
+  // a corrected punch as open and would compute overlaps from superseded times. This
+  // shipped that way in #137 and the first correction ever applied exposed it.
+  //
+  // If corrections cannot be loaded this THROWS rather than falling back to raw
+  // punches. Silently degrading would produce confident, wrong numbers on the one
+  // surface whose entire purpose is accuracy — the endpoint answers 503 instead.
+  const punchIds = allPunchIds(scan.routes, bookingRecords)
+  let corrections: Awaited<ReturnType<typeof listCorrectionsForPunches>>
+  try {
+    corrections = await listCorrectionsForPunches(punchIds)
+  } catch (cause) {
+    throw new Error('punch-overlap: corrections could not be loaded; refusing to report raw punches', { cause })
+  }
+
+  // Every timestamp below is the EFFECTIVE (correction-adjusted) punch.
+  const entries = selectTimeEntries(scan.routes, bookingRecords, {}, corrections)
   const attribution = buildAttribution(scan.routes, bookingRecords)
   const intervals = toPunchIntervals(entries, attribution)
   const analysis = analysePunchOverlaps(intervals, now)
@@ -161,6 +201,11 @@ export async function buildPunchOverlapReport(
       routes,
       bookings: bookingsLane,
       authoritative: routes.scanComplete && bookingsLane.scanComplete,
+      corrections: {
+        punchIdsQueried: punchIds.length,
+        punchesWithCorrections: corrections.size,
+        entriesCorrected: entries.filter(e => e.corrected).length,
+      },
       caps: {
         routeScanMax: ROUTE_SCAN_MAX,
         routeAuditCap: ROUTE_AUDIT_CAP,
