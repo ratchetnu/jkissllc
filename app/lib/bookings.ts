@@ -381,6 +381,9 @@ export type Booking = {
   jobCompletedBy?: 'crew' | 'admin'
   completionNote?: string
   completionPhotos?: string[]  // Vercel Blob URLs
+  // Internal bounded dedupe ledger. A crew retry reuses its request ID so an
+  // unknown first response cannot create a second timestamp or audit event.
+  completionRequestIds?: string[]
   disposalEstimateCents?: number // estimated dump/disposal cost (from the quote)
   disposalActualCents?: number   // actual disposal cost entered after the job
   aiEstimate?: StoredAiEstimate  // INITIAL AI photo analysis + deterministic pricing + decision (internal)
@@ -887,7 +890,8 @@ export function dollarsToCents(v: string | number): number {
 // a booking to the browser.
 export type CustomerBooking = Omit<Booking,
   'internalNotes' | 'agreementIp' | 'agreementUserAgent' | 'payments' | 'disposalEstimateCents' | 'disposalActualCents'
-  | 'aiEstimate' | 'finalAiEstimate' | 'events' | 'notifications' | 'replacementUpload' | 'idempotencyKey' | 'assignees'> & {
+  | 'aiEstimate' | 'finalAiEstimate' | 'events' | 'notifications' | 'replacementUpload' | 'idempotencyKey' | 'assignees'
+  | 'completionRequestIds'> & {
   balanceDueCents: number
   paymentSummary: PaymentSummaryStatus
   payments: Array<Pick<Payment, 'type' | 'method' | 'status' | 'amountCents' | 'feeCents' | 'totalChargedCents' | 'createdAt' | 'confirmedAt'> & { hasProof: boolean }>
@@ -899,9 +903,10 @@ export function customerView(b: Booking): CustomerBooking {
   const {
     internalNotes: _i, agreementIp: _ip, agreementUserAgent: _ua, payments,
     disposalEstimateCents: _de, disposalActualCents: _da, aiEstimate: _ai, finalAiEstimate: _fai,
-    events: _ev, notifications: _no, replacementUpload: _ru, idempotencyKey: _ik, assignees: _as, ...rest
+    events: _ev, notifications: _no, replacementUpload: _ru, idempotencyKey: _ik, assignees: _as,
+    completionRequestIds: _cr, ...rest
   } = b
-  void _i; void _ip; void _ua; void _de; void _da; void _ai; void _fai; void _ev; void _no; void _ru; void _ik; void _as
+  void _i; void _ip; void _ua; void _de; void _da; void _ai; void _fai; void _ev; void _no; void _ru; void _ik; void _as; void _cr
   return {
     ...rest,
     balanceDueCents: balanceDueCents(b),

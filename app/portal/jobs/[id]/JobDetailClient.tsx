@@ -41,6 +41,13 @@ type Job = {
   completion: { completedAt: number | null; note: string | null; photos: string[] }
 }
 
+type PendingCompletion = {
+  files: File[]
+  urls: Array<string | null>
+  requestId: string
+  note?: string
+}
+
 const fmtClock = (ts: number) => new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 
 // Ask the phone where it is. Best-effort by design: no geolocation, a denied
@@ -65,6 +72,10 @@ const bigBtn = (tone: string): React.CSSProperties => ({
 
 const RETRY_SAFE_ACTIONS = new Set(['accept', 'decline', 'clock_in', 'clock_out'])
 
+// One id, shared by the read-only note and the locked picker via aria-describedby,
+// so the element that explains the lock is the same element both controls point at.
+const PENDING_LOCK_ID = 'completion-pending-lock'
+
 function JobDetail({ id }: { id: string }) {
   const [job, setJob] = useState<Job | null>(null)
   const [loading, setLoading] = useState(true)
@@ -73,7 +84,10 @@ function JobDetail({ id }: { id: string }) {
   const [err, setErr] = useState('')
   const [networkMsg, setNetworkMsg] = useState('')
   const [note, setNote] = useState('')
+  const [pendingPhotoCount, setPendingPhotoCount] = useState(0)
+  const [photoRetryReady, setPhotoRetryReady] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const pendingCompletionRef = useRef<PendingCompletion | null>(null)
   const { offline } = useConnectivity()
 
   const load = useCallback(async () => {
@@ -142,22 +156,43 @@ function JobDetail({ id }: { id: string }) {
     await act({ action, ...(pos ?? {}), locationDenied: !pos }, action)
   }
 
-  const sendPhotos = async (files: FileList | null) => {
-    if (!files?.length) return
+  const submitPendingPhotos = async () => {
+    const pending = pendingCompletionRef.current
+    if (!pending) return
+    if (offline) {
+      setErr('You’re offline. Your selected photos are kept on this page — reconnect, then retry.')
+      setPhotoRetryReady(true)
+      return
+    }
+
     setBusy('photos'); setErr('')
+    setPhotoRetryReady(false)
     try {
-      const urls: string[] = []
-      for (const f of Array.from(files).slice(0, 10)) {
+      // Preserve each successful Blob URL immediately. A later failure retries
+      // only unfinished files rather than uploading the successful ones again.
+      for (let index = 0; index < pending.files.length; index++) {
+        if (pending.urls[index]) continue
+        const f = pending.files[index]
         const blob = await uploadPresigned(f.name, f, {
           access: 'public',
           handleUploadUrl: '/api/portal/upload',
         })
-        urls.push(blob.url)
+        pending.urls[index] = blob.url
       }
-      const saved = await act({ action: 'complete', photos: urls, note: note || undefined }, 'photos')
+      const saved = await act({
+        action: 'complete',
+        photos: pending.urls.filter((url): url is string => !!url),
+        note: pending.note,
+        requestId: pending.requestId,
+      }, 'photos')
       if (saved) {
+        pendingCompletionRef.current = null
+        setPendingPhotoCount(0)
+        setPhotoRetryReady(false)
         setNote('')
         if (fileRef.current) fileRef.current.value = ''
+      } else {
+        setPhotoRetryReady(true)
       }
     } catch (e) {
       // "Check your signal" is wrong — and wastes the crew member's time — when the
@@ -166,9 +201,30 @@ function JobDetail({ id }: { id: string }) {
       const cause = e instanceof Error ? e.message : String(e ?? '')
       setErr(/blob_store_(not_configured|mismatch)/.test(cause)
         ? 'Photo uploads aren’t set up yet. Tell the office — retrying won’t help.'
-        : 'Upload failed — check your signal and try again.')
+        : 'Upload paused. Your selected photos are kept on this page — check your signal and retry.')
+      setPhotoRetryReady(true)
       setBusy('')
     }
+  }
+
+  const sendPhotos = async (files: FileList | null) => {
+    if (!files?.length) return
+    // The picker is disabled while an attempt is pending; this is the programmatic
+    // backstop. Replacing the pending attempt here would orphan Blob URLs that have
+    // already uploaded under the current request id, so a stray change event must
+    // not start a second attempt. Read the ref, not the render state — the ref is
+    // authoritative before React re-renders.
+    if (pendingCompletionRef.current) return
+    const selected = Array.from(files).slice(0, 10)
+    pendingCompletionRef.current = {
+      files: selected,
+      urls: Array<string | null>(selected.length).fill(null),
+      requestId: crypto.randomUUID(),
+      note: note.trim() || undefined,
+    }
+    setPendingPhotoCount(selected.length)
+    setPhotoRetryReady(false)
+    await submitPendingPhotos()
   }
 
   if (loading) return <p style={{ color: 'var(--muted)', fontSize: 14 }}>Loading…</p>
@@ -201,6 +257,13 @@ function JobDetail({ id }: { id: string }) {
   const { me } = job
   const accepted = !!me.confirmedAt && !me.declinedAt
   const actionDisabled = !!busy || offline
+  // A pending completion attempt is IMMUTABLE. Its note and its file list were
+  // captured with the request id that identifies it, and a retry replays exactly
+  // that request. Leaving the note or the picker live would let a crew member make
+  // an edit that looks accepted and is then silently dropped when the original
+  // request id is replayed, or abandon Blob URLs that already uploaded. The
+  // controls come back on success (state is cleared) or on navigation (remount).
+  const photosPending = pendingPhotoCount > 0
   const actionBtn = (tone: string): React.CSSProperties => ({
     ...bigBtn(tone),
     opacity: actionDisabled ? .55 : 1,
@@ -330,9 +393,42 @@ function JobDetail({ id }: { id: string }) {
             </div>
           )}
 
+          {/* readOnly, NOT disabled. `disabled` drops the field out of the tab order
+              and strips its interactive affordance from the accessibility tree, so a
+              screen-reader user would find the note simply gone with no explanation.
+              readOnly keeps it focusable, announced, and readable while still
+              refusing edits — and the PENDING_LOCK_ID paragraph below says why. */}
           <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
+            readOnly={photosPending}
+            aria-describedby={photosPending ? PENDING_LOCK_ID : undefined}
             placeholder="Anything dispatch should know?" aria-label="Note for dispatch"
-            style={{ background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 10, padding: 10, fontSize: 13.5, color: 'var(--text)', resize: 'vertical' }} />
+            style={{ background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 10, padding: 10, fontSize: 13.5, color: 'var(--text)', resize: 'vertical', opacity: photosPending ? .55 : 1, cursor: photosPending ? 'not-allowed' : 'auto' }} />
+
+          {/* ALWAYS rendered while an attempt is pending — deliberately not gated on
+              `photoRetryReady`, so the lock is explained during the first in-flight
+              upload too, not only after a failure. */}
+          {photosPending && (
+            <p id={PENDING_LOCK_ID} style={{ color: 'var(--muted)', fontSize: 12 }}>
+              This note and photo set are locked to the pending upload and will be sent with it.
+              Reload the page to start over with a different note or different photos.
+            </p>
+          )}
+
+          {photoRetryReady && pendingPhotoCount > 0 && (
+            <div role="status" style={{ padding: 12, borderRadius: 10, border: '1px solid rgba(245,158,11,.35)', background: 'rgba(245,158,11,.08)' }}>
+              <p style={{ color: '#fcd34d', fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+                {pendingPhotoCount} selected {pendingPhotoCount === 1 ? 'photo is' : 'photos are'} kept on this page.
+              </p>
+              <button type="button" className="os-tap" onClick={() => void submitPendingPhotos()}
+                disabled={actionDisabled}
+                style={{ minHeight: 44, width: '100%', borderRadius: 10, border: '1px solid #f59e0b', background: 'rgba(245,158,11,.14)', color: '#fcd34d', fontWeight: 800, opacity: actionDisabled ? .55 : 1, cursor: actionDisabled ? 'not-allowed' : 'pointer' }}>
+                {busy === 'photos' ? 'Retrying…' : 'Retry upload'}
+              </button>
+              {/* The way out of an unrecoverable attempt is named by the always-rendered
+                  lock description below the note — which is linked to both controls by
+                  aria-describedby — so it is deliberately not repeated here. */}
+            </div>
+          )}
 
           {/* `.file-input-a11y` + `.file-label` — the house upload pattern. The input
               is visually hidden but STILL FOCUSABLE and still in the tab order;
@@ -341,11 +437,14 @@ function JobDetail({ id }: { id: string }) {
               (WCAG 2.1.1). `.file-label:focus-within` puts the focus ring on the
               visible label. Same shape as every other upload in the app — see
               app/globals.css and scripts/wizard-a11y.test.ts. */}
-          <label className="file-label" style={actionBtn('#60a5fa')}>
-            <Camera size={18} /> {busy === 'photos' ? 'Sending…' : 'Add finished photos'}
+          <label className="file-label"
+            style={{ ...actionBtn('#60a5fa'), opacity: actionDisabled || photosPending ? .55 : 1, cursor: actionDisabled || photosPending ? 'not-allowed' : 'pointer' }}>
+            <Camera size={18} /> {busy === 'photos' ? 'Sending…' : photosPending ? 'Photos waiting to send' : 'Add finished photos'}
             <input ref={fileRef} type="file" accept="image/*" multiple capture="environment"
-              aria-label="Add finished photos of this job" className="file-input-a11y" disabled={actionDisabled}
-              onChange={e => sendPhotos(e.target.files)} />
+              aria-label="Add finished photos of this job" className="file-input-a11y"
+              disabled={actionDisabled || photosPending}
+              aria-describedby={photosPending ? PENDING_LOCK_ID : undefined}
+              onChange={e => void sendPhotos(e.target.files)} />
           </label>
 
           {job.completion.note && (
