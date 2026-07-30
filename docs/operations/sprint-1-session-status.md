@@ -4,6 +4,17 @@
 
 > Every session MUST re-read this file before its first write, and update its own row after every increment. Do not edit another session's row.
 
+> **Superseded on 2026-07-29 — `BOOKING_ASSIGNMENT_ENABLED` Production state has changed.**
+> This file is an append-only Sprint 1 session log. Every statement in it that
+> `BOOKING_ASSIGNMENT_ENABLED` is "absent", "absent (0)", "OFF throughout", or that the
+> booking feature is "still inert" in Production was **true when written** and is preserved
+> as written. It is **no longer true**: the Production variable was created 2026-07-26
+> 23:28 UTC by the account owner and the flag is now **Production ON, independently
+> verified on 2026-07-29 through the route-gate probe**, serving since the 2026-07-27
+> 00:13 UTC deployment. The *code default* remains OFF. For current state, keep-on and
+> rollback criteria, read `OPERION-INTERNAL-OPERATIONS-ROADMAP.md`
+> §"`BOOKING_ASSIGNMENT_ENABLED` — Production activation decision" — not this log.
+
 ---
 
 ## 📌 PAYROLL REKEY RECONCILIATION (2026-07-24, owner-run · **supersedes the SHA + release state below**)

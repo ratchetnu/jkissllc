@@ -2,8 +2,18 @@
 
 **Sprint:** Job assignment & execution for bookings
 **Branch:** `feat/booking-job-assignment` (off `main` @ `a5f647d`)
-**Flag:** `BOOKING_ASSIGNMENT_ENABLED` — **default OFF, everywhere**
+**Flag:** `BOOKING_ASSIGNMENT_ENABLED` — **code default OFF** (see the superseding note below
+for the current Production state)
 **Status:** complete, verified, **not merged, not deployed**
+
+> **Superseded on 2026-07-29 — Production state has changed.** Every flag statement in this
+> report is a point-in-time record from Sprint 1 and is preserved as written. The *code
+> default* is still OFF, but `BOOKING_ASSIGNMENT_ENABLED` is now **Production ON,
+> independently verified on 2026-07-29 through the route-gate probe** (variable created
+> 2026-07-26 23:28 UTC by the account owner; serving since the 2026-07-27 00:13 UTC
+> deployment). Do not read this report as a statement of current Production state — see
+> `OPERION-INTERNAL-OPERATIONS-ROADMAP.md` §"`BOOKING_ASSIGNMENT_ENABLED` — Production
+> activation decision".
 
 ---
 
