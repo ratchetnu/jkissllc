@@ -205,6 +205,12 @@ function JobDetail({ id }: { id: string }) {
 
   const sendPhotos = async (files: FileList | null) => {
     if (!files?.length) return
+    // The picker is disabled while an attempt is pending; this is the programmatic
+    // backstop. Replacing the pending attempt here would orphan Blob URLs that have
+    // already uploaded under the current request id, so a stray change event must
+    // not start a second attempt. Read the ref, not the render state — the ref is
+    // authoritative before React re-renders.
+    if (pendingCompletionRef.current) return
     const selected = Array.from(files).slice(0, 10)
     pendingCompletionRef.current = {
       files: selected,
@@ -247,6 +253,13 @@ function JobDetail({ id }: { id: string }) {
   const { me } = job
   const accepted = !!me.confirmedAt && !me.declinedAt
   const actionDisabled = !!busy || offline
+  // A pending completion attempt is IMMUTABLE. Its note and its file list were
+  // captured with the request id that identifies it, and a retry replays exactly
+  // that request. Leaving the note or the picker live would let a crew member make
+  // an edit that looks accepted and is then silently dropped when the original
+  // request id is replayed, or abandon Blob URLs that already uploaded. The
+  // controls come back on success (state is cleared) or on navigation (remount).
+  const photosPending = pendingPhotoCount > 0
   const actionBtn = (tone: string): React.CSSProperties => ({
     ...bigBtn(tone),
     opacity: actionDisabled ? .55 : 1,
@@ -377,8 +390,9 @@ function JobDetail({ id }: { id: string }) {
           )}
 
           <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
+            disabled={photosPending}
             placeholder="Anything dispatch should know?" aria-label="Note for dispatch"
-            style={{ background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 10, padding: 10, fontSize: 13.5, color: 'var(--text)', resize: 'vertical' }} />
+            style={{ background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 10, padding: 10, fontSize: 13.5, color: 'var(--text)', resize: 'vertical', opacity: photosPending ? .55 : 1, cursor: photosPending ? 'not-allowed' : 'auto' }} />
 
           {photoRetryReady && pendingPhotoCount > 0 && (
             <div role="status" style={{ padding: 12, borderRadius: 10, border: '1px solid rgba(245,158,11,.35)', background: 'rgba(245,158,11,.08)' }}>
@@ -390,6 +404,12 @@ function JobDetail({ id }: { id: string }) {
                 style={{ minHeight: 44, width: '100%', borderRadius: 10, border: '1px solid #f59e0b', background: 'rgba(245,158,11,.14)', color: '#fcd34d', fontWeight: 800, opacity: actionDisabled ? .55 : 1, cursor: actionDisabled ? 'not-allowed' : 'pointer' }}>
                 {busy === 'photos' ? 'Retrying…' : 'Retry upload'}
               </button>
+              {/* The note and the picker are locked to this attempt, so name the way
+                  out. Without this, an error that retrying cannot fix (an unconfigured
+                  Blob store) would read as a dead end. */}
+              <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 8 }}>
+                This note and photo set are locked to this attempt. Reload the page to start over with different photos.
+              </p>
             </div>
           )}
 
@@ -400,10 +420,12 @@ function JobDetail({ id }: { id: string }) {
               (WCAG 2.1.1). `.file-label:focus-within` puts the focus ring on the
               visible label. Same shape as every other upload in the app — see
               app/globals.css and scripts/wizard-a11y.test.ts. */}
-          <label className="file-label" style={actionBtn('#60a5fa')}>
-            <Camera size={18} /> {busy === 'photos' ? 'Sending…' : 'Add finished photos'}
+          <label className="file-label"
+            style={{ ...actionBtn('#60a5fa'), opacity: actionDisabled || photosPending ? .55 : 1, cursor: actionDisabled || photosPending ? 'not-allowed' : 'pointer' }}>
+            <Camera size={18} /> {busy === 'photos' ? 'Sending…' : photosPending ? 'Photos waiting to send' : 'Add finished photos'}
             <input ref={fileRef} type="file" accept="image/*" multiple capture="environment"
-              aria-label="Add finished photos of this job" className="file-input-a11y" disabled={actionDisabled}
+              aria-label="Add finished photos of this job" className="file-input-a11y"
+              disabled={actionDisabled || photosPending}
               onChange={e => void sendPhotos(e.target.files)} />
           </label>
 

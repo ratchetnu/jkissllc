@@ -110,6 +110,38 @@ test('completion upload retry preserves files, successful URLs, and one request 
   assert.match(orchestrator, /includes\(requestId\)/)
 })
 
+test('the retry key is validated raw — the route never truncates it into validity', () => {
+  const route = readFileSync(new URL('../app/api/portal/jobs/[id]/route.ts', import.meta.url), 'utf8')
+  // The completion branch must NOT run the id through str(), which truncates.
+  const completeBranch = route.slice(route.indexOf("case 'complete':"), route.indexOf('default:'))
+  assert.doesNotMatch(completeBranch, /str\(body\.requestId/,
+    'str() truncates, which makes the 100-character upper bound unenforceable')
+  assert.match(completeBranch, /typeof raw === 'string' \? raw\.trim\(\) : ''/)
+  assert.match(completeBranch, /\/\^\[A-Za-z0-9_-\]\{16,100\}\$\//)
+})
+
+test('a pending completion attempt is immutable: note and picker lock, Retry stays live', () => {
+  const src = readFileSync(new URL('../app/portal/jobs/[id]/JobDetailClient.tsx', import.meta.url), 'utf8')
+
+  assert.match(src, /const photosPending = pendingPhotoCount > 0/)
+  // The note cannot be edited into a pending attempt it will never reach.
+  assert.match(src, /<textarea[\s\S]*?disabled=\{photosPending\}/)
+  // A replacement file set cannot abandon already-uploaded Blob URLs.
+  assert.match(src, /disabled=\{actionDisabled \|\| photosPending\}/)
+  assert.match(src, /if \(pendingCompletionRef\.current\) return/)
+
+  // Retry must remain reachable — gated only on busy/offline, never on photosPending.
+  const retryButton = src.slice(src.indexOf('onClick={() => void submitPendingPhotos()}'))
+  assert.match(retryButton.slice(0, 200), /disabled=\{actionDisabled\}/)
+  assert.doesNotMatch(retryButton.slice(0, 200), /photosPending/)
+
+  // The locked state names its own way out.
+  assert.match(src, /Reload the page to start over with different photos/)
+
+  // Success is still the thing that unlocks the controls.
+  assert.match(src, /setPendingPhotoCount\(0\)/)
+})
+
 test('both crew action screens visibly fail closed while offline', () => {
   const job = readFileSync(new URL('../app/portal/jobs/[id]/JobDetailClient.tsx', import.meta.url), 'utf8')
   const clock = readFileSync(new URL('../app/portal/clock/page.tsx', import.meta.url), 'utf8')

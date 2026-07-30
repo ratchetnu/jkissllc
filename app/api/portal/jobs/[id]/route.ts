@@ -142,8 +142,16 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
       // and has not declined it — so a booking token alone grants nothing here,
       // exactly as it grants nothing to accept / decline / clock_in / clock_out.
       {
-        const requestId = str(body.requestId, 100)
-        if (!requestId || !/^[A-Za-z0-9_-]{16,100}$/.test(requestId)) {
+        // Validate the RAW trimmed value. `str(v, 100)` would truncate first, which
+        // makes the {16,100} upper bound unenforceable: a 300-character id would be
+        // silently accepted as a valid 100-character key, and two distinct ids
+        // sharing a 100-character prefix would collapse onto ONE dedupe key —
+        // silently discarding the second, genuinely-new completion with a 200.
+        // Length is part of the contract here, so an over-long id is rejected, never
+        // normalized.
+        const raw = body.requestId
+        const requestId = typeof raw === 'string' ? raw.trim() : ''
+        if (!/^[A-Za-z0-9_-]{16,100}$/.test(requestId)) {
           return NextResponse.json(
             { error: 'invalid', message: 'This upload attempt is missing its retry key. Choose the photos again.' },
             { status: 400 },

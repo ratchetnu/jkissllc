@@ -184,9 +184,19 @@ and is deliberately not part of this closeout.
 - Completion proof now carries a bounded request-level dedupe key. A lost response
   can be retried without replacing the first timestamp/note or adding another audit
   event, and those internal keys are excluded from every customer projection.
+- The request key is validated on the RAW trimmed value: a non-string, an id under 16
+  characters, an id over 100 characters, or an invalid character is refused with a
+  400. The id is never truncated into validity, so two distinct ids cannot collapse
+  onto one dedupe key and silently discard a genuinely-new completion.
 - The job screen keeps selected files and each successful Blob URL in page memory
   after a failed attempt, then offers a visible 44 px **Retry upload** action. It
   retries only unfinished files and reuses the original completion request ID.
+- A pending attempt is IMMUTABLE. While photos are pending, the dispatch note and the
+  file picker are disabled, so a crew member cannot make an edit that looks accepted
+  and is then dropped when the original request id is replayed, and cannot abandon
+  Blob URLs that already uploaded. **Retry upload** stays live throughout. The note
+  and picker are restored only on success or on page navigation, and the retry card
+  says so.
 - No punch is stored for later delivery: replaying a payroll action after reconnect
   would incorrectly stamp server receipt time as work time. Offline punches fail
   visibly instead of silently changing the time.

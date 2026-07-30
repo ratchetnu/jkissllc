@@ -141,6 +141,97 @@ test('the crew completion route requires a retry key', async () => {
   assert.equal((await getBookingByToken(id))?.jobCompletedAt, undefined)
 })
 
+// ── The retry key is validated RAW, never truncated into validity ─────────────
+// An earlier version ran the value through `str(v, 100)` first, so the {16,100}
+// upper bound could not fail: a 300-character id became a valid 100-character key,
+// and two distinct ids sharing a 100-character prefix collapsed onto ONE dedupe
+// key — silently discarding the second, genuinely-new completion with a 200.
+test('an over-long retry key is REJECTED, not truncated into validity', async () => {
+  const cookie = await crewCookie('crewA')
+  for (const length of [101, 300]) {
+    const id = await seedBooking([assignee('crewA')])
+    const res = await jobPOST(post(id, {
+      action: 'complete', photos: [PREVIEW_PHOTO], note: 'done',
+      requestId: 'a'.repeat(length),
+    }, cookie), CTX(id))
+    assert.equal(res.status, 400, `${length}-character id must fail`)
+    assert.equal((await res.json()).error, 'invalid')
+    assert.equal((await getBookingByToken(id))?.jobCompletedAt, undefined,
+      `${length}-character id must not record completion`)
+  }
+})
+
+test('two retry keys sharing a 100-character prefix cannot collapse onto one', async () => {
+  const cookie = await crewCookie('crewA')
+  const id = await seedBooking([assignee('crewA')])
+  const shared = 'p'.repeat(100)
+  const idA = `${shared}-DISTINCT-SUFFIX-A`
+  const idB = `${shared}-DISTINCT-SUFFIX-B`
+  assert.notEqual(idA, idB)
+  assert.equal(idA.slice(0, 100), idB.slice(0, 100), 'they DO share a 100-char prefix')
+
+  // Both are over-long, so both are refused outright — there is no truncated key
+  // for them to collide on, and no completion is recorded by either.
+  for (const requestId of [idA, idB]) {
+    const res = await jobPOST(post(id, {
+      action: 'complete', photos: [PREVIEW_PHOTO], note: 'done', requestId,
+    }, cookie), CTX(id))
+    assert.equal(res.status, 400)
+  }
+  assert.equal((await getBookingByToken(id))?.jobCompletedAt, undefined,
+    'neither prefix-sharing id recorded anything')
+
+  // And no valid pair can share a 100-character prefix: for ids of length <= 100 a
+  // shared 100-char prefix means the ids are identical. Proven by construction.
+  assert.equal(idA.slice(0, 100), idB.slice(0, 100))
+  assert.equal(idA.slice(0, 100).length, 100)
+})
+
+test('retry key boundaries: 16 and 100 pass, 15 fails, non-strings fail', async () => {
+  const cookie = await crewCookie('crewA')
+
+  for (const requestId of ['a'.repeat(16), 'b'.repeat(100), 'A_valid-Key_0123']) {
+    const id = await seedBooking([assignee('crewA')])
+    const res = await jobPOST(post(id, {
+      action: 'complete', photos: [PREVIEW_PHOTO], note: 'done', requestId,
+    }, cookie), CTX(id))
+    assert.equal(res.status, 200, `${requestId.length}-character valid id must pass`)
+    assert.ok((await getBookingByToken(id))?.jobCompletedAt)
+  }
+
+  // Too short, wrong charset, and non-string shapes all fail closed.
+  for (const requestId of ['a'.repeat(15), 'has spaces in it here', 'has/slash/and.dots!!', 12345, null, ['a'.repeat(20)], { id: 'x'.repeat(20) }, true]) {
+    const id = await seedBooking([assignee('crewA')])
+    const res = await jobPOST(post(id, {
+      action: 'complete', photos: [PREVIEW_PHOTO], note: 'done', requestId,
+    }, cookie), CTX(id))
+    assert.equal(res.status, 400, `${JSON.stringify(requestId)} must fail`)
+    assert.equal((await getBookingByToken(id))?.jobCompletedAt, undefined)
+  }
+})
+
+test('a padded retry key is trimmed, and its trimmed form is what dedupes', async () => {
+  const cookie = await crewCookie('crewA')
+  const id = await seedBooking([assignee('crewA')])
+  const core = 'trimmed-key-000001'
+
+  const first = await jobPOST(post(id, {
+    action: 'complete', photos: [PREVIEW_PHOTO], note: 'first', requestId: `  ${core}  `,
+  }, cookie), CTX(id))
+  assert.equal(first.status, 200)
+  const afterFirst = await getBookingByToken(id)
+  assert.deepEqual(afterFirst?.completionRequestIds, [core], 'stored trimmed')
+
+  // The same key without padding is the SAME attempt — it must not re-record.
+  const replay = await jobPOST(post(id, {
+    action: 'complete', photos: [PREVIEW_PHOTO], note: 'second', requestId: core,
+  }, cookie), CTX(id))
+  assert.equal(replay.status, 200)
+  const after = await getBookingByToken(id)
+  assert.equal(after?.completionNote, 'first', 'replay did not replace the note')
+  assert.deepEqual(after?.completionRequestIds, [core], 'still one ledger entry')
+})
+
 // ── The bug this file was written for ────────────────────────────────────────
 test('an authenticated but UNASSIGNED crew member cannot complete another booking', async () => {
   const id = await seedBooking([assignee('crewA')])
