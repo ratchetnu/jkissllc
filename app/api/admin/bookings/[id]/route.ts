@@ -36,6 +36,7 @@ import {
   canTransition, statusAfterConfirmationLinkSent,
   canReopen, closureFieldsToClear, REOPEN_TARGETS,
 } from '../../../../lib/booking-status'
+import { listEffectiveOpenPunches } from '../../../../lib/time-corrections'
 
 export const runtime = 'nodejs'
 
@@ -121,6 +122,25 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
   let rejectReplacementUrl: string | undefined
   let rejectReason: string | undefined
 
+  const blockCompletionWithOpenPunches = async (): Promise<NextResponse | null> => {
+    let openPunches
+    try {
+      openPunches = await listEffectiveOpenPunches('booking', b.token, b.assignees ?? [])
+    } catch {
+      return NextResponse.json(
+        { error: 'Could not verify crew time entries. Nothing changed; try again.' },
+        { status: 503 },
+      )
+    }
+    if (!openPunches.length) return null
+    const names = openPunches.map(p => p.name || p.staffId).join(', ')
+    return NextResponse.json({
+      error: `Clock out or correct the open time ${openPunches.length === 1 ? 'entry' : 'entries'} for ${names} before completing this booking. Nothing changed.`,
+      code: 'open_punches',
+      openPunchCount: openPunches.length,
+    }, { status: 409 })
+  }
+
   switch (action) {
     case 'update': {
       const f = body.fields ?? body
@@ -166,6 +186,10 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
           if (target === 'confirmed') {
             const guard = canMarkConfirmed(b)   // b already has this request's field updates applied
             if (!guard.ok) return NextResponse.json({ error: `Can't mark Confirmed — ${guard.reason}.` }, { status: 400 })
+          }
+          if (target === 'completed' || target === 'partially_completed') {
+            const blocked = await blockCompletionWithOpenPunches()
+            if (blocked) return blocked
           }
           const from = b.status
           b.status = target
@@ -575,6 +599,8 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
       }
       const move = canTransition(b.status, 'completed')
       if (!move.ok) return NextResponse.json({ error: `Can't mark Completed — ${move.reason}.` }, { status: 400 })
+      const blocked = await blockCompletionWithOpenPunches()
+      if (blocked) return blocked
       b.status = 'completed'
       b.completedAt = Date.now()
       break

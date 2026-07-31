@@ -16,6 +16,7 @@ import {
 } from '../../../../lib/finance'
 import { getEquipment } from '../../../../lib/equipment'
 import { deriveMaintenanceStatus } from '../../../../lib/fleet/maintenance'
+import { listEffectiveOpenPunches } from '../../../../lib/time-corrections'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 
@@ -150,6 +151,23 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
     }
     // Stamp completion metadata when an admin closes a route out by hand.
     if (status === 'completed' && !route.completedAt) {
+      let openPunches
+      try {
+        openPunches = await listEffectiveOpenPunches('route', route.token, route.assignees ?? [])
+      } catch {
+        return NextResponse.json(
+          { error: 'Could not verify crew time entries. Nothing changed; try again.' },
+          { status: 503 },
+        )
+      }
+      if (openPunches.length) {
+        const names = openPunches.map(p => p.name || p.staffId).join(', ')
+        return NextResponse.json({
+          error: `Clock out or correct the open time ${openPunches.length === 1 ? 'entry' : 'entries'} for ${names} before completing this route. Nothing changed.`,
+          code: 'open_punches',
+          openPunchCount: openPunches.length,
+        }, { status: 409 })
+      }
       route.completedAt = Date.now()
       route.completedBy = 'admin'
     }

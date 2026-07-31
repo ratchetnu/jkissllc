@@ -219,6 +219,61 @@ export async function listCorrectionsForPunches(pids: readonly string[]): Promis
   return out
 }
 
+export type PunchAssignee = {
+  staffId: string
+  name?: string
+  clockInAt?: number | null
+  clockOutAt?: number | null
+}
+
+export type EffectiveOpenPunch = {
+  punchId: string
+  staffId: string
+  name?: string
+  clockInAt: number
+  correctionId?: string
+}
+
+/**
+ * Find assignees whose EFFECTIVE punch is open. Completion gates use this shared
+ * projection so a correction cannot make Timesheets say "open" while a route or
+ * booking is allowed to say "completed".
+ *
+ * Store failures intentionally propagate. A completion decision made without the
+ * correction ledger would be a guess, and completion must fail closed on a guess.
+ */
+export async function listEffectiveOpenPunches(
+  workType: WorkType,
+  jobToken: string,
+  assignees: readonly PunchAssignee[],
+): Promise<EffectiveOpenPunch[]> {
+  const ids = assignees.map(a => punchId(workType, jobToken, a.staffId))
+  const corrections = await listCorrectionsForPunches(ids)
+  const open: EffectiveOpenPunch[] = []
+
+  assignees.forEach((assignee, index) => {
+    const id = ids[index]
+    const effective = effectivePunch(
+      {
+        clockInAt: assignee.clockInAt ?? null,
+        clockOutAt: assignee.clockOutAt ?? null,
+      },
+      corrections.get(id) ?? [],
+    )
+    if (effective.clockInAt != null && effective.clockOutAt == null) {
+      open.push({
+        punchId: id,
+        staffId: assignee.staffId,
+        name: assignee.name,
+        clockInAt: effective.clockInAt,
+        correctionId: effective.correctionId,
+      })
+    }
+  })
+
+  return open
+}
+
 /** The currently active correction for a punch, if any. */
 export async function activeCorrection(pid: string): Promise<TimeCorrection | null> {
   const all = await listCorrections(pid)

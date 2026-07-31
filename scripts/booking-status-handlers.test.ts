@@ -29,6 +29,12 @@ globalThis.fetch = (async (url: string, init: { body?: string }) => {
       break
     }
     case 'ZADD': z(key).set(args[2], Number(args[1])); result = 1; break
+    case 'ZRANGE': {
+      result = [...z(key).entries()]
+        .sort((a, b) => a[1] - b[1])
+        .map(([member]) => member)
+      break
+    }
     case 'ZREM': z(key).delete(args[1]); result = 1; break
     case 'PEXPIRE':
     case 'EXPIRE': result = 1; break
@@ -129,6 +135,43 @@ test('illegal admin lifecycle transition returns 400 and writes nothing', async 
   const response = await adminPatch({ action: 'mark-in-progress' })
   assert.equal(response.status, 400)
   assert.equal((await getBookingByToken(TOKEN))?.status, 'completed')
+})
+
+test('Mark completed refuses an effectively open booking punch and writes nothing', async () => {
+  await seed('in_progress', {
+    assignees: [{
+      staffId: 'staff-open',
+      name: 'Open Worker',
+      token: 'booking-assignee-token',
+      confirmedAt: 1,
+      clockInAt: 1_800_000_000_000,
+    }],
+  })
+  const response = await adminPatch({ action: 'mark-completed' })
+  const body = await response.json()
+  assert.equal(response.status, 409)
+  assert.equal(body.code, 'open_punches')
+  assert.match(body.error, /Open Worker/)
+  const saved = await getBookingByToken(TOKEN)
+  assert.equal(saved?.status, 'in_progress')
+  assert.equal(saved?.completedAt, undefined)
+})
+
+test('generic status update cannot bypass the open-punch completion gate', async () => {
+  await seed('in_progress', {
+    assignees: [{
+      staffId: 'staff-open',
+      name: 'Open Worker',
+      token: 'booking-assignee-token',
+      confirmedAt: 1,
+      clockInAt: 1_800_000_000_000,
+    }],
+  })
+  const response = await adminPatch({ action: 'update', fields: { status: 'completed' } })
+  assert.equal(response.status, 409)
+  const saved = await getBookingByToken(TOKEN)
+  assert.equal(saved?.status, 'in_progress')
+  assert.equal(saved?.completedAt, undefined)
 })
 
 test('customer cancellation refuses a refunded booking and writes nothing', async () => {

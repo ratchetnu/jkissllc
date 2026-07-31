@@ -32,6 +32,8 @@ import { saveRoute, getRouteByToken, getRouteByConfirmToken, type RouteRecord, t
 import { runWithTenant } from '../app/lib/platform/tenancy/context'
 import { bindToken } from '../app/lib/platform/tenancy/token-binding'
 import { GET, POST } from '../app/api/route/[token]/route'
+import { PATCH as ADMIN_ROUTE_PATCH } from '../app/api/admin/routes/[id]/route'
+import { createSessionToken } from '../app/api/admin/_lib/session'
 import { appendCorrection, punchId, validateCorrection } from '../app/lib/time-corrections'
 import { selectTimeEntries } from '../app/lib/timesheets'
 import { buildPunchOverlapReport } from '../app/lib/timeclock/punch-overlap-scan'
@@ -351,6 +353,17 @@ test('CLIENT: going offline keeps the route visible and disables every action', 
 const confirmed = async () => post(CREW_TOK, { action: 'confirm', disclaimerAccepted: true })
 const clockIn = () => post(CREW_TOK, { action: 'clock_in', locationDenied: true })
 const complete = (extra: Record<string, unknown> = {}) => post(CREW_TOK, { action: 'complete', ...extra })
+const adminComplete = async () => {
+  const session = await createSessionToken()
+  return ADMIN_ROUTE_PATCH(new NextRequest(`http://localhost/api/admin/routes/${ROUTE_TOK}`, {
+    method: 'PATCH',
+    headers: {
+      cookie: `jk_admin_session=${session}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ action: 'status', status: 'completed' }),
+  }), { params: Promise.resolve({ id: ROUTE_TOK }) })
+}
 const me = async () => (await stored(ROUTE_TOK))!.assignees![0]
 const events = async (t: string) => ((await stored(ROUTE_TOK))!.events ?? []).filter(e => e.type === t).length
 const audits = async (re: RegExp) => ((await stored(ROUTE_TOK))!.audit ?? []).filter(a => re.test(a.action)).length
@@ -417,6 +430,61 @@ test('AUTO CLOCK-OUT: a CORRECTION-closed punch is not overwritten', async () =>
   assert.equal((await res.json()).clockedOut, false, 'the effective punch was already closed')
   assert.equal((await me()).clockOutAt, undefined, 'the RAW stamp stays null — the correction owns this punch')
   assert.equal(await events('clock_out'), 0)
+})
+
+test('AUTO CLOCK-OUT: a correction-masked OPEN punch blocks completion instead of lying', async () => {
+  await seed(); await confirmed(); await clockIn()
+  const a0 = await me()
+  const pid = punchId('route', ROUTE_TOK, a0.staffId!)
+  const correctedIn = a0.clockInAt! + 60_000
+  await runWithTenant({ tenantId: TENANT }, async () => {
+    const v = validateCorrection(
+      {
+        correctedClockIn: correctedIn,
+        correctedClockOut: null,
+        correctionReason: 'Actual start was one minute later',
+      },
+      { effectiveClockIn: a0.clockInAt!, effectiveClockOut: null },
+    )
+    assert.equal(v.ok, true)
+    await appendCorrection({
+      punchId: pid, staffId: a0.staffId!, workType: 'route', jobToken: ROUTE_TOK,
+      original: { clockInAt: a0.clockInAt!, clockOutAt: null },
+      value: (v as { ok: true; value: never }).value,
+      actor: { userId: 'u_admin', role: 'admin' },
+    } as never)
+  })
+
+  const res = await complete()
+  const body = await res.json()
+  assert.equal(res.status, 409)
+  assert.equal(body.code, 'corrected_punch_open')
+
+  const r = (await stored(ROUTE_TOK))!
+  assert.notEqual(r.status, 'completed', 'the route remains live')
+  assert.equal(r.completedAt, undefined, 'no completion stamp is written')
+  assert.equal(r.assignees![0].clockOutAt, undefined, 'no ineffective raw clock-out is written')
+  assert.equal(await events('completed'), 0)
+
+  const report = await runWithTenant({ tenantId: TENANT }, () => buildPunchOverlapReport(Date.now()))
+  assert.equal(report.summary.punches.open, 1, 'the report and response agree that the punch is open')
+})
+
+test('ADMIN COMPLETION: an open crew punch blocks route completion without inventing payroll time', async () => {
+  await seed(); await confirmed(); await clockIn()
+  const before = (await me()).clockInAt
+
+  const res = await adminComplete()
+  const body = await res.json()
+  assert.equal(res.status, 409)
+  assert.equal(body.code, 'open_punches')
+  assert.match(body.error, /Sam Contractor/)
+
+  const r = (await stored(ROUTE_TOK))!
+  assert.notEqual(r.status, 'completed')
+  assert.equal(r.completedAt, undefined)
+  assert.equal(r.assignees![0].clockInAt, before)
+  assert.equal(r.assignees![0].clockOutAt, undefined)
 })
 
 test('AUTO CLOCK-OUT: repeated completion is idempotent — first timestamps win', async () => {
