@@ -32,7 +32,7 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
   moved to `app/lib/schedule/auto-cancel-job.ts` so its clock is an ordinary parameter,
   and Production still passes `Date.now()` from the route. It fixed a red `main`
   (`dpl_382FhqAxfub2szYbnngjg2zQFfLc`).
-- Sprint 6 on `main` passes **3097/3097 tests**, TypeScript, and lint with zero errors
+- Sprint 7 on `main` passes **3125/3125 tests**, TypeScript, and lint with zero errors
   (one pre-existing warning in untouched `pay-statements.ts`).
 - The Sprint 3 completion-integrity follow-up is implemented separately: delayed
   admin completion cannot strand effective punches, and a correction-masked public
@@ -482,6 +482,49 @@ run has been recorded in Production.
 **Verification:** full typecheck/lint/tests/build/AI regression; security and role matrix; real Preview workflow for both businesses; deployment/rollback canary; production smoke tests; one-week operational gap log.
 
 **Difficulty:** High.
+
+**Status — the ENGINEERING is complete; the observations are not, and cannot be.**
+
+- **Operational gap log + readiness verdict** — `/api/admin/operations/readiness`.
+  Gaps are recorded by severity and surface; an open `blocker` disqualifies release.
+  Reading takes `audit:view` (admin-only), writing takes `settings:manage`.
+  Tenant-scoped; the store fails closed with no tenant context.
+- **Observation windows are honest by construction.** A 24-hour and a seven-day
+  window are derived from timestamps plus the existence of a follow-up reading.
+  There is NO stored completion flag, so no caller — and no later edit that needs it
+  green — can assert an observation that did not happen. Elapsed time alone is not
+  enough (nothing was compared); a follow-up alone is not enough (the clock had not
+  run); and a follow-up only satisfies a window it actually outlasted.
+- **Usage readings carry provenance or are refused.** The Upstash request count is
+  not machine-readable — the Vercel Marketplace API exposes spend, not usage, and
+  Production KV credentials are redacted. So it is typed as an EXTERNALLY SOURCED
+  reading and rejected without a stated source and reader. A number with no
+  provenance is indistinguishable from a guess.
+- **Baseline captured 2026-07-31T18:03:17Z**: build `dpl_GgKwL43VgUsWf32CJt9MAdi3LXrt`
+  (`06ed1c60`), health `healthy`, 297 cron runs/day, ≈2,600 est. Redis requests/day
+  (≈78k/month, ~16% of a 500k allowance) — down from ≈369k/month before PR #145.
+- **Runbooks** — `docs/operations/17-operational-readiness.md` (baseline, sparse
+  read-only follow-up procedure, monitoring signals, rollback per action) and
+  `docs/operations/18-sprint7-audits.md` (config drift + Supercharged parity).
+
+**Operational follow-ups — timestamped, NOT performed:**
+
+- [ ] T+24h usage reading — earliest 2026-08-01T18:03Z
+- [ ] T+7d usage reading — earliest 2026-08-07T18:03Z
+
+**Carried forward, not done here:**
+
+1. **Supercharged carries the same latent outage.** Its `book-now-ai.ts` and
+   `book-now-confirmation.ts` still select work with unconditional
+   `listBookings(500)`, its `ai-due-index.ts` is the pre-#144 shape that neither
+   runner reads, and its `ai-jobs` cron is still `*/3`. Separate project, separate
+   Upstash allowance, no telemetry to size a fix against — presented for approval
+   rather than applied.
+2. **Preview/Production flag drift** — 10 flags set in one environment only. Values
+   are encrypted and unreadable, so this reports presence, never state. Aligning
+   them is a Production write needing its own approval.
+3. **Deployment/rollback canary and production smoke tests** — the rollback
+   procedure is documented per action; exercising a canary is a Production action.
 
 ## `BOOKING_ASSIGNMENT_ENABLED` — Production activation decision
 
