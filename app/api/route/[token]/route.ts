@@ -111,6 +111,7 @@ export const POST = withPublicTokenRoute(async (req: NextRequest, { params }: { 
         // `effectivePunch` with no corrections simply returns the raw stamps, so this
         // one check covers both "already clocked out" and "corrected closed".
         let punchOpen = false
+        let punchCorrected = false
         try {
           const eff = effectivePunch(
             { clockInAt: assignee.clockInAt ?? null, clockOutAt: assignee.clockOutAt ?? null },
@@ -118,10 +119,19 @@ export const POST = withPublicTokenRoute(async (req: NextRequest, { params }: { 
           )
           // Never CREATE a punch: an absent clock-in stays absent.
           punchOpen = eff.clockInAt != null && eff.clockOutAt == null
+          punchCorrected = eff.corrected
         } catch {
           // Fail closed. Completing while we cannot tell whether a punch would be
           // stranded is exactly the state this change exists to prevent.
           return { response: NextResponse.json({ error: 'Could not save — please try again.' }, { status: 503 }) }
+        }
+        if (punchOpen && punchCorrected) {
+          return {
+            response: NextResponse.json({
+              error: 'This shift has a time correction and is still open. Ask dispatch to close the corrected time entry before completing the route.',
+              code: 'corrected_punch_open',
+            }, { status: 409 }),
+          }
         }
 
         const photos: string[] = Array.isArray(body.photos)

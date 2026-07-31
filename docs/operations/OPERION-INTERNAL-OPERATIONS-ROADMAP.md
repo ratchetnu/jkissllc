@@ -275,11 +275,21 @@ with a 44 px Try again.
     **refused** (503) rather than completing on a guess.
   - The automatic punch records `clockOutLocationDenied`, so a missing GPS pin reads as
     unverified rather than as a verified one.
-  - **Scope limit — the same gap remains on every other completion surface.** Admin
-    route completion (`PATCH /api/admin/routes/[id]`), the booking lane
-    (`recordBookingCompletion`) and portal job completion still leave an open punch
-    behind. This increment deliberately fixes only the public link, which is the surface
-    the Production defect came through. The rest is unfixed and unscheduled.
+  - **Correction-masked punches fail closed.** A correction is a separate append-only
+    record, and the current store has no transaction spanning that ledger and the job
+    record. If a correction leaves the effective punch open, public completion now
+    refuses with an explicit dispatch/time-correction recovery message instead of
+    writing a raw clock-out that the correction would hide and falsely reporting
+    success.
+  - **Delayed admin completion never invents payroll time.** Admin route completion and
+    both booking status-completion paths read the same effective-time projection as
+    Timesheets. If any assignee remains effectively open, completion is refused and
+    names the crew whose time must be closed or corrected first. A correction-store
+    failure also refuses the transition rather than completing on raw data.
+  - `recordBookingCompletion` remains intentionally proof-only. It stores field photos,
+    note and `jobCompletedAt`; it does not end a shift or change `BookingStatus`.
+    Actual booking closure remains the owner's explicit status transition, where the
+    effective-open-punch gate applies.
 - **Two divergences that remain deliberately untouched**, because both alter live
   contractor write behaviour and need their own owner-approved change:
   1. The public surface does **not** enforce `hasOtherOpenPunch`. The portal refuses a
