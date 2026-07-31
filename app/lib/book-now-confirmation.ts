@@ -9,6 +9,10 @@ import {
 import { detectPhotoTextConflicts } from './ai/photo-text-consistency'
 import { buildConfirmedPhotoEstimate } from './ai/confirmed-analysis'
 import { supportsPhotoAi, isStaleProcessing, recoverStaleJob, processingLeaseMs } from './book-now-ai'
+import {
+  dueIndexMaintained, dueIndexReadEnabled, selectDueFromIndex, readDueTokens,
+  compareDue, dueTelemetry, type DueSelection, type DueRunTelemetry,
+} from './ai-due-index'
 import { photoSetFingerprint } from './ai/photo-set'
 
 // The confirmation + final-analysis writers serialize on the UNIFIED per-booking
@@ -315,16 +319,60 @@ function scheduleFinalRetryOrFail(
   }
 }
 
-/** Cron entry point: process all due FINAL jobs (bounded). */
-export async function runDueFinalAiJobs(limit = 10): Promise<{ processed: number; results: { token: string; status: AiJobStatus }[] }> {
-  const all = await listBookings(500)
-  const due = all.filter(b => isFinalDue(b)).slice(0, limit)
+/**
+ * Cron entry point: process all due FINAL jobs (bounded).
+ *
+ * This runner used to select its work with an UNCONDITIONAL `listBookings(500)` —
+ * one ZRANGE plus a GET per booking, every three minutes, with no index path at
+ * all. Together with the initial runner in the same cron that was ~2N+2 Redis
+ * requests per tick, which is what exhausted the Upstash request quota and took
+ * Production down. It now uses the same due-index the initial lane uses, on its own
+ * `aidue:final` ZSET so the two lanes cannot overwrite each other's scores.
+ *
+ * The scan remains the authoritative path while the index is OFF, so behaviour is
+ * byte-identical by default.
+ */
+export async function runDueFinalAiJobs(limit = 10): Promise<{ processed: number; results: { token: string; status: AiJobStatus }[]; telemetry: DueRunTelemetry }> {
+  let due: Booking[]
+  let selection: DueSelection<Booking> | null = null
+  let scannedCount = 0
+
+  if (dueIndexReadEnabled()) {
+    selection = await selectDueFromIndex('final', now(), limit, getBookingByToken, b => isFinalDue(b))
+    if (!selection.ok) {
+      // NO SCAN FALLBACK — same reasoning as the initial lane. Falling back here
+      // would reinstate the very query that exhausted the request quota.
+      console.error(`[book-now-confirmation] final due-index read FAILED — no work selected, retrying next tick: ${selection.error}`)
+      return { processed: 0, results: [], telemetry: dueTelemetry(selection) }
+    }
+    due = selection.due.slice(0, limit)
+  } else {
+    const all = await listBookings(500)
+    scannedCount = all.length
+    const allDue = all.filter(b => isFinalDue(b))
+    due = allDue.slice(0, limit)
+    if (dueIndexMaintained()) {
+      // Dark-launch parity for the final lane, mirroring the initial lane: prove the
+      // index agrees with the scan WITHOUT changing what runs.
+      try {
+        const read = await readDueTokens('final', now(), 500)
+        if (read.ok) {
+          const parity = compareDue(allDue.map(b => b.token), read.tokens)
+          if (parity.match) console.log(`[book-now-confirmation] final due-index parity OK (${parity.scan} due)`)
+          else console.warn(`[book-now-confirmation] final due-index parity MISMATCH scan=${parity.scan} index=${parity.index} missingFromIndex=${JSON.stringify(parity.missingFromIndex.slice(0, 5))} extraInIndex=${parity.extraInIndex.length}`)
+        } else {
+          console.warn(`[book-now-confirmation] final due-index parity read failed: ${read.error}`)
+        }
+      } catch (e) { console.error('[book-now-confirmation] final due-index parity', e) }
+    }
+  }
+
   const results: { token: string; status: AiJobStatus }[] = []
   for (const b of due) {
     const r = await processFinalAiJob(b.token, { initiatedBy: 'cron' })
     results.push({ token: b.token, status: r.status })
   }
-  return { processed: due.length, results }
+  return { processed: due.length, results, telemetry: dueTelemetry(selection, due.length, scannedCount) }
 }
 
 /** True when a booking is at the "awaiting customer confirmation" stage (Part 11). */

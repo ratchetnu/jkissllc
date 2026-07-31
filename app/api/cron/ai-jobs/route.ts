@@ -6,6 +6,7 @@ import { getBookingByToken } from '../../../lib/bookings'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
 import { activeTenantIds } from '../../../lib/platform/tenancy/tenant-store'
 import { alert } from '../../../lib/alerts'
+import type { DueRunTelemetry } from '../../../lib/ai-due-index'
 import { runWithTrace, timeStage, markTraceOutcome, NOTIFY_FEATURE } from '../../../lib/observability/pipeline-trace'
 
 // Owner-notification with its own single-stage pipeline trace, so notification latency
@@ -43,12 +44,12 @@ export async function GET(req: NextRequest) {
   // Per-tenant fan-out: each tenant is processed independently inside its own
   // explicit tenant context, so one tenant's failure can neither contaminate nor
   // execute under another. Results are counts only (no booking tokens).
-  const tenants: { tenant: string; processed: number; final: number; error?: string }[] = []
+  const tenants: { tenant: string; processed: number; final: number; error?: string; estimatedRedisRequests?: number; fullScanPerformed?: boolean }[] = []
   let processed = 0
   let finalProcessed = 0
   for (const tenantId of activeTenantIds()) {
-    let summary: { processed: number; results: { token: string; status: string }[] } = { processed: 0, results: [] }
-    let finalSummary: { processed: number; results: { token: string; status: string }[] } = { processed: 0, results: [] }
+    let summary: { processed: number; results: { token: string; status: string }[]; telemetry: DueRunTelemetry } = { processed: 0, results: [], telemetry: { lane: 'both' as const, source: 'index' as const, selectedFromIndex: 0, dueProcessed: 0, staleRetired: 0, missingRetired: 0, indexReadFailed: false, estimatedRedisRequests: 0, fullScanPerformed: false } }
+    let finalSummary: { processed: number; results: { token: string; status: string }[]; telemetry: DueRunTelemetry } = { processed: 0, results: [], telemetry: { lane: 'both' as const, source: 'index' as const, selectedFromIndex: 0, dueProcessed: 0, staleRetired: 0, missingRetired: 0, indexReadFailed: false, estimatedRedisRequests: 0, fullScanPerformed: false } }
     try {
       await withBackgroundTenant('cron', async () => {
     try {
@@ -82,7 +83,40 @@ export async function GET(req: NextRequest) {
       }, tenantId)
       processed += summary.processed
       finalProcessed += finalSummary.processed
-      tenants.push({ tenant: tenantId, processed: summary.processed, final: finalSummary.processed })
+
+      // Selection telemetry. `fullScanPerformed` is the field that answers the
+      // question this defect was about: did this tick read every booking again?
+      const sel = [summary.telemetry, finalSummary.telemetry]
+      const estRequests = sel.reduce((n, t) => n + t.estimatedRedisRequests, 0)
+      const scanned = sel.some(t => t.fullScanPerformed)
+      console.log('[cron/ai-jobs] selection', JSON.stringify({
+        tenant: tenantId,
+        source: sel.map(t => `${t.lane}:${t.source}`).join(','),
+        selectedFromIndex: sel.reduce((n, t) => n + t.selectedFromIndex, 0),
+        dueProcessed: sel.reduce((n, t) => n + t.dueProcessed, 0),
+        staleRetired: sel.reduce((n, t) => n + t.staleRetired, 0),
+        missingRetired: sel.reduce((n, t) => n + t.missingRetired, 0),
+        indexReadFailed: sel.some(t => t.indexReadFailed),
+        estimatedRedisRequests: estRequests,
+        fullScanPerformed: scanned,
+      }))
+
+      // With no scan fallback, a failed index read means this tick did NOTHING.
+      // That must page, not hide in a log line.
+      for (const t of sel) {
+        if (t.indexReadFailed) {
+          await alert({
+            type: 'due_index_read_failed', severity: 'CRITICAL',
+            route: '/api/cron/ai-jobs', worker: `due-index:${t.lane}`,
+            errorClass: 'index_unreadable',
+          })
+        }
+      }
+
+      tenants.push({
+        tenant: tenantId, processed: summary.processed, final: finalSummary.processed,
+        estimatedRedisRequests: estRequests, fullScanPerformed: scanned,
+      })
     } catch (e) {
       // A tenant-level failure (e.g. fail-closed tenant resolution) is isolated —
       // record it and move on; it never runs under another tenant's context.

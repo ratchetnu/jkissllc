@@ -32,7 +32,7 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
   moved to `app/lib/schedule/auto-cancel-job.ts` so its clock is an ordinary parameter,
   and Production still passes `Date.now()` from the route. It fixed a red `main`
   (`dpl_382FhqAxfub2szYbnngjg2zQFfLc`).
-- Sprint 6 on `main` passes **3074/3074 tests**, TypeScript, and lint with zero errors
+- Sprint 6 on `main` passes **3097/3097 tests**, TypeScript, and lint with zero errors
   (one pre-existing warning in untouched `pay-statements.ts`).
 - The Sprint 3 completion-integrity follow-up is implemented separately: delayed
   admin completion cannot strand effective punches, and a correction-masked public
