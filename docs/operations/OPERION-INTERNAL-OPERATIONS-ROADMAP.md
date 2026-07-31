@@ -32,7 +32,7 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
   moved to `app/lib/schedule/auto-cancel-job.ts` so its clock is an ordinary parameter,
   and Production still passes `Date.now()` from the route. It fixed a red `main`
   (`dpl_382FhqAxfub2szYbnngjg2zQFfLc`).
-- Sprint 5 on `main` passes **3050/3050 tests**, TypeScript, and lint with zero errors
+- Sprint 6 on `main` passes **3074/3074 tests**, TypeScript, and lint with zero errors
   (one pre-existing warning in untouched `pay-statements.ts`).
 - The Sprint 3 completion-integrity follow-up is implemented separately: delayed
   admin completion cannot strand effective punches, and a correction-masked public
@@ -429,6 +429,42 @@ refunds and communications, plus the booking event trail for readers who hold
 **Verification:** isolated A/B test comparing latency, output tokens, model cost, quote parity, confidence parity, review rate, and schema validation; controlled provider integration run only when credentials are available.
 
 **Difficulty:** Medium-high.
+
+**Status — the LAT-002 harness is built.** `/admin/operations/ai/lat002` reports
+paired A/B runs across all seven dimensions the verification list names.
+
+- **LAT-002 is an EXPERIMENT IDENTIFIER, not a service level objective.** No latency
+  threshold existed anywhere in this repo, and inventing one would create a
+  Production SLO nobody agreed to — a build that fails because a provider had a slow
+  afternoon. It is defined the way the codebase already defines its other
+  comparison (`image-opt-eval.ts`): a paired measurement with a verdict.
+- **The asymmetry is the design.** Latency, output tokens and model cost are
+  MEASURED and never fail a run — a slower candidate is a result, reported as a
+  signed negative so "no change" and "half as fast" cannot render identically.
+  Quote parity, confidence parity, review rate and schema validity are GUARDRAILS:
+  breaching any one is `parity_regression` and is never promotable, however large
+  the speed win. That is what makes the objective — reduce latency *without*
+  changing schema, pricing, confidence or manual-review behaviour — enforceable.
+- **Schema validity is absolute, not a rate.** One invalid candidate response is a
+  regression, because the sprint objective says the schema does not change.
+- **Sample-size honesty.** Below `minPairs` the verdict is `insufficient_samples`,
+  decided before the guardrails so a tiny flattering sample can never read as safe.
+- **Runs are evidence.** The pairs are stored with the report, and the report is
+  RECOMPUTED from the stored pairs on save, so a stored verdict cannot disagree
+  with its own inputs. Re-recording the same `runId` replaces it, so a retry after
+  an unknown response is safe.
+- **Flag + authorization.** `LAT002_EXPERIMENT_ENABLED` (default OFF everywhere,
+  Preview-only by intent) gates RECORDING; reading is always available so evidence
+  outlives the flag. Reading takes `ai:analytics` (admin + manager); recording takes
+  `ai:prompts:manage` (admin only — recording is what decides promotability).
+  Tenant-scoped throughout; runs in one tenant are invisible to another.
+- Percentiles come from `ai/analytics.latencyStats`, now exported, so LAT-002 and
+  the AI Control Center cannot disagree about what p95 means.
+
+**Deferred:** the controlled live-provider integration run. The harness accepts
+paired samples from any source and the evaluator is pure, so a live run is a matter
+of feeding it real arms with credentials present — it is not performed here, and no
+run has been recorded in Production.
 
 ## Sprint 7 — Production readiness and Supercharged parity
 

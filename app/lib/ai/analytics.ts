@@ -131,7 +131,9 @@ function percentile(sorted: number[], p: number): number {
   const idx = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)
   return sorted[Math.max(0, idx)]
 }
-function latencyStats(values: number[]): LatencyStats {
+/** Exported so LAT-002 reports the SAME percentiles the AI Control Center shows.
+ *  Two implementations would drift and the two surfaces would disagree. */
+export function latencyStats(values: number[]): LatencyStats {
   if (!values.length) return { avg: 0, p50: 0, p95: 0, p99: 0 }
   const s = [...values].sort((a, b) => a - b)
   const avg = Math.round(s.reduce((a, b) => a + b, 0) / s.length)

@@ -75,6 +75,13 @@ export type FeatureFlag =
   // it on only starts recording stage timings for future performance tuning — it
   // changes no customer behavior, sends nothing, and never gates the job.
   | 'AI_PIPELINE_OBSERVABILITY_ENABLED'
+  // LAT-002 — the photo-estimate latency experiment. Gates RECORDING an experiment
+  // run; the read surface is always available so an existing run stays inspectable
+  // after the flag goes back off. Preview-only by intent: a run can drive live
+  // provider calls, so it is never enabled in Production without an explicit
+  // decision. LAT-002 is a measurement identifier, NOT a latency SLO — see
+  // lib/estimation/lat002.ts.
+  | 'LAT002_EXPERIMENT_ENABLED'
   // AI image optimization — produce a downscaled/compressed derivative of each
   // uploaded photo and send THAT to the vision model, preserving the original for
   // every booking. MASTER switch (OFF everywhere by default): OFF = no derivative is
@@ -145,6 +152,7 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   // entities, and run the approval/AI-worker/timeline wiring as fail-soft
   // side-effects of the existing booking flow. OFF = byte-identical to today.
   INTAKE_WORKFLOW_ENABLED: false,
+  LAT002_EXPERIMENT_ENABLED: false,
   // Vision-estimation enhancements (photo-quality gate, richer inventory/version
   // stamping, calibration signals) run in SHADOW: computed + recorded for admin
   // comparison, NEVER authoritative over the live estimate/quote. OFF = byte-identical
