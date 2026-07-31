@@ -65,7 +65,7 @@ test('desktop mega-menu categories are ordered + non-empty, with the reference g
   assert.deepEqual(byKey('team'), ['/admin/operations/users', '/admin/operations/permissions', '/admin/operations/audit', '/admin/operations/crew-activity', '/admin/operations/punch-overlaps'], 'Team & Access group: users + permissions + audit + crew activity + punch overlaps')
   assert.ok(byKey('comms').includes('/admin/operations/communications'))
   assert.ok(byKey('comms').includes('/admin/operations/ai'), 'AI Command Center under Communication')
-  assert.deepEqual(byKey('business'), ['/admin/operations/businesses', '/admin/operations/equipment', '/admin/operations/fleet', '/admin/operations/claims', '/admin/operations/gps-compliance'])
+  assert.deepEqual(byKey('business'), ['/admin/operations/businesses', '/admin/operations/customers', '/admin/operations/equipment', '/admin/operations/fleet', '/admin/operations/claims', '/admin/operations/gps-compliance'], 'Business group gains the retail Customers record (Sprint 5)')
   assert.deepEqual(byKey('finance'), ['/admin/operations/pay-statements', '/admin/operations/timesheets', '/admin/operations/reports', '/admin/operations/settings'])
   assert.deepEqual(byKey('release'), ['/admin/operations/release'])
   assert.deepEqual(byKey('platform'), ['/admin/operations/platform', '/admin/operations/sync'])

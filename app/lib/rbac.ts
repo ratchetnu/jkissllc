@@ -60,6 +60,8 @@ export type Permission =
   | 'pay:adjust:submit'    // submit a comp adjustment for review (manager)
   | 'pay:approve'          // approve pay / corrections
   | 'tax:view'             // W-9 / TIN / 1099 readiness (sensitive)
+  // ── Customers (retail booking customers — the Sprint 5 record) ──
+  | 'customers:view'       // read the retail customer record + derived timeline
   // ── Money ──
   | 'invoices:manage'
   | 'profitability:view'   // unrestricted profitability
@@ -98,6 +100,7 @@ const ADMIN: Permission[] = [
   'messages:send', 'reminders:view', 'reminders:manage', 'dispatch:send', 'comms:analytics',
   'users:manage', 'roles:manage',
   'pay:configure', 'pay:generate', 'pay:view:all', 'pay:adjust:submit', 'pay:approve', 'tax:view',
+  'customers:view',
   'invoices:manage', 'profitability:view',
   'claims:manage', 'claims:create', 'claimguard:use',
   'settings:manage', 'integrations:manage', 'audit:view', 'permissions:view', 'accounts:suspend', 'reports:view',
@@ -116,6 +119,7 @@ const MANAGER: Permission[] = [
   'ai:use', 'ai:analytics',
   'messages:send', 'reminders:view', 'reminders:manage', 'dispatch:send', 'comms:analytics',
   'pay:adjust:submit',       // submit adjustments for admin approval — not configure/approve
+  'customers:view',          // operational customer history; the AUDIT section stays admin-only
   'claims:manage', 'claims:create', 'claimguard:use',
   'reports:view',
   'permissions:view',   // read-only matrix viewer (NOT audit:view — that stays admin-only)
@@ -174,6 +178,7 @@ export const PERMISSION_DOMAINS: ReadonlyArray<{ domain: string; permissions: re
   { domain: 'Communications', permissions: ['messages:send', 'reminders:view', 'reminders:manage', 'dispatch:send', 'comms:analytics'] },
   { domain: 'Users & identity', permissions: ['users:manage', 'roles:manage'] },
   { domain: 'Compensation & pay', permissions: ['pay:configure', 'pay:generate', 'pay:view:all', 'pay:adjust:submit', 'pay:approve', 'tax:view'] },
+  { domain: 'Customers', permissions: ['customers:view'] },
   { domain: 'Money', permissions: ['invoices:manage', 'profitability:view'] },
   { domain: 'Claims', permissions: ['claims:manage', 'claims:create', 'claimguard:use'] },
   { domain: 'Platform & governance', permissions: ['settings:manage', 'integrations:manage', 'audit:view', 'permissions:view', 'accounts:suspend', 'reports:view'] },

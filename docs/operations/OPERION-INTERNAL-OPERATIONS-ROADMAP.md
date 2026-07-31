@@ -32,7 +32,7 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
   moved to `app/lib/schedule/auto-cancel-job.ts` so its clock is an ordinary parameter,
   and Production still passes `Date.now()` from the route. It fixed a red `main`
   (`dpl_382FhqAxfub2szYbnngjg2zQFfLc`).
-- Sprint 3 on `main` passes **3013/3013 tests**, TypeScript, and lint with zero errors
+- Sprint 5 on `main` passes **3050/3050 tests**, TypeScript, and lint with zero errors
   (one pre-existing warning in untouched `pay-statements.ts`).
 - The Sprint 3 completion-integrity follow-up is implemented separately: delayed
   admin completion cannot strand effective punches, and a correction-masked public
@@ -369,6 +369,49 @@ with a 44 px Try again.
 **Verification:** no duplicate customers/invoices/jobs; immutable issued statements; partial/full/manual payment; refunds; mixed booking/route pay; customer timeline; authorization and audit history.
 
 **Difficulty:** High.
+
+**Status — the retail customer record is built.** `/admin/operations/customers` is a
+deterministic lookup (email, phone, or a booking token) and
+`/admin/operations/customers/[id]` is that customer's timeline: bookings, payments,
+refunds and communications, plus the booking event trail for readers who hold
+`audit:view`.
+
+- **The join is DERIVED, never stored.** A `Booking` carries `customerName`,
+  `customerPhone` and `customerEmail` but no customer id, and nothing back-fills
+  one. The association is resolved at read time from the identity indexes
+  `customers.ts` already maintains (`cust:email:*`, `cust:phone:*`). That works on
+  every historical booking with no migration and no Production write. The API
+  returns `linkProvenance: 'derived'` and the UI states it in prose, so a reader
+  never mistakes the link for a stored fact.
+- **Matching is deterministic and fails closed.** Names are never matched — two
+  people share a name far more often than a phone number, and a bad merge joins one
+  person's payment history to another's. When email and phone resolve to DIFFERENT
+  customers the result is `conflict`: surfaced for manual review, excluded from
+  totals, attributed to neither side. (`customers.findCustomerId` returns the email
+  match first and stops; that is right for claiming one identity on upsert and
+  wrong for reporting the truth, so the resolver is separate.) A booking with
+  neither identifier is explicitly `unlinked`, never guessed.
+- **Incompleteness is reported.** There is no per-customer booking index, so the
+  timeline scans the booking index under a bound. A truncated scan or an unreadable
+  record sets `scan.complete: false` and the UI says the totals are a floor — "no
+  history" and "we stopped looking" stay distinguishable.
+- **Authorization.** New `customers:view` (admin + manager). The booking audit
+  section is separately gated on `audit:view`, which `rbac.ts` keeps admin-only, and
+  is omitted server-side rather than hidden in the UI. Tenant-scoped throughout;
+  the same identity in two tenants is two records.
+
+**Deferred out of Sprint 5, deliberately and not silently:**
+
+1. **B2B invoice history.** `route-invoices.ts` keys invoices to `businessName` and
+   `claims.ts` keys claims to `businessKey`/`routeToken`. Neither carries a booking
+   or retail-customer reference, so joining them here would mean inventing a
+   relationship the data model does not have. A B2B client timeline is its own
+   increment.
+2. **A durable `customerId` on `Booking`.** The derived join is correct and
+   migration-free, but it is recomputed on every read and cannot attribute a
+   booking that has no email and no phone. Stamping `customerId` at write time (plus
+   a backfill) would make the link durable. Not required for this sprint, and not
+   started — it is a Production data migration and needs its own approval.
 
 ## Sprint 6 — AI latency optimization
 
