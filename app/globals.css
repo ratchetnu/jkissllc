@@ -795,3 +795,17 @@ h1, h2, h3, .display { font-family: var(--font-display); font-feature-settings: 
 .cc-dot { width: 8px; height: 8px; border-radius: 99px; flex-shrink: 0; }
 .cc-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 @media (min-width: 720px) { .cc-stat-grid { grid-template-columns: repeat(4, 1fr); } }
+
+/* Public route completion — the confirm/cancel pair on /route/[token].
+   'Mark Route Complete' needs 156px of text advance. Side by side, the row gives
+   the primary button only 119px of text room at 320px, so the label wrapped to two
+   lines. Stack full-width below the breakpoint and restore the row at 375px, where
+   the pair measures 275px against 293px of available row. Mobile-first, matching
+   .cc-crew-grid / .cc-stat-grid above. DOM order is unchanged either way. */
+.route-complete-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.route-complete-actions > button { width: 100%; }
+@media (min-width: 375px) {
+  .route-complete-actions { flex-direction: row; }
+  .route-complete-actions > button { width: auto; }
+  .route-complete-actions > button:first-child { flex: 1; }
+}

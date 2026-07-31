@@ -564,6 +564,7 @@ const LABEL_WIDTH_320: Record<string, number> = {
   'Mark Complete': 110,
 }
 const TEXT_ROOM_320 = 119
+const ROW_CHROME = 82        // measured: viewport − row width (main padding + card padding)
 const COMPLETE_BUTTON = 'Mark Route Complete'
 
 test('BUTTON: the completion label is UNCONDITIONAL — one label at every width', () => {
@@ -586,41 +587,96 @@ test('BUTTON: the label is no WIDER than the one it replaced', () => {
     `"${current}" (${LABEL_WIDTH_320[current]}px) is wider than the label it replaced`)
 })
 
-test('BUTTON: the label can never OVERFLOW 320 px — it wraps instead', () => {
-  // The real 320 px guarantee is that no single unbreakable word exceeds the text
-  // room. 156 px of label in 119 px of room wraps to two lines; it does not spill
-  // out of the card. (Two lines at 320 px is inherited from main, where
-  // 'Submit — Route Done' measured the same 156 px — this PR is width-neutral.)
-  const longestWord = Math.max(...COMPLETE_BUTTON.split(' ').map(w => w.length)) * 9.5
-  assert.ok(longestWord <= TEXT_ROOM_320,
-    `the longest word (~${longestWord.toFixed(0)}px) must fit ${TEXT_ROOM_320}px of text room`)
-  assert.ok(LABEL_WIDTH_320['Submit — Done & Clock Out'] > LABEL_WIDTH_320[COMPLETE_BUTTON],
-    'and the rejected variant must still measure wider than the one we kept')
+test('BUTTON: stacked at 320 px, the label fits ONE line with room to spare', () => {
+  // Side by side the primary button gets 119px of text room for a 156px label, so it
+  // wrapped. Stacked full-width it gets the whole row: 238 − 26px padding = 212px.
+  const stackedTextRoom = 320 - ROW_CHROME - 26
+  assert.ok(stackedTextRoom >= LABEL_WIDTH_320['Mark Route Complete'],
+    `${stackedTextRoom}px of stacked text room must hold the ${LABEL_WIDTH_320['Mark Route Complete']}px label on one line`)
+  // No overflow either: the label is comfortably inside the card, not spilling out.
+  assert.ok(LABEL_WIDTH_320['Mark Route Complete'] < stackedTextRoom,
+    'and it must not merely touch the edge')
 })
 
 test('BUTTON: the completion controls clear a 44 px tap target from their OWN styles', () => {
   const src = readFileSync(new URL('../app/route/[token]/page.tsx', import.meta.url), 'utf8')
-  const rowStart = src.indexOf("<div style={{ display: 'flex', gap: 10, marginTop: 14 }}>")
+  const rowStart = src.indexOf('<div className="route-complete-actions">')
   const row = src.slice(rowStart, src.indexOf('</div>', src.indexOf('Cancel', rowStart)))
   const buttons = [...row.matchAll(/padding: '(\d+)px(?: (\d+)px)?'[^}]*?fontSize: ([\d.]+)/g)]
-  assert.ok(buttons.length >= 2, `expected both completion buttons, found ${buttons.length}`)
+  assert.equal(buttons.length, 2, `expected both completion buttons, found ${buttons.length}`)
   for (const [, padY, , fontSize] of buttons) {
-    // height = padding top+bottom + one line box (≈1.2 × font-size, the UA default)
+    // height = padding top+bottom + one line box (≈1.2 × font-size, the UA default).
+    // Stacked, the label is ONE line, so this is the real height — not the two-line
+    // 70px that the side-by-side row happened to produce.
     const height = 2 * Number(padY) + Math.ceil(Number(fontSize) * 1.2)
     assert.ok(height >= 44, `a completion control is only ${height}px tall`)
   }
 })
 
-test('BUTTON: nothing in the completion row can overflow 320 px', () => {
+// ── Responsive: stacked where the row cannot fit, side by side where it can ──
+//
+// Measured in Chrome at real viewports (a same-origin iframe, so the media query
+// genuinely applies rather than a container being narrowed):
+//
+//                          320 px          375 px
+//   available row width    238 px          293 px
+//   the pair needs         275 px          275 px     (182 + 10 gap + 83)
+//   verdict                cannot fit      fits
+//
+// So the breakpoint is 375px — the narrowest width where the row is honest.
+const BREAKPOINT = 375
+const PAIR_NEEDS = 275       // measured: primary(156 label + 26 padding) + gap(10) + Cancel(83)
+
+test('RESPONSIVE: the breakpoint is where the row genuinely stops fitting', () => {
+  assert.ok(BREAKPOINT - ROW_CHROME >= PAIR_NEEDS,
+    `at ${BREAKPOINT}px the row has ${BREAKPOINT - ROW_CHROME}px but needs ${PAIR_NEEDS}px`)
+  assert.ok(320 - ROW_CHROME < PAIR_NEEDS,
+    'at 320px the row must NOT fit — otherwise stacking is gratuitous')
+  // And the reason it cannot fit: side by side, the primary button's text room is
+  // narrower than the label itself. That is the whole case for stacking.
+  assert.ok(TEXT_ROOM_320 < LABEL_WIDTH_320['Mark Route Complete'],
+    `side-by-side text room (${TEXT_ROOM_320}px) must be short of the label (${LABEL_WIDTH_320['Mark Route Complete']}px)`)
+})
+
+test('RESPONSIVE: the stylesheet stacks by default and RESTORES the row at 375px', () => {
+  const css = readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8')
+  const block = css.slice(css.indexOf('.route-complete-actions'))
+  assert.ok(block.length > 0, 'the completion row must be styled by class, not inline')
+
+  // Mobile-first: the BASE state is stacked, matching .cc-crew-grid / .cc-stat-grid.
+  const base = block.slice(0, block.indexOf('@media'))
+  assert.match(base, /flex-direction: column/, 'base state is stacked')
+  assert.match(base, /\.route-complete-actions > button \{ width: 100%; \}/, 'stacked buttons are full width')
+
+  // …and the row is RESTORED at the breakpoint, never the other way round.
+  assert.match(block, new RegExp(`@media \\(min-width: ${BREAKPOINT}px\\)`), `restores at ${BREAKPOINT}px`)
+  const wide = block.slice(block.indexOf('@media'))
+  assert.match(wide, /flex-direction: row/, 'side by side at 375px and up')
+  assert.match(wide, /width: auto/, 'and no longer full width')
+  assert.match(wide, /:first-child \{ flex: 1; \}/, 'the primary button takes the slack')
+  assert.doesNotMatch(block, /max-width:/, 'mobile-first only — no desktop-first override')
+})
+
+test('RESPONSIVE: layout lives in the STYLESHEET, and DOM/tab order is unchanged', () => {
   const src = readFileSync(new URL('../app/route/[token]/page.tsx', import.meta.url), 'utf8')
-  const rowStart = src.indexOf("<div style={{ display: 'flex', gap: 10, marginTop: 14 }}>")
+  const rowStart = src.indexOf('<div className="route-complete-actions">')
+  assert.ok(rowStart > 0, 'the row carries the class')
   const row = src.slice(rowStart, src.indexOf('</div>', src.indexOf('Cancel', rowStart)))
-  // The primary button flexes; only the Cancel button is intrinsically sized. If the
-  // primary were given a fixed width or nowrap it could push the row past the viewport.
-  assert.match(row, /flex: 1/, 'the primary button flexes to the space available')
-  assert.doesNotMatch(row, /whiteSpace: 'nowrap'/, 'no nowrap — that would force overflow instead of wrapping')
-  assert.doesNotMatch(row, /minWidth:/, 'no minWidth floor to breach the viewport')
-  // PR #136 behaviour must survive: completion is still single-attempt.
+
+  // Order is submit-then-cancel in BOTH layouts, because only flex-direction changes.
+  assert.ok(row.indexOf('submitComplete') < row.indexOf('setCompleteMode(false)'),
+    'the primary action stays first in the DOM')
+  // `(?<!b)` so this catches a real `order:` property without matching `border:`.
+  assert.doesNotMatch(row, /(?<!b)order:/, 'no visual reordering that would desync tab order')
+  // An inline style would beat the class and the media query could never reach it —
+  // which is exactly how this regresses silently.
+  assert.doesNotMatch(row, /display: 'flex'/, 'no inline display')
+  assert.doesNotMatch(row, /flex: 1/, 'no inline flex')
+  assert.doesNotMatch(row, /width: '100%'/, 'no inline width')
+})
+
+test('BUTTON: completion is still SINGLE-ATTEMPT (PR #136 behaviour survives)', () => {
+  const src = readFileSync(new URL('../app/route/[token]/page.tsx', import.meta.url), 'utf8')
   assert.match(src, /allowMutationRetry: RETRY_SAFE_ACTIONS\.has\('complete'\)/)
   assert.doesNotMatch(src, /RETRY_SAFE_ACTIONS = new Set\(\[[^\]]*'complete'/)
 })

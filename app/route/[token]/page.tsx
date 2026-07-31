@@ -405,9 +405,11 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
               </div>
             )}
             {err && <p style={{ color: '#f87171', fontSize: 13, marginTop: 10 }}>{err}</p>}
-            <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+            {/* Stacked full-width below 375px so the label stays one line; the row
+                returns at 375px and up. See .route-complete-actions in globals.css. */}
+            <div className="route-complete-actions">
               <button onClick={submitComplete} disabled={busy === 'complete' || uploading || offline}
-                style={{ flex: 1, padding: '13px', borderRadius: 12, border: 'none', fontWeight: 800, fontSize: 14.5, color: '#fff', background: '#16a34a', cursor: 'pointer', opacity: busy === 'complete' ? .7 : 1 }}>
+                style={{ padding: '13px', borderRadius: 12, border: 'none', fontWeight: 800, fontSize: 14.5, color: '#fff', background: '#16a34a', cursor: 'pointer', opacity: busy === 'complete' ? .7 : 1 }}>
                 {/* ONE label at every width. A clock-out variant read well on a phone
                     but wrapped to two lines at 320 px, and the notice above already
                     carries that message — so the button stays a stable target. */}
