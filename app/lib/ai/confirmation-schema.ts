@@ -186,6 +186,9 @@ export type CustomerConfirmation = {
   estate?: EstateIntake             // present only for the Estate Cleanout service family
   notes?: string                    // optional free notes (never the primary input)
   idempotencyKey?: string
+  invalidatedAt?: string
+  invalidatedBy?: string
+  invalidationReason?: 'photos_changed'
 }
 
 // ── coercion helpers (mirror analysis-schema idioms) ─────────────────────────

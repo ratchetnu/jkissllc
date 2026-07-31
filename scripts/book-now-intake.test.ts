@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { serviceFamily, JUNK_SERVICE_TYPES, MOVING_SERVICE_TYPES, type ServiceType } from '../app/lib/bookings'
-import { buildBookNowDetail, type QuoteRequestInput } from '../app/lib/booking-requests'
+import { buildBookNowDetail, draftMatchesSubmittedPhotos, type QuoteRequestInput } from '../app/lib/booking-requests'
 
 const base: QuoteRequestInput = { name: 'x', serviceType: 'junk-removal', photos: [] }
 
@@ -69,4 +69,11 @@ test('a zero/absent estimate is not recorded as $0.00', () => {
   assert.ok(d)
   assert.equal(d!.shownEstimateLowCents, undefined)
   assert.equal(d!.shownEstimateHighCents, undefined)
+})
+
+test('a draft estimate can attach only to the exact submitted photo set', () => {
+  const draft = { inputPhotoUrls: ['https://x/a.jpg', 'https://x/b.jpg'] }
+  assert.equal(draftMatchesSubmittedPhotos(draft, [{ url: 'https://x/b.jpg' }, { url: 'https://x/a.jpg' }]), true)
+  assert.equal(draftMatchesSubmittedPhotos(draft, [{ url: 'https://x/a.jpg' }, { url: 'https://x/c.jpg' }]), false)
+  assert.equal(draftMatchesSubmittedPhotos(draft, []), false)
 })

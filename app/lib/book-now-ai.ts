@@ -18,6 +18,7 @@ import { runWithTrace, markStage, markTraceOutcome } from './observability/pipel
 import {
   dueIndexMaintained, dueIndexReadEnabled, dueTokensFromIndex, compareDue, rebuildDueIndex,
 } from './ai-due-index'
+import { photoSetFingerprint, samePhotoSet } from './ai/photo-set'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Durable, server-side Book Now AI processing — the RECOVERY path for the
@@ -65,7 +66,7 @@ export function needsManualReview(outcome: string | undefined): boolean {
 
 const now = () => Date.now()
 
-/** Photos count doubles as a version — a changed set re-triggers analysis. */
+/** Kept as the human-facing/count field on AiJob. Exact identity uses a fingerprint. */
 export function photoVersion(b: Pick<Booking, 'invoicePhotos'>): number {
   return b.invoicePhotos?.length ?? 0
 }
@@ -76,12 +77,13 @@ export function supportsPhotoAi(b: Pick<Booking, 'serviceType'>): boolean {
 }
 
 /** A genuine, usable AI estimate is already attached (not a failed shell). */
-export function hasValidEstimate(b: Pick<Booking, 'aiEstimate'>): boolean {
-  return !!b.aiEstimate && b.aiEstimate.status !== 'failed' && !!b.aiEstimate.pricing
+export function hasValidEstimate(b: Pick<Booking, 'aiEstimate' | 'invoicePhotos'>): boolean {
+  if (!b.aiEstimate || b.aiEstimate.status === 'failed' || !b.aiEstimate.pricing || b.aiEstimate.invalidatedAt) return false
+  return !b.aiEstimate.inputPhotoUrls?.length || samePhotoSet(b.aiEstimate.inputPhotoUrls, b.invoicePhotos)
 }
 
 export function aiJobIdempotencyKey(b: Pick<Booking, 'token' | 'invoicePhotos'>, tenantId: string): string {
-  return `book-now-ai:${tenantId}:${b.token}:${photoVersion(b)}`
+  return `book-now-ai:${tenantId}:${b.token}:${photoVersion(b)}:${photoSetFingerprint(b.invoicePhotos)}`
 }
 
 /** A Book Now request that should be processed by the server-side worker. */
@@ -138,11 +140,52 @@ export function enqueueAiJob(b: Booking, opts: { tenantId?: string; initiatedBy?
   }
   b.aiJob = {
     status: 'queued', idempotencyKey: key, photoVersion: photoVersion(b),
+    photoFingerprint: photoSetFingerprint(b.invoicePhotos),
     attempts: b.aiJob && b.aiJob.idempotencyKey === key ? b.aiJob.attempts : 0,
     nextRetryAt: now(), initiatedBy: opts.initiatedBy ?? 'system', updatedAt: now(),
   }
   pushBookingEvent(b, { actor: opts.initiatedBy ?? 'system', action: 'ai.queued', result: 'queued', meta: { photoVersion: photoVersion(b) } })
   return true
+}
+
+/**
+ * Preserve prior analysis as audit history while making every customer/owner
+ * projection stop treating it as current. The caller holds the booking write lock.
+ */
+export function invalidatePhotoAnalysis(b: Booking, actor: string, at = new Date().toISOString()): boolean {
+  let changed = false
+  if (b.aiEstimate && !b.aiEstimate.invalidatedAt) {
+    b.aiEstimate.invalidatedAt = at
+    b.aiEstimate.invalidatedBy = actor
+    b.aiEstimate.invalidationReason = 'photos_changed'
+    changed = true
+  }
+  if (b.finalAiEstimate && !b.finalAiEstimate.invalidatedAt) {
+    b.finalAiEstimate.invalidatedAt = at
+    b.finalAiEstimate.invalidatedBy = actor
+    b.finalAiEstimate.invalidationReason = 'photos_changed'
+    changed = true
+  }
+  if (b.confirmation && !b.confirmation.invalidatedAt) {
+    b.confirmation.invalidatedAt = at
+    b.confirmation.invalidatedBy = actor
+    b.confirmation.invalidationReason = 'photos_changed'
+    changed = true
+  }
+  if (b.finalAiJob) {
+    delete b.finalAiJob
+    changed = true
+  }
+  if (changed) {
+    pushBookingEvent(b, {
+      actor,
+      action: 'ai.invalidated',
+      result: 'photos_changed',
+      meta: { photoVersion: photoVersion(b), photoFingerprint: photoSetFingerprint(b.invoicePhotos) },
+    })
+  }
+  enqueueAiJob(b, { initiatedBy: actor })
+  return changed
 }
 
 export type ProcessResult = {
@@ -232,7 +275,7 @@ async function runJobAttempt(b: Booking, opts: { initiatedBy?: string; tenantId?
   b.aiJob = {
     status: 'processing',
     idempotencyKey: prior?.idempotencyKey ?? aiJobIdempotencyKey(b, opts.tenantId ?? 'default'),
-    photoVersion: photoVersion(b), attempts,
+    photoVersion: photoVersion(b), photoFingerprint: photoSetFingerprint(b.invoicePhotos), attempts,
     lastAttemptAt: now(), initiatedBy: opts.initiatedBy ?? prior?.initiatedBy ?? 'system', updatedAt: now(),
   }
   await saveBooking(b)
@@ -259,7 +302,8 @@ async function runJobAttempt(b: Booking, opts: { initiatedBy?: string; tenantId?
       // booking reaches a TERMINAL state now — instead of a hard function kill that leaves
       // it stuck in "processing" and retrying. The owner hand-prices from here.
       b.aiJob = {
-        status: 'manual_review', idempotencyKey: b.aiJob.idempotencyKey, photoVersion: photoVersion(b), attempts,
+        status: 'manual_review', idempotencyKey: b.aiJob.idempotencyKey,
+        photoVersion: photoVersion(b), photoFingerprint: photoSetFingerprint(b.invoicePhotos), attempts,
         lastAttemptAt: now(), completedAt: now(),
         errorSummary: 'Photo analysis exceeded its time budget — routed to manual pricing.',
         initiatedBy: opts.initiatedBy ?? b.aiJob.initiatedBy, updatedAt: now(),
@@ -285,7 +329,8 @@ async function runJobAttempt(b: Booking, opts: { initiatedBy?: string; tenantId?
     if (MODEL_RAN_EMPTY.includes(res.outcome)) {
       b.aiEstimate = res.stored
       b.aiJob = {
-        status: 'manual_review', idempotencyKey: b.aiJob.idempotencyKey, photoVersion: photoVersion(b), attempts,
+        status: 'manual_review', idempotencyKey: b.aiJob.idempotencyKey,
+        photoVersion: photoVersion(b), photoFingerprint: photoSetFingerprint(b.invoicePhotos), attempts,
         lastAttemptAt: now(), completedAt: now(), provider: res.stored.provider, model: res.model, providerTraceId: res.callId,
         errorSummary: 'AI found no identifiable items in the photos — needs manual pricing.',
         initiatedBy: opts.initiatedBy ?? b.aiJob.initiatedBy, updatedAt: now(),
@@ -308,7 +353,8 @@ async function runJobAttempt(b: Booking, opts: { initiatedBy?: string; tenantId?
 
   const status: AiJobStatus = res.stored.decision === 'manual_review' ? 'manual_review' : 'completed'
   b.aiJob = {
-    status, idempotencyKey: b.aiJob.idempotencyKey, photoVersion: photoVersion(b), attempts,
+    status, idempotencyKey: b.aiJob.idempotencyKey,
+    photoVersion: photoVersion(b), photoFingerprint: photoSetFingerprint(b.invoicePhotos), attempts,
     lastAttemptAt: b.aiJob.lastAttemptAt, completedAt: now(),
     provider: res.stored.provider, model: res.model, providerTraceId: res.callId,
     initiatedBy: opts.initiatedBy ?? b.aiJob.initiatedBy, updatedAt: now(),
@@ -335,7 +381,7 @@ function completeJob(b: Booking, status: AiJobStatus, initiatedBy?: string): AiJ
   const prior = b.aiJob
   return {
     status, idempotencyKey: prior?.idempotencyKey ?? aiJobIdempotencyKey(b, 'default'),
-    photoVersion: photoVersion(b), attempts: prior?.attempts ?? 1,
+    photoVersion: photoVersion(b), photoFingerprint: photoSetFingerprint(b.invoicePhotos), attempts: prior?.attempts ?? 1,
     completedAt: now(), provider: b.aiEstimate?.provider, model: b.aiEstimate?.model,
     initiatedBy: initiatedBy ?? prior?.initiatedBy ?? 'system', updatedAt: now(),
   }
@@ -346,7 +392,7 @@ function failJob(b: Booking, code: AiJobErrorCode, summary: string, initiatedBy:
   pushBookingEvent(b, { actor: initiatedBy ?? 'system', action: 'ai.failed', result: code, meta: { permanent } })
   return {
     status: 'failed', idempotencyKey: prior?.idempotencyKey ?? aiJobIdempotencyKey(b, 'default'),
-    photoVersion: photoVersion(b), attempts: prior?.attempts ?? 1,
+    photoVersion: photoVersion(b), photoFingerprint: photoSetFingerprint(b.invoicePhotos), attempts: prior?.attempts ?? 1,
     lastAttemptAt: now(), errorCode: code, errorSummary: summary,
     initiatedBy: initiatedBy ?? prior?.initiatedBy ?? 'system', updatedAt: now(),
   }
@@ -358,13 +404,15 @@ function scheduleRetryOrFail(b: Booking, attempts: number, code: AiJobErrorCode,
   if (d.terminal) {
     pushBookingEvent(b, { actor: initiatedBy ?? 'system', action: 'ai.failed', result: d.finalCode, meta: { attempts } })
     return {
-      status: 'failed', idempotencyKey, photoVersion: photoVersion(b), attempts,
+      status: 'failed', idempotencyKey, photoVersion: photoVersion(b),
+      photoFingerprint: photoSetFingerprint(b.invoicePhotos), attempts,
       lastAttemptAt: now(), errorCode: d.finalCode, errorSummary: summary,
       initiatedBy: initiatedBy ?? 'system', updatedAt: now(),
     }
   }
   return {
-    status: 'retrying', idempotencyKey, photoVersion: photoVersion(b), attempts,
+    status: 'retrying', idempotencyKey, photoVersion: photoVersion(b),
+    photoFingerprint: photoSetFingerprint(b.invoicePhotos), attempts,
     lastAttemptAt: now(), nextRetryAt: now() + (d.delayMs ?? 0),
     errorCode: code, errorSummary: summary, initiatedBy: initiatedBy ?? 'system', updatedAt: now(),
   }

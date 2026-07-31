@@ -9,6 +9,7 @@ import {
 import { detectPhotoTextConflicts } from './ai/photo-text-consistency'
 import { buildConfirmedPhotoEstimate } from './ai/confirmed-analysis'
 import { supportsPhotoAi, isStaleProcessing, recoverStaleJob, processingLeaseMs } from './book-now-ai'
+import { photoSetFingerprint } from './ai/photo-set'
 
 // The confirmation + final-analysis writers serialize on the UNIFIED per-booking
 // write lease (bk:wlock) shared with the admin handler and the initial-AI worker,
@@ -74,7 +75,7 @@ export async function submitConfirmation(
   if (b.isTest || b.archived) return { ok: false, status: 'rejected', reason: 'ineligible' }
 
   // ── Idempotency: same key as the stored confirmation → return it, no new version.
-  if (incomingKey && b.confirmation?.idempotencyKey === incomingKey) {
+  if (incomingKey && b.confirmation?.idempotencyKey === incomingKey && !b.confirmation.invalidatedAt) {
     return { ok: true, confirmation: b.confirmation, status: b.finalAiJob?.status ?? 'queued', reason: 'idempotent' }
   }
 
@@ -127,7 +128,7 @@ export function enqueueFinalAiJob(
   b: Booking,
   opts: { tenantId?: string; initiatedBy?: string; force?: boolean } = {},
 ): boolean {
-  if (!b.confirmation) return false
+  if (!b.confirmation || b.confirmation.invalidatedAt) return false
   const key = finalJobIdempotencyKey(b.token, b.confirmation.confirmationVersion, opts.tenantId ?? 'default')
   const active: AiJobStatus[] = ['queued', 'processing', 'retrying']
   if (!opts.force && b.finalAiJob && b.finalAiJob.idempotencyKey === key
@@ -136,6 +137,7 @@ export function enqueueFinalAiJob(
   }
   b.finalAiJob = {
     status: 'queued', idempotencyKey: key, photoVersion: b.invoicePhotos?.length ?? 0,
+    photoFingerprint: photoSetFingerprint(b.invoicePhotos),
     attempts: b.finalAiJob && b.finalAiJob.idempotencyKey === key ? b.finalAiJob.attempts : 0,
     nextRetryAt: now(), initiatedBy: opts.initiatedBy ?? 'system', updatedAt: now(),
   }
@@ -150,7 +152,7 @@ export function enqueueFinalAiJob(
  *  crash-stranded 'processing' job older than the lease (recovered on pickup). */
 export function isFinalDue(b: Booking, at = now()): boolean {
   const j = b.finalAiJob
-  if (!j || b.archived || b.isTest || !b.confirmation) return false
+  if (!j || b.archived || b.isTest || !b.confirmation || b.confirmation.invalidatedAt) return false
   if (j.status === 'queued' || j.status === 'retrying') return (j.nextRetryAt ?? 0) <= at
   if (j.status === 'processing') return isStaleProcessing(j, at)
   return false
@@ -159,6 +161,8 @@ export function isFinalDue(b: Booking, at = now()): boolean {
 /** A completed final estimate is already attached for the current confirmation version. */
 export function hasFinalEstimate(b: Booking): boolean {
   return !!b.finalAiEstimate && !!b.confirmation
+    && !b.finalAiEstimate.invalidatedAt
+    && !b.confirmation.invalidatedAt
     && b.finalAiEstimate.confirmationVersion === b.confirmation.confirmationVersion
 }
 
@@ -195,7 +199,9 @@ async function processFinalAiJobInner(
 ): Promise<ProcessFinalResult> {
   const b = await getBookingByToken(token)
   if (!b) return { ok: false, status: 'failed', reason: 'not_found' }
-  if (!b.confirmation) return { ok: false, status: 'failed', reason: 'no_confirmation' }
+  if (!b.confirmation || b.confirmation.invalidatedAt) {
+    return { ok: false, status: 'failed', reason: b.confirmation ? 'stale_confirmation' : 'no_confirmation' }
+  }
 
   // Idempotency: a final estimate for this exact confirmation version already landed.
   if (hasFinalEstimate(b)) {
@@ -231,6 +237,7 @@ async function processFinalAiJobInner(
   // Persist "processing" BEFORE the slow call so a crash leaves a durable record.
   b.finalAiJob = {
     status: 'processing', idempotencyKey, photoVersion: b.invoicePhotos?.length ?? 0, attempts,
+    photoFingerprint: photoSetFingerprint(b.invoicePhotos),
     lastAttemptAt: now(), initiatedBy: opts.initiatedBy ?? prior?.initiatedBy ?? 'system', updatedAt: now(),
   }
   await saveBooking(b)
@@ -260,6 +267,7 @@ async function processFinalAiJobInner(
   const status: AiJobStatus = needsHuman ? 'manual_review' : 'completed'
   b.finalAiJob = {
     status, idempotencyKey, photoVersion: b.invoicePhotos?.length ?? 0, attempts,
+    photoFingerprint: photoSetFingerprint(b.invoicePhotos),
     lastAttemptAt: now(), completedAt: now(),
     provider: result.mergedAnalysis.modelProvider, model: result.mergedAnalysis.modelName,
     initiatedBy: opts.initiatedBy ?? b.finalAiJob.initiatedBy, updatedAt: now(),
@@ -282,6 +290,7 @@ function completeFinalJob(b: Booking, status: AiJobStatus, initiatedBy?: string)
   return {
     status, idempotencyKey: prior?.idempotencyKey ?? finalJobIdempotencyKey(b.token, b.confirmation?.confirmationVersion ?? 1),
     photoVersion: b.invoicePhotos?.length ?? 0, attempts: prior?.attempts ?? 1,
+    photoFingerprint: photoSetFingerprint(b.invoicePhotos),
     completedAt: now(), initiatedBy: initiatedBy ?? prior?.initiatedBy ?? 'system', updatedAt: now(),
   }
 }
@@ -292,13 +301,15 @@ function scheduleFinalRetryOrFail(
   if (attempts >= MAX_FINAL_ATTEMPTS) {
     pushBookingEvent(b, { actor: initiatedBy ?? 'system', action: 'ai.final_failed', result: 'retry_exhausted', meta: { attempts } })
     return {
-      status: 'failed', idempotencyKey, photoVersion: b.invoicePhotos?.length ?? 0, attempts,
+      status: 'failed', idempotencyKey, photoVersion: b.invoicePhotos?.length ?? 0,
+      photoFingerprint: photoSetFingerprint(b.invoicePhotos), attempts,
       lastAttemptAt: now(), errorCode: 'retry_exhausted', errorSummary: summary,
       initiatedBy: initiatedBy ?? 'system', updatedAt: now(),
     }
   }
   return {
-    status: 'retrying', idempotencyKey, photoVersion: b.invoicePhotos?.length ?? 0, attempts,
+    status: 'retrying', idempotencyKey, photoVersion: b.invoicePhotos?.length ?? 0,
+    photoFingerprint: photoSetFingerprint(b.invoicePhotos), attempts,
     lastAttemptAt: now(), nextRetryAt: now() + backoffMs(attempts),
     errorCode: code, errorSummary: summary, initiatedBy: initiatedBy ?? 'system', updatedAt: now(),
   }

@@ -29,3 +29,14 @@ test('filterPhotoUrls dedups, caps, and drops disallowed entries', () => {
   assert.equal(filterPhotoUrls([BLOB, 'https://store.blob.vercel-storage.com/2', 'https://store.blob.vercel-storage.com/3'], 2).length, 2)
   assert.deepEqual(filterPhotoUrls('not-an-array', 8), [])
 })
+
+test('quote intake accepts the zero, one, and six-photo acceptance boundaries', () => {
+  const six = Array.from(
+    { length: 6 },
+    (_, i) => `https://store.blob.vercel-storage.com/quote-${i + 1}.jpg`,
+  )
+  assert.deepEqual(filterPhotoUrls([], 6), [])
+  assert.deepEqual(filterPhotoUrls([six[0]], 6), [six[0]])
+  assert.deepEqual(filterPhotoUrls(six, 6), six)
+  assert.equal(filterPhotoUrls([...six, BLOB], 6).length, 6)
+})

@@ -10,7 +10,8 @@ import {
   type BookingStatus,
 } from '../../../../lib/bookings'
 import { notifyCustomerZelleRejected, resendOwnerNotification, notifyOwnerAiOutcome } from '../../../../lib/booking-notify'
-import { processAiJob, enqueueAiJob, supportsPhotoAi, photoVersion } from '../../../../lib/book-now-ai'
+import { processAiJob, enqueueAiJob, supportsPhotoAi, photoVersion, invalidatePhotoAnalysis } from '../../../../lib/book-now-ai'
+import { photoSetFingerprint } from '../../../../lib/ai/photo-set'
 import { reconvertHeicUrls } from '../../../../lib/image-convert'
 import { submitConfirmation, processFinalAiJob, enqueueFinalAiJob } from '../../../../lib/book-now-confirmation'
 import { INFO_REQUEST_FIELD_LABEL, type InfoRequest, type InfoRequestField } from '../../../../lib/bookings'
@@ -144,6 +145,7 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
   switch (action) {
     case 'update': {
       const f = body.fields ?? body
+      const priorPhotoFingerprint = photoSetFingerprint(b.invoicePhotos)
       if (str(f.customerName, 200)) b.customerName = str(f.customerName, 200)!
       if ('customerPhone' in f) b.customerPhone = str(f.customerPhone, 40)
       if ('customerEmail' in f) b.customerEmail = str(f.customerEmail, 200)
@@ -156,6 +158,9 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
       if ('description' in f) b.description = str(f.description, 2000)
       if ('items' in f) b.items = strList(f.items, 80)
       if ('invoicePhotos' in f) b.invoicePhotos = sanitizePhotos(f.invoicePhotos)
+      if ('invoicePhotos' in f && photoSetFingerprint(b.invoicePhotos) !== priorPhotoFingerprint) {
+        invalidatePhotoAnalysis(b, actor)
+      }
       if ('invoiceAmount' in f) b.invoiceAmountCents = dollarsToCents(f.invoiceAmount)
       if ('discountAmount' in f) b.discountCents = dollarsToCents(f.discountAmount) || undefined
       if ('depositAmount' in f) b.depositAmountCents = dollarsToCents(f.depositAmount)
@@ -352,7 +357,13 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
     case 'run-final-ai':
     case 'retry-final-ai': {
       if (who?.role !== 'admin') return NextResponse.json({ error: 'Owner/admin only.' }, { status: 403 })
-      if (!b.confirmation) return NextResponse.json({ error: 'No customer confirmation to analyze. Request or enter the confirmation first.' }, { status: 400 })
+      if (!b.confirmation || b.confirmation.invalidatedAt) {
+        return NextResponse.json({
+          error: b.confirmation
+            ? 'Photos changed after confirmation. Review and confirm the current photo set before running final analysis.'
+            : 'No customer confirmation to analyze. Request or enter the confirmation first.',
+        }, { status: 400 })
+      }
       let tenantId: string | undefined
       try { tenantId = currentTenantId() } catch { /* ignore */ }
       enqueueFinalAiJob(b, { force: true, initiatedBy: actor, tenantId })
@@ -372,6 +383,7 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
         status: 'manual_review',
         idempotencyKey: b.finalAiJob?.idempotencyKey ?? `book-now-final:manual:${b.token}:${b.confirmation?.confirmationVersion ?? 0}`,
         photoVersion: b.invoicePhotos?.length ?? 0, attempts: b.finalAiJob?.attempts ?? 0,
+        photoFingerprint: photoSetFingerprint(b.invoicePhotos),
         initiatedBy: actor, updatedAt: Date.now(),
       }
       pushBookingEvent(b, { actor, action: 'ai.final_manual_review', result: 'owner', meta: { by: actor } })

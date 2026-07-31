@@ -1,6 +1,6 @@
 # Operion Internal Operations Completion Roadmap
 
-**Updated:** 2026-07-29
+**Updated:** 2026-07-30
 **Customers:** J KISS LLC and Supercharged  
 **Scope:** Daily internal operations. Enterprise tenancy, editions, subscriptions, and self-service onboarding remain deferred.
 
@@ -34,6 +34,12 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
   (`dpl_382FhqAxfub2szYbnngjg2zQFfLc`).
 - Sprint 3 on `main` passes **3013/3013 tests**, TypeScript, and lint with zero errors
   (one pre-existing warning in untouched `pay-statements.ts`).
+- The Sprint 3 completion-integrity follow-up is implemented separately: delayed
+  admin completion cannot strand effective punches, and a correction-masked public
+  punch is rejected instead of reporting a false clock-out.
+- Sprint 4 is complete without changing pricing rules or visible customer copy.
+  Photo-set identity now governs draft attachment, durable AI idempotency, admin
+  invalidation, final-confirmation freshness, and OpsPilot read-back.
 - `BOOKING_ASSIGNMENT_ENABLED` is **Production ON, independently verified on 2026-07-29
   through the route-gate probe**. The crew booking surface is serving, not dormant. See
   [Production activation decision](#booking_assignment_enabled--production-activation-decision).
@@ -311,6 +317,8 @@ with a 44 px Try again.
 
 **Objective:** Make the existing customer pipeline understandable and dependable from photo selection through quote decision and OpsPilot visibility.
 
+**Status:** Complete.
+
 **Affected files/components:**
 
 - `app/quote/*`
@@ -323,6 +331,24 @@ with a 44 px Try again.
 **Dependencies:** Stable booking lifecycle from Sprint 1; no pricing-rule changes without explicit approval.
 
 **Verification:** zero/one/six photos; remove/change photos invalidates stale analysis; provider failure saves manual-review booking; quote/range/manual-review outcomes; mobile photo previews; duplicate submission; OpsPilot read-back.
+
+**Completion evidence (2026-07-30):**
+
+- Zero, one, and six-photo requests persist into the booking index and read back
+  through the same queue projection OpsPilot renders.
+- Draft estimates attach only when their exact source-photo set matches the submitted
+  set. Replacing a photo with another at the same count creates a new durable AI job;
+  simple reordering does not.
+- Owner photo edits preserve prior analysis as invalidated audit history, retire stale
+  final analysis/confirmation, and queue the current evidence. An invalidated
+  confirmation cannot be retried as if it were current.
+- A provider-failure draft remains attached as manual-review evidence while the
+  bounded durable recovery job is queued. Customer submission is never lost.
+- Duplicate quote submission returns the original durable booking.
+- Existing responsive photo previews, retry/remove controls, and
+  instant/range/manual-review routing remain unchanged. No pricing rule changed.
+- Full suite **3029/3029**, TypeScript, lint (zero errors; one pre-existing warning),
+  ordinary Production build, and tenant-enabled Production build pass.
 
 **Difficulty:** High.
 

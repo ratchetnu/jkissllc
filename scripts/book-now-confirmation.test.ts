@@ -11,9 +11,10 @@ import {
 import { mergeConfirmedInventory, buildConfirmedEstimate } from '../app/lib/ai/confirmed-analysis'
 import { detectPhotoTextConflicts, hasMaterialConflict } from '../app/lib/ai/photo-text-consistency'
 import { routeByConfidence, routingConfigFor, DEFAULT_ROUTING_CONFIG } from '../app/lib/pricing/confidence-routing'
-import { nextConfirmationVersion } from '../app/lib/book-now-confirmation'
+import { enqueueFinalAiJob, hasFinalEstimate, isFinalDue, nextConfirmationVersion } from '../app/lib/book-now-confirmation'
 import { DEFAULT_DISPOSAL } from '../app/lib/disposal'
 import type { JunkPhotoAnalysis } from '../app/lib/ai/analysis-schema'
+import type { Booking } from '../app/lib/bookings'
 
 const NOW = '2026-07-13T00:00:00.000Z'
 
@@ -230,4 +231,38 @@ test('nextConfirmationVersion is monotonic (supports re-submit)', () => {
   assert.equal(nextConfirmationVersion({ confirmation: undefined }), 1)
   assert.equal(nextConfirmationVersion({ confirmation: conf({ items: [] }, 1) }), 2)
   assert.equal(nextConfirmationVersion({ confirmation: conf({ items: [] }, 4) }), 5)
+})
+
+test('an invalidated confirmation cannot be re-queued or presented as a current final estimate', () => {
+  const confirmation = {
+    ...conf({ items: [] }, 2),
+    invalidatedAt: NOW,
+    invalidatedBy: 'owner',
+    invalidationReason: 'photos_changed' as const,
+  }
+  const booking = {
+    token: 'booking-token',
+    bookingNumber: 'JK-B-1',
+    customerName: 'Customer',
+    serviceType: 'junk-removal',
+    items: [],
+    invoicePhotos: [{ url: 'https://x/current.jpg' }],
+    invoiceAmountCents: 0,
+    depositAmountCents: 0,
+    amountPaidCents: 0,
+    availableDates: [],
+    availableWindows: [],
+    status: 'quote_received',
+    payments: [],
+    source: 'online',
+    confirmation,
+    finalAiEstimate: { confirmationVersion: 2 } as Booking['finalAiEstimate'],
+    createdAt: 1,
+    updatedAt: 1,
+  } as Booking
+
+  assert.equal(enqueueFinalAiJob(booking, { force: true }), false)
+  assert.equal(booking.finalAiJob, undefined)
+  assert.equal(hasFinalEstimate(booking), false)
+  assert.equal(isFinalDue(booking), false)
 })

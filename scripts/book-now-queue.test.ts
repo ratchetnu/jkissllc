@@ -59,6 +59,32 @@ test('stage advances with the workflow', () => {
   assert.equal(bookNowStage(mk({ status: 'cancelled' })), 'failed')
 })
 
+test('OpsPilot never presents analysis from a different or invalidated photo set as current', () => {
+  const current = [{ url: 'https://x/current.jpg' }]
+  const stale = {
+    status: 'completed',
+    decision: 'estimate_range',
+    pricing: { lowUsd: 1, highUsd: 2 },
+    inputPhotoUrls: ['https://x/old.jpg'],
+  } as Booking['aiEstimate']
+  const mismatched = mk({ invoicePhotos: current, aiEstimate: stale })
+  assert.equal(bookNowStage(mismatched), 'awaiting_ai')
+  assert.equal(aiStatus(mismatched), 'processing')
+  assert.equal(quoteStatus(mismatched), 'none')
+
+  const invalidated = mk({
+    invoicePhotos: current,
+    aiEstimate: {
+      ...stale,
+      inputPhotoUrls: [current[0].url],
+      invalidatedAt: '2026-07-30T00:00:00.000Z',
+    } as Booking['aiEstimate'],
+  })
+  assert.equal(bookNowStage(invalidated), 'awaiting_ai')
+  assert.equal(aiStatus(invalidated), 'processing')
+  assert.equal(quoteStatus(invalidated), 'none')
+})
+
 test('filters select the right requests', () => {
   const junk = mk({ serviceType: 'junk-removal', invoicePhotos: [{ url: 'https://x/p.jpg' }] })
   const moving = mk({ serviceType: 'moving' })
