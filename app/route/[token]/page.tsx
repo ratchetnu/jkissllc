@@ -70,6 +70,12 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
   const [networkMsg, setNetworkMsg] = useState('')
   const { offline } = useConnectivity()
 
+  // Completing closes an OPEN punch server-side, so the wording has to say so —
+  // otherwise the contractor is silently clocked out by a button labelled
+  // "Route Done". Mirrors the server's `punchOpen` test on the raw stamps the
+  // public projection exposes.
+  const willClockOut = !!route?.clockInAt && !route?.clockOutAt
+
   const load = useCallback(async () => {
     // `notFound` is set ONLY by a literal 404. Every other failure keeps whatever is
     // already on screen and surfaces a retryable connection/service error, so a
@@ -370,6 +376,11 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
         ) : (
           <div>
             <div style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 8 }}>Wrap up this route</div>
+            {willClockOut && (
+              <p role="status" style={{ fontSize: 12.5, lineHeight: 1.5, color: '#fcd34d', margin: '0 0 10px', padding: '9px 11px', borderRadius: 10, border: '1px solid rgba(245,158,11,.35)', background: 'rgba(245,158,11,.08)' }}>
+                You’re still clocked in. Submitting will <strong>also clock you out</strong>, at the same time the route is marked complete.
+              </p>
+            )}
             <textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
               placeholder="Optional note — how it went, anything dispatch should know…"
               style={{ width: '100%', padding: '11px 12px', borderRadius: 10, background: 'rgba(255,255,255,.04)', border: '1px solid var(--line)', color: 'var(--text)', fontSize: 14, resize: 'vertical', fontFamily: 'inherit' }} />
@@ -393,7 +404,7 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
             <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
               <button onClick={submitComplete} disabled={busy === 'complete' || uploading || offline}
                 style={{ flex: 1, padding: '13px', borderRadius: 12, border: 'none', fontWeight: 800, fontSize: 14.5, color: '#fff', background: '#16a34a', cursor: 'pointer', opacity: busy === 'complete' ? .7 : 1 }}>
-                {busy === 'complete' ? 'Submitting…' : 'Submit — Route Done'}
+                {busy === 'complete' ? 'Submitting…' : willClockOut ? 'Submit — Done & Clock Out' : 'Submit — Route Done'}
               </button>
               <button onClick={() => { setCompleteMode(false); setErr('') }} disabled={busy === 'complete'}
                 style={{ padding: '13px 16px', borderRadius: 12, border: '1px solid var(--line)', fontWeight: 700, fontSize: 14.5, color: 'var(--muted)', background: 'transparent', cursor: 'pointer' }}>

@@ -25,11 +25,25 @@ const PORT = 8700 + (process.pid % 200)
 process.env.KV_REST_API_URL = `http://127.0.0.1:${PORT}`
 process.env.KV_REST_API_TOKEN = 'emulator-accepts-anything'
 
+import { createServer, type Server } from 'node:http'
+
 import { NextRequest } from 'next/server'
 import { saveRoute, getRouteByToken, getRouteByConfirmToken, type RouteRecord, type Assignee } from '../app/lib/routes'
 import { runWithTenant } from '../app/lib/platform/tenancy/context'
 import { bindToken } from '../app/lib/platform/tenancy/token-binding'
 import { GET, POST } from '../app/api/route/[token]/route'
+import { appendCorrection, punchId, validateCorrection } from '../app/lib/time-corrections'
+import { selectTimeEntries } from '../app/lib/timesheets'
+import { buildPunchOverlapReport } from '../app/lib/timeclock/punch-overlap-scan'
+
+// Fails the next N route WRITES while leaving every read intact. Arming this is
+// the only honest way to ask "what if the save fails halfway through?" — the
+// answer must be that nothing at all was persisted.
+let failRouteWrites = 0
+let failCorrectionReads = 0
+let proxy: Server | null = null
+const PROXY_PORT = PORT + 1
+const EMULATOR_URL = `http://127.0.0.1:${PORT}`
 
 let kv: ChildProcess | null = null
 before(async () => {
@@ -38,9 +52,43 @@ before(async () => {
     try { if ((await fetch(`http://127.0.0.1:${PORT}/__admin/health`)).ok) break } catch { /* not up */ }
     await sleep(50)
   }
+  proxy = createServer((req, res) => {
+    const chunks: Buffer[] = []
+    req.on('data', c => chunks.push(c as Buffer))
+    req.on('end', async () => {
+      const body = Buffer.concat(chunks).toString('utf8')
+      // The route RECORD write only — not `rt:lock:`, which must keep working so
+      // the failure under test is a failed save and not a failed lock.
+      const isRouteWrite = /^\["SET","rt:[a-f0-9]{16,}"/i.test(body)
+      const isCorrectionRead = /tcorr:punch:/.test(body)
+      if ((failRouteWrites > 0 && isRouteWrite) || (failCorrectionReads > 0 && isCorrectionRead)) {
+        if (isRouteWrite) failRouteWrites--; else failCorrectionReads--
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: 'INJECTED_WRITE_FAILURE' }))
+        return
+      }
+      try {
+        const up = await fetch(EMULATOR_URL + (req.url ?? '/'), {
+          method: req.method, headers: { 'content-type': 'application/json', authorization: 'Bearer x' },
+          body: req.method === 'POST' && body ? body : undefined,
+        })
+        const text = await up.text()
+        res.writeHead(up.status, { 'content-type': 'application/json' })
+        res.end(text)
+      } catch {
+        res.writeHead(502); res.end('{"error":"proxy"}')
+      }
+    })
+  })
+  await new Promise<void>(r => proxy!.listen(PROXY_PORT, '127.0.0.1', r))
 })
-after(() => { kv?.kill('SIGKILL') })
-beforeEach(async () => { await fetch(`http://127.0.0.1:${PORT}/__admin/flush`, { method: 'POST' }).catch(() => {}) })
+after(() => { kv?.kill('SIGKILL'); proxy?.close() })
+beforeEach(async () => {
+  failRouteWrites = 0
+  failCorrectionReads = 0
+  process.env.KV_REST_API_URL = EMULATOR_URL
+  await fetch(`${EMULATOR_URL}/__admin/flush`, { method: 'POST' }).catch(() => {})
+})
 
 // Route + assignee tokens must satisfy /^[a-f0-9]{16,}$/.
 const ROUTE_TOK = 'aaaa0000bbbb1111'
@@ -288,4 +336,245 @@ test('CLIENT: going offline keeps the route visible and disables every action', 
   // render guard was `notFound || !route`.
   assert.match(src, /if \(notFound\) return wrap\(/, 'missing-link card is gated on a real 404 alone')
   assert.doesNotMatch(src, /if \(notFound \|\| !route\)/, 'the defect this replaced')
+})
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Completing a route closes the completing crew member's OPEN punch.
+//
+// Completion used to leave the punch open forever — nothing anywhere set
+// `clockOutAt` on completion — so anyone who clocked in and then finished from
+// this link stayed on the clock indefinitely. That is the guaranteed outcome of
+// the normal sequence, and it produced the one stale punch found in Production.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const confirmed = async () => post(CREW_TOK, { action: 'confirm', disclaimerAccepted: true })
+const clockIn = () => post(CREW_TOK, { action: 'clock_in', locationDenied: true })
+const complete = (extra: Record<string, unknown> = {}) => post(CREW_TOK, { action: 'complete', ...extra })
+const me = async () => (await stored(ROUTE_TOK))!.assignees![0]
+const events = async (t: string) => ((await stored(ROUTE_TOK))!.events ?? []).filter(e => e.type === t).length
+const audits = async (re: RegExp) => ((await stored(ROUTE_TOK))!.audit ?? []).filter(a => re.test(a.action)).length
+
+test('AUTO CLOCK-OUT: an open punch is closed at the SAME instant as completion', async () => {
+  await seed(); await confirmed(); await clockIn()
+  assert.equal((await me()).clockOutAt, undefined, 'open before completion')
+
+  const res = await complete({ note: 'done' })
+  assert.equal(res.status, 200)
+  assert.equal((await res.json()).clockedOut, true)
+
+  const r = (await stored(ROUTE_TOK))!
+  const a = r.assignees![0]
+  assert.ok(a.clockOutAt, 'the punch was closed')
+  assert.equal(a.clockOutAt, r.completedAt, 'ONE timestamp for completion and clock-out')
+  assert.equal(a.clockOutLocationDenied, true, 'an automatic punch records no GPS')
+  assert.equal(r.status, 'completed')
+})
+
+test('AUTO CLOCK-OUT: no punch means none is created', async () => {
+  await seed(); await confirmed()
+  const res = await complete()
+  assert.equal(res.status, 200)
+  assert.equal((await res.json()).clockedOut, false)
+  const a = await me()
+  assert.equal(a.clockInAt, undefined, 'no clock-in was invented')
+  assert.equal(a.clockOutAt, undefined, 'no clock-out was invented')
+  assert.equal(await events('clock_out'), 0, 'and no clock_out event')
+})
+
+test('AUTO CLOCK-OUT: an existing clock-out is never overwritten', async () => {
+  await seed(); await confirmed(); await clockIn()
+  await post(CREW_TOK, { action: 'clock_out', locationDenied: true })
+  const original = (await me()).clockOutAt
+  assert.ok(original)
+
+  await complete()
+  assert.equal((await me()).clockOutAt, original, 'the explicit clock-out survives')
+  assert.equal(await events('clock_out'), 1, 'no second clock_out event')
+})
+
+test('AUTO CLOCK-OUT: a CORRECTION-closed punch is not overwritten', async () => {
+  await seed(); await confirmed(); await clockIn()
+  const a0 = await me()
+  const pid = punchId('route', ROUTE_TOK, a0.staffId!)
+  const closeAt = a0.clockInAt! + 3_600_000
+  await runWithTenant({ tenantId: TENANT }, async () => {
+    const v = validateCorrection(
+      { correctedClockIn: a0.clockInAt!, correctedClockOut: closeAt, correctionReason: 'admin closed it' },
+      { effectiveClockIn: a0.clockInAt!, effectiveClockOut: null },
+    )
+    assert.equal(v.ok, true)
+    await appendCorrection({
+      punchId: pid, staffId: a0.staffId!, workType: 'route', jobToken: ROUTE_TOK,
+      original: { clockInAt: a0.clockInAt!, clockOutAt: null },
+      value: (v as { ok: true; value: never }).value,
+      actor: { userId: 'u_admin', role: 'admin' },
+    } as never)
+  })
+
+  const res = await complete()
+  assert.equal(res.status, 200)
+  assert.equal((await res.json()).clockedOut, false, 'the effective punch was already closed')
+  assert.equal((await me()).clockOutAt, undefined, 'the RAW stamp stays null — the correction owns this punch')
+  assert.equal(await events('clock_out'), 0)
+})
+
+test('AUTO CLOCK-OUT: repeated completion is idempotent — first timestamps win', async () => {
+  await seed(); await confirmed(); await clockIn()
+  await complete({ note: 'first' })
+  const r1 = (await stored(ROUTE_TOK))!
+  const firstCompleted = r1.completedAt
+  const firstOut = r1.assignees![0].clockOutAt
+
+  const again = await complete({ note: 'second' })
+  assert.equal((await again.json()).already, true)
+
+  const r2 = (await stored(ROUTE_TOK))!
+  assert.equal(r2.completedAt, firstCompleted, 'completion time preserved')
+  assert.equal(r2.assignees![0].clockOutAt, firstOut, 'clock-out time preserved')
+  assert.equal(r2.completionNote, 'first', 'the replay cannot rewrite the note')
+  assert.equal(await events('clock_out'), 1, 'exactly one clock_out event')
+  assert.equal(await events('completed'), 1, 'exactly one completed event')
+  assert.equal(await audits(/clocked out automatically/), 1, 'one automatic clock-out audit entry')
+  assert.equal(await audits(/marked the route complete/), 1)
+})
+
+test('AUTO CLOCK-OUT: explicit clock-out remains available BEFORE completion', async () => {
+  await seed(); await confirmed(); await clockIn()
+  const res = await post(CREW_TOK, { action: 'clock_out', locationDenied: true })
+  assert.equal(res.status, 200)
+  assert.ok((await me()).clockOutAt, 'the explicit path still works')
+  assert.notEqual((await stored(ROUTE_TOK))!.status, 'completed', 'and does not complete the route')
+  assert.equal(await events('completed'), 0, 'clocking out is not completing')
+})
+
+test('AUTO CLOCK-OUT: concurrent completion and explicit clock-out converge on one punch', async () => {
+  await seed(); await confirmed(); await clockIn()
+  const [a, b] = await Promise.all([
+    complete(),
+    post(CREW_TOK, { action: 'clock_out', locationDenied: true }),
+  ])
+  assert.ok([200, 503].includes(a.status), `completion status ${a.status}`)
+  assert.ok([200, 409, 503].includes(b.status), `clock-out status ${b.status}`)
+
+  const r = (await stored(ROUTE_TOK))!
+  const outs = (r.events ?? []).filter(e => e.type === 'clock_out').length
+  assert.ok(outs <= 1, `at most one clock_out event, got ${outs}`)
+  assert.ok(r.assignees![0].clockOutAt, 'the punch is closed exactly once')
+})
+
+test('AUTO CLOCK-OUT: an ALREADY-completed route is untouched by a later completion', async () => {
+  await seed(mkRoute({ status: 'completed', assignees: [assignee({ confirmedAt: 1, clockInAt: 1 })] }))
+  const before = JSON.stringify(await stored(ROUTE_TOK))
+  const res = await complete()
+  assert.equal((await res.json()).already, true)
+  assert.equal(JSON.stringify(await stored(ROUTE_TOK)), before, 'byte-identical — no clock-out written')
+})
+
+test('AUTO CLOCK-OUT: token and tenant isolation are unchanged', async () => {
+  await seed(); await confirmed(); await clockIn()
+  for (const bad of ['9999888877776666', 'not-a-token!!', '']) {
+    const res = await POST(new NextRequest(`http://localhost/api/route/${bad}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'complete' }),
+    }), ctx(bad) as never)
+    assert.equal(res.status, 404, `${JSON.stringify(bad)} must be an indistinguishable 404`)
+  }
+  assert.equal((await me()).clockOutAt, undefined, 'no foreign request touched the punch')
+})
+
+test('AUTO CLOCK-OUT: Timesheets and Punch Overlaps both see the closed punch', async () => {
+  await seed(); await confirmed(); await clockIn()
+  await complete()
+
+  const r = (await stored(ROUTE_TOK))!
+  const entries = selectTimeEntries([r], [], {})
+  assert.equal(entries.length, 1)
+  assert.equal(entries[0].status, 'complete', 'Timesheets sees it closed')
+  assert.equal(entries[0].clockOutAt, r.completedAt)
+
+  const rep = await runWithTenant({ tenantId: TENANT }, () => buildPunchOverlapReport(Date.now()))
+  assert.equal(rep.summary.punches.open, 0, 'Punch Overlaps reports no open punch')
+  assert.equal(rep.summary.punches.complete, 1)
+  assert.equal(rep.summary.openDuplicates.contractorsGlobal, 0)
+})
+
+test('AUTO CLOCK-OUT: the handler decides on the EFFECTIVE punch and fails closed', () => {
+  const src = readFileSync(new URL('../app/api/route/[token]/route.ts', import.meta.url), 'utf8')
+  const branch = src.slice(src.indexOf("if (action === 'complete')"), src.indexOf("// Timeclock —"))
+  assert.match(branch, /effectivePunch\(/, 'corrections are consulted')
+  assert.match(branch, /eff\.clockInAt != null && eff\.clockOutAt == null/, 'never creates a punch')
+  assert.match(branch, /const completedAt = Date\.now\(\)/, 'one timestamp')
+  assert.match(branch, /assignee\.clockOutAt = completedAt/, 'the same instant closes the punch')
+  assert.doesNotMatch(branch, /clockOutAt = Date\.now\(\)/, 'never a second clock read')
+  // Corrections load failure must refuse to complete, not complete blindly.
+  const failClosed = branch.slice(branch.indexOf('} catch {'), branch.indexOf('const photos'))
+  assert.match(failClosed, /status: 503/, 'a corrections read failure refuses to complete')
+  assert.doesNotMatch(failClosed, /punchOpen = |saveRoute/, 'and does not fall through to completing')
+  // Exactly one save commits both mutations.
+  assert.equal((branch.match(/await saveRoute\(route\)/g) ?? []).length, 1, 'one save = atomic')
+})
+
+test('AUTO CLOCK-OUT: the completion UI says it will clock you out, only when it will', () => {
+  const src = readFileSync(new URL('../app/route/[token]/page.tsx', import.meta.url), 'utf8')
+  assert.match(src, /const willClockOut = !!route\?\.clockInAt && !route\?\.clockOutAt/)
+  assert.match(src, /also clock you out/)
+  assert.match(src, /willClockOut \? 'Submit — Done & Clock Out' : 'Submit — Route Done'/,
+    'normal wording is retained when not clocked in')
+  // PR #136 behaviour must survive: completion is still single-attempt.
+  assert.match(src, /allowMutationRetry: RETRY_SAFE_ACTIONS\.has\('complete'\)/)
+  assert.doesNotMatch(src, /RETRY_SAFE_ACTIONS = new Set\(\[[^\]]*'complete'/)
+})
+
+test('AUTO CLOCK-OUT: if the save fails, NOTHING is persisted and the route stays recoverable', async () => {
+  await seed(); await confirmed(); await clockIn()
+  const openAt = (await me()).clockInAt
+  assert.ok(openAt)
+
+  // Reads keep working; the route write fails. This is the half-way point the
+  // single-save design exists to make impossible.
+  process.env.KV_REST_API_URL = `http://127.0.0.1:${PROXY_PORT}`
+  failRouteWrites = 99
+  const failed = await complete({ note: 'lost' })
+  assert.ok([500, 503].includes(failed.status), `save failure surfaces as retryable, got ${failed.status}`)
+
+  process.env.KV_REST_API_URL = EMULATOR_URL
+  failRouteWrites = 0
+  const mid = (await stored(ROUTE_TOK))!
+  assert.notEqual(mid.status, 'completed', 'the route did NOT become completed')
+  assert.equal(mid.completedAt, undefined, 'no completion timestamp leaked')
+  assert.equal(mid.assignees![0].clockInAt, openAt, 'the punch is untouched…')
+  assert.equal(mid.assignees![0].clockOutAt, undefined, '…and still open — not half-closed')
+
+  // Recoverable: the very same request now succeeds and closes the punch.
+  const res = await complete({ note: 'retry' })
+  assert.equal(res.status, 200)
+  assert.equal((await res.json()).clockedOut, true)
+  const done = (await stored(ROUTE_TOK))!
+  assert.equal(done.status, 'completed')
+  assert.equal(done.assignees![0].clockOutAt, done.completedAt)
+  assert.equal(done.completionNote, 'retry')
+})
+
+test('AUTO CLOCK-OUT: if CORRECTIONS cannot be read, completion is refused — never completed blindly', async () => {
+  await seed(); await confirmed(); await clockIn()
+
+  // We cannot tell whether an admin already closed this punch. Completing anyway
+  // would either strand the punch or overwrite a correction, so refuse both.
+  process.env.KV_REST_API_URL = `http://127.0.0.1:${PROXY_PORT}`
+  failCorrectionReads = 99
+  const res = await complete()
+  assert.equal(res.status, 503, 'refused, and retryable')
+
+  process.env.KV_REST_API_URL = EMULATOR_URL
+  failCorrectionReads = 0
+  const r = (await stored(ROUTE_TOK))!
+  assert.notEqual(r.status, 'completed', 'the route was not completed')
+  assert.equal(r.assignees![0].clockOutAt, undefined, 'and no punch was closed on a guess')
+
+  const ok = await complete()
+  assert.equal(ok.status, 200, 'and it recovers once corrections are readable again')
+  const done = (await stored(ROUTE_TOK))!
+  assert.equal(done.status, 'completed')
+  assert.equal(done.assignees![0].clockOutAt, done.completedAt, 'closed at the completion instant')
 })

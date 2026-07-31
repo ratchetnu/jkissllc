@@ -11,6 +11,7 @@ import { withRouteLock, mutateByConfirmToken, RouteBusyError } from '../../../li
 import { alertOwnerRouteEvent, alertOwnerClockLocationOff } from '../../../lib/route-notify'
 import { getFinanceSettings } from '../../../lib/finance'
 import { getStaff, staffUsesTimeclock } from '../../../lib/staff'
+import { effectivePunch, listCorrections, punchId } from '../../../lib/time-corrections'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 const clientIp = (req: NextRequest) => req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || undefined
@@ -94,21 +95,61 @@ export const POST = withPublicTokenRoute(async (req: NextRequest, { params }: { 
       if (isExpired(route)) return { response: NextResponse.json({ error: 'expired', route: pub() }, { status: 410 }) }
 
       // Completion — a confirmed crew member marks the whole route done on-site.
+      //
+      // COMPLETING ALSO CLOSES THIS CREW MEMBER'S OPEN PUNCH. Completion used to leave
+      // the punch open forever: nothing in this file or anywhere else set
+      // `clockOutAt` on completion, so anyone who clocked in and then finished from
+      // this link stayed on the clock indefinitely. That is not an edge case — it is
+      // the guaranteed outcome of the normal sequence, and it produced the one stale
+      // punch found in Production (route JK-R-1004).
       if (action === 'complete') {
         if (route.status === 'completed') return { response: NextResponse.json({ ok: true, already: true, route: pub() }) }
         if (!assignee.confirmedAt) return { response: NextResponse.json({ error: 'Please confirm before marking the route complete.' }, { status: 409 }) }
+
+        // Is THIS crew member's punch actually open? Decided on the EFFECTIVE punch,
+        // so an admin time correction that already closed it is never overwritten —
+        // `effectivePunch` with no corrections simply returns the raw stamps, so this
+        // one check covers both "already clocked out" and "corrected closed".
+        let punchOpen = false
+        try {
+          const eff = effectivePunch(
+            { clockInAt: assignee.clockInAt ?? null, clockOutAt: assignee.clockOutAt ?? null },
+            await listCorrections(punchId('route', route.token, assignee.staffId)),
+          )
+          // Never CREATE a punch: an absent clock-in stays absent.
+          punchOpen = eff.clockInAt != null && eff.clockOutAt == null
+        } catch {
+          // Fail closed. Completing while we cannot tell whether a punch would be
+          // stranded is exactly the state this change exists to prevent.
+          return { response: NextResponse.json({ error: 'Could not save — please try again.' }, { status: 503 }) }
+        }
+
         const photos: string[] = Array.isArray(body.photos)
           ? (body.photos as unknown[]).filter((u): u is string => typeof u === 'string' && /^https:\/\/\S+$/.test(u)).slice(0, 6)
           : []
-        route.completedAt = Date.now()
+        // ONE timestamp for the completion and the automatic clock-out, so the record
+        // cannot say the shift ended at a different moment than the work did.
+        const completedAt = Date.now()
+        route.completedAt = completedAt
         route.completedBy = 'contractor'
         route.completionNote = S(body.note, 500) || undefined
         route.completionPhotos = photos.length ? photos : undefined
+        if (punchOpen) {
+          assignee.clockOutAt = completedAt
+          // No GPS is captured on an automatic punch, so record it as unverified
+          // rather than letting a missing pin read as a verified one.
+          assignee.clockOutLocationDenied = true
+          pushEvent(route, 'clock_out', ip, ua)
+          pushAudit(route, 'contractor', `${assignee.name} clocked out automatically on completion`)
+        }
         pushEvent(route, 'completed', ip, ua)
         pushAudit(route, 'contractor', `${assignee.name} marked the route complete`)
         setStatus(route, 'completed', 'contractor')
+        // ONE save for both mutations. If it throws, NOTHING is persisted — the route
+        // does not become Completed and the punch is not half-closed. Atomicity here
+        // is structural, not bolted on.
         try { await saveRoute(route) } catch { return saveFail }
-        return { response: NextResponse.json({ ok: true, route: pub() }) }
+        return { response: NextResponse.json({ ok: true, route: pub(), clockedOut: punchOpen }) }
       }
 
       // Timeclock — a confirmed crew member punches in on arrival and out when done.
