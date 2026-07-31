@@ -393,7 +393,11 @@ test('the alert cron is registered on a schedule', async () => {
   const vercel = JSON.parse(readFileSync('vercel.json', 'utf8')) as { crons: { path: string; schedule: string }[] }
   const cron = vercel.crons.find((c) => c.path === '/api/cron/shadow-alerts')
   assert.ok(cron, 'the evaluator must actually be scheduled — an unscheduled evaluator never runs')
-  assert.equal(cron!.schedule, '*/15 * * * *')
-  // It must not collide with the vision worker's own budget/cadence.
+  // Cadence was cut from */15 (96 runs/day) when the Upstash request quota was
+  // exhausted; this evaluator is internal and nothing customer-facing waits on it.
+  // See scripts/cron-request-budget.test.ts for the ceiling this sits under.
+  assert.equal(cron!.schedule, '30 */6 * * *')
+  // It must not collide with the vision worker's own budget/cadence — it reads what
+  // that worker produced, so it runs 30 minutes after it, not alongside it.
   assert.notEqual(cron!.schedule, vercel.crons.find((c) => c.path === '/api/cron/vision-shadow')!.schedule)
 })
