@@ -70,10 +70,14 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
   const [networkMsg, setNetworkMsg] = useState('')
   const { offline } = useConnectivity()
 
-  // Completing closes an OPEN punch server-side, so the wording has to say so —
-  // otherwise the contractor is silently clocked out by a button labelled
-  // "Route Done". Mirrors the server's `punchOpen` test on the raw stamps the
-  // public projection exposes.
+  // Completing closes an OPEN punch server-side, so the notice below has to say so —
+  // otherwise the contractor is silently clocked out. This reads the RAW stamps the
+  // public projection already exposes; the server decides on the EFFECTIVE punch
+  // (corrections applied), and deliberately nothing about corrections is exposed here.
+  // Those two can disagree — an admin correction may have closed a punch whose raw
+  // clock-out is still null — which is exactly why the notice is worded as a
+  // condition ("If you're still clocked in…") rather than as an assertion. Hedged
+  // copy is correct under both readings; asserting "you are clocked in" would not be.
   const willClockOut = !!route?.clockInAt && !route?.clockOutAt
 
   const load = useCallback(async () => {
@@ -378,7 +382,7 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
             <div style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 8 }}>Wrap up this route</div>
             {willClockOut && (
               <p role="status" style={{ fontSize: 12.5, lineHeight: 1.5, color: '#fcd34d', margin: '0 0 10px', padding: '9px 11px', borderRadius: 10, border: '1px solid rgba(245,158,11,.35)', background: 'rgba(245,158,11,.08)' }}>
-                You’re still clocked in. Submitting will <strong>also clock you out</strong>, at the same time the route is marked complete.
+                If you’re still clocked in, completing this route will clock you out automatically.
               </p>
             )}
             <textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
@@ -404,7 +408,10 @@ export default function RouteConfirmPage({ params }: { params: Promise<{ token: 
             <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
               <button onClick={submitComplete} disabled={busy === 'complete' || uploading || offline}
                 style={{ flex: 1, padding: '13px', borderRadius: 12, border: 'none', fontWeight: 800, fontSize: 14.5, color: '#fff', background: '#16a34a', cursor: 'pointer', opacity: busy === 'complete' ? .7 : 1 }}>
-                {busy === 'complete' ? 'Submitting…' : willClockOut ? 'Submit — Done & Clock Out' : 'Submit — Route Done'}
+                {/* ONE label at every width. A clock-out variant read well on a phone
+                    but wrapped to two lines at 320 px, and the notice above already
+                    carries that message — so the button stays a stable target. */}
+                {busy === 'complete' ? 'Submitting…' : 'Mark Route Complete'}
               </button>
               <button onClick={() => { setCompleteMode(false); setErr('') }} disabled={busy === 'complete'}
                 style={{ padding: '13px 16px', borderRadius: 12, border: '1px solid var(--line)', fontWeight: 700, fontSize: 14.5, color: 'var(--muted)', background: 'transparent', cursor: 'pointer' }}>

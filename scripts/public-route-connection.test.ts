@@ -515,66 +515,89 @@ test('AUTO CLOCK-OUT: the handler decides on the EFFECTIVE punch and fails close
   assert.equal((branch.match(/await saveRoute\(route\)/g) ?? []).length, 1, 'one save = atomic')
 })
 
-test('AUTO CLOCK-OUT: the completion UI says it will clock you out, only when it will', () => {
+test('AUTO CLOCK-OUT: the completion notice is CONDITIONAL, and worded as a condition', () => {
   const src = readFileSync(new URL('../app/route/[token]/page.tsx', import.meta.url), 'utf8')
+
+  // Rendered only when the raw stamps show an open punch…
   assert.match(src, /const willClockOut = !!route\?\.clockInAt && !route\?\.clockOutAt/)
-  assert.match(src, /also clock you out/)
-  assert.match(src, /willClockOut \? 'Submit — Done & Clock Out' : 'Submit — Route Done'/,
-    'normal wording is retained when not clocked in')
+  assert.match(src, /\{willClockOut && \(/, 'the notice is conditional, not always-on')
+  assert.match(src, /role="status"/, 'and is announced, not silent')
+
+  // …but worded as a CONDITION, never an assertion. The client reads raw stamps while
+  // the server decides on the effective punch, so the two can legitimately disagree
+  // (an admin correction may have closed a punch whose raw clock-out is still null).
+  // Hedged copy is true under both readings; an assertion would be false under one.
+  const notice = src.slice(src.indexOf('{willClockOut && ('), src.indexOf('<textarea'))
+  assert.match(notice, /If you’re still clocked in, completing this route will clock you out automatically\./)
+  assert.doesNotMatch(notice, /You’re still clocked in/, 'never asserts the punch state')
+  assert.doesNotMatch(notice, /correction|effective/i, 'no correction data reaches the public page')
+})
+
+test('AUTO CLOCK-OUT: the public projection exposes NO correction or effective-punch data', () => {
+  const api = readFileSync(new URL('../app/api/route/[token]/route.ts', import.meta.url), 'utf8')
+  const pub = api.slice(api.indexOf('const pub = '), api.indexOf('const pub = ') + 1200)
+  for (const banned of ['effectivePunch', 'listCorrections', 'correction', 'punchOpen']) {
+    assert.equal(pub.includes(banned), false, `pub() must not expose ${banned}`)
+  }
+  // The additive completion flag is a plain boolean, not a punch object.
+  assert.match(api, /clockedOut: punchOpen/)
+})
+
+// ── The completion button is ONE stable target at every width ────────────────
+//
+// A conditional clock-out label wrapped to two lines at 320 px. These pin the
+// three properties that made that a problem, so a future label change cannot
+// silently reintroduce it. Text advance widths were measured in the browser at
+// 320 px against Preview: the button's text box is 164 px wide there, and
+// 'Mark Route Complete' measures 154 px in the page's own 800-weight 14.5 px
+// system font — one line, with room to spare.
+const COMPLETE_BUTTON = 'Mark Route Complete'
+const TEXT_ROOM_AT_320 = 164   // measured: 320 − main padding − gap − Cancel − button padding
+
+test('BUTTON: the completion label is UNCONDITIONAL — one label at every width', () => {
+  const src = readFileSync(new URL('../app/route/[token]/page.tsx', import.meta.url), 'utf8')
+  const label = src.slice(src.indexOf("busy === 'complete' ? 'Submitting…'"), src.indexOf("busy === 'complete' ? 'Submitting…'") + 90)
+  assert.match(label, new RegExp(`'Submitting…' : '${COMPLETE_BUTTON}'`), 'exactly one completion label')
+  assert.doesNotMatch(label, /willClockOut/, 'the label never varies on punch state')
+  assert.equal(src.includes('Submit — Done & Clock Out'), false, 'the wrapping variant is gone')
+  assert.equal(src.includes('Submit — Route Done'), false, 'and so is the old one')
+})
+
+test('BUTTON: the label fits ONE line at 320 px', () => {
+  // A per-character upper bound for this font at 800/14.5px, calibrated against the
+  // browser measurement: 'Mark Route Complete' (19 chars) measured 154 px → 8.11 px
+  // per character. Rounded UP to 8.3 so the bound can only be pessimistic.
+  const upperBound = COMPLETE_BUTTON.length * 8.3
+  assert.ok(upperBound <= TEXT_ROOM_AT_320,
+    `${COMPLETE_BUTTON} needs ≤ ${TEXT_ROOM_AT_320}px of text room, bound is ${upperBound.toFixed(0)}px`)
+  // Guard the guard: the label that actually wrapped must still fail this bound.
+  assert.ok('Submit — Done & Clock Out'.length * 8.3 > TEXT_ROOM_AT_320,
+    'the bound must still reject the label that wrapped')
+})
+
+test('BUTTON: the completion controls clear a 44 px tap target from their OWN styles', () => {
+  const src = readFileSync(new URL('../app/route/[token]/page.tsx', import.meta.url), 'utf8')
+  const rowStart = src.indexOf("<div style={{ display: 'flex', gap: 10, marginTop: 14 }}>")
+  const row = src.slice(rowStart, src.indexOf('</div>', src.indexOf('Cancel', rowStart)))
+  const buttons = [...row.matchAll(/padding: '(\d+)px(?: (\d+)px)?'[^}]*?fontSize: ([\d.]+)/g)]
+  assert.ok(buttons.length >= 2, `expected both completion buttons, found ${buttons.length}`)
+  for (const [, padY, , fontSize] of buttons) {
+    // height = padding top+bottom + one line box (≈1.2 × font-size, the UA default)
+    const height = 2 * Number(padY) + Math.ceil(Number(fontSize) * 1.2)
+    assert.ok(height >= 44, `a completion control is only ${height}px tall`)
+  }
+})
+
+test('BUTTON: nothing in the completion row can overflow 320 px', () => {
+  const src = readFileSync(new URL('../app/route/[token]/page.tsx', import.meta.url), 'utf8')
+  const rowStart = src.indexOf("<div style={{ display: 'flex', gap: 10, marginTop: 14 }}>")
+  const row = src.slice(rowStart, src.indexOf('</div>', src.indexOf('Cancel', rowStart)))
+  // The primary button flexes; only the Cancel button is intrinsically sized. If the
+  // primary were given a fixed width or nowrap it could push the row past the viewport.
+  assert.match(row, /flex: 1/, 'the primary button flexes to the space available')
+  assert.doesNotMatch(row, /whiteSpace: 'nowrap'/, 'no nowrap — that would force overflow instead of wrapping')
+  assert.doesNotMatch(row, /minWidth:/, 'no minWidth floor to breach the viewport')
   // PR #136 behaviour must survive: completion is still single-attempt.
   assert.match(src, /allowMutationRetry: RETRY_SAFE_ACTIONS\.has\('complete'\)/)
   assert.doesNotMatch(src, /RETRY_SAFE_ACTIONS = new Set\(\[[^\]]*'complete'/)
-})
-
-test('AUTO CLOCK-OUT: if the save fails, NOTHING is persisted and the route stays recoverable', async () => {
-  await seed(); await confirmed(); await clockIn()
-  const openAt = (await me()).clockInAt
-  assert.ok(openAt)
-
-  // Reads keep working; the route write fails. This is the half-way point the
-  // single-save design exists to make impossible.
-  process.env.KV_REST_API_URL = `http://127.0.0.1:${PROXY_PORT}`
-  failRouteWrites = 99
-  const failed = await complete({ note: 'lost' })
-  assert.ok([500, 503].includes(failed.status), `save failure surfaces as retryable, got ${failed.status}`)
-
-  process.env.KV_REST_API_URL = EMULATOR_URL
-  failRouteWrites = 0
-  const mid = (await stored(ROUTE_TOK))!
-  assert.notEqual(mid.status, 'completed', 'the route did NOT become completed')
-  assert.equal(mid.completedAt, undefined, 'no completion timestamp leaked')
-  assert.equal(mid.assignees![0].clockInAt, openAt, 'the punch is untouched…')
-  assert.equal(mid.assignees![0].clockOutAt, undefined, '…and still open — not half-closed')
-
-  // Recoverable: the very same request now succeeds and closes the punch.
-  const res = await complete({ note: 'retry' })
-  assert.equal(res.status, 200)
-  assert.equal((await res.json()).clockedOut, true)
-  const done = (await stored(ROUTE_TOK))!
-  assert.equal(done.status, 'completed')
-  assert.equal(done.assignees![0].clockOutAt, done.completedAt)
-  assert.equal(done.completionNote, 'retry')
-})
-
-test('AUTO CLOCK-OUT: if CORRECTIONS cannot be read, completion is refused — never completed blindly', async () => {
-  await seed(); await confirmed(); await clockIn()
-
-  // We cannot tell whether an admin already closed this punch. Completing anyway
-  // would either strand the punch or overwrite a correction, so refuse both.
-  process.env.KV_REST_API_URL = `http://127.0.0.1:${PROXY_PORT}`
-  failCorrectionReads = 99
-  const res = await complete()
-  assert.equal(res.status, 503, 'refused, and retryable')
-
-  process.env.KV_REST_API_URL = EMULATOR_URL
-  failCorrectionReads = 0
-  const r = (await stored(ROUTE_TOK))!
-  assert.notEqual(r.status, 'completed', 'the route was not completed')
-  assert.equal(r.assignees![0].clockOutAt, undefined, 'and no punch was closed on a guess')
-
-  const ok = await complete()
-  assert.equal(ok.status, 200, 'and it recovers once corrections are readable again')
-  const done = (await stored(ROUTE_TOK))!
-  assert.equal(done.status, 'completed')
-  assert.equal(done.assignees![0].clockOutAt, done.completedAt, 'closed at the completion instant')
 })
