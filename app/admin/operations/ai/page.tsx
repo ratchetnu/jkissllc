@@ -142,6 +142,7 @@ function Overview() {
           <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
             <Link href="/admin/operations/ai/performance" style={sectionLink}>See performance →</Link>
             <Link href="/admin/operations/ai/alerts" style={sectionLink}>Readiness detail →</Link>
+            <Link href="/admin/operations/ai/lat002" style={sectionLink}>LAT-002 latency →</Link>
           </div>
         </div>
       )}
