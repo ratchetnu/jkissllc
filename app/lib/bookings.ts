@@ -155,6 +155,7 @@ export type BookingEventAction =
   | 'notification.sent' | 'notification.failed' | 'notification.resent'
   | 'customer.confirmation'
   | 'ai.override' | 'ai.reprice' | 'ai.modify'
+  | 'ai.invalidated'
   | 'ai.queued' | 'ai.analyzed' | 'ai.failed' | 'ai.manual_review'
   // ── Customer inventory-confirmation + second (final) analysis (Part 3/7/10) ──
   | 'confirmation.requested' | 'confirmation.submitted' | 'confirmation.owner_edited'
@@ -213,8 +214,9 @@ export type AiJobErrorCode =
   | 'persistence_failed' | 'retry_exhausted' | 'unknown'
 export type AiJob = {
   status: AiJobStatus
-  idempotencyKey: string       // book-now-ai:{tenantId}:{bookingId}:{photoVersion}
-  photoVersion: number         // # of photos analyzed — re-triggers if the set changes
+  idempotencyKey: string       // stable job identity for one booking + evidence version
+  photoVersion: number         // human-readable photo count retained for diagnostics
+  photoFingerprint?: string    // exact set identity; distinguishes same-count replacements
   attempts: number
   lastAttemptAt?: number
   nextRetryAt?: number         // when the cron may next pick it up (backoff)

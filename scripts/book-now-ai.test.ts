@@ -6,8 +6,9 @@ import test from 'node:test'
 import type { Booking } from '../app/lib/bookings'
 import {
   needsAiJob, supportsPhotoAi, hasValidEstimate, photoVersion, aiJobIdempotencyKey,
-  enqueueAiJob, classifyOutcome, retryDecision, isDue, needsManualReview, MAX_ATTEMPTS,
+  enqueueAiJob, classifyOutcome, retryDecision, isDue, needsManualReview, invalidatePhotoAnalysis, MAX_ATTEMPTS,
 } from '../app/lib/book-now-ai'
+import { photoSetFingerprint, samePhotoSet } from '../app/lib/ai/photo-set'
 
 function mk(p: Partial<Booking>): Booking {
   return {
@@ -49,6 +50,62 @@ test('enqueue is idempotent per booking + photo set, and re-triggers when photos
   assert.equal(photoVersion(b), 1)
   assert.equal(enqueueAiJob(b, { initiatedBy: 'system' }), true)
   assert.notEqual(b.aiJob?.idempotencyKey, key)
+})
+
+test('same-count photo replacement is a new AI job; reordering is not', () => {
+  const b = mk({ invoicePhotos: [{ url: 'https://x/a.jpg' }, { url: 'https://x/b.jpg' }] })
+  assert.equal(enqueueAiJob(b), true)
+  const firstKey = b.aiJob!.idempotencyKey
+  const firstFingerprint = b.aiJob!.photoFingerprint
+
+  b.invoicePhotos = [{ url: 'https://x/b.jpg' }, { url: 'https://x/a.jpg' }]
+  assert.equal(photoSetFingerprint(b.invoicePhotos), firstFingerprint)
+  assert.equal(enqueueAiJob(b), false, 'order alone is the same set')
+
+  b.invoicePhotos = [{ url: 'https://x/a.jpg' }, { url: 'https://x/c.jpg' }]
+  assert.equal(photoVersion(b), 2, 'the count did not change')
+  assert.equal(enqueueAiJob(b), true, 'but the source evidence did')
+  assert.notEqual(b.aiJob!.idempotencyKey, firstKey)
+  assert.notEqual(b.aiJob!.photoFingerprint, firstFingerprint)
+})
+
+test('an estimate is valid only for the source-photo set it analyzed', () => {
+  const b = mk({
+    invoicePhotos: [{ url: 'https://x/a.jpg' }],
+    aiEstimate: {
+      status: 'completed',
+      pricing: { lowUsd: 1 },
+      inputPhotoUrls: ['https://x/a.jpg'],
+    } as Booking['aiEstimate'],
+  })
+  assert.equal(hasValidEstimate(b), true)
+  b.invoicePhotos = [{ url: 'https://x/b.jpg' }]
+  assert.equal(hasValidEstimate(b), false)
+})
+
+test('photo invalidation preserves history, retires final state, and queues current evidence', () => {
+  const b = mk({
+    invoicePhotos: [{ url: 'https://x/new.jpg' }],
+    aiEstimate: {
+      status: 'completed', pricing: { lowUsd: 1 }, inputPhotoUrls: ['https://x/old.jpg'],
+    } as Booking['aiEstimate'],
+    finalAiEstimate: { confirmationVersion: 1 } as Booking['finalAiEstimate'],
+    confirmation: { confirmationVersion: 1 } as Booking['confirmation'],
+    finalAiJob: { status: 'completed', idempotencyKey: 'old', photoVersion: 1, attempts: 1, updatedAt: 1 },
+  })
+  assert.equal(invalidatePhotoAnalysis(b, 'owner', '2026-07-30T00:00:00.000Z'), true)
+  assert.equal(b.aiEstimate?.invalidatedAt, '2026-07-30T00:00:00.000Z')
+  assert.equal(b.finalAiEstimate?.invalidatedAt, '2026-07-30T00:00:00.000Z')
+  assert.equal(b.confirmation?.invalidatedAt, '2026-07-30T00:00:00.000Z')
+  assert.equal(b.finalAiJob, undefined)
+  assert.equal(b.aiJob?.status, 'queued')
+  assert.equal(b.aiJob?.photoFingerprint, photoSetFingerprint(b.invoicePhotos))
+  assert.ok(b.events?.some(event => event.action === 'ai.invalidated'))
+})
+
+test('photo-set identity is order-insensitive but URL-sensitive', () => {
+  assert.equal(samePhotoSet(['https://x/a', 'https://x/b'], ['https://x/b', 'https://x/a']), true)
+  assert.equal(samePhotoSet(['https://x/a', 'https://x/b'], ['https://x/a', 'https://x/c']), false)
 })
 
 test('force enqueue overrides an existing completed/failed job (owner retry)', () => {

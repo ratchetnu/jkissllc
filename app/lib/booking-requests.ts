@@ -9,6 +9,7 @@ import { onLeadPersisted } from './intake-workflow'
 import { notifyOwnerNewSubmission } from './booking-notify'
 import { enqueueAiJob } from './book-now-ai'
 import { currentTenantId } from './platform/tenancy/context'
+import { samePhotoSet } from './ai/photo-set'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public "Book Now" quote requests → persisted OpsPilot bookings.
@@ -58,6 +59,13 @@ export type QuoteRequestInput = {
 }
 
 const REQ_IDEM_TTL_MS = 24 * 60 * 60_000
+
+export function draftMatchesSubmittedPhotos(
+  draft: Pick<NonNullable<Booking['aiEstimate']>, 'inputPhotoUrls'>,
+  photos: Booking['invoicePhotos'],
+): boolean {
+  return samePhotoSet(draft.inputPhotoUrls, photos)
+}
 
 const isoDate = (v?: string): string | undefined =>
   typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined
@@ -179,7 +187,7 @@ export async function persistQuoteRequest(input: QuoteRequestInput): Promise<Boo
   if (input.analysisId) {
     try {
       const draft = await getDraftEstimate(input.analysisId)
-      if (draft) {
+      if (draft && draftMatchesSubmittedPhotos(draft, booking.invoicePhotos)) {
         draft.analysis.bookingId = booking.token
         booking.aiEstimate = draft
         booking.disposalEstimateCents = draft.pricing.breakdown.disposalCents

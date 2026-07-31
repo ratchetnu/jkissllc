@@ -3,6 +3,7 @@ import {
   JUNK_SERVICE_TYPES,
 } from './bookings'
 import { centralToday } from './dates'
+import { samePhotoSet } from './ai/photo-set'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Book Now operations queue — the pre-job pipeline of online customer submissions.
@@ -43,7 +44,11 @@ export function isEstateBooking(b: Pick<Booking, 'serviceType' | 'confirmation'>
 
 // A genuine, usable AI estimate is attached (not a failed shell).
 function hasValidEstimate(b: Booking): boolean {
-  return !!b.aiEstimate && b.aiEstimate.status !== 'failed' && !!b.aiEstimate.pricing
+  return !!b.aiEstimate
+    && !b.aiEstimate.invalidatedAt
+    && b.aiEstimate.status !== 'failed'
+    && !!b.aiEstimate.pricing
+    && (!b.aiEstimate.inputPhotoUrls?.length || samePhotoSet(b.aiEstimate.inputPhotoUrls, b.invoicePhotos))
 }
 
 // Canonical workflow stage — the single furthest-along state of a request. Ordered
@@ -104,7 +109,7 @@ export function bookNowStage(b: Booking): BookNowStage {
   // ── Guided-confirmation FINAL workflow — only when the confirmation flow is
   // engaged (confirmation / finalAiJob / finalAiEstimate present). Records that
   // predate the feature fall through to the unchanged initial-AI logic below. ──
-  if (b.finalAiEstimate && b.confirmation && b.finalAiEstimate.confirmationVersion === b.confirmation.confirmationVersion) {
+  if (b.finalAiEstimate && !b.finalAiEstimate.invalidatedAt && b.confirmation && !b.confirmation.invalidatedAt && b.finalAiEstimate.confirmationVersion === b.confirmation.confirmationVersion) {
     const fd = b.finalAiEstimate.finalDecision
     if (fd === 'manual_review') return 'manual_review'
     if (fd === 'site_visit_required') return 'site_visit'
@@ -116,8 +121,8 @@ export function bookNowStage(b: Booking): BookNowStage {
     if (b.finalAiJob.status === 'manual_review') return 'manual_review'
     return 'final_processing'                                                  // queued / processing / retrying
   }
-  if (b.confirmation) return 'final_processing'                               // confirmed, job about to enqueue
-  if (b.aiJob?.status === 'manual_review' || b.aiEstimate?.decision === 'manual_review') return 'manual_review'
+  if (b.confirmation && !b.confirmation.invalidatedAt) return 'final_processing' // confirmed, job about to enqueue
+  if (b.aiJob?.status === 'manual_review' || (hasValidEstimate(b) && b.aiEstimate?.decision === 'manual_review')) return 'manual_review'
   if (hasValidEstimate(b)) return 'quote_ready'                               // AI priced, owner can send
   // ── AI recovery phase (real, persisted job states) ──
   if (b.aiJob?.status === 'failed') return 'ai_failed'
@@ -125,15 +130,16 @@ export function bookNowStage(b: Booking): BookNowStage {
   if (b.aiJob?.status === 'queued') return 'ai_queued'
   const isJobBased = bookNowServiceGroup(b.serviceType) === 'junk'
   if ((b.invoicePhotos?.length ?? 0) === 0 && isJobBased) return 'awaiting_photos'
-  if ((b.invoicePhotos?.length ?? 0) > 0 && !b.aiEstimate) return 'awaiting_ai'  // legacy: photos, never enqueued
+  if ((b.invoicePhotos?.length ?? 0) > 0 && !hasValidEstimate(b)) return 'awaiting_ai' // missing/stale analysis
   return 'new'
 }
 
 // ── Sub-status read-outs shown on each row (independent of the canonical stage) ──
 export type AiStatusRead = 'none' | 'queued' | 'processing' | 'failed' | 'review' | 'priced'
 export function aiStatus(b: Booking): AiStatusRead {
-  if (b.aiEstimate && b.aiEstimate.status !== 'failed' && b.aiEstimate.pricing) {
-    return b.aiEstimate.decision === 'manual_review' ? 'review' : 'priced'
+  const estimate = b.aiEstimate
+  if (estimate && hasValidEstimate(b)) {
+    return estimate.decision === 'manual_review' ? 'review' : 'priced'
   }
   switch (b.aiJob?.status) {
     case 'queued': return 'queued'
@@ -179,7 +185,7 @@ export type ConfirmationStatusRead =
   | 'submitted'     // confirmation recorded, final job not yet resolved
 export function confirmationStatus(b: Booking): ConfirmationStatusRead {
   const isJunk = bookNowServiceGroup(b.serviceType) === 'junk'
-  if (b.finalAiEstimate && b.confirmation && b.finalAiEstimate.confirmationVersion === b.confirmation.confirmationVersion) {
+  if (b.finalAiEstimate && !b.finalAiEstimate.invalidatedAt && b.confirmation && !b.confirmation.invalidatedAt && b.finalAiEstimate.confirmationVersion === b.confirmation.confirmationVersion) {
     switch (b.finalAiEstimate.finalDecision) {
       case 'manual_review': return 'review'
       case 'site_visit_required': return 'site_visit'
@@ -190,10 +196,10 @@ export function confirmationStatus(b: Booking): ConfirmationStatusRead {
   if (b.finalAiJob?.status === 'failed') return 'failed'
   if (b.finalAiJob?.status === 'manual_review') return 'review'
   if (b.finalAiJob && ['queued', 'processing', 'retrying'].includes(b.finalAiJob.status)) return 'processing'
-  if (b.confirmation) return 'submitted'
+  if (b.confirmation && !b.confirmation.invalidatedAt) return 'submitted'
   // No confirmation yet — is the request waiting for the customer to confirm?
   const firstDone = b.aiJob?.status === 'completed' || b.aiJob?.status === 'manual_review'
-    || (!!b.aiEstimate && b.aiEstimate.status !== 'failed')
+    || hasValidEstimate(b)
   if (isJunk && firstDone) return 'awaiting'
   return 'none'
 }

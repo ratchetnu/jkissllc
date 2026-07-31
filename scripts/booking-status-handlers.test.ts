@@ -174,6 +174,33 @@ test('generic status update cannot bypass the open-punch completion gate', async
   assert.equal(saved?.completedAt, undefined)
 })
 
+test('changing a same-count photo set invalidates stored analysis and queues the new evidence', async () => {
+  const oldUrl = 'https://example.public.blob.vercel-storage.com/old.jpg'
+  const newUrl = 'https://example.public.blob.vercel-storage.com/new.jpg'
+  await seed('quote_received', {
+    source: 'online',
+    serviceType: 'junk-removal',
+    invoicePhotos: [{ url: oldUrl }],
+    aiEstimate: {
+      status: 'completed',
+      pricing: { lowUsd: 100 },
+      inputPhotoUrls: [oldUrl],
+    } as Booking['aiEstimate'],
+  })
+
+  const response = await adminPatch({
+    action: 'update',
+    fields: { invoicePhotos: [{ url: newUrl }] },
+  })
+  assert.equal(response.status, 200)
+  const saved = await getBookingByToken(TOKEN)
+  assert.equal(saved?.invoicePhotos?.length, 1, 'the count is unchanged')
+  assert.ok(saved?.aiEstimate?.invalidatedAt, 'the old result remains as invalidated history')
+  assert.equal(saved?.aiEstimate?.invalidationReason, 'photos_changed')
+  assert.equal(saved?.aiJob?.status, 'queued')
+  assert.match(saved?.aiJob?.idempotencyKey ?? '', /p1-/)
+})
+
 test('customer cancellation refuses a refunded booking and writes nothing', async () => {
   await seed('refunded')
   const request = new NextRequest(`http://localhost/api/booking/${TOKEN}/cancel`, {

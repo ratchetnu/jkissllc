@@ -35,6 +35,10 @@ export type StoredAiEstimate = {
     breakdown: PricingBreakdown
   }
   reviewReasons: string[]
+  /** Set when the booking's source-photo set changes; history stays visible. */
+  invalidatedAt?: string
+  invalidatedBy?: string
+  invalidationReason?: 'photos_changed'
   // QA layers: the deterministic consistency monitor + the second-opinion AI
   // reviewer (both auditable, shown in OpsPilot).
   monitor?: MonitorReport

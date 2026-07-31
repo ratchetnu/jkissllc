@@ -182,6 +182,9 @@ export type FinalAnalysisResult = {
   // Estate/cleanout: sensitive property names + estate subtype (for OpsPilot warnings).
   sensitiveItems: string[]
   estateSubtype?: string
+  invalidatedAt?: string
+  invalidatedBy?: string
+  invalidationReason?: 'photos_changed'
 }
 
 function buildEvidenceSummary(a: JunkPhotoAnalysis, c: CustomerConfirmation): string[] {
