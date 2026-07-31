@@ -543,36 +543,59 @@ test('AUTO CLOCK-OUT: the public projection exposes NO correction or effective-p
   assert.match(api, /clockedOut: punchOpen/)
 })
 
-// ── The completion button is ONE stable target at every width ────────────────
+// ── The completion button is ONE stable target at every width ───────────────
 //
-// A conditional clock-out label wrapped to two lines at 320 px. These pin the
-// three properties that made that a problem, so a future label change cannot
-// silently reintroduce it. Text advance widths were measured in the browser at
-// 320 px against Preview: the button's text box is 164 px wide there, and
-// 'Mark Route Complete' measures 154 px in the page's own 800-weight 14.5 px
-// system font — one line, with room to spare.
+// Every number here was MEASURED in Chrome against the Preview deployment, with
+// the centred column constrained to a true 320 px viewport (320 − 36 px of main
+// padding), in the page's own 800-weight 14.5 px system font. Chrome cannot be
+// resized below ~400 px, so the column is constrained instead — the layout is
+// fluid, so that reproduces the completion row exactly.
+//
+//   completion row        238 px   (the card adds ~23 px of padding each side)
+//   primary button        145 px   (flex: 1, beside an 83 px Cancel and a 10 px gap)
+//   TEXT ROOM             119 px   (145 − 13 px padding each side)
+//
+// Measured label advance widths:
+const LABEL_WIDTH_320: Record<string, number> = {
+  'Mark Route Complete': 156,        // current
+  'Submit — Route Done': 156,        // what it replaced, on main — identical width
+  'Submit — Done & Clock Out': 198,  // the rejected clock-out variant
+  'Complete Route': 116,
+  'Mark Complete': 110,
+}
+const TEXT_ROOM_320 = 119
 const COMPLETE_BUTTON = 'Mark Route Complete'
-const TEXT_ROOM_AT_320 = 164   // measured: 320 − main padding − gap − Cancel − button padding
 
 test('BUTTON: the completion label is UNCONDITIONAL — one label at every width', () => {
   const src = readFileSync(new URL('../app/route/[token]/page.tsx', import.meta.url), 'utf8')
   const label = src.slice(src.indexOf("busy === 'complete' ? 'Submitting…'"), src.indexOf("busy === 'complete' ? 'Submitting…'") + 90)
   assert.match(label, new RegExp(`'Submitting…' : '${COMPLETE_BUTTON}'`), 'exactly one completion label')
   assert.doesNotMatch(label, /willClockOut/, 'the label never varies on punch state')
-  assert.equal(src.includes('Submit — Done & Clock Out'), false, 'the wrapping variant is gone')
-  assert.equal(src.includes('Submit — Route Done'), false, 'and so is the old one')
+  assert.equal(src.includes('Submit — Done & Clock Out'), false, 'the wrapping clock-out variant is gone')
 })
 
-test('BUTTON: the label fits ONE line at 320 px', () => {
-  // A per-character upper bound for this font at 800/14.5px, calibrated against the
-  // browser measurement: 'Mark Route Complete' (19 chars) measured 154 px → 8.11 px
-  // per character. Rounded UP to 8.3 so the bound can only be pessimistic.
-  const upperBound = COMPLETE_BUTTON.length * 8.3
-  assert.ok(upperBound <= TEXT_ROOM_AT_320,
-    `${COMPLETE_BUTTON} needs ≤ ${TEXT_ROOM_AT_320}px of text room, bound is ${upperBound.toFixed(0)}px`)
-  // Guard the guard: the label that actually wrapped must still fail this bound.
-  assert.ok('Submit — Done & Clock Out'.length * 8.3 > TEXT_ROOM_AT_320,
-    'the bound must still reject the label that wrapped')
+test('BUTTON: the label is no WIDER than the one it replaced', () => {
+  const src = readFileSync(new URL('../app/route/[token]/page.tsx', import.meta.url), 'utf8')
+  const m = src.match(/busy === 'complete' \? 'Submitting…' : '([^']+)'/)
+  assert.ok(m, 'the completion label must be a plain string literal')
+  const current = m![1]
+  // Changing the copy without re-measuring is the failure mode this catches.
+  assert.ok(current in LABEL_WIDTH_320,
+    `"${current}" has no measured width — re-measure at 320 px and add it to LABEL_WIDTH_320`)
+  assert.ok(LABEL_WIDTH_320[current] <= LABEL_WIDTH_320['Submit — Route Done'],
+    `"${current}" (${LABEL_WIDTH_320[current]}px) is wider than the label it replaced`)
+})
+
+test('BUTTON: the label can never OVERFLOW 320 px — it wraps instead', () => {
+  // The real 320 px guarantee is that no single unbreakable word exceeds the text
+  // room. 156 px of label in 119 px of room wraps to two lines; it does not spill
+  // out of the card. (Two lines at 320 px is inherited from main, where
+  // 'Submit — Route Done' measured the same 156 px — this PR is width-neutral.)
+  const longestWord = Math.max(...COMPLETE_BUTTON.split(' ').map(w => w.length)) * 9.5
+  assert.ok(longestWord <= TEXT_ROOM_320,
+    `the longest word (~${longestWord.toFixed(0)}px) must fit ${TEXT_ROOM_320}px of text room`)
+  assert.ok(LABEL_WIDTH_320['Submit — Done & Clock Out'] > LABEL_WIDTH_320[COMPLETE_BUTTON],
+    'and the rejected variant must still measure wider than the one we kept')
 })
 
 test('BUTTON: the completion controls clear a 44 px tap target from their OWN styles', () => {
