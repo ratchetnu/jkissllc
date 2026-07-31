@@ -514,12 +514,17 @@ run has been recorded in Production.
 
 **Carried forward, not done here:**
 
-1. **Supercharged carries the same latent outage.** Its `book-now-ai.ts` and
-   `book-now-confirmation.ts` still select work with unconditional
-   `listBookings(500)`, its `ai-due-index.ts` is the pre-#144 shape that neither
-   runner reads, and its `ai-jobs` cron is still `*/3`. Separate project, separate
-   Upstash allowance, no telemetry to size a fix against — presented for approval
-   rather than applied.
+1. **Supercharged parity — RESOLVED.** Both ports are merged and live:
+   supercharged#27 (cron cadence, 913 → 197 runs/day, `9c60ea26`) and
+   supercharged#28 (durable due-index, `261e7ef7`). Adapted rather than
+   cherry-picked: the index was dead code there (`maintainDueIndex` had no callers,
+   now wired into both write paths), that repo has no Redis tenant scoping so the
+   port makes no isolation claims, its `isFinalDue` has no stale-`processing`
+   recovery, and it has no event-driven recovery trigger. Flags OFF, no backfill,
+   no configuration change. See `18-sprint7-audits.md`.
+   - **New finding:** Supercharged has **no `/api/health`**, so it has no liveness
+     signal equivalent to the one that surfaced the J KISS outage within minutes.
+     Its own increment.
 2. **Preview/Production flag drift** — 10 flags set in one environment only. Values
    are encrypted and unreadable, so this reports presence, never state. Aligning
    them is a Production write needing its own approval.
