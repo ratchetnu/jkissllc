@@ -17,6 +17,7 @@ import { maybeEnqueueShadowJob } from './estimation/shadow-worker'
 import { runWithTrace, markStage, markTraceOutcome } from './observability/pipeline-trace'
 import {
   dueIndexMaintained, dueIndexReadEnabled, dueTokensFromIndex, compareDue, rebuildDueIndex,
+  selectDueFromIndex, dueTelemetry, type DueSelection, type DueRunTelemetry,
 } from './ai-due-index'
 import { photoSetFingerprint, samePhotoSet } from './ai/photo-set'
 
@@ -484,19 +485,28 @@ export function isDue(b: Booking, at = now()): boolean {
 }
 
 /** Cron entry point: process all due jobs (bounded). Returns a summary per booking. */
-export async function runDueAiJobs(limit = 10): Promise<{ processed: number; results: { token: string; status: AiJobStatus }[] }> {
+export async function runDueAiJobs(limit = 10): Promise<{ processed: number; results: { token: string; status: AiJobStatus }[]; telemetry: DueRunTelemetry }> {
   // ── Due-job selection (Phase 2 due-index, flag-gated) ──────────────────────
   // OFF / dark-launch: the authoritative O(n) scan (listBookings + isDue) picks the
   // work; dark-launch additionally reads the index and logs a parity check. Fully ON
   // (OPERION_DUE_INDEX): the read source flips to the index — NO full scan — and each
   // candidate is re-verified via isDue as defense-in-depth. Byte-identical when off.
   let due: Booking[]
+  let selection: DueSelection<Booking> | null = null
+  let scannedCount = 0
   if (dueIndexReadEnabled()) {
-    const idxTokens = await dueTokensFromIndex(now(), limit)
-    const loaded = await Promise.all(idxTokens.map(t => getBookingByToken(t)))
-    due = loaded.filter((b): b is Booking => !!b && isDue(b)).slice(0, limit)
+    selection = await selectDueFromIndex('initial', now(), limit, getBookingByToken, b => isDue(b))
+    if (!selection.ok) {
+      // NO SCAN FALLBACK. The fallback IS the O(n) scan that exhausted the Redis
+      // request quota, so silently taking it would restore the exact failure mode
+      // this path exists to remove. Fail visibly; the next tick retries.
+      console.error(`[book-now-ai] due-index read FAILED — no work selected, retrying next tick: ${selection.error}`)
+      return { processed: 0, results: [], telemetry: dueTelemetry(selection) }
+    }
+    due = selection.due.slice(0, limit)
   } else {
     const all = await listBookings(500)
+    scannedCount = all.length
     const allDue = all.filter(b => isDue(b))
     due = allDue.slice(0, limit)
     if (dueIndexMaintained()) {
@@ -525,7 +535,7 @@ export async function runDueAiJobs(limit = 10): Promise<{ processed: number; res
     // Outage cooldown in effect — skip this tick entirely. The next tick past the
     // cooldown runs a probe. Manual "Run AI" remains available as the operator escape.
     console.log(`[book-now-ai] provider breaker OPEN (tenant=${tenantId}) — parking ${due.length} due job(s) this tick`)
-    return { processed: 0, results }
+    return { processed: 0, results, telemetry: dueTelemetry(selection, 0, scannedCount) }
   }
   const probing = breaker ? inProbeWindow(breaker) : false
 
@@ -546,19 +556,19 @@ export async function runDueAiJobs(limit = 10): Promise<{ processed: number; res
       if (breaker.phase === 'open') {
         // (Re-)opened this tick — stop hammering immediately; the rest stay due.
         await saveBreaker(tenantId, breaker)
-        return { processed: results.length, results }
+        return { processed: results.length, results, telemetry: dueTelemetry(selection, results.length, scannedCount) }
       }
       if (probing) {
         // A half-open probe SUCCEEDED (breaker is now closed). Persist recovery and
         // stop after this single job; the next tick drains the rest normally. This
         // caps an ongoing outage at one burned attempt per cooldown, not a batch.
         await saveBreaker(tenantId, breaker)
-        return { processed: results.length, results }
+        return { processed: results.length, results, telemetry: dueTelemetry(selection, results.length, scannedCount) }
       }
     }
   }
   if (breaker) await saveBreaker(tenantId, breaker)
-  return { processed: results.length, results }
+  return { processed: results.length, results, telemetry: dueTelemetry(selection, results.length, scannedCount) }
 }
 
 /** Backfill the due-job index from the current bookings — run once before flipping
