@@ -55,6 +55,9 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/admin/operations/ai', label: 'AI Command Center', group: 'comms', adminOnly: true, ownerOnly: true },
   // ── More menu — Business ──
   { href: '/admin/operations/businesses', label: 'Businesses', group: 'business' },
+  // Retail customer record (Sprint 5). Managers hold customers:view too; the booking
+  // AUDIT section inside is separately gated on audit:view, server-side.
+  { href: '/admin/operations/customers', label: 'Customers', group: 'business' },
   { href: '/admin/operations/equipment', label: 'Equipment', group: 'business' },
   { href: '/admin/operations/fleet', label: 'Fleet', group: 'business' },
   { href: '/admin/operations/claims', label: 'Claims', group: 'business' },

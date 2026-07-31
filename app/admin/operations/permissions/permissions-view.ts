@@ -60,6 +60,7 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'pay:adjust:submit': 'Submit pay adjustments',
   'pay:approve': 'Approve pay',
   'tax:view': 'View tax details',
+  'customers:view': 'View customer records',
   'invoices:manage': 'Manage invoices',
   'profitability:view': 'View profitability',
   'claims:manage': 'Manage claims',
