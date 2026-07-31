@@ -32,7 +32,7 @@ This roadmap supersedes the execution ordering in `OPERION-V1-COMPLETION-REPORT.
   moved to `app/lib/schedule/auto-cancel-job.ts` so its clock is an ordinary parameter,
   and Production still passes `Date.now()` from the route. It fixed a red `main`
   (`dpl_382FhqAxfub2szYbnngjg2zQFfLc`).
-- Sprint 3 on `main` passes **2992/2992 tests**, TypeScript, and lint with zero errors
+- Sprint 3 on `main` passes **3013/3013 tests**, TypeScript, and lint with zero errors
   (one pre-existing warning in untouched `pay-statements.ts`).
 - `BOOKING_ASSIGNMENT_ENABLED` is **Production ON, independently verified on 2026-07-29
   through the route-gate probe**. The crew booking surface is serving, not dormant. See
@@ -259,6 +259,27 @@ with a 44 px Try again.
     (`Assignee` has `confirmedVia` but no `clockedVia`), so it is read from the audit
     trail, which is capped at 200 entries per route. Punches outlive that evidence, so
     an `unattributable` bucket is reported as a real answer.
+- **Sprint 3.1 completion clock-out is built**: completing a route through the public
+  contractor link now closes that crew member's open punch, at the identical timestamp
+  the route is marked complete. This closed a *guaranteed* defect, not an edge case —
+  no surface set `clockOutAt` on completion, so anyone who clocked in and then finished
+  from the link stayed on the clock indefinitely. It is what produced the single stale
+  Production punch (route JK-R-1004).
+  - The decision is made on the **effective** punch (`effectivePunch` over
+    `listCorrections`), so an admin correction that already closed the punch is never
+    overwritten, and an absent clock-in is never turned into one.
+  - Completion and clock-out share **one** `Date.now()` and **one** `saveRoute`, so the
+    record cannot claim the shift ended at a different moment than the work did, and a
+    failed save leaves the route uncompleted with the punch untouched — recoverable by
+    retrying the same request. If corrections cannot be read at all, completion is
+    **refused** (503) rather than completing on a guess.
+  - The automatic punch records `clockOutLocationDenied`, so a missing GPS pin reads as
+    unverified rather than as a verified one.
+  - **Scope limit — the same gap remains on every other completion surface.** Admin
+    route completion (`PATCH /api/admin/routes/[id]`), the booking lane
+    (`recordBookingCompletion`) and portal job completion still leave an open punch
+    behind. This increment deliberately fixes only the public link, which is the surface
+    the Production defect came through. The rest is unfixed and unscheduled.
 - **Two divergences that remain deliberately untouched**, because both alter live
   contractor write behaviour and need their own owner-approved change:
   1. The public surface does **not** enforce `hasOtherOpenPunch`. The portal refuses a
