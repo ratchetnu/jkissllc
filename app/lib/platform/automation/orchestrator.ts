@@ -329,11 +329,14 @@ export async function advancePromotion(input: { jobId: string; env?: Record<stri
       const prod = projectId ? await vercel.findProductionDeployment(projectId, j.mergeCommit) : { ok: false as const, error: 'no project', category: 'config' }
       const deploymentTimedOut = t - (j.productionDeployStartedAt ?? j.updatedAt) >= PRODUCTION_DEPLOY_TIMEOUT_MS
       if ((!prod.ok || !prod.data) && deploymentTimedOut) {
-        j.status = 'failed'; j.failureCategory = 'promotion_failed'
-        j.failureSummary = `no ready production deployment appeared within ${Math.round(PRODUCTION_DEPLOY_TIMEOUT_MS / 60_000)} minutes of the merge`
-        j.updatedAt = t; await store.saveJob(j)
-        await reconcilePublishForJob({ jobId: j.id, status: 'failed', now: t, reason: j.failureSummary }).catch(() => null)
-        return { ok: false, job: j, reason: j.failureSummary }
+        if (!j.productionDeployUnconfirmedAt) {
+          j.productionDeployStartedAt ??= j.updatedAt
+          j.productionDeployUnconfirmedAt = t
+          j.failureSummary = `no ready production deployment appeared within ${Math.round(PRODUCTION_DEPLOY_TIMEOUT_MS / 60_000)} minutes of the merge — status is unconfirmed and reconciliation is still checking`
+          j.updatedAt = t; await store.saveJob(j)
+          await reconcilePublishForJob({ jobId: j.id, status: 'unconfirmed', now: t, reason: j.failureSummary }).catch(() => null)
+        }
+        return { ok: true, job: j, reason: j.failureSummary ?? 'production deployment status remains unconfirmed' }
       }
       if (!prod.ok || !prod.data) return { ok: true, job: j, reason: 'awaiting production deployment' }
       if (prod.data.failed) {
@@ -342,14 +345,19 @@ export async function advancePromotion(input: { jobId: string; env?: Record<stri
         return { ok: false, job: j, reason: 'production deploy failed' }
       }
       if (!prod.data.ready && deploymentTimedOut) {
-        j.status = 'failed'; j.failureCategory = 'promotion_failed'
-        j.failureSummary = `production deployment did not become ready within ${Math.round(PRODUCTION_DEPLOY_TIMEOUT_MS / 60_000)} minutes of the merge`
-        j.updatedAt = t; await store.saveJob(j)
-        await reconcilePublishForJob({ jobId: j.id, status: 'failed', now: t, deploymentId: prod.data.deploymentId, reason: j.failureSummary }).catch(() => null)
-        return { ok: false, job: j, reason: j.failureSummary }
+        if (!j.productionDeployUnconfirmedAt) {
+          j.productionDeployStartedAt ??= j.updatedAt
+          j.productionDeployUnconfirmedAt = t
+          j.failureSummary = `production deployment did not become ready within ${Math.round(PRODUCTION_DEPLOY_TIMEOUT_MS / 60_000)} minutes of the merge — status is unconfirmed and reconciliation is still checking`
+          j.updatedAt = t; await store.saveJob(j)
+          await reconcilePublishForJob({ jobId: j.id, status: 'unconfirmed', now: t, deploymentId: prod.data.deploymentId, reason: j.failureSummary }).catch(() => null)
+        }
+        return { ok: true, job: j, reason: j.failureSummary ?? 'production deployment status remains unconfirmed' }
       }
       if (!prod.data.ready) return { ok: true, job: j, reason: 'production build in progress' }
-      j.productionDeploymentId = prod.data.deploymentId; j.productionUrl = prod.data.url; j.status = 'verifying'; j.currentStep = 'verification'; j.updatedAt = now(); await store.saveJob(j)
+      j.productionDeploymentId = prod.data.deploymentId; j.productionUrl = prod.data.url; j.status = 'verifying'; j.currentStep = 'verification'
+      j.productionDeployUnconfirmedAt = undefined; j.failureCategory = undefined; j.failureSummary = undefined
+      j.updatedAt = now(); await store.saveJob(j)
     }
     if (j.status === 'verifying') {
       const provider = getAutomationProvider(env)

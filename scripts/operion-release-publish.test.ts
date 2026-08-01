@@ -54,6 +54,7 @@ test('mode: live ONLY in Production runtime + flag; simulated everywhere else', 
 test('ux state mapping — truthful states', () => {
   assert.equal(publishUxState('promoting'), 'queued')
   assert.equal(publishUxState('verifying'), 'verifying')
+  assert.equal(publishUxState('unconfirmed'), 'unconfirmed')
   assert.equal(publishUxState('completed'), 'ready')
   assert.equal(publishUxState('failed'), 'failed')
   assert.equal(publishUxState(undefined), 'idle')
@@ -228,9 +229,12 @@ test('publish projection completes only when the authoritative job completes', a
     const r = await executePublish({ now: now + 1, actor: 'owner', business: { id: 'supercharged', slug: 'supercharged' }, jobId: 'AUTO-5', approval, binding: BINDING, mode: 'live', beginPromotion: begin.fn })
     assert.equal(r.ok && r.publish.status, 'verifying')
     const { reconcilePublishForJob } = await import('../app/lib/platform/release/publish-store')
-    const done = await reconcilePublishForJob({ jobId: 'AUTO-5', status: 'completed', now: now + 2, deploymentId: 'dpl_prod' })
+    const waiting = await reconcilePublishForJob({ jobId: 'AUTO-5', status: 'unconfirmed', now: now + 2, reason: 'deployment not observed yet' })
+    assert.equal(waiting?.status, 'unconfirmed')
+    const done = await reconcilePublishForJob({ jobId: 'AUTO-5', status: 'completed', now: now + 3, deploymentId: 'dpl_prod' })
     assert.equal(done?.status, 'completed')
     assert.equal(done?.promotedDeploymentId, 'dpl_prod')
+    assert.equal(done?.failureReason, undefined)
   } finally { fake.restore() }
 })
 

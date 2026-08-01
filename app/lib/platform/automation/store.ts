@@ -3,7 +3,8 @@ import { redis } from '../../redis'
 import { randomUUID } from 'node:crypto'
 import type { UpdateAutomationJob, TransferEvidence } from './types'
 import { AUTOMATION_ACTIVE, EVIDENCE_TTL_MS } from './types'
-import { TRANSIENT_FAILURES } from './deploy-view'
+import { artifactsComplete, TRANSIENT_FAILURES } from './deploy-view'
+import { acquireLock } from '../../kv-lock'
 
 const K_JOB = 'platform:autojob:'
 const K_IDX = 'platform:autojob:index'
@@ -48,7 +49,7 @@ function needsReconciliation(j: UpdateAutomationJob): boolean {
   // A complete review waits for a human, not a worker. Keeping thousands of healthy
   // review-ready jobs in an oldest-first queue could crowd out actual running work.
   const backgroundActive = AUTOMATION_ACTIVE.includes(j.status) && j.status !== 'awaiting_owner_review'
-  const incompleteReview = j.status === 'awaiting_owner_review' && (!j.pullRequestUrl || !j.previewUrl)
+  const incompleteReview = j.status === 'awaiting_owner_review' && !artifactsComplete(j, {})
   return backgroundActive || incompleteReview
     || j.status === 'rollback_required'
     || (j.status === 'failed' && !!j.failureCategory && TRANSIENT_FAILURES.has(j.failureCategory))
@@ -57,9 +58,8 @@ function needsReconciliation(j: UpdateAutomationJob): boolean {
 
 async function migrateLegacyReconcileIndex(): Promise<void> {
   if (await redis.get(K_RECONCILE_MIGRATED)) return
-  const token = randomUUID()
-  const locked = await redis.setNxPx(K_RECONCILE_MIGRATION_LOCK, token, 5 * 60_000)
-  if (!locked) return
+  const lock = await acquireLock(K_RECONCILE_MIGRATION_LOCK, { ttlMs: 60_000, renew: true, holder: 'reconcile-migration' })
+  if (!lock) return
   try {
     if (await redis.get(K_RECONCILE_MIGRATED)) return
     // Walk the complete historical index in bounded pages. A fixed record ceiling would
@@ -74,7 +74,7 @@ async function migrateLegacyReconcileIndex(): Promise<void> {
     }
     await redis.set(K_RECONCILE_MIGRATED, '1')
   } finally {
-    try { await redis.eval(RELEASE_LOCK, [K_RECONCILE_MIGRATION_LOCK], [token]) } catch { /* TTL */ }
+    await lock.release()
   }
 }
 

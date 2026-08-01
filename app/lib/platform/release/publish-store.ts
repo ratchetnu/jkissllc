@@ -134,31 +134,43 @@ export async function startPublish(n: NewPublish): Promise<ReleasePublish> {
 /** Mirror the authoritative automation job into the release-history projection. */
 export async function reconcilePublishForJob(input: {
   jobId: string
-  status: 'completed' | 'failed'
+  status: 'completed' | 'failed' | 'unconfirmed'
   now: number
   deploymentId?: string
   reason?: string
 }): Promise<ReleasePublish | null> {
   const p = await getPublishByJob(input.jobId)
   if (!p || p.status === 'completed' || p.status === 'failed') return p
-  return input.status === 'completed'
-    ? completePublish(p.id, input.now, input.deploymentId)
-    : failPublish(p.id, input.now, input.reason ?? 'the authoritative automation job failed')
+  if (input.status === 'completed') return completePublish(p.id, input.now, input.deploymentId)
+  if (input.status === 'unconfirmed') return markUnconfirmed(p.id, input.now, input.reason)
+  return failPublish(p.id, input.now, input.reason ?? 'the authoritative automation job failed')
 }
 
 /** LIVE-only: the promotion was accepted; we are confirming Production is READY. */
 export async function markVerifying(id: string, now: number, promotedDeploymentId?: string): Promise<ReleasePublish | null> {
   const p = await getPublish(id)
   if (!p) return null
-  const v: ReleasePublish = { ...p, status: 'verifying', promotedDeploymentId: promotedDeploymentId ?? p.promotedDeploymentId, updatedAt: now }
+  const v: ReleasePublish = { ...p, status: 'verifying', promotedDeploymentId: promotedDeploymentId ?? p.promotedDeploymentId, failureReason: undefined, updatedAt: now }
   await savePublish(v)
   return v
+}
+
+/** Merge completed but Production has not reached a provable terminal state. Non-terminal:
+ * reconciliation continues and may advance this same record to completed or failed. */
+export async function markUnconfirmed(id: string, now: number, reason?: string): Promise<ReleasePublish | null> {
+  const p = await getPublish(id)
+  if (!p || p.status === 'completed' || p.status === 'failed') return p
+  const unconfirmed: ReleasePublish = {
+    ...p, status: 'unconfirmed', failureReason: reason?.slice(0, 500), completedAt: undefined, updatedAt: now,
+  }
+  await savePublish(unconfirmed)
+  return unconfirmed
 }
 
 export async function completePublish(id: string, now: number, promotedDeploymentId?: string): Promise<ReleasePublish | null> {
   const p = await getPublish(id)
   if (!p) return null
-  const done: ReleasePublish = { ...p, status: 'completed', promotedDeploymentId, completedAt: now, updatedAt: now }
+  const done: ReleasePublish = { ...p, status: 'completed', promotedDeploymentId, failureReason: undefined, completedAt: now, updatedAt: now }
   await savePublish(done)
   return done
 }

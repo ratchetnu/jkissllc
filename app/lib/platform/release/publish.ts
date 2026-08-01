@@ -35,12 +35,14 @@ export function resolvePublishMode(env: Record<string, string | undefined> = pro
 // Truthful, reachable statuses only:
 //   promoting  — approval consumed, promotion request issued ("Promotion queued")
 //   verifying  — LIVE-only: promotion accepted, confirming Production is READY (real read)
+//   unconfirmed — merge completed, but no READY Production deployment appeared in time;
+//                 reconciliation keeps watching and may still advance it truthfully
 //   completed  — Production is READY ("Production READY")
 //   failed     — the promotion or its verification failed ("Publish failed")
 // SIMULATED runs never enter `verifying` (there is nothing real to verify) — it is never faked.
-export type PublishRecordStatus = 'promoting' | 'verifying' | 'completed' | 'failed'
+export type PublishRecordStatus = 'promoting' | 'verifying' | 'unconfirmed' | 'completed' | 'failed'
 export type PublishUxState =
-  | 'idle' | 'publishing' | 'queued' | 'verifying' | 'ready' | 'failed'
+  | 'idle' | 'publishing' | 'queued' | 'verifying' | 'unconfirmed' | 'ready' | 'failed'
 
 export type PublishGateRefusalCode =
   | 'OWNER_REQUIRED' | 'APPROVAL_GATE_DISABLED' | 'PUBLISH_DISABLED'
@@ -119,6 +121,7 @@ export function publishUxState(status: PublishRecordStatus | undefined): Publish
   switch (status) {
     case 'promoting': return 'queued'
     case 'verifying': return 'verifying'
+    case 'unconfirmed': return 'unconfirmed'
     case 'completed': return 'ready'
     case 'failed': return 'failed'
     default: return 'idle'

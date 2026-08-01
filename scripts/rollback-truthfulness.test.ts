@@ -143,7 +143,7 @@ const startedAt = async () => (await reload())!.rollbackStartedAt!
 
 // ── Production deployment discovery is bounded ─────────────────────────────
 
-test('a merge that produces no Production deployment fails the publish instead of verifying forever', async () => {
+test('a merge with no observed Production deployment becomes unconfirmed and keeps reconciling', async () => {
   await job({
     status: 'production_deploying', mergeCommit: 'merge_commit_1',
     productionDeployStartedAt: T0, updatedAt: T0, automaticRollbackEligible: false,
@@ -159,14 +159,15 @@ test('a merge that produces no Production deployment fails the publish instead o
   assert.equal((await reload())!.status, 'production_deploying')
 
   const expired = await advancePromotion({ jobId: 'job_1', at: T0 + PRODUCTION_DEPLOY_TIMEOUT_MS + 1 })
-  assert.equal(expired.ok, false)
+  assert.equal(expired.ok, true)
   const j = (await reload())!
-  assert.equal(j.status, 'failed')
-  assert.equal(j.failureCategory, 'promotion_failed')
-  assert.match(j.failureSummary!, /no ready production deployment appeared within 30 minutes/)
+  assert.equal(j.status, 'production_deploying')
+  assert.ok(j.productionDeployUnconfirmedAt)
+  assert.equal(j.failureCategory, undefined)
+  assert.match(j.failureSummary!, /status is unconfirmed and reconciliation is still checking/)
   const publish = await getPublishByJob('job_1')
-  assert.equal(publish?.status, 'failed')
-  assert.match(publish?.failureReason ?? '', /no ready production deployment/)
+  assert.equal(publish?.status, 'unconfirmed')
+  assert.match(publish?.failureReason ?? '', /status is unconfirmed/)
 })
 
 // ── GAP B: a started rollback is not a finished one ──────────────────────────

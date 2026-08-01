@@ -45,6 +45,7 @@ test('publishToHistoryEntry maps a publish + approval into a release entry', () 
 test('publish status maps to calm release status', () => {
   assert.equal(publishToHistoryEntry(pub({ status: 'promoting' })).status, 'publishing')
   assert.equal(publishToHistoryEntry(pub({ status: 'verifying' })).status, 'verifying')
+  assert.equal(publishToHistoryEntry(pub({ status: 'unconfirmed' })).status, 'verifying')
   assert.equal(publishToHistoryEntry(pub({ status: 'failed', failureReason: 'x' })).status, 'publish_failed')
 })
 test('rollbackToHistoryEntry maps a rollback into a release entry', () => {
