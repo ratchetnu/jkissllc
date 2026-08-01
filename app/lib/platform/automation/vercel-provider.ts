@@ -338,6 +338,49 @@ export class VercelPreviewProvider {
   // A prior production deployment must use the rollback API; the promote API returns 404.
   // The rollback path REQUIRES the immutable project id, so we resolve first (fail closed)
   // and never issue the rollback with an unverified project name.
+  /**
+   * READ the outcome of the most recent rollback for this project.
+   *
+   * Vercel's rollback is ASYNCHRONOUS: POST .../rollback/{id} only STARTS it. The
+   * authoritative outcome lives on the project as `lastRollbackTarget.jobStatus`.
+   * Without this read, a 200 from the POST was being recorded as "production
+   * restored" — a claim nothing had verified.
+   *
+   * `unknown` is returned when the project reports no rollback at all, which is a
+   * real answer (nothing was started, or it was cleared) and must not be confused
+   * with success.
+   */
+  async rollbackStatus(project: string, teamId?: string): Promise<ProviderResult<{
+    status: 'in_progress' | 'succeeded' | 'failed' | 'unknown'
+    toDeploymentId?: string
+    fromDeploymentId?: string
+  }>> {
+    if (!this.configured) return { ok: false, error: 'VERCEL_TOKEN not configured', category: 'not_configured' }
+    if (!project) return { ok: false, error: 'project required', category: 'config' }
+    const resolved = await this.resolveProjectId(project, teamId)
+    if (!resolved.ok) return { ok: false, error: resolved.error, category: resolved.category }
+    let res
+    try { res = await this.fetch(`${API}/v9/projects/${encodeURIComponent(resolved.data.projectId)}${this.team(teamId)}`, { headers: this.headers() }) }
+    catch { return { ok: false, error: 'Vercel API unreachable', category: 'network' } }
+    if (res.status === 401 || res.status === 403) return { ok: false, error: 'Vercel auth/permission denied', category: 'permission' }
+    if (res.status === 404) return { ok: false, error: 'rollback project not found', category: 'not_found' }
+    if (!res.ok) return { ok: false, error: `rollback status failed (${res.status})`, category: 'api' }
+    const b = (await res.json().catch(() => null)) as {
+      lastRollbackTarget?: { jobStatus?: string; toDeploymentId?: string; fromDeploymentId?: string } | null
+    } | null
+    const t = b?.lastRollbackTarget
+    // A malformed or absent body is `unknown`, never a silent success.
+    if (!t || typeof t !== 'object') return { ok: true, data: { status: 'unknown' } }
+    const raw = String(t.jobStatus ?? '').toLowerCase()
+    const status = raw === 'succeeded' ? 'succeeded'
+      : raw === 'failed' ? 'failed'
+      : raw === 'in-progress' || raw === 'in_progress' || raw === 'pending' ? 'in_progress'
+      : 'unknown'
+    return { ok: true, data: { status, toDeploymentId: t.toDeploymentId, fromDeploymentId: t.fromDeploymentId } }
+  }
+
+  /** START a rollback. Returns when Vercel has ACCEPTED it — not when it is done.
+   *  Completion must be confirmed with `rollbackStatus`. */
   async rollbackProduction(project: string, deploymentId: string, teamId?: string): Promise<ProviderResult<{ rolledBack: boolean }>> {
     if (!this.configured) return { ok: false, error: 'VERCEL_TOKEN not configured', category: 'not_configured' }
     if (!project || !deploymentId) return { ok: false, error: 'project + deploymentId required', category: 'config' }
@@ -350,6 +393,9 @@ export class VercelPreviewProvider {
     if (res.status === 401 || res.status === 403) return { ok: false, error: 'Vercel auth/permission denied', category: 'permission' }
     if (res.status === 404) return { ok: false, error: 'rollback project or deployment not found', category: 'not_found' }
     if (!res.ok) return { ok: false, error: `rollback failed (${res.status})`, category: 'api' }
+    // `rolledBack` means STARTED, not finished. The field name is kept for callers,
+    // but the contract is documented above and enforced by the orchestrator, which
+    // only records `rolled_back` after rollbackStatus() reports 'succeeded'.
     return { ok: true, data: { rolledBack: true } }
   }
 
@@ -402,6 +448,7 @@ export class StubPreviewProvider {
   promoteProduction() { return this.fail<{ promoted: boolean }>() }
   resolveProjectId() { return this.fail<{ projectId: string }>() }
   rollbackProduction() { return this.fail<{ rolledBack: boolean }>() }
+  rollbackStatus() { return this.fail<{ status: 'in_progress' | 'succeeded' | 'failed' | 'unknown'; toDeploymentId?: string; fromDeploymentId?: string }>() }
   readPreviewDeployment() { return this.fail<PreviewDeployment>() }
   waitForPreviewReady() { return this.fail<PreviewDeployment>() }
   cancelPreviewDeployment() { return this.fail<{ canceled: boolean }>() }
