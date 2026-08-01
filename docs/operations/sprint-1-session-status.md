@@ -665,7 +665,7 @@ Ownership is by **file path**, not by intent. A session may only write paths in 
 | **Current task** | T3.1 (read-only) write the **#33 triage recommendation** (close vs. rebase) with evidence — hand to S1. T3.2 draft the `UPD-1004` split into `UPD-A` / `UPD-B` with explicit `dependencies[]` and `pathsToExclude[]`. **UPD-1004 itself is never retried.** T3.3 specify the §4 #7 audit-trail persistence. **No source writes until B-1 resolves.** |
 | **Commit SHA** | — not started |
 | **Test status** | baseline to establish: `npm test` on `1e80da5` (handoff claims 1854/1854) |
-| **Blockers** | **B-1** (merge of #52) · **B-4** Supercharged has never completed a full Operion Preview E2E — Preview-only flag enablement is Sprint 2, needs its own approval · **B-5** SC local `main` is 2 behind `origin/main` |
+| **Blockers** | **B-1** (merge of #52) · **B-4** ~~Supercharged has never completed a full Operion Preview E2E~~ **withdrawn — UPD-1007 completed it** (run `29697932299` = `success`, Supercharged PR #3); Preview-only flag enablement is Sprint 2 and still needs its own approval · **B-5** SC local `main` is 2 behind `origin/main` |
 | **Merge readiness** | Not ready — PR #52 must land first |
 
 ### Overlap analysis — verdict
