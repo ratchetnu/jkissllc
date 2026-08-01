@@ -19,6 +19,7 @@ import { getMessageByProviderId, setMessageDeliveryStatus } from '../../../../li
 import { sendOwnerAlert, getOwnerAlertConfig } from '../../../../lib/owner-alerts'
 import { withBackgroundTenant } from '../../../../lib/platform/tenancy/request-context'
 import { resolveTenantFromPhoneChannel } from '../../../../lib/platform/tenancy/tenant-channel-resolve'
+import { resolveTwilioMessageTenant } from '../../../../lib/platform/tenancy/twilio-tenant-binding'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -70,7 +71,10 @@ export async function POST(req: NextRequest) {
   // Signature verification makes the provider payload trustworthy; the sending
   // number then maps through the platform-global tenant registry. Ambiguous or
   // unknown channels fail closed instead of falling into the first tenant.
-  const tenantId = await resolveTenantFromPhoneChannel(params.From)
+  const tenantId = await resolveTwilioMessageTenant(messageSid) ?? await resolveTenantFromPhoneChannel({
+    phone: params.From,
+    messagingServiceSid: params.MessagingServiceSid,
+  })
   if (!tenantId) return new NextResponse(null, { status: 204 })
   return withBackgroundTenant('webhook', async () => {
     // Correlate to the originating outbound message (and its booking) when we recorded

@@ -20,6 +20,7 @@ import { platformKey, normalizeTenantId } from './keys'
 import { JKISS_TENANT } from './jkiss'
 import { DEFAULT_TENANT_ID, type Tenant } from './types'
 import { isEnabled } from '../flags'
+import { invalidateTenantRosterCache } from './tenant-roster-cache'
 
 /** Sorted set of known tenant ids (score = createdAt). Platform-global. */
 const INDEX_KEY = platformKey('platform:tenant:index')
@@ -67,6 +68,7 @@ export async function upsertTenant(t: Tenant): Promise<Tenant> {
   const record: Tenant = { ...t, id }
   await redis.set(tenantRecordKey(id), JSON.stringify(record))
   await redis.zadd(INDEX_KEY, record.createdAt, id)
+  invalidateTenantRosterCache()
   return record
 }
 

@@ -61,7 +61,6 @@ const EXEMPT_PREAUTH = new Set([
   'app/api/automation/manifest/route.ts',     // signed platform-global control plane
   'app/api/cron/operion-reconcile/route.ts',  // platform-global release control plane
   'app/api/cron/operion-sync/route.ts',       // platform-global product registry
-  'app/api/operion/demo/route.ts',            // platform-global Operion lead capture
 ])
 
 const BACKGROUND_DELEGATES = new Set([
@@ -118,19 +117,28 @@ for (const p of libFiles) {
 }
 
 // ── 3. Un-scoped Blob writes ─────────────────────────────────────────────────
-// put(...) / upload(...) whose FIRST argument is not a *BlobPath helper or a
-// scopeBlobPath(...) call. Scans lib + api + admin UI (client uploaders live in
-// app/admin). A raw string path here bypasses the tenant blob chokepoint.
+// Server-side put(...) whose FIRST argument is not produced by a *BlobPath helper
+// or scopeBlobPath(...). Track one-step variable assignments too, so moving a raw
+// literal into `const pathname = ...` cannot evade the gate.
 const BLOB_SCAN_DIRS = [LIB_DIR, API_DIR, path.join(ROOT, 'app', 'admin')]
 const blobFiles = BLOB_SCAN_DIRS.flatMap((d) => walk(d, (p) => /\.(ts|tsx)$/.test(p)))
-const SCOPED_HELPER = /BlobPath\b|scopeBlobPath\s*\(/
+const SCOPED_HELPER = /\b(?:[A-Za-z_$][\w$]*BlobPath|scopeBlobPath)\s*\(/
 const blobWriteHits = []
 for (const p of blobFiles) {
-  const lines = read(p).split('\n')
-  lines.forEach((l, i) => {
-    const m = /\b(put|upload)\s*\(\s*(`[^`]*`|'[^']*'|"[^"]*")/.exec(l) // literal path as 1st arg
-    if (m && !SCOPED_HELPER.test(l)) blobWriteHits.push({ at: `${rel(p)}:${i + 1}`, call: m[1], arg: m[2].slice(0, 48) })
-  })
+  const src = read(p)
+  if (!/from ['"]@vercel\/blob['"]/.test(src)) continue
+  const safeVars = new Set()
+  for (const m of src.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*([^;\n]+)/g)) {
+    if (SCOPED_HELPER.test(m[2])) safeVars.add(m[1])
+  }
+  for (const m of src.matchAll(/\bput\s*\(\s*([^,\n]+)/g)) {
+    const arg = m[1].trim()
+    const safe = SCOPED_HELPER.test(arg) || (/^[A-Za-z_$][\w$]*$/.test(arg) && safeVars.has(arg))
+    if (!safe) {
+      const line = src.slice(0, m.index).split('\n').length
+      blobWriteHits.push({ at: `${rel(p)}:${line}`, call: 'put', arg: arg.slice(0, 48) })
+    }
+  }
 }
 
 // ── report ───────────────────────────────────────────────────────────────────
@@ -150,7 +158,7 @@ for (const h of derivedHits) console.log(`   • ${h.family.padEnd(24)} ${h.at} 
 console.log('   value-embedded name-derived keys (a Redis prefix cannot reach these):')
 for (const v of valueEmbeddedHits) console.log(`   • ${v.what} — ${v.at}`)
 
-console.log('\n3. UN-SCOPED BLOB WRITES (literal path not via a *BlobPath / scopeBlobPath helper)')
+console.log('\n3. UN-SCOPED BLOB WRITES (path not proven to come from a *BlobPath / scopeBlobPath helper)')
 if (!blobWriteHits.length) console.log('   none found')
 for (const h of blobWriteHits) console.log(`   • ${h.at}  ${h.call}(${h.arg}…)`)
 

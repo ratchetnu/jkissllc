@@ -12,12 +12,16 @@ export const JKISS_TENANT: Tenant = {
   id: DEFAULT_TENANT_ID, // 'jkiss' — opaque, NOT derived from the display name
   slug: 'jkiss',
   domains: ['jkissllc.com', 'www.jkissllc.com', 'jkissllc.vercel.app'],
+  channels: {
+    smsE164: [COMPANY.phoneE164],
+    inboundEmails: [COMPANY.email, COMPANY.emailFrom],
+  },
   displayName: COMPANY.legalName,
   legal: {
     dotNumber: COMPANY.usdot,
     mcNumber: COMPANY.mc,
     addressOneLine: ADDRESS_ONE_LINE,
-    phone: COMPANY.phoneDisplay,
+    phone: COMPANY.phoneE164,
     supportEmail: COMPANY.email,
   },
   brand: {

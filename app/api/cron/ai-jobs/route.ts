@@ -47,7 +47,15 @@ export async function GET(req: NextRequest) {
   const tenants: { tenant: string; processed: number; final: number; error?: string; estimatedRedisRequests?: number; fullScanPerformed?: boolean }[] = []
   let processed = 0
   let finalProcessed = 0
-  for (const tenantId of await activeTenantIdsFromRegistry()) {
+  let tenantIds: string[]
+  try {
+    tenantIds = await activeTenantIdsFromRegistry()
+  } catch (e) {
+    console.error('[cron/ai-jobs] tenant registry', e)
+    await alert({ type: 'cron_job_failed', severity: 'CRITICAL', route: '/api/cron/ai-jobs', worker: 'tenant-registry', errorClass: e instanceof Error ? e.name : 'unknown' })
+    return NextResponse.json({ ok: false, error: 'tenant registry unavailable' }, { status: 503 })
+  }
+  for (const tenantId of tenantIds) {
     let summary: { processed: number; results: { token: string; status: string }[]; telemetry: DueRunTelemetry } = { processed: 0, results: [], telemetry: { lane: 'both' as const, source: 'index' as const, selectedFromIndex: 0, dueProcessed: 0, staleRetired: 0, missingRetired: 0, indexReadFailed: false, estimatedRedisRequests: 0, fullScanPerformed: false } }
     let finalSummary: { processed: number; results: { token: string; status: string }[]; telemetry: DueRunTelemetry } = { processed: 0, results: [], telemetry: { lane: 'both' as const, source: 'index' as const, selectedFromIndex: 0, dueProcessed: 0, staleRetired: 0, missingRetired: 0, indexReadFailed: false, estimatedRedisRequests: 0, fullScanPerformed: false } }
     try {

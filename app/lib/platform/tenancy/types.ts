@@ -19,6 +19,12 @@ export type Tenant = {
   slug: string // subdomain / vanity
   /** Verified request hosts owned by this tenant (custom domains and platform aliases). */
   domains?: string[]
+  /** Provider-owned channels that may establish tenant context without a session. */
+  channels?: {
+    smsE164?: string[]
+    twilioMessagingServiceSids?: string[]
+    inboundEmails?: string[]
+  }
   displayName: string
   legal: {
     dotNumber?: string

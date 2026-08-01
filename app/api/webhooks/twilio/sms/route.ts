@@ -75,7 +75,10 @@ export async function POST(req: NextRequest) {
 
   // The signed recipient number is the tenant-owned channel binding. Unknown or
   // ambiguous numbers fail closed; they never inherit the first registered tenant.
-  const tenantId = await resolveTenantFromPhoneChannel(params.To)
+  const tenantId = await resolveTenantFromPhoneChannel({
+    phone: params.To,
+    messagingServiceSid: params.MessagingServiceSid,
+  })
   if (!tenantId) return twiml()
   return withBackgroundTenant('webhook', async () => {
   const messageSid = params.MessageSid || params.SmsSid || ''

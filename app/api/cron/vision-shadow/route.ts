@@ -33,7 +33,15 @@ export async function GET(req: NextRequest) {
 
   const tenants: { tenant: string; processed: number; error?: string }[] = []
   let processed = 0
-  for (const tenantId of await activeTenantIdsFromRegistry()) {
+  let tenantIds: string[]
+  try {
+    tenantIds = await activeTenantIdsFromRegistry()
+  } catch (e) {
+    console.error('[cron/vision-shadow] tenant registry', e)
+    await alert({ type: 'cron_job_failed', severity: 'CRITICAL', route: '/api/cron/vision-shadow', worker: 'tenant-registry', errorClass: e instanceof Error ? e.name : 'unknown' })
+    return NextResponse.json({ ok: false, error: 'tenant registry unavailable' }, { status: 503 })
+  }
+  for (const tenantId of tenantIds) {
     let summary: { processed: number; results: { bookingId: string; status: string }[] } = { processed: 0, results: [] }
     try {
       await withBackgroundTenant('cron', async () => {

@@ -9,6 +9,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { redis } from './redis'
 import { statusCallbackUrl } from './twilio-webhook'
+import { bindTwilioMessageTenant } from './platform/tenancy/twilio-tenant-binding'
 
 // Per-async-context kill switch for OUTBOUND texts. When a run wraps its work in
 // withSmsSuppressed(), every sendSms/sendSmsDetailed call inside that async context
@@ -134,7 +135,13 @@ export async function sendSmsDetailed(to: string | undefined | null, body: strin
       console.error('[sms] twilio error', res.status, msg)
       return { ok: false, error: msg, code: (data as { code?: number }).code, httpStatus: res.status }
     }
-    return { ok: true, sid: (data as { sid: string }).sid, status: (data as { status: string }).status }
+    const sid = (data as { sid: string }).sid
+    try {
+      await bindTwilioMessageTenant(sid)
+    } catch (e) {
+      console.error('[sms] accepted message could not be tenant-bound', e)
+    }
+    return { ok: true, sid, status: (data as { status: string }).status }
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Network error sending SMS'
     console.error('[sms] send failed', msg)

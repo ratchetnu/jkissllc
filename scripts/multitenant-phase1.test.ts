@@ -39,6 +39,7 @@ globalThis.fetch = (async (_url: string, init: { body: string }) => {
     case 'GET': result = kv.get(key) ?? null; break
     case 'SET': kv.set(key, args[1]); result = 'OK'; break
     case 'DEL': result = kv.delete(key) ? 1 : 0; break
+    case 'EXPIRE': result = kv.has(key) ? 1 : 0; break
     case 'ZADD': z(key).set(args[2], Number(args[1])); result = 1; break
     case 'ZREM': result = z(key).delete(args[1]) ? 1 : 0; break
     case 'ZCARD': result = z(key).size; break
@@ -68,8 +69,10 @@ import {
   ensureReferenceTenant, listTenants, upsertTenant, activeTenantIdsFromRegistry,
 } from '../app/lib/platform/tenancy/tenant-registry'
 import {
-  resolveTenantFromEmailChannel, resolveTenantFromHostChannel, resolveTenantFromPhoneChannel,
+  canonicalPhoneChannel, resolveTenantFromEmailChannel, resolveTenantFromHostChannel, resolveTenantFromPhoneChannel,
 } from '../app/lib/platform/tenancy/tenant-channel-resolve'
+import { tenancyOperatingProfile } from '../app/lib/platform/tenancy/operating-profile'
+import { bindTwilioMessageTenant, resolveTwilioMessageTenant } from '../app/lib/platform/tenancy/twilio-tenant-binding'
 import {
   upsertMembership, ensureReferenceMembership, resolveMembership, assertMembership,
   getMembership, listTenantIdsForUser, TenantAccessDeniedError,
@@ -109,6 +112,10 @@ test('registry: activeTenantIdsFromRegistry falls back to reference when empty',
   assert.deepEqual(await activeTenantIdsFromRegistry(), [DEFAULT_TENANT_ID])
 })
 
+test('registry: tenancy ON fails closed when no active tenant exists', async () => {
+  await withFlag(true, () => assert.rejects(activeTenantIdsFromRegistry, /no active tenants/))
+})
+
 test('registry: a display-name id can never become a tenant boundary', async () => {
   await assert.rejects(
     () => upsertTenant({ ...JKISS_TENANT, id: 'J Kiss LLC' }),
@@ -129,16 +136,35 @@ test('registry channels resolve one active tenant and never use first-tenant fal
       ...JKISS_TENANT,
       id: 'supercharged', slug: 'supercharged', displayName: 'Supercharged',
       domains: ['supercharged.example'],
-      legal: { ...JKISS_TENANT.legal, phone: '+1 555 555 0102', supportEmail: 'ops@supercharged.example' },
+      channels: { smsE164: ['+15555550102'], twilioMessagingServiceSids: ['MGsupercharged'], inboundEmails: ['ops@supercharged.example'] },
+      legal: { ...JKISS_TENANT.legal, phone: '(555) 555-0102', supportEmail: 'ops@supercharged.example' },
       brand: { ...JKISS_TENANT.brand, emailFromAddress: 'dispatch@supercharged.example' },
       createdAt: 1,
     })
     assert.deepEqual(await activeTenantIdsFromRegistry(), ['jkiss', 'supercharged'])
+    assert.equal(canonicalPhoneChannel('(817) 909-4312'), COMPANY.phoneE164)
+    assert.equal(await resolveTenantFromPhoneChannel(COMPANY.phoneE164), DEFAULT_TENANT_ID)
     assert.equal(await resolveTenantFromPhoneChannel('+1 (555) 555-0102'), 'supercharged')
+    assert.equal(await resolveTenantFromPhoneChannel({ messagingServiceSid: 'MGsupercharged' }), 'supercharged')
     assert.equal(await resolveTenantFromEmailChannel('Supercharged <ops@supercharged.example>'), 'supercharged')
     assert.equal(await resolveTenantFromHostChannel('supercharged.example:443'), 'supercharged')
+    assert.equal(await resolveTenantFromHostChannel('supercharged'), null)
     assert.equal(await resolveTenantFromHostChannel('unknown.example'), null)
   })
+})
+
+test('Twilio delivery callbacks resolve by outbound MessageSid even with a number pool', async () => {
+  await withFlag(true, async () => {
+    await withBackgroundTenant('cron', async () => bindTwilioMessageTenant('SM12345678'), 'supercharged')
+    assert.equal(await resolveTwilioMessageTenant('SM12345678'), 'supercharged')
+  })
+})
+
+test('operating profile rejects a shared legacy dual-write lane for multiple tenants', () => {
+  const env = { TENANCY_ENABLED: '1', TENANCY_DUAL_WRITE: '1', TENANCY_DARK_LAUNCH: '0' }
+  assert.equal(tenancyOperatingProfile(env, { activeTenantCount: 1 }).valid, true)
+  assert.equal(tenancyOperatingProfile(env, { activeTenantCount: 2 }).valid, false)
+  assert.equal(tenancyOperatingProfile(env).valid, false)
 })
 
 // ── Membership: server-side validation ────────────────────────────────────────
