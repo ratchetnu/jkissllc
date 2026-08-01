@@ -129,6 +129,16 @@ test('existing J KISS access: flag OFF resolves the reference tenant for the leg
   assert.ok(await resolveMembership('owner', null, { enabled: false }))
 })
 
+test('role safety: flag OFF never fabricates an admin membership for a named user', async () => {
+  for (const userId of ['named-admin', 'named-manager', 'named-crew']) {
+    assert.equal(
+      await resolveMembership(userId, DEFAULT_TENANT_ID, { enabled: false }),
+      null,
+      `${userId} must keep the role from its signed login session, not gain admin here`,
+    )
+  }
+})
+
 test('unauthorized tenant access: flag OFF denies any non-reference tenant id (client not trusted)', async () => {
   assert.equal(await resolveMembership('owner', 'acme', { enabled: false }), null)
   await assert.rejects(() => assertMembership('owner', 'acme', { enabled: false }), TenantAccessDeniedError)
