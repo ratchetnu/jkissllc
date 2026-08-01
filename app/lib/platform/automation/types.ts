@@ -163,7 +163,18 @@ export type UpdateAutomationJob = {
   // production promotion (Sprint 2)
   mergeCommit?: string
   rollbackTargetDeploymentId?: string   // the known-good production deployment captured before promoting
+  rollbackTargetCommit?: string         // the VERIFIED commit that deployment was built from — binds the two
   rollbackAttemptCount?: number         // rollback retries are bounded independently from Preview retries
+  // Async rollback confirmation. Vercel's rollback is STARTED by the POST and
+  // confirmed separately, so a started rollback is tracked until Vercel says it
+  // finished. Timestamps drive backoff + timeout so polling is crash-safe.
+  rollbackStartedAt?: number            // when the rollback was ACCEPTED by Vercel
+  rollbackPollCount?: number            // bounded — never poll forever
+  rollbackLastPolledAt?: number         // backoff is derived from this, not a timer
+  rollbackConfirmedAt?: number          // set ONLY when Vercel reports 'succeeded'
+  // Set when promotion proceeded WITHOUT an automatic-recovery path, so the absence
+  // is visible in the record rather than discovered during an incident.
+  rollbackUnavailableReason?: string
   rolledBackAt?: number
   // failure / rollback
   failureCategory?: AutomationFailure

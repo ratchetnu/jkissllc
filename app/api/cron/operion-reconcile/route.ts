@@ -4,7 +4,7 @@ import { listJobs, saveJob } from '../../../lib/platform/automation/store'
 import { getBusiness } from '../../../lib/platform/updates/store'
 import { getAutomationProvider } from '../../../lib/platform/automation/provider'
 import { businessRepoRef } from '../../../lib/platform/automation/repo-identity'
-import { retryPreview, finalizePreview, advancePromotion, advanceRollback } from '../../../lib/platform/automation/orchestrator'
+import { retryPreview, finalizePreview, advancePromotion, advanceRollback, pollRollback } from '../../../lib/platform/automation/orchestrator'
 import { reconcileDecision } from '../../../lib/platform/automation/reconcile'
 import { reconcileCompletedJobs } from '../../../lib/platform/automation/reconcile-records'
 import { isTransientFailure, artifactsComplete } from '../../../lib/platform/automation/deploy-view'
@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
   const jobs = all.filter(j => AUTOMATION_ACTIVE.includes(j.status) || isTransientFailure(j.failureCategory)
     || (j.status === 'awaiting_owner_review' && (!j.pullRequestUrl || !j.previewUrl))
     || (j.status === 'production_deploying' || j.status === 'verifying')
-    || j.status === 'rollback_required')
+    || j.status === 'rollback_required' || j.status === 'rolling_back')
   const provider = getAutomationProvider()
   const results: { jobId: string; action: string; reason: string }[] = []
 
@@ -41,6 +41,15 @@ export async function GET(req: NextRequest) {
     if (job.status === 'rollback_required') {
       const rb = await advanceRollback({ jobId: job.id })
       results.push({ jobId: job.id, action: 'auto_rollback', reason: rb.job?.status ?? rb.reason ?? 'skipped' })
+      continue
+    }
+    // A STARTED rollback is not a finished one. Vercel's rollback is asynchronous,
+    // so confirmation is its own step — without this the job would sit in
+    // `rolling_back` forever and nothing would ever verify production recovered.
+    // Bounded + backed off inside pollRollback, so re-entering each tick is safe.
+    if (job.status === 'rolling_back') {
+      const rb = await pollRollback({ jobId: job.id })
+      results.push({ jobId: job.id, action: 'confirm_rollback', reason: rb.job?.status ?? rb.reason ?? 'pending' })
       continue
     }
     // Production promotion in flight → confirm deploy + health, then complete.

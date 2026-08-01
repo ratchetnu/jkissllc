@@ -248,12 +248,51 @@ export async function approveProduction(input: {
       j.status = 'failed'; j.failureCategory = 'internal_error'; j.failureSummary = 'missing repo/PR for merge'; j.updatedAt = now(); await store.saveJob(j)
       return { ok: false, job: j, reason: 'missing repo/PR for merge' }
     }
-    // Capture the current production deployment as the known-good rollback target BEFORE we
-    // change production, so automatic rollback (if enabled) can instantly restore it.
+    // Capture the known-good rollback target BEFORE we change production.
+    //
+    // GAP A. Eligibility is computed at prepare from `business.currentCommit` — a
+    // COMMIT — but a rollback executes against a DEPLOYMENT ID. Previously the two
+    // were never linked: the lookup here was unguarded, took whatever production
+    // deployment happened to be newest, and the merge proceeded regardless. A job
+    // could therefore be marked rollback-eligible, change production, fail, and only
+    // then discover it had nothing to roll back to.
+    //
+    // Now the target is resolved FOR THE VERIFIED COMMIT and must be `ready`. If the
+    // flag is on and that cannot be established, the promotion is REFUSED before
+    // production changes — asserting recoverability we do not have is worse than not
+    // promoting. If the flag is off, promotion proceeds (unchanged behaviour) but the
+    // absence is recorded, so nobody discovers it mid-incident.
     const projectId = productionProjectFor(input.business)
-    if (projectId && !j.rollbackTargetDeploymentId) {
-      const cur = await getPreviewProvider(env).findProductionDeployment(projectId)
-      if (cur.ok && cur.data && cur.data.ready) j.rollbackTargetDeploymentId = cur.data.deploymentId
+    const autoRollbackOn = flag('OPERION_AUTOMATIC_ROLLBACK_ENABLED', env)
+    if (!j.rollbackTargetDeploymentId) {
+      const verifiedCommit = input.business.currentCommit
+      let reason: string | undefined
+      if (!projectId) reason = 'no production project configured'
+      else if (!verifiedCommit) reason = 'business has no verified current commit to roll back to'
+      else {
+        const cur = await getPreviewProvider(env).findProductionDeployment(projectId, verifiedCommit)
+        if (!cur.ok) reason = `could not read the current production deployment: ${cur.error}`
+        else if (!cur.data) reason = `no production deployment found for the verified commit ${verifiedCommit.slice(0, 8)}`
+        else if (!cur.data.ready) reason = `the production deployment for ${verifiedCommit.slice(0, 8)} is ${cur.data.state}, not ready`
+        else {
+          j.rollbackTargetDeploymentId = cur.data.deploymentId
+          j.rollbackTargetCommit = verifiedCommit
+        }
+      }
+      if (reason) {
+        if (autoRollbackOn && j.automaticRollbackEligible) {
+          // Refuse. Do NOT enter `merging` claiming a recovery path we lack.
+          j.status = 'failed'; j.failureCategory = 'promotion_failed'
+          j.failureSummary = `refused to promote: automatic rollback is enabled but no verified rollback target could be captured — ${reason}`
+          j.rollbackUnavailableReason = reason
+          j.updatedAt = now(); await store.saveJob(j)
+          return { ok: false, job: j, reason: j.failureSummary }
+        }
+        // Flag off (or job not eligible): proceed, but record the gap explicitly and
+        // make sure nothing downstream believes automatic recovery is available.
+        j.rollbackUnavailableReason = reason
+        j.automaticRollbackEligible = false
+      }
     }
     j.status = 'merging'; j.currentStep = 'production'; j.updatedAt = now(); await store.saveJob(j)
     const provider = getAutomationProvider(env)
@@ -416,9 +455,106 @@ export async function advanceRollback(input: { jobId: string; env?: Record<strin
     j.status = 'rolling_back'; j.rollbackAttemptCount = (j.rollbackAttemptCount ?? 0) + 1; j.updatedAt = now(); await store.saveJob(j)
     const vercel = getPreviewProvider(env)
     const res = projectId && j.rollbackTargetDeploymentId ? await vercel.rollbackProduction(projectId, j.rollbackTargetDeploymentId) : { ok: false as const, error: 'no rollback target', category: 'config' }
-    if (res.ok) { j.status = 'rolled_back'; j.rolledBackAt = now(); j.failureSummary = 'production restored to the previous verified deployment'; j.updatedAt = now(); await store.saveJob(j); return { ok: true, job: j } }
-    j.status = 'rollback_required'; j.failureSummary = `automatic rollback failed: ${res.error}`; j.updatedAt = now(); await store.saveJob(j)
+    if (res.ok) {
+      // GAP B. A 200 from Vercel means the rollback was ACCEPTED, not finished — it
+      // runs asynchronously. Recording `rolled_back` here claimed "production
+      // restored" on evidence nothing had checked. The job now stays `rolling_back`
+      // until pollRollback() sees Vercel report 'succeeded'.
+      j.rollbackStartedAt = now(); j.rollbackPollCount = 0; j.rollbackLastPolledAt = undefined
+      j.failureSummary = 'rollback started — awaiting confirmation from Vercel'
+      j.updatedAt = now(); await store.saveJob(j)
+      return { ok: true, job: j }
+    }
+    j.status = 'rollback_required'; j.failureSummary = `automatic rollback failed to start: ${res.error}`; j.updatedAt = now(); await store.saveJob(j)
     return { ok: false, job: j, reason: res.error }
+  }, { onBusy: () => ({ ok: false, reason: 'target_locked' }), token: `${job.businessId}:${now()}` })
+}
+
+/** Bounded confirmation polling for an in-flight rollback (GAP B).
+ *
+ *  Vercel's rollback is asynchronous, so completion is a separate FACT that has to
+ *  be read. This is driven by stored timestamps rather than an in-process timer, so
+ *  it is safe across crashes and duplicate invocations: every call re-reads the job,
+ *  refuses if the job is not `rolling_back`, and respects the backoff and the poll
+ *  ceiling recorded on the record itself.
+ */
+export const ROLLBACK_MAX_POLLS = 20
+export const ROLLBACK_POLL_BACKOFF_MS = 15_000
+export const ROLLBACK_TIMEOUT_MS = 15 * 60_000
+
+export async function pollRollback(input: { jobId: string; env?: Record<string, string | undefined>; at?: number }): Promise<ApproveResult> {
+  const env = input.env ?? process.env
+  const t = input.at ?? now()
+  const job = await store.getJob(input.jobId)
+  if (!job) return { ok: false, reason: 'no_job' }
+  // Only an in-flight rollback is pollable. A duplicate invocation against a job
+  // that already settled is a no-op, never a second rollback.
+  if (job.status !== 'rolling_back') return { ok: false, reason: `job is ${job.status}, not rolling_back` }
+  if (!job.rollbackStartedAt) return { ok: false, reason: 'no rollback in flight' }
+
+  // Backoff: derived from the stored timestamp, so a crash-restart cannot poll faster.
+  if (job.rollbackLastPolledAt && t - job.rollbackLastPolledAt < ROLLBACK_POLL_BACKOFF_MS) {
+    return { ok: false, reason: 'backoff' }
+  }
+
+  const business = await getBusiness(job.businessId)
+  if (!business) return { ok: false, reason: 'business missing' }
+  const projectId = productionProjectFor(business)
+  if (!projectId) return { ok: false, reason: 'no production project' }
+
+  return store.withBusinessLock<ApproveResult>(job.businessId, async () => {
+    const j = await store.getJob(input.jobId)
+    // Re-check under the lock: another invocation may have settled it already.
+    if (!j || j.status !== 'rolling_back') return { ok: false, reason: 'job changed' }
+
+    j.rollbackPollCount = (j.rollbackPollCount ?? 0) + 1
+    j.rollbackLastPolledAt = t
+    const timedOut = t - (j.rollbackStartedAt ?? t) >= ROLLBACK_TIMEOUT_MS
+    const exhausted = j.rollbackPollCount >= ROLLBACK_MAX_POLLS
+
+    const st = await getPreviewProvider(env).rollbackStatus(projectId)
+
+    if (st.ok && st.data.status === 'succeeded') {
+      // The ONLY path that may claim the rollback finished — and only when Vercel
+      // agrees the target it restored is the one we asked for.
+      const restoredWrong = !!st.data.toDeploymentId && !!j.rollbackTargetDeploymentId
+        && st.data.toDeploymentId !== j.rollbackTargetDeploymentId
+      if (restoredWrong) {
+        j.status = 'rollback_required'
+        j.failureSummary = `rollback reported success for a DIFFERENT deployment (${st.data.toDeploymentId}) than the captured target (${j.rollbackTargetDeploymentId}) — needs a human`
+        j.updatedAt = now(); await store.saveJob(j)
+        return { ok: false, job: j, reason: j.failureSummary }
+      }
+      j.status = 'rolled_back'; j.rolledBackAt = now(); j.rollbackConfirmedAt = now()
+      j.failureSummary = 'production restored to the previous verified deployment (confirmed by Vercel)'
+      j.updatedAt = now(); await store.saveJob(j)
+      return { ok: true, job: j }
+    }
+
+    if (st.ok && st.data.status === 'failed') {
+      j.status = 'rollback_required'
+      j.failureSummary = 'Vercel reported the rollback FAILED — production is still on the bad deployment'
+      j.updatedAt = now(); await store.saveJob(j)
+      return { ok: false, job: j, reason: j.failureSummary }
+    }
+
+    // in_progress, unknown, or an unreadable status. Keep waiting — but only within
+    // the bounds, and never claim an outcome we do not have.
+    if (timedOut || exhausted) {
+      j.status = 'rollback_required'
+      const why = timedOut ? `did not confirm within ${Math.round(ROLLBACK_TIMEOUT_MS / 60_000)} minutes` : `did not confirm after ${ROLLBACK_MAX_POLLS} checks`
+      const seen = st.ok ? `last status: ${st.data.status}` : `status unreadable: ${st.error}`
+      j.failureSummary = `rollback ${why} — ${seen}. Production state is UNCONFIRMED; verify manually before retrying.`
+      j.failureCategory = 'timeout'
+      j.updatedAt = now(); await store.saveJob(j)
+      return { ok: false, job: j, reason: j.failureSummary }
+    }
+
+    j.failureSummary = st.ok
+      ? `rollback in progress — Vercel reports ${st.data.status} (check ${j.rollbackPollCount}/${ROLLBACK_MAX_POLLS})`
+      : `rollback in progress — status unreadable (${st.error}), will retry`
+    j.updatedAt = now(); await store.saveJob(j)
+    return { ok: false, job: j, reason: 'pending' }
   }, { onBusy: () => ({ ok: false, reason: 'target_locked' }), token: `${job.businessId}:${now()}` })
 }
 
