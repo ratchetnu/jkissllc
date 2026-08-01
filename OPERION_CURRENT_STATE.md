@@ -72,8 +72,9 @@ wrong on that point.
 
 - Blocker **2** (PR #47) and blocker **4** (PR #52): both **merged**; no longer blocking.
 - Blocker **1** (`BLOB_STORE_ID`): **fixed**, see above.
-- Blockers **5–7** (UPD-1004 stays rejected; Supercharged has never completed a full Operion
-  Preview E2E; transfer audit-trail gap): **unchanged**.
+- Blockers **5** and **7** (UPD-1004 stays rejected; transfer audit-trail gap): **unchanged**.
+  Blocker **6 is withdrawn** — Supercharged DID complete a full Operion Preview E2E
+  (UPD-1007, run `29697932299` = `success`, Supercharged PR #3). See blocker 6 below.
 - Process blockers **8–10**: unchanged. `.claude/` is ~227 MB and not gitignored (PR #78).
 
 ### Corrections to specific sections
@@ -653,7 +654,7 @@ Commands: `npm test` · `npm run test:ai:regression` · `npm run test:ai` · `np
 
 4. **PR #52 unmerged** — required-updates + pre-dispatch transfer gates.
 5. **`UPD-1004` must remain rejected** and must not be retried. It needs splitting into ordered prerequisite updates (issue #48 §8): Book Now intake → telemetry (already present on SC) → tenancy-only.
-6. **Supercharged has never completed a full Operion Preview E2E run.** Every transfer to date failed or was manual.
+6. ~~**Supercharged has never completed a full Operion Preview E2E run.** Every transfer to date failed or was manual.~~ **CORRECTED — this was never true.** UPD-1007 completed the Preview E2E successfully: job `AUTO-4273c3ce`, workflow run `29697932299` = `success`, Supercharged **PR #3** (closed unmerged; Production promotion intentionally not requested). See §199 and §688 of this document, which already recorded it. What IS true is narrower: no *substantive* update has since been eligible to run the pipeline, and Supercharged's installed Operion version remains unknown because a canary does not establish one.
 7. **Audit trail gap** (§4 #7) — reconstructing a failed transfer currently requires git archaeology.
 
 ### Process blockers
