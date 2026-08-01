@@ -117,26 +117,27 @@ for (const p of libFiles) {
 }
 
 // ── 3. Un-scoped Blob writes ─────────────────────────────────────────────────
-// Server-side put(...) whose FIRST argument is not produced by a *BlobPath helper
-// or scopeBlobPath(...). Track one-step variable assignments too, so moving a raw
-// literal into `const pathname = ...` cannot evade the gate.
+// Server and browser-direct Blob writes whose FIRST argument is not produced by a
+// *BlobPath helper or scopeBlobPath(...). Track one-step variable assignments too,
+// so moving a raw literal into `const pathname = ...` cannot evade the gate.
 const BLOB_SCAN_DIRS = [LIB_DIR, API_DIR, path.join(ROOT, 'app', 'admin')]
 const blobFiles = BLOB_SCAN_DIRS.flatMap((d) => walk(d, (p) => /\.(ts|tsx)$/.test(p)))
 const SCOPED_HELPER = /\b(?:[A-Za-z_$][\w$]*BlobPath|scopeBlobPath)\s*\(/
+const codeOnly = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
 const blobWriteHits = []
 for (const p of blobFiles) {
-  const src = read(p)
-  if (!/from ['"]@vercel\/blob['"]/.test(src)) continue
+  const src = codeOnly(read(p))
+  if (!/from ['"]@vercel\/blob(?:\/client)?['"]/.test(src)) continue
   const safeVars = new Set()
   for (const m of src.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*([^;\n]+)/g)) {
     if (SCOPED_HELPER.test(m[2])) safeVars.add(m[1])
   }
-  for (const m of src.matchAll(/\bput\s*\(\s*([^,\n]+)/g)) {
-    const arg = m[1].trim()
+  for (const m of src.matchAll(/\b(put|upload|uploadPresigned)\s*\(\s*([^,\n]+)/g)) {
+    const arg = m[2].trim()
     const safe = SCOPED_HELPER.test(arg) || (/^[A-Za-z_$][\w$]*$/.test(arg) && safeVars.has(arg))
     if (!safe) {
       const line = src.slice(0, m.index).split('\n').length
-      blobWriteHits.push({ at: `${rel(p)}:${line}`, call: 'put', arg: arg.slice(0, 48) })
+      blobWriteHits.push({ at: `${rel(p)}:${line}`, call: m[1], arg: arg.slice(0, 48) })
     }
   }
 }
@@ -162,7 +163,6 @@ console.log('\n3. UN-SCOPED BLOB WRITES (path not proven to come from a *BlobPat
 if (!blobWriteHits.length) console.log('   none found')
 for (const h of blobWriteHits) console.log(`   • ${h.at}  ${h.call}(${h.arg}…)`)
 
-const codeOnly = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
 const retiredFanoutHits = [...routeFiles, ...libFiles]
   .filter((p) => /\bactiveTenantIds\s*\(/.test(codeOnly(read(p))))
   .map(rel)

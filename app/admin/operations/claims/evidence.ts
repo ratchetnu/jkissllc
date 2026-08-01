@@ -3,6 +3,13 @@ import type { AttachmentKind } from '../../../lib/claims'
 
 export type EvidenceUpload = { url: string; name: string; kind: AttachmentKind }
 
+async function claimEvidenceBlobPath(filename: string): Promise<string> {
+  const res = await fetch(`/api/admin/claims/upload?filename=${encodeURIComponent(filename)}`, { credentials: 'same-origin' })
+  const body = await res.json() as { pathname?: string; error?: string }
+  if (!res.ok || !body.pathname) throw new Error(body.error ?? 'Unable to prepare evidence upload')
+  return body.pathname
+}
+
 // Shrink a phone photo before upload so evidence stays light. Best-effort: any
 // failure (e.g. a HEIC the browser can't decode to a canvas) returns the original
 // file untouched. Mirrors the invoice-photo downscaler in app/admin/bookings.
@@ -32,6 +39,7 @@ const kindFor = (type: string): AttachmentKind =>
 // claim's `attach` action or the create-claim `attachments` array.
 export async function uploadEvidence(file: File): Promise<EvidenceUpload> {
   const body = await downscaleImage(file)
-  const blob = await upload(file.name, body, { access: 'public', handleUploadUrl: '/api/admin/claims/upload' })
+  const pathname = await claimEvidenceBlobPath(file.name)
+  const blob = await upload(pathname, body, { access: 'public', handleUploadUrl: '/api/admin/claims/upload' })
   return { url: blob.url, name: file.name, kind: kindFor(file.type) }
 }
