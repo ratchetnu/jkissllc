@@ -24,7 +24,9 @@ function runsPerDay(schedule: string): number {
   const [min, hour] = schedule.split(' ')
   const everyMin = /^\*\/(\d+)$/.exec(min)
   const everyHour = /^\*\/(\d+)$/.exec(hour)
+  const fixedMinutes = /^\d+(?:,\d+)+$/.test(min) ? min.split(',').map(Number) : null
   if (everyMin && hour === '*') return (60 / Number(everyMin[1])) * 24
+  if (fixedMinutes && hour === '*') return fixedMinutes.length * 24
   if (everyHour && /^\d+$/.test(min)) return 24 / Number(everyHour[1])
   if (/^\d+$/.test(min) && /^\d+$/.test(hour)) return 1
   throw new Error(`unhandled cron expression: ${schedule}`)
@@ -89,6 +91,7 @@ test('BUDGET: runsPerDay is right, or the ceiling means nothing', () => {
   assert.equal(runsPerDay('*/5 * * * *'), 288)
   assert.equal(runsPerDay('*/15 * * * *'), 96)
   assert.equal(runsPerDay('*/30 * * * *'), 48)
+  assert.equal(runsPerDay('10,40 * * * *'), 48)
   assert.equal(runsPerDay('0 */6 * * *'), 4)
   assert.equal(runsPerDay('0 14 * * *'), 1)
   // The pre-incident schedule must still exceed the ceiling, or the guard is inert.

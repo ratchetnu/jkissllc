@@ -20,6 +20,7 @@ import { buildCommitTransferManifest } from './manifest-builder'
 import { parseRepoName } from './repo-identity'
 import { productionProjectFor } from '../production-project'
 import * as store from './store'
+import { reconcilePublishForJob } from '../release/publish-store'
 
 const flag = (f: Parameters<typeof isEnabled>[0], env?: Record<string, string | undefined>) => isEnabled(f, env)
 const now = () => Date.now()
@@ -322,7 +323,11 @@ export async function advancePromotion(input: { jobId: string; env?: Record<stri
       const vercel = getPreviewProvider(env)
       const prod = projectId ? await vercel.findProductionDeployment(projectId, j.mergeCommit) : { ok: false as const, error: 'no project', category: 'config' }
       if (!prod.ok || !prod.data) return { ok: true, job: j, reason: 'awaiting production deployment' }
-      if (prod.data.failed) { j.status = 'rollback_required'; j.failureCategory = 'promotion_failed'; j.failureSummary = 'production build failed'; j.updatedAt = now(); await store.saveJob(j); return { ok: false, job: j, reason: 'production deploy failed' } }
+      if (prod.data.failed) {
+        j.status = 'rollback_required'; j.failureCategory = 'promotion_failed'; j.failureSummary = 'production build failed'; j.updatedAt = now(); await store.saveJob(j)
+        await reconcilePublishForJob({ jobId: j.id, status: 'failed', now: j.updatedAt, reason: j.failureSummary }).catch(() => null)
+        return { ok: false, job: j, reason: 'production deploy failed' }
+      }
       if (!prod.data.ready) return { ok: true, job: j, reason: 'production build in progress' }
       j.productionDeploymentId = prod.data.deploymentId; j.productionUrl = prod.data.url; j.status = 'verifying'; j.currentStep = 'verification'; j.updatedAt = now(); await store.saveJob(j)
     }
@@ -333,6 +338,7 @@ export async function advancePromotion(input: { jobId: string; env?: Record<stri
       const health = healthUrl ? await provider.runHealthCheck(healthUrl) : { ok: false as const, error: 'no url', category: 'config' }
       if (health.ok && health.data.ok) {
         j.status = 'completed'; j.currentStep = 'verification'; j.completedAt = now(); j.updatedAt = now(); await store.saveJob(j)
+        await reconcilePublishForJob({ jobId: j.id, status: 'completed', now: j.updatedAt, deploymentId: j.productionDeploymentId }).catch(() => null)
         // Automatic post-deployment reconciliation: propagate this verified promotion to
         // ALL related records (deployment, update, business version, release, audit) so the
         // owner never hand-sets a status. FAIL-SOFT — a hiccup here must not undo a live,
@@ -346,6 +352,7 @@ export async function advancePromotion(input: { jobId: string; env?: Record<stri
         return { ok: true, job: j }
       }
       j.status = 'rollback_required'; j.failureCategory = 'health_failed'; j.failureSummary = 'production health check failed'; j.updatedAt = now(); await store.saveJob(j)
+      await reconcilePublishForJob({ jobId: j.id, status: 'failed', now: j.updatedAt, deploymentId: j.productionDeploymentId, reason: j.failureSummary }).catch(() => null)
       return { ok: false, job: j, reason: 'production health check failed' }
     }
     return { ok: true, job: j }

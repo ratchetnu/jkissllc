@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import Link from 'next/link'
 import OperationsShell from '../OperationsShell'
 import { fmtTs } from '../ui'
 import { parseRepoName } from '../../../lib/platform/automation/repo-identity'
@@ -540,9 +541,9 @@ function AutomationPanel({ updateKey, businesses, requiresEnv = false, requiresM
                 {job.pullRequestUrl && <a href={job.pullRequestUrl} target="_blank" rel="noreferrer" style={{ ...btn(), textDecoration: 'none' }}>Open PR →</a>}
                 <button style={btn()} disabled={busy} onClick={() => act('request-changes', 'Send this back for changes?')}>Request Changes</button>
                 <button style={btn('danger')} disabled={busy} onClick={() => act('cancel', 'Reject and close this preview?')}>Reject</button>
-                <button style={{ ...btn(), opacity: 0.7 }} disabled={busy} onClick={() => act('approve-production', 'Promote this verified Preview to PRODUCTION? (currently disabled — the production sprint isn’t enabled)')}>Approve → Production</button>
+                <Link href="/admin/operations/release" style={{ ...btn(), textDecoration: 'none' }}>Continue in Release Center →</Link>
               </div>
-              <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>“Approve → Production” promotes to production and is <strong>owner-gated + currently OFF</strong> (it turns on in the production-promotion sprint). Reviewing, Request Changes, and Reject are available now.</p>
+              <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>Production has one entry point: the Release Center’s release-bound owner approval. Reviewing, Request Changes, and Reject remain available here.</p>
             </div>
           )}
 

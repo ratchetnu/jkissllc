@@ -3,9 +3,7 @@ import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route
 import { requireStaffSession, requireAdmin } from '../_lib/session'
 import { getAutomationSettings, setAutomationSettings } from '../../../lib/automation-settings'
 
-// Deprecated compatibility endpoint. New clients use /api/admin/reminder-settings.
-// Retain explicit guards here (rather than a blind re-export) so every route remains
-// independently auditable until old clients have aged out and this alias can be deleted.
+// Crew reminder policy. Kept separate in name from Operion release automation.
 export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireStaffSession(req)
   if (who instanceof NextResponse) return who

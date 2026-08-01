@@ -1,6 +1,6 @@
 // ── Release Center — curated static content (server-safe, no secrets) ─────────
 //
-// The read-only Release Center (/admin/operations/release) renders this alongside
+// The Release Center's System Details tab renders this historical note alongside
 // runtime build info (manifest.ts) and resolved feature-flag states (flag-view.ts).
 //
 // This is CURATED CONTENT, edited as a normal reviewed code change — NOT a live data
@@ -41,7 +41,6 @@ export const RELEASES: ReleaseEntry[] = [
     version: '2026.07 — Update Center foundation',
     date: '2026-07-17',
     environment: 'preview',
-    current: true,
     summary:
       'Operator documentation set + a read-only, admin-only Release Center. No operational workflow changed.',
     highlights: [

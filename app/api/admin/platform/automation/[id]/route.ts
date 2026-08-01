@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePlatformOwner, getPrincipal } from '../../../_lib/session'
 import { getJob, getTransferEvidence } from '../../../../../lib/platform/automation/store'
-import { getBusiness } from '../../../../../lib/platform/updates/store'
-import { approveProduction, transitionJob, retryPreview, finalizePreview } from '../../../../../lib/platform/automation/orchestrator'
+import { transitionJob, retryPreview, finalizePreview } from '../../../../../lib/platform/automation/orchestrator'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -40,14 +39,13 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
 
   switch (action) {
     case 'approve-production': {
-      const business = await getBusiness(job.businessId)
-      if (!business) return NextResponse.json({ error: 'business missing' }, { status: 400 })
-      const r = await approveProduction({ jobId: id, business, actor })
-      // Clear, owner-facing message when promotion is gated off (this is by design for now).
-      const error = r.ok ? undefined : /promotion disabled/.test(r.reason ?? '')
-        ? 'Production promotion isn’t enabled yet. The Preview is verified and approved for review — deploying it to production is a separate, deliberate step that turns on in the production-promotion sprint.'
-        : (r.reason ?? 'Approve failed')
-      return NextResponse.json(r.ok ? r : { ...r, error }, { status: r.ok ? 200 : 400 })
+      // RETIRED: this endpoint used to bypass the release-bound approval and launch a
+      // second Production executor. Keep a deterministic refusal for stale clients.
+      return NextResponse.json({
+        ok: false,
+        error: 'Production publishing now requires the controlled Release Center approval.',
+        releaseCenter: '/admin/operations/release',
+      }, { status: 409 })
     }
     case 'request-changes': return NextResponse.json(await transitionJob(id, 'failed', actor, `changes requested: ${typeof body.reason === 'string' ? body.reason.slice(0, 500) : ''}`))
     case 'cancel': return NextResponse.json(await transitionJob(id, 'cancelled', actor, typeof body.reason === 'string' ? body.reason : 'cancelled by owner'))

@@ -53,7 +53,7 @@ function Settings() {
   const [finBusy, setFinBusy] = useState(false)
   // Settings is governed by `settings:manage`, which a manager does not hold
   // (app/lib/rbac.ts). Both /api/admin/alerts and /api/admin/finance refuse them, and
-  // every write on this page is admin-only — /api/admin/automation answers a manager's
+  // every write on this page is admin-only — /api/admin/reminder-settings answers a manager's
   // GET but rejects the POST, so rendering its toggles would offer switches that
   // silently roll back. The page is therefore denied as a whole, not section by section.
   const [state, setState] = useState<LoadState>('loading')
@@ -66,7 +66,7 @@ function Settings() {
       const [aRes, fRes, auRes] = await Promise.all([
         fetch('/api/admin/alerts', { credentials: 'same-origin' }),
         fetch('/api/admin/finance', { credentials: 'same-origin' }),
-        fetch('/api/admin/automation', { credentials: 'same-origin' }),
+        fetch('/api/admin/reminder-settings', { credentials: 'same-origin' }),
       ])
       // The refusal is the answer. Terminal — no retry, no spinner left running.
       if (accessStateForStatus(aRes.status) === 'denied') { setState('denied'); return }
@@ -102,7 +102,7 @@ function Settings() {
     const prev = auto
     setAuto(a => (a ? { ...a, ...patch } : a))
     try {
-      const res = await fetch('/api/admin/automation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(patch) })
+      const res = await fetch('/api/admin/reminder-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(patch) })
       const d = await res.json()
       if (!res.ok || !d.settings) setAuto(prev); else setAuto(d.settings)
     } catch { setAuto(prev) }

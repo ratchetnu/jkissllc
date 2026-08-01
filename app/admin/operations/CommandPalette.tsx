@@ -19,7 +19,7 @@ const ACTIONS: Item[] = [
   { id: 'a-equip', label: 'Equipment', sub: 'Trucks & gear', Icon: Truck, href: '/admin/operations/equipment', group: 'Go to' },
   { id: 'a-set', label: 'Settings', Icon: Settings, href: '/admin/operations/settings', group: 'Go to' },
   { id: 'a-ai', label: 'AI Command Center', sub: 'Shadow evaluation, learning & controls', Icon: Sparkles, href: '/admin/operations/ai', group: 'Go to' },
-  { id: 'a-ops-wl', label: 'Operion Waitlist', sub: 'Early-access requests', Icon: Rocket, href: '/admin/opspilot', group: 'Go to' },
+  { id: 'a-ops-wl', label: 'Operion Waitlist', sub: 'Early-access requests', Icon: Rocket, href: '/admin/operion-waitlist', group: 'Go to' },
 ]
 
 const fbBtn: React.CSSProperties = { background: 'rgba(255,255,255,.06)', border: '1px solid var(--line)', borderRadius: 7, padding: '2px 8px', fontSize: 13, cursor: 'pointer', lineHeight: 1.2 }

@@ -43,7 +43,6 @@ export interface UpdateAutomationProvider {
   mergePullRequest(installationId: string, repo: RepoRef, number: number, expectedHeadSha: string): Promise<ProviderResult<{ merged: boolean; mergeCommit?: string }>>
   readDeployment(project: string, deploymentId: string): Promise<ProviderResult<{ state: string; url?: string }>>
   createPreviewDeployment(project: string, ref: string): Promise<ProviderResult<{ deploymentId: string; url: string }>>
-  promoteProduction(project: string, deploymentId: string): Promise<ProviderResult<{ promoted: boolean; url?: string }>>
   runHealthCheck(url: string): Promise<ProviderResult<{ ok: boolean; status: number }>>
   cancelJob(installationId: string, repo: RepoRef, runId: string): Promise<ProviderResult<{ cancelled: boolean }>>
 }
@@ -72,7 +71,6 @@ export class StubProvider implements UpdateAutomationProvider {
   mergePullRequest() { return fail<{ merged: boolean; mergeCommit?: string }>() }
   readDeployment() { return fail<{ state: string; url?: string }>() }
   createPreviewDeployment() { return fail<{ deploymentId: string; url: string }>() }
-  promoteProduction() { return fail<{ promoted: boolean; url?: string }>() }
   runHealthCheck() { return fail<{ ok: boolean; status: number }>() }
   cancelJob() { return fail<{ cancelled: boolean }>() }
 }

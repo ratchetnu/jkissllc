@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isEnabled } from '../../../lib/platform/flags'
-import { listJobs, saveJob } from '../../../lib/platform/automation/store'
+import { listReconcileJobs, saveJob } from '../../../lib/platform/automation/store'
 import { getBusiness } from '../../../lib/platform/updates/store'
 import { getAutomationProvider } from '../../../lib/platform/automation/provider'
 import { businessRepoRef } from '../../../lib/platform/automation/repo-identity'
@@ -10,6 +10,7 @@ import { reconcileCompletedJobs } from '../../../lib/platform/automation/reconci
 import { isTransientFailure, artifactsComplete } from '../../../lib/platform/automation/deploy-view'
 import { PROMOTION_ACTIVE } from '../../../lib/platform/automation/promotion'
 import { AUTOMATION_ACTIVE } from '../../../lib/platform/automation/types'
+import { reconcilePublishForJob } from '../../../lib/platform/release/publish-store'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -17,7 +18,9 @@ export const dynamic = 'force-dynamic'
 // GET /api/cron/operion-reconcile — background job reconciliation so a Preview job continues
 // even with the browser closed. CRON_SECRET bearer (Vercel injects it). For each active (or
 // transiently-failed) job it queries the real GitHub run, repairs missed callbacks, finalizes
-// stale jobs, and auto-retries transient failures (bounded). It NEVER promotes to production.
+// stale jobs, and auto-retries transient failures (bounded). Owner approval is the only
+// operation that can START a Production change; this worker only confirms an already-started
+// promotion or rollback and repairs its durable records.
 function authorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET
   return !!secret && req.headers.get('authorization') === `Bearer ${secret}`
@@ -28,7 +31,7 @@ export async function GET(req: NextRequest) {
   if (!isEnabled('OPERION_AUTOMATION_ENABLED')) return NextResponse.json({ ok: true, skipped: 'automation disabled' })
 
   const now = Date.now()
-  const all = await listJobs()
+  const all = await listReconcileJobs()
   const jobs = all.filter(j => AUTOMATION_ACTIVE.includes(j.status) || isTransientFailure(j.failureCategory)
     || (j.status === 'awaiting_owner_review' && (!j.pullRequestUrl || !j.previewUrl))
     || (j.status === 'production_deploying' || j.status === 'verifying')
@@ -39,6 +42,11 @@ export async function GET(req: NextRequest) {
   for (const job of jobs) {
     // Failed production promotion → automatic rollback (flag-gated + bounded).
     if (job.status === 'rollback_required') {
+      await reconcilePublishForJob({
+        jobId: job.id, status: 'failed', now,
+        deploymentId: job.productionDeploymentId,
+        reason: job.failureSummary ?? 'production verification required rollback',
+      }).catch(() => null)
       const rb = await advanceRollback({ jobId: job.id })
       results.push({ jobId: job.id, action: 'auto_rollback', reason: rb.job?.status ?? rb.reason ?? 'skipped' })
       continue

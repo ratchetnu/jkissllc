@@ -213,7 +213,6 @@ test('StubProvider fails closed on every write op; getAutomationProvider selects
   const p: UpdateAutomationProvider = new StubProvider()
   const r = await p.dispatchWorkflow('1', { owner: 'o', name: 'n' }, 'wf.yml', 'main', {})
   assert.equal(r.ok, false)
-  assert.equal((await p.promoteProduction('prj', 'dep')).ok, false)
   assert.equal(getAutomationProvider({}).name, 'stub')                        // no GITHUB_APP_* → inert stub
   assert.equal(getAutomationProvider({ GITHUB_APP_ID: '1', GITHUB_APP_PRIVATE_KEY: 'k' }).name, 'github') // creds present → live provider
 })

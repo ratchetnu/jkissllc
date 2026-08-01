@@ -12,6 +12,7 @@ import type { PublishRecordStatus } from './publish'
 const REC = (id: string) => `platform:publish:rec:${id}`
 const LATEST = (businessId: string) => `platform:publish:latest:${businessId}`
 const BYAPPROVAL = (approvalId: string) => `platform:publish:byapproval:${approvalId}`
+const BYJOB = (jobId: string) => `platform:publish:byjob:${jobId}`
 const LOCK = (businessId: string) => `platform:publish:lock:${businessId}`
 const INDEX = 'platform:publish:index'   // sorted set: publishId scored by startedAt (release history)
 const CTR = 'platform:publish:counter'
@@ -25,6 +26,8 @@ export type ReleasePublish = {
   businessId: string
   businessSlug: string
   approvalId: string
+  /** The one automation job which owns merge, deployment, verification and reconciliation. */
+  jobId?: string
   releaseId: string              // candidate commit
   sourceDeploymentId: string     // the preview deployment promoted
   targetEnvironment: 'production'
@@ -55,6 +58,11 @@ export async function getLatestPublishFor(businessId: string): Promise<ReleasePu
 /** The publish (if any) that already consumed a given approval — the idempotency anchor. */
 export async function getPublishByApproval(approvalId: string): Promise<ReleasePublish | null> {
   const id = await redis.get(BYAPPROVAL(approvalId))
+  return id ? getPublish(id) : null
+}
+
+export async function getPublishByJob(jobId: string): Promise<ReleasePublish | null> {
+  const id = await redis.get(BYJOB(jobId))
   return id ? getPublish(id) : null
 }
 
@@ -97,6 +105,7 @@ export type NewPublish = {
   businessId: string
   businessSlug: string
   approvalId: string
+  jobId?: string
   releaseId: string
   sourceDeploymentId: string
   mode: 'live' | 'simulated'
@@ -108,14 +117,33 @@ export async function startPublish(n: NewPublish): Promise<ReleasePublish> {
   const p: ReleasePublish = {
     recordVersion: RECORD_VERSION,
     id: await nextPublishId(),
-    businessId: n.businessId, businessSlug: n.businessSlug, approvalId: n.approvalId,
+    businessId: n.businessId, businessSlug: n.businessSlug, approvalId: n.approvalId, jobId: n.jobId,
     releaseId: n.releaseId, sourceDeploymentId: n.sourceDeploymentId, targetEnvironment: 'production',
     mode: n.mode, status: 'promoting', startedAt: n.now, updatedAt: n.now, startedBy: n.startedBy,
   }
   await savePublish(p)
   await redis.set(BYAPPROVAL(n.approvalId), p.id)
   await redis.pexpire(BYAPPROVAL(n.approvalId), RECORD_TTL_MS)
+  if (n.jobId) {
+    await redis.set(BYJOB(n.jobId), p.id)
+    await redis.pexpire(BYJOB(n.jobId), RECORD_TTL_MS)
+  }
   return p
+}
+
+/** Mirror the authoritative automation job into the release-history projection. */
+export async function reconcilePublishForJob(input: {
+  jobId: string
+  status: 'completed' | 'failed'
+  now: number
+  deploymentId?: string
+  reason?: string
+}): Promise<ReleasePublish | null> {
+  const p = await getPublishByJob(input.jobId)
+  if (!p || p.status === 'completed' || p.status === 'failed') return p
+  return input.status === 'completed'
+    ? completePublish(p.id, input.now, input.deploymentId)
+    : failPublish(p.id, input.now, input.reason ?? 'the authoritative automation job failed')
 }
 
 /** LIVE-only: the promotion was accepted; we are confirming Production is READY. */

@@ -6,6 +6,11 @@ import { AUTOMATION_ACTIVE, EVIDENCE_TTL_MS } from './types'
 
 const K_JOB = 'platform:autojob:'
 const K_IDX = 'platform:autojob:index'
+// Jobs which still need background attention. The historical reconciler scanned only
+// the 200 most-recently-updated jobs, so an older stuck job could disappear behind newer
+// terminal work forever. This index is maintained on every save and read oldest-first.
+const K_RECONCILE = 'platform:autojob:reconcile'
+const K_RECONCILE_MIGRATED = 'platform:autojob:reconcile:migrated:v1'
 const K_CTR = 'platform:autojob:counter'
 const K_IDEM = 'platform:autoidem:'      // idempotencyKey -> jobId
 const K_LOCK = 'platform:autolock:'      // per-business orchestration lock
@@ -25,6 +30,8 @@ export async function getJob(id: string): Promise<UpdateAutomationJob | null> { 
 export async function saveJob(j: UpdateAutomationJob): Promise<void> {
   await redis.set(K_JOB + j.id, JSON.stringify(j))
   await redis.zadd(K_IDX, j.updatedAt, j.id)
+  if (needsReconciliation(j)) await redis.zadd(K_RECONCILE, j.updatedAt, j.id)
+  else await redis.zrem(K_RECONCILE, j.id)
 }
 export async function listJobs(limit = 200): Promise<UpdateAutomationJob[]> {
   const ids = await redis.zrevrange(K_IDX, 0, Math.max(0, limit - 1))
@@ -32,6 +39,36 @@ export async function listJobs(limit = 200): Promise<UpdateAutomationJob[]> {
   // zrevrange already ordered the ids, so output order/contents are identical.
   const jobs = await Promise.all(ids.map(getJob))
   return jobs.filter((j): j is UpdateAutomationJob => j !== null)
+}
+
+const TRANSIENT_FAILURES = new Set(['timeout', 'provider_error', 'internal_error'])
+function needsReconciliation(j: UpdateAutomationJob): boolean {
+  return AUTOMATION_ACTIVE.includes(j.status)
+    || j.status === 'rollback_required'
+    || (j.status === 'failed' && !!j.failureCategory && TRANSIENT_FAILURES.has(j.failureCategory))
+    || (j.status === 'completed' && !j.recordsFinalizedAt)
+}
+
+/** Background candidates, oldest first so no job can starve behind newer traffic.
+ *
+ * The one-time legacy pass migrates records written before this index existed. New and
+ * subsequently changed records are maintained by saveJob, so normal cron runs only read
+ * the small active index instead of repeatedly scanning historical jobs.
+ */
+export async function listReconcileJobs(limit = 500): Promise<UpdateAutomationJob[]> {
+  if (!(await redis.get(K_RECONCILE_MIGRATED))) {
+    const legacy = (await listJobs(5_000)).filter(needsReconciliation)
+    await Promise.all(legacy.map(job => redis.zadd(K_RECONCILE, job.updatedAt, job.id)))
+    await redis.set(K_RECONCILE_MIGRATED, '1')
+  }
+
+  const indexedIds = await redis.zrange(K_RECONCILE, 0, Math.max(0, limit - 1))
+  const indexed = await Promise.all(indexedIds.map(getJob))
+  const byId = new Map<string, UpdateAutomationJob>()
+  for (const job of indexed) {
+    if (job && needsReconciliation(job)) byId.set(job.id, job)
+  }
+  return [...byId.values()].sort((a, b) => a.updatedAt - b.updatedAt).slice(0, limit)
 }
 export async function activeJobForBusiness(businessId: string): Promise<UpdateAutomationJob | null> {
   return (await listJobs(500)).find(j => j.businessId === businessId && AUTOMATION_ACTIVE.includes(j.status)) ?? null

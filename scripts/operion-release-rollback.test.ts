@@ -206,9 +206,10 @@ test('safety: rollback route is owner-gated, flag-gated, no-store, LIVE only in 
   assert.match(s, /simulated — no Vercel call/)
   assert.match(s, /rolledBackPublishId: reversedPublish\?\.id/)
 })
-test('safety: automatic rollback uses rollback API while publish keeps promote API', () => {
+test('safety: rollback uses the rollback API while publish hands off to the one automation executor', () => {
   const orchestrator = src('../app/lib/platform/automation/orchestrator.ts')
   const publish = src('../app/api/admin/release/businesses/[id]/publish/route.ts')
   assert.match(orchestrator, /rollbackTargetDeploymentId\s*\?\s*await vercel\.rollbackProduction/)
-  assert.match(publish, /vercel\.promoteProduction/)
+  assert.match(publish, /approveProduction/)
+  assert.doesNotMatch(publish, /promoteProduction/)
 })

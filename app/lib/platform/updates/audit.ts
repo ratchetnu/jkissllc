@@ -14,6 +14,7 @@
 import { redis } from '../../redis'
 
 export type PlatformAuditAction =
+  | 'promotion.started'
   | 'promotion.merged'
   | 'promotion.production_deployment_discovered'
   | 'promotion.production_ready'
@@ -40,7 +41,8 @@ export type PlatformAuditAction =
   | 'approval.invalidated'
   | 'approval.revoked'
   | 'approval.consumed'
-  // Controlled Production publish (Increment 3B.4). Consumes an approval + promotes.
+  // Controlled Production publish. Consumes an approval, then hands execution to the
+  // authoritative automation job (which records the promotion.* lifecycle above).
   | 'publish.started'
   | 'publish.completed'
   | 'publish.failed'
