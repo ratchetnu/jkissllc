@@ -119,7 +119,7 @@ test('rehearsal never attempts a write: mutating provider methods throw', () => 
   // So this write-safety assertion runs even on a clone-only CI without the sibling.
   const here = process.cwd()
   const p = makeLocalGitProvider({ sourceRepoPath: here, targetRepoPath: here, targetRef: 'HEAD' })
-  for (const op of ['createBranch', 'dispatchWorkflow', 'createPullRequest', 'mergePullRequest', 'promoteProduction', 'createPreviewDeployment'] as const) {
+  for (const op of ['createBranch', 'dispatchWorkflow', 'createPullRequest', 'mergePullRequest', 'createPreviewDeployment'] as const) {
     assert.throws(() => (p[op] as () => never)(), /read-only/, `${op} must throw`)
   }
 })

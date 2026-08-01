@@ -3,6 +3,7 @@ import { redis } from '../../redis'
 import { randomUUID } from 'node:crypto'
 import type { UpdateAutomationJob, TransferEvidence } from './types'
 import { AUTOMATION_ACTIVE, EVIDENCE_TTL_MS } from './types'
+import { TRANSIENT_FAILURES } from './deploy-view'
 
 const K_JOB = 'platform:autojob:'
 const K_IDX = 'platform:autojob:index'
@@ -11,11 +12,13 @@ const K_IDX = 'platform:autojob:index'
 // terminal work forever. This index is maintained on every save and read oldest-first.
 const K_RECONCILE = 'platform:autojob:reconcile'
 const K_RECONCILE_MIGRATED = 'platform:autojob:reconcile:migrated:v1'
+const K_RECONCILE_MIGRATION_LOCK = 'platform:autojob:reconcile:migration-lock:v1'
 const K_CTR = 'platform:autojob:counter'
 const K_IDEM = 'platform:autoidem:'      // idempotencyKey -> jobId
 const K_LOCK = 'platform:autolock:'      // per-business orchestration lock
 const K_CB = 'platform:autocb:'          // callback delivery-id replay guard
 const K_EV = 'platform:autoev:'          // transfer evidence, off the bulk job read path
+const RELEASE_LOCK = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
 
 const parse = <T>(raw: string | null): T | null => { if (!raw) return null; try { return JSON.parse(raw) as T } catch { return null } }
 
@@ -41,12 +44,38 @@ export async function listJobs(limit = 200): Promise<UpdateAutomationJob[]> {
   return jobs.filter((j): j is UpdateAutomationJob => j !== null)
 }
 
-const TRANSIENT_FAILURES = new Set(['timeout', 'provider_error', 'internal_error'])
 function needsReconciliation(j: UpdateAutomationJob): boolean {
-  return AUTOMATION_ACTIVE.includes(j.status)
+  // A complete review waits for a human, not a worker. Keeping thousands of healthy
+  // review-ready jobs in an oldest-first queue could crowd out actual running work.
+  const backgroundActive = AUTOMATION_ACTIVE.includes(j.status) && j.status !== 'awaiting_owner_review'
+  const incompleteReview = j.status === 'awaiting_owner_review' && (!j.pullRequestUrl || !j.previewUrl)
+  return backgroundActive || incompleteReview
     || j.status === 'rollback_required'
     || (j.status === 'failed' && !!j.failureCategory && TRANSIENT_FAILURES.has(j.failureCategory))
     || (j.status === 'completed' && !j.recordsFinalizedAt)
+}
+
+async function migrateLegacyReconcileIndex(): Promise<void> {
+  if (await redis.get(K_RECONCILE_MIGRATED)) return
+  const token = randomUUID()
+  const locked = await redis.setNxPx(K_RECONCILE_MIGRATION_LOCK, token, 5 * 60_000)
+  if (!locked) return
+  try {
+    if (await redis.get(K_RECONCILE_MIGRATED)) return
+    // Walk the complete historical index in bounded pages. A fixed record ceiling would
+    // silently lose the oldest stuck jobs—the exact failure this migration repairs.
+    const pageSize = 500
+    for (let offset = 0; ; offset += pageSize) {
+      const ids = await redis.zrevrange(K_IDX, offset, offset + pageSize - 1)
+      const jobs = await Promise.all(ids.map(getJob))
+      await Promise.all(jobs.filter((j): j is UpdateAutomationJob => !!j && needsReconciliation(j))
+        .map(j => redis.zadd(K_RECONCILE, j.updatedAt, j.id)))
+      if (ids.length < pageSize) break
+    }
+    await redis.set(K_RECONCILE_MIGRATED, '1')
+  } finally {
+    try { await redis.eval(RELEASE_LOCK, [K_RECONCILE_MIGRATION_LOCK], [token]) } catch { /* TTL */ }
+  }
 }
 
 /** Background candidates, oldest first so no job can starve behind newer traffic.
@@ -56,11 +85,7 @@ function needsReconciliation(j: UpdateAutomationJob): boolean {
  * the small active index instead of repeatedly scanning historical jobs.
  */
 export async function listReconcileJobs(limit = 500): Promise<UpdateAutomationJob[]> {
-  if (!(await redis.get(K_RECONCILE_MIGRATED))) {
-    const legacy = (await listJobs(5_000)).filter(needsReconciliation)
-    await Promise.all(legacy.map(job => redis.zadd(K_RECONCILE, job.updatedAt, job.id)))
-    await redis.set(K_RECONCILE_MIGRATED, '1')
-  }
+  await migrateLegacyReconcileIndex()
 
   const indexedIds = await redis.zrange(K_RECONCILE, 0, Math.max(0, limit - 1))
   const indexed = await Promise.all(indexedIds.map(getJob))
@@ -82,11 +107,10 @@ export async function jobForIdempotency(key: string): Promise<UpdateAutomationJo
 export async function bindIdempotency(key: string, jobId: string): Promise<void> { await redis.set(K_IDEM + key, jobId) }
 
 // Per-business orchestration lock (prevents two jobs/promotions racing one target).
-const RELEASE = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
 export async function withBusinessLock<T>(businessId: string, fn: () => Promise<T>, opts: { onBusy: () => T; token: string; ttlMs?: number }): Promise<T> {
   const acquired = await redis.setNxPx(K_LOCK + businessId, opts.token, opts.ttlMs ?? 60_000)
   if (!acquired) return opts.onBusy()
-  try { return await fn() } finally { try { await redis.eval(RELEASE, [K_LOCK + businessId], [opts.token]) } catch { /* TTL */ } }
+  try { return await fn() } finally { try { await redis.eval(RELEASE_LOCK, [K_LOCK + businessId], [opts.token]) } catch { /* TTL */ } }
 }
 
 // Transfer evidence (§4 #7). Deliberately a SEPARATE key family: `listJobs` loads whole
