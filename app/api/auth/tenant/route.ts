@@ -5,7 +5,11 @@
 //        a member of cannot appear, and no tenant id from the request is consulted.
 // POST — bind a session to one of them.
 //
-// Reachable in two states, both of which prove identity first:
+// Available only when TENANCY_ENABLED=true. In single-tenant mode there is no
+// organization to select or switch to, so both methods fail closed before reading
+// a cookie or request body and can never mint a replacement session.
+//
+// When enabled, it is reachable in two states, both of which prove identity first:
 //   • a PENDING token (multi-membership login, before a choice) — signed, roleless,
 //     refused by getPrincipal, so it can do nothing except complete this step;
 //   • a live session (switching organizations mid-visit).
@@ -35,6 +39,10 @@ import { recordTenantEvent } from '../../../lib/platform/observability/tenant-te
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+function unavailable(): NextResponse {
+  return NextResponse.json({ error: 'not found' }, { status: 404 })
+}
+
 /** The caller's user id from EITHER a pending selection token or a live session. */
 async function callerUserId(req: NextRequest): Promise<string | null> {
   const pending = await getPendingUserId(req)
@@ -47,6 +55,7 @@ async function callerUserId(req: NextRequest): Promise<string | null> {
 }
 
 export async function GET(req: NextRequest) {
+  if (!isEnabled('TENANCY_ENABLED')) return unavailable()
   const userId = await callerUserId(req)
   if (!userId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const memberships = await listActiveMembershipsForUser(userId)
@@ -54,6 +63,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // There is nothing to switch in single-tenant mode. This check must precede
+  // identity and body parsing so no named-user role can be re-derived here.
+  if (!isEnabled('TENANCY_ENABLED')) return unavailable()
+
   const userId = await callerUserId(req)
   if (!userId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
@@ -67,11 +80,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }
 
-  if (isEnabled('TENANCY_ENABLED')) {
-    const tenant = await getTenant(membership.tenantId)
-    if (!tenant || tenant.status === 'suspended') {
-      return NextResponse.json({ error: 'forbidden' }, { status: 403 })
-    }
+  const tenant = await getTenant(membership.tenantId)
+  if (!tenant || tenant.status === 'suspended') {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }
 
   // A fresh session bound to the chosen tenant. Role and staff link come from the

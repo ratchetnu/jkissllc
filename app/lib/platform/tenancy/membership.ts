@@ -10,11 +10,12 @@
 // that the authenticated user holds an ACTIVE membership in that tenant. There is
 // no fail-open path.
 //
-// COMPATIBILITY — while TENANCY_ENABLED=false the deployment is single-tenant, so
-// resolution returns a synthetic active membership for the REFERENCE tenant ONLY
-// (byte-identical to today, no persisted state required) and DENIES any other
-// requested tenant id. When enabled, a real persisted active membership is
-// required; anything else fails closed.
+// COMPATIBILITY — while TENANCY_ENABLED=false the deployment is single-tenant.
+// Only the legacy shared-password owner may resolve a synthetic reference-tenant
+// membership here. Named users already receive a role-preserving compatibility
+// session during login; fabricating a role in this lower-level membership lookup
+// would let a later caller overwrite that trusted role. When enabled, a real
+// persisted active membership is required; anything else fails closed.
 //
 // Storage — the PLATFORM-GLOBAL keyspace (never tenant-prefixed): memberships are
 // platform roster data, asserted via platformKey(). No cross-tenant identifier is
@@ -178,10 +179,11 @@ export type ResolveOpts = { enabled?: boolean; correlationId?: string }
 /**
  * Decide whether `userId` may act as `requestedTenantId`, returning the active
  * membership or null. NEVER trusts the requested id on its own:
- *   • tenancy OFF  → single-tenant. The reference tenant (or an absent request →
- *                    reference) resolves to a synthetic active admin membership;
- *                    ANY other requested id is denied (a client cannot conjure a
- *                    second tenant). No persisted state needed → byte-identical.
+ *   • tenancy OFF  → single-tenant. The legacy owner may resolve the reference
+ *                    tenant (or an absent request → reference) as admin. Named
+ *                    users are denied here because this function has no trusted
+ *                    role input and must never invent one. ANY other requested id
+ *                    is denied (a client cannot conjure a second tenant).
  *   • tenancy ON   → a persisted, ACTIVE membership is required. No match, a
  *                    non-active status, or a malformed id → null (fail closed).
  */
@@ -208,6 +210,10 @@ export async function resolveMembership(
     const target = requested ?? DEFAULT_TENANT_ID
     if (target !== DEFAULT_TENANT_ID) {
       recordTenantEvent('cross-tenant-denial', { detail: 'foreign tenant requested while single-tenant', correlationId: opts?.correlationId })
+      return null
+    }
+    if (uid !== 'owner') {
+      recordTenantEvent('cross-tenant-denial', { detail: 'named membership requires trusted role while single-tenant', correlationId: opts?.correlationId })
       return null
     }
     return {

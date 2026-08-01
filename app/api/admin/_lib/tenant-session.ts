@@ -27,6 +27,7 @@ import { getPrincipal, type Principal } from './session'
 import { resolveMembership } from '../../../lib/platform/tenancy/membership'
 import { getTenant } from '../../../lib/platform/tenancy/tenant-registry'
 import { isEnabled } from '../../../lib/platform/flags'
+import { DEFAULT_TENANT_ID } from '../../../lib/platform/tenancy/types'
 
 function unauthorized(): NextResponse {
   return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -50,16 +51,22 @@ export async function requireMemberSession(req: NextRequest): Promise<MemberPrin
   // Legacy owner — no User row, no membership. Unchanged authority.
   if (who.sub === 'owner') return { ...who, membershipVerified: false }
 
+  // With tenancy disabled, named-user login has already preserved the account's
+  // trusted role in the signed session. There is no store-backed membership to
+  // revalidate, and resolveMembership must not invent one. Keep the signed role
+  // exactly as-is and reject even a signed non-reference tenant defensively.
+  if (!isEnabled('TENANCY_ENABLED')) {
+    if (who.tenantId !== DEFAULT_TENANT_ID) return forbidden()
+    return { ...who, membershipVerified: false }
+  }
+
   const membership = await resolveMembership(who.sub, who.tenantId)
   if (!membership) return forbidden()
 
-  // A tenant that has been deleted or suspended cannot be acted in. Only meaningful
-  // once tenancy is on; while off there is exactly one tenant and no registry record
-  // is required for continuity.
-  if (isEnabled('TENANCY_ENABLED')) {
-    const tenant = await getTenant(membership.tenantId)
-    if (!tenant || tenant.status === 'suspended') return forbidden()
-  }
+  // A tenant that has been deleted or suspended cannot be acted in. This branch is
+  // tenancy-on only; the compatibility return above needs no registry record.
+  const tenant = await getTenant(membership.tenantId)
+  if (!tenant || tenant.status === 'suspended') return forbidden()
 
   // The STORE is authoritative for role. A token minted before a demotion must not
   // keep its old authority for the rest of its 2-hour life.
