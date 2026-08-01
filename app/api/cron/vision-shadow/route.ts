@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runDueShadowJobs } from '../../../lib/estimation/shadow-worker'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
-import { activeTenantIds } from '../../../lib/platform/tenancy/tenant-store'
+import { activeTenantIdsFromRegistry } from '../../../lib/platform/tenancy/tenant-registry'
 import { isEnabled } from '../../../lib/platform/flags'
 import { alert } from '../../../lib/alerts'
 
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
 
   const tenants: { tenant: string; processed: number; error?: string }[] = []
   let processed = 0
-  for (const tenantId of activeTenantIds()) {
+  for (const tenantId of await activeTenantIdsFromRegistry()) {
     let summary: { processed: number; results: { bookingId: string; status: string }[] } = { processed: 0, results: [] }
     try {
       await withBackgroundTenant('cron', async () => {

@@ -6,6 +6,7 @@ import { ESTIMATE_SCHEMA } from '../../../lib/ai/schema'
 import { toModelReadableDataUrl } from '../../../lib/image-convert'
 import { optimizeDataUrlForModel } from '../../../lib/image-optimize'
 import { imageOptimizationEnabled, resolveImageOptimizeOptions } from '../../../lib/ai/image-optimize-config'
+import { withPublicHostRoute } from '../../../lib/platform/tenancy/with-public-host-route'
 
 export const runtime = 'nodejs' // jimp image optimization uses Node APIs (Buffer/zlib)
 export const maxDuration = 30
@@ -13,7 +14,7 @@ export const maxDuration = 30
 // POST /api/ai/photo-estimate — customer uploads a photo of their junk/load and
 // gets an AI-suggested load size + ballpark price range. Public, so it's rate-limited
 // and bot-protected, and fails soft.
-export async function POST(req: NextRequest) {
+export const POST = withPublicHostRoute(async function POST(req: NextRequest) {
   if (await rateLimit(req, 'photoestimate', 6, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many estimates. Please wait a few minutes.' }, { status: 429 })
   }
@@ -70,4 +71,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Could not read that photo clearly — try another angle, or request a custom quote below.' }, { status: 422 })
   }
   return NextResponse.json({ ok: true, loadSize, low, high, summary, callId: result.callId })
-}
+})

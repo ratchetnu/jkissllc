@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { runDueReminders, runEscalations } from '../../../lib/reminder-engine'
 import { withSmsSuppressed } from '../../../lib/sms'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
-import { activeTenantIds } from '../../../lib/platform/tenancy/tenant-store'
+import { activeTenantIdsFromRegistry } from '../../../lib/platform/tenancy/tenant-registry'
 import { alert } from '../../../lib/alerts'
 
 export const runtime = 'nodejs'
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   // failure is isolated and never executes under another. Counts only (no PII).
   const tenants: { tenant: string; evaluated: number; sent: number; escalated: number; error?: string }[] = []
   try {
-    for (const tenantId of activeTenantIds()) {
+    for (const tenantId of await activeTenantIdsFromRegistry()) {
       let due: { evaluated: number; sent: number } = { evaluated: 0, sent: 0 }
       let esc: { escalated: number } = { escalated: 0 }
       try {

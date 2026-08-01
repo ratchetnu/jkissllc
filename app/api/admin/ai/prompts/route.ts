@@ -4,13 +4,14 @@ import { hasPrompt, listPrompts } from '../../../../lib/ai/prompts'
 import {
   listVersions, getActiveVersion, getAb, saveEdit, activateVersion, setAb, clearAb, type AbConfig,
 } from '../../../../lib/ai/prompt-store'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 // GET /api/admin/ai/prompts — the Prompt Management surface. Lists every prompt with
 // its full version history, active version, and A/B config. Read access = ai:analytics.
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async function GET(req: NextRequest) {
   const who = await requirePermission(req, 'ai:analytics')
   if (who instanceof NextResponse) return who
   try {
@@ -28,13 +29,13 @@ export async function GET(req: NextRequest) {
     console.error('[ai/prompts GET]', e)
     return NextResponse.json({ error: 'Failed to load prompts.' }, { status: 500 })
   }
-}
+})
 
 // POST /api/admin/ai/prompts — mutations. Editing/activating/rolling back a prompt and
 // configuring an A/B test are powerful, so they require ai:prompts:manage (admin only).
 // This changes AI CONFIG only — never authoritative business data — and is fully
 // reversible (rollback to any prior version, including the immutable built-in).
-export async function POST(req: NextRequest) {
+export const POST = withTenantRoute(async function POST(req: NextRequest) {
   const who = await requirePermission(req, 'ai:prompts:manage')
   if (who instanceof NextResponse) return who
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
@@ -77,4 +78,4 @@ export async function POST(req: NextRequest) {
     console.error('[ai/prompts POST]', e)
     return NextResponse.json({ error: 'Prompt update failed.' }, { status: 500 })
   }
-}
+})

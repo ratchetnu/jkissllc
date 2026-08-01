@@ -15,9 +15,9 @@
 //      their path through scopeBlobPath (a helper), so they'd land in the shared
 //      namespace even with tenancy on.
 //
-// This is a REPORT, not a CI gate: it always exits 0 so it never blocks a parallel
-// branch. Promote a section to a gate (process.exit(1) on UNCLASSIFIED) once the
-// remaining items below are closed. Nothing here imports app code or touches Redis.
+// This is a CI gate. Unknown route boundaries, literal Blob writes, and use of the
+// retired hardcoded tenant fan-out fail the command. Nothing imports app code or
+// touches Redis.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -56,13 +56,25 @@ const EXEMPT_PREAUTH = new Set([
   'app/api/health/route.ts',            // liveness — no data access
   'app/api/opspilot/waitlist/route.ts', // platform (opspilot:) — allowlisted global
   'app/api/admin/opspilot-waitlist/route.ts',
+  'app/api/auth/tenant/route.ts',             // membership directory/switch boundary
+  'app/api/automation/callback/route.ts',     // signed platform-global control plane
+  'app/api/automation/manifest/route.ts',     // signed platform-global control plane
+  'app/api/cron/operion-reconcile/route.ts',  // platform-global release control plane
+  'app/api/cron/operion-sync/route.ts',       // platform-global product registry
+  'app/api/operion/demo/route.ts',            // platform-global Operion lead capture
+])
+
+const BACKGROUND_DELEGATES = new Set([
+  'app/api/cron/route-auto-cancel/route.ts',   // runAutoCancelJob fans out via registry
 ])
 
 function classifyRoute(p) {
   const src = read(p)
   const r = rel(p)
-  if (/withTenantRoute\s*\(/.test(src)) return 'request-wrapped'
+  if (/with(?:Tenant|PublicToken|PublicHost)Route(?:<[^>]+>)?\s*\(/.test(src)) return 'request-wrapped'
+  if (/runWithTenant\s*\(/.test(src) && /resolveTenant/.test(src)) return 'request-wrapped'
   if (/withBackgroundTenant\s*\(|resolveBackgroundTenant\s*\(/.test(src)) return 'background-context'
+  if (BACKGROUND_DELEGATES.has(r)) return 'background-context'
   if (EXEMPT_PREAUTH.has(r)) return 'exempt-preauth'
   return 'unclassified'
 }
@@ -142,7 +154,15 @@ console.log('\n3. UN-SCOPED BLOB WRITES (literal path not via a *BlobPath / scop
 if (!blobWriteHits.length) console.log('   none found')
 for (const h of blobWriteHits) console.log(`   • ${h.at}  ${h.call}(${h.arg}…)`)
 
+const codeOnly = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+const retiredFanoutHits = [...routeFiles, ...libFiles]
+  .filter((p) => /\bactiveTenantIds\s*\(/.test(codeOnly(read(p))))
+  .map(rel)
+console.log('\n4. RETIRED HARDCODED TENANT FAN-OUT')
+if (!retiredFanoutHits.length) console.log('   none found')
+for (const hit of retiredFanoutHits) console.log(`   • ${hit}`)
+
 console.log(`\n${bar}`)
-console.log('Report only — exit 0. See docs/opspilot-os/tenant-isolation/audits/ for the')
-console.log('narrative audit and the phased plan to close these items.\n')
-process.exit(0)
+const blockers = routeBuckets.unclassified.length + blobWriteHits.length + retiredFanoutHits.length
+console.log(blockers ? `FAIL — ${blockers} tenant-boundary blocker(s).\n` : 'PASS — tenant-boundary certification is clean.\n')
+process.exit(blockers ? 1 : 0)

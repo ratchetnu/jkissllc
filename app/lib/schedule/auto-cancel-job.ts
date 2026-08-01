@@ -14,7 +14,7 @@ import { scanAllRoutes, getRouteByToken, saveRoute, autoCancelRoute } from '../r
 import { withRouteLock, RouteBusyError } from '../route-mutex'
 import { isEnabled } from '../platform/flags'
 import { withBackgroundTenant } from '../platform/tenancy/request-context'
-import { activeTenantIds } from '../platform/tenancy/tenant-store'
+import { activeTenantIdsFromRegistry } from '../platform/tenancy/tenant-registry'
 import { currentTenantId } from '../platform/tenancy/context'
 import { alert } from '../alerts'
 import {
@@ -155,31 +155,19 @@ export async function runAutoCancelJob(req: NextRequest, now: number): Promise<N
   const inWindow = isCancellationWindow(now)
   const tenancyOn = isEnabled('TENANCY_ENABLED')
 
-  // TENANT COMPLETENESS. `activeTenantIds()` is a hardcoded single-tenant list, not a
-  // registry — it cannot enumerate every tenant. With tenancy OFF that is exactly
-  // right (the reference tenant IS the complete set). With tenancy ON it would mean
-  // sweeping one tenant and reporting as though all had been processed, so activation
-  // is refused outright rather than being silently partial.
-  if (tenancyOn) {
-    try {
-      await alert({
-        type: 'cron_job_failed', severity: 'WARNING', worker: 'route-auto-cancel',
-        route: '/api/cron/route-auto-cancel', errorClass: 'TenantRegistryIncomplete',
-      })
-    } catch { /* alerting must never mask the refusal */ }
+  let activeTenants: string[]
+  try {
+    activeTenants = await activeTenantIdsFromRegistry()
+  } catch {
     return NextResponse.json({
-      ok: true, mode: 'blocked (no complete tenant registry)', write: false,
+      ok: true, mode: 'blocked (tenant registry unavailable)', write: false,
       activationBlocked: true,
-      activationBlockedReason:
-        'TENANCY_ENABLED is on but activeTenantIds() is a hardcoded single-tenant list, ' +
-        'so a complete tenant sweep cannot be proven. Refusing to run rather than ' +
-        'processing one tenant and reporting success.',
+      activationBlockedReason: 'No complete active-tenant registry is available; refusing a partial sweep.',
       scanComplete: false,
       flag: { ROUTE_AUTO_CANCEL_ENABLED: flagOn, TENANCY_ENABLED: tenancyOn },
       timezone: OPS_TIMEZONE, centralDate: centralDate(now), centralHour: centralHour(now),
       graceHours: CANCELLATION_GRACE_HOURS, inCancellationWindow: inWindow,
-      scheduled: false,
-      tenants: [],
+      scheduled: false, tenants: [],
     })
   }
 
@@ -192,7 +180,7 @@ export async function runAutoCancelJob(req: NextRequest, now: number): Promise<N
   try {
     const tenants: Record<string, unknown>[] = []
     let anyIncompleteScan = false
-    for (const tenantId of activeTenantIds()) {
+    for (const tenantId of activeTenants) {
       try {
         const r = await withBackgroundTenant('cron', () => runForTenant(now, write), tenantId)
         if (!r.scanComplete) anyIncompleteScan = true

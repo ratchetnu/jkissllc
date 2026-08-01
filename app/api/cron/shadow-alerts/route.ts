@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runShadowAlertEvaluation } from '../../../lib/estimation/shadow-alert-store'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
-import { activeTenantIds } from '../../../lib/platform/tenancy/tenant-store'
+import { activeTenantIdsFromRegistry } from '../../../lib/platform/tenancy/tenant-registry'
 import { isEnabled } from '../../../lib/platform/flags'
 import { alert } from '../../../lib/alerts'
 
@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
 
   const tenants: { tenant: string; opened: number; skipped?: string; error?: string }[] = []
   let opened = 0
-  for (const tenantId of activeTenantIds()) {
+  for (const tenantId of await activeTenantIdsFromRegistry()) {
     try {
       await withBackgroundTenant('cron', async () => {
         try {

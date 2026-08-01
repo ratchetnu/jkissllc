@@ -1,6 +1,7 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { isEnabled } from '../../../lib/platform/flags'
 import { getProgressCalibration, DEFAULT_ANALYZE_P50_MS } from '../../../lib/ai/progress-calibration'
+import { withPublicHostRoute } from '../../../lib/platform/tenancy/with-public-host-route'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -10,7 +11,7 @@ export const dynamic = 'force-dynamic'
 // number + sample size). Returns the safe default when the flag is off or
 // telemetry is thin, so the client can always render. Short CDN cache — the p50
 // drifts slowly and a stale value is harmless.
-export async function GET() {
+export const GET = withPublicHostRoute(async function GET(_req: NextRequest) {
   if (!isEnabled('OPERION_PROGRESS_UX')) {
     return NextResponse.json(
       { analyzeP50Ms: DEFAULT_ANALYZE_P50_MS, sampleSize: 0, source: 'default', enabled: false },
@@ -22,4 +23,4 @@ export async function GET() {
     { ...cal, enabled: true },
     { headers: { 'Cache-Control': 'public, max-age=120, s-maxage=120' } },
   )
-}
+})

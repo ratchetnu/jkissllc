@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requirePermission } from '../../_lib/session'
 import { computeAiAnalytics, computeCostView } from '../../../../lib/ai/analytics'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -10,7 +11,7 @@ export const maxDuration = 30
 // series, month-to-date, projected month-end, trend, cap risk, and explainable
 // optimization hints. Estimated costs are reconciled to provider-reported cost when
 // the Gateway supplies it (see costSource on the analytics models breakdown).
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async function GET(req: NextRequest) {
   const who = await requirePermission(req, 'ai:analytics')
   if (who instanceof NextResponse) return who
   try {
@@ -28,4 +29,4 @@ export async function GET(req: NextRequest) {
     console.error('[ai/cost]', e)
     return NextResponse.json({ error: 'Failed to load cost view.' }, { status: 500 })
   }
-}
+})

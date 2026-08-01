@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requirePermission } from '../../_lib/session'
 import { featureCatalog } from '../../../../lib/ai/registry'
 import { computeAiAnalytics } from '../../../../lib/ai/analytics'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -10,7 +11,7 @@ export const maxDuration = 30
 // GET /api/admin/ai/registry — the AI Feature Registry joined with live metrics: each
 // documented capability (model, prompt version, owner, access, status) plus its
 // in-window usage, cost, success rate, and quality from telemetry.
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async function GET(req: NextRequest) {
   const who = await requirePermission(req, 'ai:analytics')
   if (who instanceof NextResponse) return who
   try {
@@ -31,4 +32,4 @@ export async function GET(req: NextRequest) {
     console.error('[ai/registry]', e)
     return NextResponse.json({ error: 'Failed to load feature registry.' }, { status: 500 })
   }
-}
+})

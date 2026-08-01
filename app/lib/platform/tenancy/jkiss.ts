@@ -11,6 +11,7 @@ import { DEFAULT_TENANT_ID, type Tenant } from './types'
 export const JKISS_TENANT: Tenant = {
   id: DEFAULT_TENANT_ID, // 'jkiss' — opaque, NOT derived from the display name
   slug: 'jkiss',
+  domains: ['jkissllc.com', 'www.jkissllc.com', 'jkissllc.vercel.app'],
   displayName: COMPANY.legalName,
   legal: {
     dotNumber: COMPANY.usdot,

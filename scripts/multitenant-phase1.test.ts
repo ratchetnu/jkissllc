@@ -68,6 +68,9 @@ import {
   ensureReferenceTenant, listTenants, upsertTenant, activeTenantIdsFromRegistry,
 } from '../app/lib/platform/tenancy/tenant-registry'
 import {
+  resolveTenantFromEmailChannel, resolveTenantFromHostChannel, resolveTenantFromPhoneChannel,
+} from '../app/lib/platform/tenancy/tenant-channel-resolve'
+import {
   upsertMembership, ensureReferenceMembership, resolveMembership, assertMembership,
   getMembership, listTenantIdsForUser, TenantAccessDeniedError,
 } from '../app/lib/platform/tenancy/membership'
@@ -117,6 +120,25 @@ test('registry: records live in the platform-global keyspace (never tenant-prefi
   // Even with tenancy ON and a foreign tenant context, a platform key is unchanged.
   assert.equal(scopeKey('platform:tenant:jkiss', { enabled: true, tenantId: 'acme' }), 'platform:tenant:jkiss')
   assert.equal(scopeKey('platform:membership:jkiss:owner', { enabled: true, tenantId: 'acme' }), 'platform:membership:jkiss:owner')
+})
+
+test('registry channels resolve one active tenant and never use first-tenant fallback', async () => {
+  await withFlag(true, async () => {
+    await upsertTenant(JKISS_TENANT)
+    await upsertTenant({
+      ...JKISS_TENANT,
+      id: 'supercharged', slug: 'supercharged', displayName: 'Supercharged',
+      domains: ['supercharged.example'],
+      legal: { ...JKISS_TENANT.legal, phone: '+1 555 555 0102', supportEmail: 'ops@supercharged.example' },
+      brand: { ...JKISS_TENANT.brand, emailFromAddress: 'dispatch@supercharged.example' },
+      createdAt: 1,
+    })
+    assert.deepEqual(await activeTenantIdsFromRegistry(), ['jkiss', 'supercharged'])
+    assert.equal(await resolveTenantFromPhoneChannel('+1 (555) 555-0102'), 'supercharged')
+    assert.equal(await resolveTenantFromEmailChannel('Supercharged <ops@supercharged.example>'), 'supercharged')
+    assert.equal(await resolveTenantFromHostChannel('supercharged.example:443'), 'supercharged')
+    assert.equal(await resolveTenantFromHostChannel('unknown.example'), null)
+  })
 })
 
 // ── Membership: server-side validation ────────────────────────────────────────
