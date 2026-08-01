@@ -93,11 +93,13 @@ globalThis.fetch = (async (url: string, init?: { body?: string; method?: string 
 }) as unknown as typeof fetch
 
 import {
-  advanceRollback, pollRollback, approveProduction,
+  advanceRollback, pollRollback, approveProduction, advancePromotion,
+  PRODUCTION_DEPLOY_TIMEOUT_MS,
   ROLLBACK_MAX_POLLS, ROLLBACK_POLL_BACKOFF_MS, ROLLBACK_TIMEOUT_MS,
 } from '../app/lib/platform/automation/orchestrator'
 import * as store from '../app/lib/platform/automation/store'
 import { saveBusiness } from '../app/lib/platform/updates/store'
+import { getPublishByJob, startPublish } from '../app/lib/platform/release/publish-store'
 import type { UpdateAutomationJob } from '../app/lib/platform/automation/types'
 
 const T0 = 1_800_000_000_000
@@ -138,6 +140,35 @@ const reload = () => store.getJob('job_1')
 /** Poll times must be relative to the REAL start the orchestrator stamped, or every
  *  poll looks like it happened 20 years late and trips the timeout. */
 const startedAt = async () => (await reload())!.rollbackStartedAt!
+
+// ── Production deployment discovery is bounded ─────────────────────────────
+
+test('a merge with no observed Production deployment becomes unconfirmed and keeps reconciling', async () => {
+  await job({
+    status: 'production_deploying', mergeCommit: 'merge_commit_1',
+    productionDeployStartedAt: T0, updatedAt: T0, automaticRollbackEligible: false,
+  })
+  await startPublish({
+    now: T0, businessId: BIZ, businessSlug: BIZ, approvalId: 'APR-1', jobId: 'job_1',
+    releaseId: 'merge_commit_1', sourceDeploymentId: 'dpl_preview', mode: 'live', startedBy: 'owner',
+  })
+  vercel.deployments = { deployments: [] }
+
+  const pending = await advancePromotion({ jobId: 'job_1', at: T0 + PRODUCTION_DEPLOY_TIMEOUT_MS - 1 })
+  assert.equal(pending.ok, true)
+  assert.equal((await reload())!.status, 'production_deploying')
+
+  const expired = await advancePromotion({ jobId: 'job_1', at: T0 + PRODUCTION_DEPLOY_TIMEOUT_MS + 1 })
+  assert.equal(expired.ok, true)
+  const j = (await reload())!
+  assert.equal(j.status, 'production_deploying')
+  assert.ok(j.productionDeployUnconfirmedAt)
+  assert.equal(j.failureCategory, undefined)
+  assert.match(j.failureSummary!, /status is unconfirmed and reconciliation is still checking/)
+  const publish = await getPublishByJob('job_1')
+  assert.equal(publish?.status, 'unconfirmed')
+  assert.match(publish?.failureReason ?? '', /status is unconfirmed/)
+})
 
 // ── GAP B: a started rollback is not a finished one ──────────────────────────
 

@@ -18,8 +18,9 @@ import {
   listDeployments, saveDeployment, nextDeploymentId,
   updateRelease, listReleases, listCompat,
 } from '../updates/store'
-import { getJob, saveJob, listJobs } from './store'
+import { getJob, saveJob, listJobs, listReconcileJobs } from './store'
 import { recordPlatformAudit, type PlatformAuditAction } from '../updates/audit'
+import { reconcilePublishForJob } from '../release/publish-store'
 
 const now = () => Date.now()
 const uniq = (xs: string[]) => [...new Set(xs)]
@@ -257,6 +258,14 @@ export async function reconcileJobRecords(input: {
   freshJob.recordsFinalizedAt = now()
   freshJob.updatedAt = now()
   await saveJob(freshJob)
+  // The publish record is a projection of this authoritative job. This call is also the
+  // crash-recovery path when inline completion updated the job but not release history.
+  await reconcilePublishForJob({
+    jobId: freshJob.id,
+    status: 'completed',
+    now: freshJob.updatedAt,
+    deploymentId: freshJob.productionDeploymentId,
+  }).catch(() => null)
   await audit({ action: 'reconcile.records_finalized', newStatus: 'finalized', summary: `All records reconciled for ${job.id} (${business.name})` })
 
   return {
@@ -299,7 +308,7 @@ export async function reconcileJobsIndependently(
 }
 
 export async function reconcileCompletedJobs(input: { actor?: string; source?: string; limit?: number } = {}): Promise<ReconcileSummary[]> {
-  const jobs = (await listJobs(input.limit ?? 200)).filter((j) => j.status === 'completed' && !j.recordsFinalizedAt)
+  const jobs = (await listReconcileJobs(input.limit ?? 500)).filter((j) => j.status === 'completed' && !j.recordsFinalizedAt)
   return reconcileJobsIndependently(jobs, (job) =>
     reconcileJobRecords({ job, actor: input.actor ?? 'system', actorType: 'system', source: input.source ?? 'reconciler' }),
   )

@@ -54,6 +54,7 @@ test('mode: live ONLY in Production runtime + flag; simulated everywhere else', 
 test('ux state mapping — truthful states', () => {
   assert.equal(publishUxState('promoting'), 'queued')
   assert.equal(publishUxState('verifying'), 'verifying')
+  assert.equal(publishUxState('unconfirmed'), 'unconfirmed')
   assert.equal(publishUxState('completed'), 'ready')
   assert.equal(publishUxState('failed'), 'failed')
   assert.equal(publishUxState(undefined), 'idle')
@@ -132,14 +133,14 @@ async function seedActiveApproval(now: number, business = { id: 'supercharged', 
   return c.ok ? c.approval : (null as never)
 }
 
-function spyPromote(result: { ok: true; promotedDeploymentId?: string } | { ok: false; error: string }) {
-  const calls: { project: string; dep: string }[] = []
-  const fn = async (project: string, dep: string) => { calls.push({ project, dep }); return result }
+function spyBegin(result: { ok: true } | { ok: false; error: string }) {
+  const calls: number[] = []
+  const fn = async () => { calls.push(Date.now()); return result }
   return { fn, calls }
 }
 
-// ── Executor: successful publish, consume, single promotion, audit ───────────
-test('executor: successful simulated publish — one promotion, approval consumed, audit trail', async () => {
+// ── Executor: approval + authoritative job handoff ───────────────────────────
+test('executor: simulated publish consumes approval but never starts Production', async () => {
   const fake = installFakeKv()
   try {
     const { executePublish } = await import('../app/lib/platform/release/publish-executor')
@@ -147,11 +148,11 @@ test('executor: successful simulated publish — one promotion, approval consume
     const { listPlatformAuditForRef } = await import('../app/lib/platform/updates/audit')
     const now = 10_000_000
     const approval = await seedActiveApproval(now)
-    const promote = spyPromote({ ok: true, promotedDeploymentId: 'dpl_prev9' })
-    const r = await executePublish({ now: now + 1000, actor: 'owner', business: { id: 'supercharged', slug: 'supercharged', project: 'supercharged' }, approval, binding: BINDING, mode: 'simulated', promote: promote.fn })
+    const begin = spyBegin({ ok: true })
+    const r = await executePublish({ now: now + 1000, actor: 'owner', business: { id: 'supercharged', slug: 'supercharged' }, jobId: 'AUTO-1', approval, binding: BINDING, mode: 'simulated', beginPromotion: begin.fn })
     assert.equal(r.ok, true)
     assert.equal(r.ok && r.publish.status, 'completed')
-    assert.equal(promote.calls.length, 1)                       // EXACTLY ONE promotion
+    assert.equal(begin.calls.length, 0)
 
     // Approval is now consumed.
     const after = await getActiveApprovalFor('supercharged')
@@ -160,31 +161,31 @@ test('executor: successful simulated publish — one promotion, approval consume
     // Audit trail present.
     const events = await listPlatformAuditForRef({ businessId: 'supercharged' }, 50)
     const actions = events.map((e) => e.action)
-    for (const a of ['approval.consumed', 'publish.started', 'deployment.promoted', 'publish.completed']) {
+    for (const a of ['approval.consumed', 'publish.started', 'publish.completed']) {
       assert.ok(actions.includes(a as never), `missing audit ${a}`)
     }
   } finally { fake.restore() }
 })
 
-test('executor: idempotent — a repeat for the same approval never promotes twice', async () => {
+test('executor: idempotent — a repeat for the same approval never starts twice', async () => {
   const fake = installFakeKv()
   try {
     const { executePublish } = await import('../app/lib/platform/release/publish-executor')
     const now = 11_000_000
     const approval = await seedActiveApproval(now)
-    const promote = spyPromote({ ok: true, promotedDeploymentId: 'dpl_prev9' })
-    const biz = { id: 'supercharged', slug: 'supercharged', project: 'supercharged' }
-    const r1 = await executePublish({ now: now + 1, actor: 'owner', business: biz, approval, binding: BINDING, mode: 'simulated', promote: promote.fn })
-    const r2 = await executePublish({ now: now + 2, actor: 'owner', business: biz, approval, binding: BINDING, mode: 'simulated', promote: promote.fn })
+    const begin = spyBegin({ ok: true })
+    const biz = { id: 'supercharged', slug: 'supercharged' }
+    const r1 = await executePublish({ now: now + 1, actor: 'owner', business: biz, jobId: 'AUTO-2', approval, binding: BINDING, mode: 'simulated', beginPromotion: begin.fn })
+    const r2 = await executePublish({ now: now + 2, actor: 'owner', business: biz, jobId: 'AUTO-2', approval, binding: BINDING, mode: 'simulated', beginPromotion: begin.fn })
     assert.equal(r1.ok && !r1.idempotent, true)
     assert.equal(r2.ok && r2.idempotent, true)                  // second returns the SAME record
     assert.ok(r1.ok && r2.ok)
     if (r1.ok && r2.ok) assert.equal(r1.publish.id, r2.publish.id)
-    assert.equal(promote.calls.length, 1)                       // promoted once, not twice
+    assert.equal(begin.calls.length, 0)
   } finally { fake.restore() }
 })
 
-test('executor: promote failure → publish.failed, approval still consumed (no retry, no rollback)', async () => {
+test('executor: automation start failure → publish.failed and approval remains single-use', async () => {
   const fake = installFakeKv()
   try {
     const { executePublish } = await import('../app/lib/platform/release/publish-executor')
@@ -192,8 +193,8 @@ test('executor: promote failure → publish.failed, approval still consumed (no 
     const { listPlatformAuditForRef } = await import('../app/lib/platform/updates/audit')
     const now = 12_000_000
     const approval = await seedActiveApproval(now, { id: 'jkiss', slug: 'jkiss' }, { ...BINDING, businessId: 'jkiss' })
-    const promote = spyPromote({ ok: false, error: 'Vercel auth/permission denied' })
-    const r = await executePublish({ now: now + 1, actor: 'owner', business: { id: 'jkiss', slug: 'jkiss', project: 'jkissllc' }, approval, binding: { ...BINDING, businessId: 'jkiss' }, mode: 'live', promote: promote.fn })
+    const begin = spyBegin({ ok: false, error: 'merge refused' })
+    const r = await executePublish({ now: now + 1, actor: 'owner', business: { id: 'jkiss', slug: 'jkiss' }, jobId: 'AUTO-3', approval, binding: { ...BINDING, businessId: 'jkiss' }, mode: 'live', beginPromotion: begin.fn })
     assert.equal(r.ok, false)
     assert.equal(!r.ok && r.code, 'PROMOTE_FAILED')
     assert.equal(!r.ok && r.publish?.status, 'failed')
@@ -204,49 +205,49 @@ test('executor: promote failure → publish.failed, approval still consumed (no 
   } finally { fake.restore() }
 })
 
-test('executor: LIVE verify READY → completed (real verification, not faked)', async () => {
+test('executor: live publish starts one job and remains verifying until the job completes', async () => {
   const fake = installFakeKv()
   try {
     const { executePublish } = await import('../app/lib/platform/release/publish-executor')
     const now = 14_000_000
     const approval = await seedActiveApproval(now, { id: 'supercharged', slug: 'supercharged' })
-    const promote = spyPromote({ ok: true, promotedDeploymentId: 'dpl_prev9' })
-    const verifyCalls: string[] = []
-    const verify = async (_p: string, dep: string) => { verifyCalls.push(dep); return { ready: true } }
-    const r = await executePublish({ now: now + 1, actor: 'owner', business: { id: 'supercharged', slug: 'supercharged', project: 'jkissllc' }, approval, binding: BINDING, mode: 'live', promote: promote.fn, verify })
+    const begin = spyBegin({ ok: true })
+    const r = await executePublish({ now: now + 1, actor: 'owner', business: { id: 'supercharged', slug: 'supercharged' }, jobId: 'AUTO-4', approval, binding: BINDING, mode: 'live', beginPromotion: begin.fn })
     assert.equal(r.ok, true)
-    assert.equal(r.ok && r.publish.status, 'completed')
-    assert.deepEqual(verifyCalls, ['dpl_prev9'])                // verification actually ran
+    assert.equal(r.ok && r.publish.status, 'verifying')
+    assert.equal(begin.calls.length, 1)
   } finally { fake.restore() }
 })
 
-test('executor: LIVE verify NOT READY → failed (no fake completion)', async () => {
+test('publish projection completes only when the authoritative job completes', async () => {
   const fake = installFakeKv()
   try {
     const { executePublish } = await import('../app/lib/platform/release/publish-executor')
     const now = 15_000_000
-    const approval = await seedActiveApproval(now, { id: 'jkiss', slug: 'jkiss' }, { ...BINDING, businessId: 'jkiss' })
-    const promote = spyPromote({ ok: true, promotedDeploymentId: 'dpl_prev9' })
-    const verify = async () => ({ ready: false })
-    const r = await executePublish({ now: now + 1, actor: 'owner', business: { id: 'jkiss', slug: 'jkiss', project: 'jkissllc' }, approval, binding: { ...BINDING, businessId: 'jkiss' }, mode: 'live', promote: promote.fn, verify })
-    assert.equal(r.ok, false)
-    assert.equal(!r.ok && r.code, 'PROMOTE_FAILED')
-    assert.equal(!r.ok && r.publish?.status, 'failed')          // never faked to completed
+    const approval = await seedActiveApproval(now)
+    const begin = spyBegin({ ok: true })
+    const r = await executePublish({ now: now + 1, actor: 'owner', business: { id: 'supercharged', slug: 'supercharged' }, jobId: 'AUTO-5', approval, binding: BINDING, mode: 'live', beginPromotion: begin.fn })
+    assert.equal(r.ok && r.publish.status, 'verifying')
+    const { reconcilePublishForJob } = await import('../app/lib/platform/release/publish-store')
+    const waiting = await reconcilePublishForJob({ jobId: 'AUTO-5', status: 'unconfirmed', now: now + 2, reason: 'deployment not observed yet' })
+    assert.equal(waiting?.status, 'unconfirmed')
+    const done = await reconcilePublishForJob({ jobId: 'AUTO-5', status: 'completed', now: now + 3, deploymentId: 'dpl_prod' })
+    assert.equal(done?.status, 'completed')
+    assert.equal(done?.promotedDeploymentId, 'dpl_prod')
+    assert.equal(done?.failureReason, undefined)
   } finally { fake.restore() }
 })
 
-test('executor: SIMULATED mode never verifies (no verifying step claimed)', async () => {
+test('executor: simulated mode never calls the job executor', async () => {
   const fake = installFakeKv()
   try {
     const { executePublish } = await import('../app/lib/platform/release/publish-executor')
     const now = 16_000_000
     const approval = await seedActiveApproval(now, { id: 'supercharged', slug: 'supercharged' })
-    const promote = spyPromote({ ok: true, promotedDeploymentId: 'dpl_prev9' })
-    let verifyCalled = false
-    const verify = async () => { verifyCalled = true; return { ready: true } }
-    const r = await executePublish({ now: now + 1, actor: 'owner', business: { id: 'supercharged', slug: 'supercharged', project: 'jkissllc' }, approval, binding: BINDING, mode: 'simulated', promote: promote.fn, verify })
+    const begin = spyBegin({ ok: true })
+    const r = await executePublish({ now: now + 1, actor: 'owner', business: { id: 'supercharged', slug: 'supercharged' }, jobId: 'AUTO-6', approval, binding: BINDING, mode: 'simulated', beginPromotion: begin.fn })
     assert.equal(r.ok && r.publish.status, 'completed')
-    assert.equal(verifyCalled, false)                           // simulated never claims verification
+    assert.equal(begin.calls.length, 0)
   } finally { fake.restore() }
 })
 
@@ -256,38 +257,37 @@ test('executor: refuses when the approval is not consumable (expired/changed)', 
     const { executePublish } = await import('../app/lib/platform/release/publish-executor')
     const now = 13_000_000
     const approval = await seedActiveApproval(now, { id: 'supercharged', slug: 'supercharged' })
-    const promote = spyPromote({ ok: true })
+    const begin = spyBegin({ ok: true })
     // Execute far in the future → approval expired → not consumable.
-    const r = await executePublish({ now: now + APPROVAL_TTL_MS + 1, actor: 'owner', business: { id: 'supercharged', slug: 'supercharged', project: 'supercharged' }, approval, binding: BINDING, mode: 'simulated', promote: promote.fn })
+    const r = await executePublish({ now: now + APPROVAL_TTL_MS + 1, actor: 'owner', business: { id: 'supercharged', slug: 'supercharged' }, jobId: 'AUTO-7', approval, binding: BINDING, mode: 'simulated', beginPromotion: begin.fn })
     assert.equal(r.ok, false)
     assert.equal(!r.ok && r.code, 'APPROVAL_NOT_CONSUMABLE')
-    assert.equal(promote.calls.length, 0)                       // never promoted
+    assert.equal(begin.calls.length, 0)
   } finally { fake.restore() }
 })
 
 // ── STATIC safety guards ─────────────────────────────────────────────────────
 function src(rel: string) { return readFileSync(new URL(rel, import.meta.url), 'utf8') }
-test('safety: publish modules never merge, dispatch, rollback, or touch secrets', () => {
+test('safety: publish modules never implement a second provider executor', () => {
   for (const f of ['../app/lib/platform/release/publish.ts', '../app/lib/platform/release/publish-store.ts', '../app/lib/platform/release/publish-executor.ts']) {
     const s = src(f)
-    for (const bad of ['dispatchWorkflow', 'createBranch', 'mergePullRequest', 'createPullRequest', 'advanceRollback', 'rollback', 'saveBusiness', 'saveJob', 'VERCEL_TOKEN', 'GITHUB_APP', 'KV_REST_API']) {
+    for (const bad of ['promoteProduction', 'dispatchWorkflow', 'createBranch', 'mergePullRequest', 'createPullRequest', 'advanceRollback', 'rollback', 'saveBusiness', 'saveJob', 'VERCEL_TOKEN', 'GITHUB_APP', 'KV_REST_API']) {
       assert.equal(s.includes(bad), false, `${f} must not reference ${bad}`)
     }
   }
 })
-test('safety: route is owner-gated, revalidates, and promotes LIVE only in Production runtime', () => {
+test('safety: route is owner-gated, revalidates, and hands off to the automation executor', () => {
   const s = src('../app/api/admin/release/businesses/[id]/publish/route.ts')
   assert.match(s, /requirePlatformOwner/)
   assert.match(s, /evaluatePublishGate/)
   assert.match(s, /resolvePublishMode/)
   assert.match(s, /no-store/)
-  // The real Vercel promote is reached ONLY on mode === 'live' (which requires VERCEL_ENV production + flag).
-  assert.match(s, /mode === 'live'\s*\n?\s*\?\s*async[\s\S]*promoteProduction/)
-  assert.match(s, /simulated — no Vercel call/)
+  assert.match(s, /approveProduction/)
+  assert.doesNotMatch(s, /promoteProduction/)
 })
-test('safety: executor consumes the approval BEFORE promoting (single-use, idempotent)', () => {
+test('safety: executor consumes the approval before starting the one job', () => {
   const s = src('../app/lib/platform/release/publish-executor.ts')
-  assert.ok(s.indexOf('consumeApproval') < s.indexOf('i.promote('), 'approval must be consumed before promote')
+  assert.ok(s.indexOf('consumeApproval') < s.indexOf('i.beginPromotion()'), 'approval must be consumed before execution')
   assert.match(s, /getPublishByApproval/)               // idempotency anchor
   assert.match(s, /acquirePublishLock/)                 // concurrency guard
 })

@@ -9,22 +9,21 @@ import { evaluatePromotionEligibility } from '../../../../../../lib/platform/rel
 import { PROMOTION_ACTIVE } from '../../../../../../lib/platform/automation/promotion'
 import { isTestOnlyBusiness } from '../../../../../../lib/platform/release/promotion-guards'
 import { readCurrentProductionDeployment } from '../../../../../../lib/platform/release/production-deployment'
-import { getPreviewProvider } from '../../../../../../lib/platform/automation/vercel-provider'
 import { APPROVAL_TARGET, type ApprovalBinding } from '../../../../../../lib/platform/release/approval'
 import { getActiveApprovalFor } from '../../../../../../lib/platform/release/approval-store'
 import { evaluatePublishGate, publishPhrase, publishUxState, resolvePublishMode } from '../../../../../../lib/platform/release/publish'
-import { executePublish, type PromoteFn, type VerifyFn } from '../../../../../../lib/platform/release/publish-executor'
+import { executePublish } from '../../../../../../lib/platform/release/publish-executor'
 import { getLatestPublishFor, getPublishByApproval, type ReleasePublish } from '../../../../../../lib/platform/release/publish-store'
+import { approveProduction } from '../../../../../../lib/platform/automation/orchestrator'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 // POST/GET /api/admin/release/businesses/[id]/publish
 // Increment 3B.4 — owner-only CONTROLLED PUBLISH. Consumes a 3B.3 approval and promotes the
-// approved Preview deployment into Production — EXACTLY ONCE, idempotently. It re-validates
-// EVERYTHING server-side immediately before executing. A REAL Vercel promotion runs ONLY in a
-// Production runtime with OPERION_PRODUCTION_PROMOTION_ENABLED on; everywhere else it is
-// SIMULATED (no Vercel call). No merges, no rollback, no secrets, no raw provider errors.
+// approved Preview into Production — EXACTLY ONCE, idempotently. It re-validates EVERYTHING
+// server-side, consumes the release-bound approval, then hands the exact verified job to the
+// single merge/deploy/verify automation state machine. It never promotes Preview directly.
 type Ctx = { params: Promise<{ id: string }> }
 const noStore = { 'Cache-Control': 'no-store, no-cache, must-revalidate', Pragma: 'no-cache' }
 
@@ -75,8 +74,7 @@ async function assemble(id: string) {
     businessId: business?.id, releaseId: releaseId || undefined, sourceDeploymentId: sourceDeploymentId || undefined, targetEnvironment: APPROVAL_TARGET,
   }
   const slug = business?.slug || business?.id || id
-  const project = business?.productionProjectId || business?.deployProject || ''
-  return { business, slug, project, testOnly: isTestOnlyBusiness(business), eligibility, previewReady, binding, releaseId, sourceDeploymentId, now }
+  return { business, job, slug, testOnly: isTestOnlyBusiness(business), eligibility, previewReady, binding, releaseId, sourceDeploymentId, now }
 }
 
 function publishView(p: ReleasePublish | null) {
@@ -148,25 +146,20 @@ export const POST = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
     return NextResponse.json({ ok: false, code: gate.code, message: gate.message }, { status, headers: noStore })
   }
 
-  // Wire the promotion: LIVE only in a Production runtime with the flag; else SIMULATED.
+  // LIVE hands off to the one authoritative automation executor. Preview/development remains
+  // an honest simulation and never mutates the job or calls a provider.
   const mode = resolvePublishMode(process.env)
-  const vercel = getPreviewProvider(process.env)
-  const promote: PromoteFn = mode === 'live'
-    ? async (project, dep) => { const r = await vercel.promoteProduction(project, dep); return r.ok ? { ok: true, promotedDeploymentId: dep } : { ok: false, error: r.error, category: r.category } }
-    : async (_project, dep) => ({ ok: true, promotedDeploymentId: dep })   // simulated — no Vercel call
-  // LIVE-only truthful verification: read whether the promoted deployment is now the live,
-  // READY production deployment. Omitted in SIMULATED mode (no verifying step is claimed).
-  const verify: VerifyFn | undefined = mode === 'live'
-    ? async (project, dep) => {
-        const r = await vercel.readProductionForReview(project)
-        if (!r.ok) return { error: r.error }
-        return { ready: !!r.data && r.data.deploymentId === dep && r.data.ready }
-      }
-    : undefined
+  if (!s.job || !s.business) return NextResponse.json({ ok: false, code: 'PUBLISH_CONTEXT_MISSING', message: 'the verified automation job is no longer available' }, { status: 409, headers: noStore })
 
   const result = await executePublish({
-    now: s.now, actor: who.sub, business: { id: s.business!.id, slug: s.slug, project: s.project },
-    approval: gate.approval, binding: gate.binding, mode, promote, verify,
+    now: s.now, actor: who.sub, business: { id: s.business.id, slug: s.slug }, jobId: s.job.id,
+    approval: gate.approval, binding: gate.binding, mode,
+    beginPromotion: mode === 'live'
+      ? async () => {
+          const started = await approveProduction({ jobId: s.job!.id, business: s.business!, actor: who.sub })
+          return started.ok ? { ok: true as const } : { ok: false as const, error: started.reason ?? 'promotion start failed' }
+        }
+      : async () => ({ ok: true as const }),
   })
 
   if (!result.ok) {

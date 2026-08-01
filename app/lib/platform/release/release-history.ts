@@ -69,7 +69,7 @@ export type ReleaseHistoryEntry = {
 }
 
 const PUBLISH_STATUS: Record<PublishRecordStatus, ReleaseHistoryStatus> = {
-  promoting: 'publishing', verifying: 'verifying', completed: 'published', failed: 'publish_failed',
+  promoting: 'publishing', verifying: 'verifying', unconfirmed: 'verifying', completed: 'published', failed: 'publish_failed',
 }
 const ROLLBACK_STATUS: Record<ReleaseRollback['status'], ReleaseHistoryStatus> = {
   rolling_back: 'rolling_back', completed: 'rolled_back', failed: 'rollback_failed',

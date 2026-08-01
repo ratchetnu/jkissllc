@@ -75,9 +75,10 @@ export function deriveBuildInfo(
   }
 }
 
-/** Current release = the first entry flagged `current`, else the newest, else null. */
+/** Curated notes never become "current" merely by being first. Live release history is
+ * authoritative; this returns a note only when a reviewer explicitly marks it current. */
 export function currentRelease(releases: ReleaseEntry[] = RELEASES): ReleaseEntry | null {
-  return releases.find((r) => r.current) ?? releases[0] ?? null
+  return releases.find((r) => r.current) ?? null
 }
 
 /**

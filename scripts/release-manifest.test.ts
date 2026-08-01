@@ -77,12 +77,12 @@ test('flag redaction: the serialized snapshot contains no secret env value', () 
   assert.ok(!json.includes('STRIPE_SECRET_KEY'), 'no secret env name leaks either')
 })
 
-test('getReleaseSnapshot: shape + current/history split + migration summary', () => {
+test('getReleaseSnapshot: live history is authoritative; curated notes remain historical', () => {
   const snap = getReleaseSnapshot({}, 12345)
   assert.equal(snap.generatedAt, 12345)
   assert.equal(snap.build.available, false)
-  assert.ok(snap.current, 'a current release is present')
-  assert.ok(!snap.history.includes(snap.current!), 'history excludes the current release')
+  assert.equal(snap.current, null)
+  assert.ok(snap.history.length > 0, 'curated notes remain available as history')
   assert.equal(snap.migration.state, 'none_pending')
   assert.ok(snap.knownIssues.length > 0)
   const sum = flagSummary(snap.flags)
@@ -90,10 +90,9 @@ test('getReleaseSnapshot: shape + current/history split + migration summary', ()
   assert.equal(sum.enabled + sum.disabled, sum.total)
 })
 
-test('currentRelease: prefers the entry flagged current', () => {
+test('currentRelease: does not label a stale curated note as the live release', () => {
   const r = currentRelease()
-  assert.ok(r)
-  assert.equal(r!.current, true)
+  assert.equal(r, null)
 })
 
 test('API route is READ-ONLY: exports GET and no mutating handler', () => {

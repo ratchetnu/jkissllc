@@ -314,7 +314,4 @@ export class GitHubActionsProvider implements UpdateAutomationProvider {
     const r = await this.preview.createPreviewDeployment({ project, ref })
     return r.ok ? { ok: true, data: { deploymentId: r.data.deploymentId, url: r.data.url ?? '' } } : r
   }
-  // Production promotion stays fail-closed here — promotion is gated by the owner approval
-  // path + OPERION_PRODUCTION_PROMOTION_ENABLED, never by this provider.
-  promoteProduction() { return Promise.resolve({ ok: false as const, error: 'production promotion is owner-gated and disabled for the preview pilot', category: 'disabled' }) }
 }

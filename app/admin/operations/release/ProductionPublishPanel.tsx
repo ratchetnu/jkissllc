@@ -12,8 +12,8 @@ import { Dialog, TypedConfirm, Button, StatusBadge, Alert } from '../../../compo
 import type { Tone } from '../../../components/ui'
 
 type PublishView = {
-  state: 'idle' | 'publishing' | 'queued' | 'verifying' | 'ready' | 'failed'
-  id?: string; status?: 'promoting' | 'verifying' | 'completed' | 'failed'; mode?: 'live' | 'simulated'
+  state: 'idle' | 'publishing' | 'queued' | 'verifying' | 'unconfirmed' | 'ready' | 'failed'
+  id?: string; status?: 'promoting' | 'verifying' | 'unconfirmed' | 'completed' | 'failed'; mode?: 'live' | 'simulated'
   releaseId?: string; sourceDeploymentId?: string; promotedDeploymentId?: string
   failureReason?: string; startedAt?: number; completedAt?: number
 }
@@ -33,9 +33,10 @@ type PublishStatus = {
 
 const UX_LABEL: Record<PublishView['state'], string> = {
   idle: 'Ready to publish', publishing: 'Publishing…', queued: 'Promotion queued…',
-  verifying: 'Verifying Production…', ready: 'Production READY', failed: 'Publish failed',
+  verifying: 'Verifying Production…', unconfirmed: 'Production status unconfirmed',
+  ready: 'Production READY', failed: 'Publish failed',
 }
-const NON_TERMINAL = new Set(['promoting', 'verifying'])
+const NON_TERMINAL = new Set(['promoting', 'verifying', 'unconfirmed'])
 
 function ageLabel(ms: number | undefined): string {
   if (ms == null) return 'Unavailable'
@@ -117,7 +118,7 @@ export function ProductionPublishPanel({
     status.release.releaseId === expectedRelease.releaseId &&
     status.release.sourceDeploymentId === expectedRelease.sourceDeploymentId
   )
-  const inProgress = p.state === 'queued' || p.state === 'verifying'
+  const inProgress = p.state === 'queued' || p.state === 'verifying' || p.state === 'unconfirmed'
   const showButton = status.publishEnabled && status.ready && expectedReleaseMatches &&
     (p.state === 'idle' || p.state === 'failed') && !busy
   const badgeTone: Tone = p.state === 'ready' ? 'good' : p.state === 'failed' ? 'bad' : p.state === 'idle' ? (status.ready ? 'good' : 'neutral') : 'info'
@@ -138,7 +139,11 @@ export function ProductionPublishPanel({
 
       {/* Progress / outcome — truthful states only */}
       {(busy || inProgress) && (
-        <Alert tone="info">{busy ? 'Publishing…' : p.state === 'verifying' ? 'Verifying Production…' : 'Promotion queued…'}</Alert>
+        <Alert tone="info" title={p.state === 'unconfirmed' ? 'Production status unconfirmed' : undefined}>
+          {busy ? 'Publishing…' : p.state === 'unconfirmed'
+            ? (p.failureReason ?? 'The merge completed, but no READY Production deployment has been confirmed yet. Operion is still checking.')
+            : p.state === 'verifying' ? 'Verifying Production…' : 'Promotion queued…'}
+        </Alert>
       )}
       {p.state === 'ready' && !busy && (
         <Alert tone="good" title="Production READY">

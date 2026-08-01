@@ -155,6 +155,8 @@ export type UpdateAutomationJob = {
   completedAt?: number
   approvedAt?: number
   approvedBy?: string
+  productionDeployStartedAt?: number // merge completed; bounded wait for the git-integrated Production deployment starts here
+  productionDeployUnconfirmedAt?: number // deadline passed without a READY deployment; reconciliation continues truthfully
   recordsFinalizedAt?: number    // when post-deploy reconciliation propagated this job to all related records (idempotency marker)
   /** When transfer evidence was last recorded for this job. A marker only — the
    *  evidence itself lives under `platform:autoev:<id>` so bulk job reads stay cheap.

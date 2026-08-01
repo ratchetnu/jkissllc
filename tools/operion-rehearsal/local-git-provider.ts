@@ -4,7 +4,7 @@
 // instead of the network, so the real transfer gates can be rehearsed offline. It
 // implements ONLY the read methods the manifest builder calls; every mutating capability
 // throws, so a rehearsal can never create a branch, dispatch a workflow, open a PR,
-// merge, or promote — the harness is structurally incapable of a write.
+// or merge — the harness is structurally incapable of a write.
 //
 // Existence comes exclusively from `git-path-state` (B-13): the target's file set is a
 // tree listing, and a per-file read is discriminated into found / not_found the same way
@@ -47,7 +47,6 @@ export type RehearsalProvider = {
   dispatchWorkflow(): never
   createPullRequest(): never
   mergePullRequest(): never
-  promoteProduction(): never
   createPreviewDeployment(): never
 }
 
@@ -117,7 +116,6 @@ export function makeLocalGitProvider(repos: RehearsalRepos): RehearsalProvider {
     dispatchWorkflow: () => REHEARSAL_VIOLATION('dispatchWorkflow'),
     createPullRequest: () => REHEARSAL_VIOLATION('createPullRequest'),
     mergePullRequest: () => REHEARSAL_VIOLATION('mergePullRequest'),
-    promoteProduction: () => REHEARSAL_VIOLATION('promoteProduction'),
     createPreviewDeployment: () => REHEARSAL_VIOLATION('createPreviewDeployment'),
   }
   return provider

@@ -12,6 +12,7 @@ import type { PublishRecordStatus } from './publish'
 const REC = (id: string) => `platform:publish:rec:${id}`
 const LATEST = (businessId: string) => `platform:publish:latest:${businessId}`
 const BYAPPROVAL = (approvalId: string) => `platform:publish:byapproval:${approvalId}`
+const BYJOB = (jobId: string) => `platform:publish:byjob:${jobId}`
 const LOCK = (businessId: string) => `platform:publish:lock:${businessId}`
 const INDEX = 'platform:publish:index'   // sorted set: publishId scored by startedAt (release history)
 const CTR = 'platform:publish:counter'
@@ -25,6 +26,8 @@ export type ReleasePublish = {
   businessId: string
   businessSlug: string
   approvalId: string
+  /** The one automation job which owns merge, deployment, verification and reconciliation. */
+  jobId?: string
   releaseId: string              // candidate commit
   sourceDeploymentId: string     // the preview deployment promoted
   targetEnvironment: 'production'
@@ -55,6 +58,11 @@ export async function getLatestPublishFor(businessId: string): Promise<ReleasePu
 /** The publish (if any) that already consumed a given approval — the idempotency anchor. */
 export async function getPublishByApproval(approvalId: string): Promise<ReleasePublish | null> {
   const id = await redis.get(BYAPPROVAL(approvalId))
+  return id ? getPublish(id) : null
+}
+
+export async function getPublishByJob(jobId: string): Promise<ReleasePublish | null> {
+  const id = await redis.get(BYJOB(jobId))
   return id ? getPublish(id) : null
 }
 
@@ -97,6 +105,7 @@ export type NewPublish = {
   businessId: string
   businessSlug: string
   approvalId: string
+  jobId?: string
   releaseId: string
   sourceDeploymentId: string
   mode: 'live' | 'simulated'
@@ -108,29 +117,60 @@ export async function startPublish(n: NewPublish): Promise<ReleasePublish> {
   const p: ReleasePublish = {
     recordVersion: RECORD_VERSION,
     id: await nextPublishId(),
-    businessId: n.businessId, businessSlug: n.businessSlug, approvalId: n.approvalId,
+    businessId: n.businessId, businessSlug: n.businessSlug, approvalId: n.approvalId, jobId: n.jobId,
     releaseId: n.releaseId, sourceDeploymentId: n.sourceDeploymentId, targetEnvironment: 'production',
     mode: n.mode, status: 'promoting', startedAt: n.now, updatedAt: n.now, startedBy: n.startedBy,
   }
   await savePublish(p)
   await redis.set(BYAPPROVAL(n.approvalId), p.id)
   await redis.pexpire(BYAPPROVAL(n.approvalId), RECORD_TTL_MS)
+  if (n.jobId) {
+    await redis.set(BYJOB(n.jobId), p.id)
+    await redis.pexpire(BYJOB(n.jobId), RECORD_TTL_MS)
+  }
   return p
+}
+
+/** Mirror the authoritative automation job into the release-history projection. */
+export async function reconcilePublishForJob(input: {
+  jobId: string
+  status: 'completed' | 'failed' | 'unconfirmed'
+  now: number
+  deploymentId?: string
+  reason?: string
+}): Promise<ReleasePublish | null> {
+  const p = await getPublishByJob(input.jobId)
+  if (!p || p.status === 'completed' || p.status === 'failed') return p
+  if (input.status === 'completed') return completePublish(p.id, input.now, input.deploymentId)
+  if (input.status === 'unconfirmed') return markUnconfirmed(p.id, input.now, input.reason)
+  return failPublish(p.id, input.now, input.reason ?? 'the authoritative automation job failed')
 }
 
 /** LIVE-only: the promotion was accepted; we are confirming Production is READY. */
 export async function markVerifying(id: string, now: number, promotedDeploymentId?: string): Promise<ReleasePublish | null> {
   const p = await getPublish(id)
   if (!p) return null
-  const v: ReleasePublish = { ...p, status: 'verifying', promotedDeploymentId: promotedDeploymentId ?? p.promotedDeploymentId, updatedAt: now }
+  const v: ReleasePublish = { ...p, status: 'verifying', promotedDeploymentId: promotedDeploymentId ?? p.promotedDeploymentId, failureReason: undefined, updatedAt: now }
   await savePublish(v)
   return v
+}
+
+/** Merge completed but Production has not reached a provable terminal state. Non-terminal:
+ * reconciliation continues and may advance this same record to completed or failed. */
+export async function markUnconfirmed(id: string, now: number, reason?: string): Promise<ReleasePublish | null> {
+  const p = await getPublish(id)
+  if (!p || p.status === 'completed' || p.status === 'failed') return p
+  const unconfirmed: ReleasePublish = {
+    ...p, status: 'unconfirmed', failureReason: reason?.slice(0, 500), completedAt: undefined, updatedAt: now,
+  }
+  await savePublish(unconfirmed)
+  return unconfirmed
 }
 
 export async function completePublish(id: string, now: number, promotedDeploymentId?: string): Promise<ReleasePublish | null> {
   const p = await getPublish(id)
   if (!p) return null
-  const done: ReleasePublish = { ...p, status: 'completed', promotedDeploymentId, completedAt: now, updatedAt: now }
+  const done: ReleasePublish = { ...p, status: 'completed', promotedDeploymentId, failureReason: undefined, completedAt: now, updatedAt: now }
   await savePublish(done)
   return done
 }

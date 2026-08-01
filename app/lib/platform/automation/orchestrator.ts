@@ -20,6 +20,7 @@ import { buildCommitTransferManifest } from './manifest-builder'
 import { parseRepoName } from './repo-identity'
 import { productionProjectFor } from '../production-project'
 import * as store from './store'
+import { reconcilePublishForJob } from '../release/publish-store'
 
 const flag = (f: Parameters<typeof isEnabled>[0], env?: Record<string, string | undefined>) => isEnabled(f, env)
 const now = () => Date.now()
@@ -301,15 +302,20 @@ export async function approveProduction(input: {
       j.status = 'failed'; j.failureCategory = merged.category === 'commit_drift' ? 'commit_drift' : 'merge_conflict'; j.failureSummary = merged.error; j.updatedAt = now(); await store.saveJob(j)
       return { ok: false, job: j, reason: merged.error }
     }
-    j.mergeCommit = merged.data.mergeCommit; j.status = 'production_deploying'; j.currentStep = 'production'; j.updatedAt = now(); await store.saveJob(j)
+    const productionDeployStartedAt = now()
+    j.mergeCommit = merged.data.mergeCommit; j.status = 'production_deploying'; j.currentStep = 'production'
+    j.productionDeployStartedAt = productionDeployStartedAt; j.updatedAt = productionDeployStartedAt; await store.saveJob(j)
     return { ok: true, job: j }
   }, { onBusy: () => ({ ok: false, reason: 'target_locked' }), token: `${job.businessId}:${now()}` })
 }
 
 /** Confirm the post-merge production deployment + health, then complete. Reconciler-driven so
  *  it survives the browser closing. Never merges again; only advances a promoting job. */
-export async function advancePromotion(input: { jobId: string; env?: Record<string, string | undefined> }): Promise<ApproveResult> {
+export const PRODUCTION_DEPLOY_TIMEOUT_MS = 30 * 60_000
+
+export async function advancePromotion(input: { jobId: string; env?: Record<string, string | undefined>; at?: number }): Promise<ApproveResult> {
   const env = input.env ?? process.env
+  const t = input.at ?? now()
   const job = await store.getJob(input.jobId)
   if (!job) return { ok: false, reason: 'no_job' }
   if (job.status !== 'production_deploying' && job.status !== 'verifying') return { ok: false, reason: `job is ${job.status}, not deploying` }
@@ -321,10 +327,37 @@ export async function advancePromotion(input: { jobId: string; env?: Record<stri
     if (j.status === 'production_deploying') {
       const vercel = getPreviewProvider(env)
       const prod = projectId ? await vercel.findProductionDeployment(projectId, j.mergeCommit) : { ok: false as const, error: 'no project', category: 'config' }
+      const deploymentTimedOut = t - (j.productionDeployStartedAt ?? j.updatedAt) >= PRODUCTION_DEPLOY_TIMEOUT_MS
+      if ((!prod.ok || !prod.data) && deploymentTimedOut) {
+        if (!j.productionDeployUnconfirmedAt) {
+          j.productionDeployStartedAt ??= j.updatedAt
+          j.productionDeployUnconfirmedAt = t
+          j.failureSummary = `no ready production deployment appeared within ${Math.round(PRODUCTION_DEPLOY_TIMEOUT_MS / 60_000)} minutes of the merge — status is unconfirmed and reconciliation is still checking`
+          j.updatedAt = t; await store.saveJob(j)
+          await reconcilePublishForJob({ jobId: j.id, status: 'unconfirmed', now: t, reason: j.failureSummary }).catch(() => null)
+        }
+        return { ok: true, job: j, reason: j.failureSummary ?? 'production deployment status remains unconfirmed' }
+      }
       if (!prod.ok || !prod.data) return { ok: true, job: j, reason: 'awaiting production deployment' }
-      if (prod.data.failed) { j.status = 'rollback_required'; j.failureCategory = 'promotion_failed'; j.failureSummary = 'production build failed'; j.updatedAt = now(); await store.saveJob(j); return { ok: false, job: j, reason: 'production deploy failed' } }
+      if (prod.data.failed) {
+        j.status = 'rollback_required'; j.failureCategory = 'promotion_failed'; j.failureSummary = 'production build failed'; j.updatedAt = now(); await store.saveJob(j)
+        await reconcilePublishForJob({ jobId: j.id, status: 'failed', now: j.updatedAt, reason: j.failureSummary }).catch(() => null)
+        return { ok: false, job: j, reason: 'production deploy failed' }
+      }
+      if (!prod.data.ready && deploymentTimedOut) {
+        if (!j.productionDeployUnconfirmedAt) {
+          j.productionDeployStartedAt ??= j.updatedAt
+          j.productionDeployUnconfirmedAt = t
+          j.failureSummary = `production deployment did not become ready within ${Math.round(PRODUCTION_DEPLOY_TIMEOUT_MS / 60_000)} minutes of the merge — status is unconfirmed and reconciliation is still checking`
+          j.updatedAt = t; await store.saveJob(j)
+          await reconcilePublishForJob({ jobId: j.id, status: 'unconfirmed', now: t, deploymentId: prod.data.deploymentId, reason: j.failureSummary }).catch(() => null)
+        }
+        return { ok: true, job: j, reason: j.failureSummary ?? 'production deployment status remains unconfirmed' }
+      }
       if (!prod.data.ready) return { ok: true, job: j, reason: 'production build in progress' }
-      j.productionDeploymentId = prod.data.deploymentId; j.productionUrl = prod.data.url; j.status = 'verifying'; j.currentStep = 'verification'; j.updatedAt = now(); await store.saveJob(j)
+      j.productionDeploymentId = prod.data.deploymentId; j.productionUrl = prod.data.url; j.status = 'verifying'; j.currentStep = 'verification'
+      j.productionDeployUnconfirmedAt = undefined; j.failureCategory = undefined; j.failureSummary = undefined
+      j.updatedAt = now(); await store.saveJob(j)
     }
     if (j.status === 'verifying') {
       const provider = getAutomationProvider(env)
@@ -333,6 +366,7 @@ export async function advancePromotion(input: { jobId: string; env?: Record<stri
       const health = healthUrl ? await provider.runHealthCheck(healthUrl) : { ok: false as const, error: 'no url', category: 'config' }
       if (health.ok && health.data.ok) {
         j.status = 'completed'; j.currentStep = 'verification'; j.completedAt = now(); j.updatedAt = now(); await store.saveJob(j)
+        await reconcilePublishForJob({ jobId: j.id, status: 'completed', now: j.updatedAt, deploymentId: j.productionDeploymentId }).catch(() => null)
         // Automatic post-deployment reconciliation: propagate this verified promotion to
         // ALL related records (deployment, update, business version, release, audit) so the
         // owner never hand-sets a status. FAIL-SOFT — a hiccup here must not undo a live,
@@ -346,6 +380,7 @@ export async function advancePromotion(input: { jobId: string; env?: Record<stri
         return { ok: true, job: j }
       }
       j.status = 'rollback_required'; j.failureCategory = 'health_failed'; j.failureSummary = 'production health check failed'; j.updatedAt = now(); await store.saveJob(j)
+      await reconcilePublishForJob({ jobId: j.id, status: 'failed', now: j.updatedAt, deploymentId: j.productionDeploymentId, reason: j.failureSummary }).catch(() => null)
       return { ok: false, job: j, reason: 'production health check failed' }
     }
     return { ok: true, job: j }

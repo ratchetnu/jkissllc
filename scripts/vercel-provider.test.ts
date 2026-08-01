@@ -225,16 +225,6 @@ test('resolveProjectId: prj_ passthrough vs read-only lookup; requires a valid i
   assert.equal(look.calls[0].url, 'https://api.vercel.com/v9/projects/supercharged?teamId=team_x')
 })
 
-test('publish is unchanged: promoteProduction still POSTs /promote with the given project, no resolution, no rollback', async () => {
-  const m = mockFetch([['/promote/', () => ({ status: 200, body: {} })]])
-  const p = new VercelPreviewProvider(ENV, { fetch: m.fetch })
-  const r = await p.promoteProduction('some name', 'dpl_p')
-  assert.equal(r.ok && r.data.promoted, true)
-  assert.equal(m.calls.length, 1)
-  assert.equal(m.calls[0].url, 'https://api.vercel.com/v10/projects/some%20name/promote/dpl_p?teamId=team_x')
-  assert.equal(m.calls[0].url.includes('/rollback/'), false)
-})
-
 test('readDeploymentLogsReference returns inspector + events api (no log contents, no token)', async () => {
   const p = new VercelPreviewProvider(ENV, { fetch: mockFetch([]).fetch })
   const r = await p.readDeploymentLogsReference('dpl_1')
