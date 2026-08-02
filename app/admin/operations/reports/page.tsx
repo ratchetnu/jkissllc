@@ -6,6 +6,7 @@ import OperationsShell from '../OperationsShell'
 import { Stat } from '../ui'
 import { REPORT_CATALOG, type ReportDef, type ReportRow } from '../../../lib/reports/catalog'
 import { revenueDailyRows, claimsGroupRows, filterRowsByDate } from '../../../lib/reports/build'
+import RevenueTrend, { type DayRow } from './RevenueTrend'
 
 // Dedicated reporting surface. Read-only, gated server-side on reports:view. Backed by
 // the two existing engines (revenue + claims); rows are built with the SAME pure
@@ -78,6 +79,8 @@ function Board() {
 
   const dateQS = useMemo(() => { const p = new URLSearchParams(); if (from) p.set('from', from); if (to) p.set('to', to); const s = p.toString(); return s ? `&${s}` : '' }, [from, to])
   const revenueRows = useMemo(() => rev ? filterRowsByDate(revenueDailyRows({ revenue: { series: rev.series } }), 'date', from || undefined, to || undefined) : [], [rev, from, to])
+  // The chart reads the SAME filtered rows the CSV export does, so screen and file agree.
+  const revenueDays = useMemo<DayRow[]>(() => revenueRows.map(r => ({ date: String(r.date ?? ''), amountCents: Number(r.amountCents ?? 0) })), [revenueRows])
   const byBusinessRows = useMemo(() => claims ? claimsGroupRows(claims.byBusiness) : [], [claims])
   const byCrewRows = useMemo(() => claims ? claimsGroupRows(claims.byCrew) : [], [claims])
   const def = (id: string) => REPORT_CATALOG.find(r => r.id === id)!
@@ -114,7 +117,7 @@ function Board() {
               <Stat label="This year" value={usd(rev?.year)} />
               <Stat label="All time" value={usd(rev?.allTime)} />
             </div>
-            <ReportTable def={def('revenue-daily')} rows={revenueRows} exportHref={`/api/admin/reports/export?report=revenue-daily${dateQS}`} />
+            <RevenueTrend rows={revenueDays} exportHref={`/api/admin/reports/export?report=revenue-daily${dateQS}`} />
           </section>
 
           {/* Claims */}

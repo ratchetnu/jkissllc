@@ -9,7 +9,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import OperationsShell from '../OperationsShell'
-import { osLabel, fmtTs } from '../ui'
+import { Mail, MessageSquare } from 'lucide-react'
+import { osLabel } from '../ui'
 
 type Health = {
   sendMode: 'live' | 'test' | 'off'
@@ -31,6 +32,57 @@ const muted: React.CSSProperties = { color: 'var(--muted)', fontSize: 13 }
 
 function Dot({ ok }: { ok: boolean }) {
   return <span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 9, marginRight: 7, background: ok ? '#86efac' : '#fca5a5' }} />
+}
+
+// ── Message history presentation ─────────────────────────────────────────────
+// Flat rows with hairline separators instead of a stack of bordered cards, grouped
+// by day. The old row crammed recipient · event · simulated · booking · sender ·
+// timestamp into one dot-chain; here the two things you scan for (who, when) stay on
+// the line and the rest become quiet chips that appear only when set.
+
+const dayKey = (ts: number) => new Date(ts).toLocaleDateString('en-US', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' })
+
+function dayHeading(ts: number): string {
+  const now = Date.now()
+  if (dayKey(ts) === dayKey(now)) return 'Today'
+  if (dayKey(ts) === dayKey(now - 86_400_000)) return 'Yesterday'
+  return new Date(ts).toLocaleDateString('en-US', { timeZone: 'America/Chicago', weekday: 'short', month: 'short', day: 'numeric' })
+}
+
+const clockTime = (ts: number) => new Date(ts).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' })
+
+const STATUS_TONE: Record<string, string> = {
+  failed: '#fca5a5', undelivered: '#fca5a5',
+  delivered: '#86efac', sent: '#86efac',
+}
+
+function Chip({ children }: { children: React.ReactNode }) {
+  return <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', border: '1px solid var(--line)', borderRadius: 6, padding: '1px 6px', whiteSpace: 'nowrap' }}>{children}</span>
+}
+
+function MessageRow({ m, first }: { m: HistoryRow; first: boolean }) {
+  const tone = STATUS_TONE[m.status] || 'var(--muted)'
+  return (
+    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', padding: '11px 2px', borderTop: first ? 'none' : '1px solid var(--line)' }}>
+      <span aria-hidden style={{ color: 'var(--muted)', flexShrink: 0, marginTop: 1 }}>
+        {m.channel === 'email' ? <Mail size={15} /> : <MessageSquare size={15} />}
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, lineHeight: 1.45, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.subject || m.body}</div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 4 }}>
+          <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>{m.recipient || 'No recipient'} · {clockTime(m.createdAt)}</span>
+          {m.simulated && <Chip>simulated</Chip>}
+          {m.bookingNumber && <Chip>{m.bookingNumber}</Chip>}
+          {m.event && <Chip>{m.event}</Chip>}
+          {m.initiatedBy && <Chip>by {m.initiatedBy}</Chip>}
+        </div>
+      </div>
+      <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0, fontSize: 11.5, fontWeight: 700, color: tone }}>
+        <span aria-hidden style={{ width: 6, height: 6, borderRadius: 6, background: tone }} />
+        {m.status}
+      </span>
+    </div>
+  )
 }
 
 function ModeBadge({ mode }: { mode: string }) {
@@ -83,6 +135,20 @@ export default function Communications() {
     })()
     return () => { alive = false }
   }, [loadHealth, loadHistory])
+
+  // Group the history by calendar day (Central, matching every other ops surface) so
+  // the list reads as "Today / Yesterday / Fri, Aug 1" instead of one flat run.
+  // The API already returns newest-first; grouping preserves that order.
+  const groupedRows = useMemo(() => {
+    const groups: { key: string; heading: string; items: HistoryRow[] }[] = []
+    for (const m of rows) {
+      const key = dayKey(m.createdAt)
+      const last = groups[groups.length - 1]
+      if (last && last.key === key) last.items.push(m)
+      else groups.push({ key, heading: dayHeading(m.createdAt), items: [m] })
+    }
+    return groups
+  }, [rows])
 
   const doPreview = useCallback(async (event: string) => {
     setPreviewing(true); setPreview(null); setTestMsg('')
@@ -222,17 +288,13 @@ export default function Communications() {
         {loading ? <div style={muted}>Loading…</div> : rows.length === 0 ? (
           <div style={muted}>No messages match. (Nothing is sent by loading this page.)</div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {rows.map(m => (
-              <div key={m.id} style={{ display: 'flex', gap: 12, alignItems: 'flex-start', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--line)', background: 'color-mix(in srgb, var(--card) 60%, transparent)' }}>
-                <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', color: 'var(--muted)', width: 52, flexShrink: 0 }}>{m.channel}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, lineHeight: 1.45, overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.subject || m.body}</div>
-                  <div style={{ ...muted, fontSize: 11.5, marginTop: 3 }}>
-                    {m.recipient || '—'}{m.event ? ` · ${m.event}` : ''}{m.simulated ? ' · simulated' : ''}{m.bookingNumber ? ` · ${m.bookingNumber}` : ''}{m.initiatedBy ? ` · by ${m.initiatedBy}` : ''} · {fmtTs(m.createdAt)}
-                  </div>
+          <div>
+            {groupedRows.map(group => (
+              <div key={group.key} style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--muted)', padding: '0 2px 4px' }}>
+                  {group.heading}
                 </div>
-                <div style={{ fontSize: 11.5, fontWeight: 800, color: m.status === 'failed' ? '#fca5a5' : m.status === 'delivered' || m.status === 'sent' ? '#86efac' : 'var(--muted)' }}>{m.status}</div>
+                {group.items.map((m, i) => <MessageRow key={m.id} m={m} first={i === 0} />)}
               </div>
             ))}
           </div>
