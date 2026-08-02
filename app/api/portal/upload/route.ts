@@ -6,6 +6,7 @@ import { getVercelOidcToken } from '@vercel/oidc'
 import { requireCrew } from '../_lib/crew'
 import { completionUploadReadiness } from '../../../lib/job-assignment'
 import { isEnabled } from '../../../lib/platform/flags'
+import { assertClientUploadBlobPath, clientUploadBlobPath } from '../../../lib/platform/tenancy/client-blob-path'
 
 // Client-upload token broker for CREW completion photos, mirroring the admin
 // broker (api/admin/blob-upload) with one difference: it admits a crew principal
@@ -39,6 +40,16 @@ const FAILURES: Record<string, { status: number; message: string }> = {
   unauthorized: { status: 401, message: 'Sign in again to upload photos.' },
 }
 
+export const GET = withTenantRoute(async (req: NextRequest): Promise<NextResponse> => {
+  if (!isEnabled('BOOKING_ASSIGNMENT_ENABLED')) {
+    return NextResponse.json({ error: 'not_found' }, { status: 404 })
+  }
+  const guard = await requireCrew(req)
+  if (guard instanceof NextResponse) return guard
+  const filename = req.nextUrl.searchParams.get('filename') ?? ''
+  return NextResponse.json({ pathname: clientUploadBlobPath(filename) })
+})
+
 export const POST = withTenantRoute(async (req: NextRequest): Promise<NextResponse> => {
   if (!isEnabled('BOOKING_ASSIGNMENT_ENABLED')) {
     return NextResponse.json({ error: 'not_found' }, { status: 404 })
@@ -55,6 +66,10 @@ export const POST = withTenantRoute(async (req: NextRequest): Promise<NextRespon
       request: req,
       getSignedToken: async (pathname) => {
         if ((await requireCrew(req)) instanceof NextResponse) throw new Error('unauthorized')
+        // Bind the signed put permission to the exact path issued for this
+        // session. A modified portal client cannot select another tenant or a
+        // nested object path.
+        assertClientUploadBlobPath(pathname)
         // Never let the SDK fall back to a different store's legacy token. Preview
         // and Production are intentionally isolated; the signed token must name
         // the store explicitly connected to this deployment.
@@ -86,7 +101,6 @@ export const POST = withTenantRoute(async (req: NextRequest): Promise<NextRespon
           },
         }
       },
-      onUploadCompleted: async () => { /* the URL is persisted with the job, not here */ },
     })
     return NextResponse.json(result)
   } catch (err) {

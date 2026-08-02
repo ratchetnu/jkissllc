@@ -24,8 +24,12 @@ test('crew completion uploads use the OIDC-compatible presigned Blob transport e
   assert.match(route, /blob_store_not_configured/)
   assert.match(route, /blob_store_mismatch/)
   assert.match(route, /requireCrew\(req\)/)
+  assert.match(route, /clientUploadBlobPath\(filename\)/)
+  assert.match(route, /assertClientUploadBlobPath\(pathname\)/)
   assert.match(route, /maximumSizeInBytes\s*=\s*15\s*\*\s*1024\s*\*\s*1024/)
   assert.match(page, /uploadPresigned/)
+  assert.match(page, /crewCompletionBlobPath\(f\.name\)/)
+  assert.doesNotMatch(page, /uploadPresigned\(f\.name/)
 
   assert.doesNotMatch(route, /\bhandleUpload\(/)
   assert.doesNotMatch(page, /\bupload\(/)
@@ -101,6 +105,34 @@ const postRaw = async (raw: string) => {
   })
   return POST(req, CTX)
 }
+
+test('the pathname issuer binds a crew upload to the signed session tenant', async () => {
+  await withFlag('true', async () => {
+    const previousTenancy = process.env.TENANCY_ENABLED
+    process.env.TENANCY_ENABLED = 'true'
+    try {
+      const { NextRequest } = await import('next/server')
+      const { GET } = await import('../app/api/portal/upload/route')
+      const { COOKIE_NAME, createUserSessionToken } = await import('../app/api/admin/_lib/session')
+      const token = await createUserSessionToken({
+        id: 'crew-user',
+        role: 'crew',
+        staffId: 'staff-7',
+        tenantId: 'jkiss',
+      })
+      const req = new NextRequest('https://example.test/api/portal/upload?filename=../../damage%20photo.jpg', {
+        headers: { cookie: `${COOKIE_NAME}=${token}` },
+      })
+
+      const res = await GET(req, CTX)
+      assert.equal(res.status, 200)
+      assert.deepEqual(await res.json(), { pathname: 'tenants/jkiss/damage_photo.jpg' })
+    } finally {
+      if (previousTenancy === undefined) delete process.env.TENANCY_ENABLED
+      else process.env.TENANCY_ENABLED = previousTenancy
+    }
+  })
+})
 
 test('malformed JSON answers the generic 400, never an unhandled 500', async () => {
   await withFlag('true', async () => {

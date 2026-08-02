@@ -89,7 +89,7 @@ for (const p of routeFiles) routeBuckets[classifyRoute(p)].push(rel(p))
 const DERIVED_KEY_FAMILIES = [
   { family: 'biz:{name}',        why: 'key derived from business NAME (bizKey)',      re: /`biz:\$\{|biz:\$\{bizKey|biz:\$\{key/ },
   { family: 'promo:{code}',      why: 'key is the admin/customer-typed promo code',   re: /`promo:\$\{/ },
-  { family: 'ship:{bol}',        why: 'key is an external BOL / PO number',           re: /ship:\$\{|normalizeBol\s*\(/ },
+  { family: 'ship:{bol}',        why: 'key is an external BOL / PO number',           re: /[`'"]ship:\$\{|normalizeBol\s*\(/ },
   { family: 'cust:email:{email}',why: 'customer email as an identity key',            re: /cust:email:\$\{/ },
   { family: 'cust:phone:{phone}',why: 'customer phone as an identity key',            re: /cust:phone:\$\{/ },
   { family: 'msg:phone:{e164}',  why: 'consumer phone → thread (cross-tenant merge)', re: /msg:phone:\$\{/ },
@@ -118,11 +118,26 @@ for (const p of libFiles) {
 
 // ── 3. Un-scoped Blob writes ─────────────────────────────────────────────────
 // Server and browser-direct Blob writes whose FIRST argument is not produced by a
-// *BlobPath helper or scopeBlobPath(...). Track one-step variable assignments too,
+// explicitly reviewed path issuers below. Track one-step variable assignments too,
 // so moving a raw literal into `const pathname = ...` cannot evade the gate.
-const BLOB_SCAN_DIRS = [LIB_DIR, API_DIR, path.join(ROOT, 'app', 'admin')]
+const BLOB_SCAN_DIRS = [LIB_DIR, API_DIR, path.join(ROOT, 'app', 'admin'), path.join(ROOT, 'app', 'portal')]
 const blobFiles = BLOB_SCAN_DIRS.flatMap((d) => walk(d, (p) => /\.(ts|tsx)$/.test(p)))
-const SCOPED_HELPER = /\b(?:[A-Za-z_$][\w$]*BlobPath|scopeBlobPath)\s*\(/
+// This is intentionally an allowlist, not a naming convention. Adding a helper
+// requires reviewing its implementation before the certification gate trusts it.
+const SCOPED_BLOB_PATH_HELPERS = [
+  'scopeBlobPath',
+  'quotePhotoBlobPath',
+  'aiDerivativeBlobPath',
+  'adminPhotoBlobPath',
+  'uniformPhotoBlobPath',
+  'driverDocBlobPath',
+  'crewDocBlobPath',
+  'proofBlobPath',
+  'invoicePhotoBlobPath',
+  'claimEvidenceBlobPath',
+  'crewCompletionBlobPath',
+]
+const SCOPED_HELPER = new RegExp(`\\b(?:${SCOPED_BLOB_PATH_HELPERS.join('|')})\\s*\\(`)
 const codeOnly = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
 const blobWriteHits = []
 for (const p of blobFiles) {
