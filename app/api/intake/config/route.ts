@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { resolveIntakeConfig, DEFAULT_PACK_ID } from '../../../lib/intake-config'
 import { isEnabled } from '../../../lib/platform/flags'
+import { withPublicHostRoute } from '../../../lib/platform/tenancy/with-public-host-route'
 
 // Public: the intake configuration (services, questions, pricing method) for the
 // current tenant's industry pack. The Book Now wizard reads this so its steps come
@@ -10,9 +11,9 @@ import { isEnabled } from '../../../lib/platform/flags'
 // Also carries the small set of PRESENTATIONAL client flags the wizard needs. A flag
 // absent (older client / flag off) is treated as false, so the response stays
 // backward-compatible.
-export async function GET(req: NextRequest) {
+export const GET = withPublicHostRoute(async function GET(req: NextRequest) {
   const packId = req.nextUrl.searchParams.get('pack') || DEFAULT_PACK_ID
   const config = resolveIntakeConfig(packId)
   const flags = { progressUx: isEnabled('OPERION_PROGRESS_UX') }
   return NextResponse.json({ config, flags })
-}
+})

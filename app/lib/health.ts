@@ -16,6 +16,7 @@ import { redis } from './redis'
 import { buildId } from './alerts'
 import { twilioConfigured } from './sms'
 import { completionUploadReadiness } from './job-assignment'
+import { tenancyOperatingProfile } from './platform/tenancy/operating-profile'
 
 export type ComponentStatus = 'ok' | 'degraded' | 'down'
 export type HealthComponent = { name: string; status: ComponentStatus; critical: boolean; detail: string }
@@ -34,7 +35,9 @@ type Env = Record<string, string | undefined>
 /** Presence-only configuration checks — NEVER the secret value, only whether set. */
 export function configChecks(env: Env): HealthComponent[] {
   const has = (...keys: string[]) => keys.some(k => !!env[k])
+  const tenancy = tenancyOperatingProfile(env)
   return [
+    { name: 'tenancy_profile', critical: false, status: tenancy.valid ? 'ok' : 'degraded', detail: `${tenancy.profile}: ${tenancy.detail}` },
     { name: 'storage', critical: false, status: has('BLOB_READ_WRITE_TOKEN') ? 'ok' : 'degraded', detail: has('BLOB_READ_WRITE_TOKEN') ? 'Blob configured' : 'Blob token not set — photo uploads disabled' },
     // Holding a Blob token and being able to accept COMPLETION PROOF are different
     // capabilities. Minting a completion-upload token additionally requires the store
@@ -45,7 +48,7 @@ export function configChecks(env: Env): HealthComponent[] {
     { name: 'completion_uploads', critical: false, status: completionUploadReadiness(env.BLOB_STORE_ID).ready ? 'ok' : 'degraded', detail: completionUploadReadiness(env.BLOB_STORE_ID).ready ? 'Completion-photo uploads configured' : 'BLOB_STORE_ID not set — crew completion uploads fail closed (blob_store_not_configured)' },
     // The Vercel AI Gateway authenticates via auto-injected OIDC when deployed on
     // Vercel (no static key needed), so `VERCEL` presence is a valid "configured".
-    { name: 'ai_provider', critical: false, status: has('AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN', 'VERCEL') ? 'ok' : 'degraded', detail: has('AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN', 'VERCEL') ? 'AI gateway configured' : 'AI gateway not configured — analysis falls back to manual review' },
+    { name: 'ai_provider', critical: false, status: has('AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN', 'VERCEL') ? 'ok' : 'degraded', detail: has('AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN', 'VERCEL') ? 'AI gateway credentials present — runtime availability and credits are verified only by actual calls' : 'AI gateway not configured — analysis falls back to manual review' },
     { name: 'scheduled_worker', critical: false, status: has('CRON_SECRET') ? 'ok' : 'degraded', detail: has('CRON_SECRET') ? 'Cron secret set' : 'CRON_SECRET not set — durable worker + cron disabled' },
     { name: 'payments', critical: false, status: has('STRIPE_SECRET_KEY') ? 'ok' : 'degraded', detail: has('STRIPE_SECRET_KEY') ? 'Stripe configured' : 'Stripe not configured — card payments disabled' },
     // Taking a card and CONFIRMING it are separate capabilities on the same provider.

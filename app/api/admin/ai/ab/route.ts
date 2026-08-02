@@ -4,6 +4,7 @@ import { hasPrompt } from '../../../../lib/ai/prompts'
 import { getAb } from '../../../../lib/ai/prompt-store'
 import { listAiCalls } from '../../../../lib/ai/telemetry'
 import { computeAbAnalysis } from '../../../../lib/ai/analytics'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -12,7 +13,7 @@ export const maxDuration = 30
 // GET /api/admin/ai/ab?taskId=ops.command — statistical comparison of a prompt A/B
 // test: control vs variant success rate + quality + feedback, with a two-proportion
 // z-test and a significance verdict. Read-only (ai:analytics).
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async function GET(req: NextRequest) {
   const who = await requirePermission(req, 'ai:analytics')
   if (who instanceof NextResponse) return who
   const taskId = req.nextUrl.searchParams.get('taskId') || ''
@@ -25,4 +26,4 @@ export async function GET(req: NextRequest) {
     console.error('[ai/ab]', e)
     return NextResponse.json({ error: 'Failed to load A/B analysis.' }, { status: 500 })
   }
-}
+})

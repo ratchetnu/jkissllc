@@ -1,27 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
+import { assertClientUploadBlobPath, clientUploadBlobPath } from '../../../../lib/platform/tenancy/client-blob-path'
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client'
 import { requirePermission } from '../../_lib/session'
 
 // Client-upload token broker for CLAIM EVIDENCE. The admin uploads on-scene photos,
 // videos, and documents straight to Vercel Blob; this route only mints a short-lived
-// upload token and is gated to a signed-in admin session (the onUploadCompleted
-// webhook from Blob carries no cookie, so auth lives in onBeforeGenerateToken).
+// upload token and is gated to a signed-in admin session. GET issues the exact
+// tenant-bound pathname; POST validates that path again before minting a token.
 //
 // Unlike the invoice-photo broker (/api/admin/blob-upload, images only), claim
 // evidence must also accept the PDF/photo of a damage report, a lumper receipt, or a
 // dashcam clip — so documents and video are allowed here. The claim's `attach` action
 // stores the returned URL; kind (photo/video/document) is derived client-side.
+export const GET = withTenantRoute(async (req: NextRequest): Promise<NextResponse> => {
+  const guard = await requirePermission(req, 'claims:manage')
+  if (guard instanceof NextResponse) return guard
+  const filename = req.nextUrl.searchParams.get('filename') ?? ''
+  return NextResponse.json({ pathname: clientUploadBlobPath(filename) })
+})
+
 export const POST = withTenantRoute(async (req: NextRequest): Promise<NextResponse>  => {
   const body = (await req.json()) as HandleUploadBody
   try {
     const result = await handleUpload({
       body,
       request: req,
-      onBeforeGenerateToken: async () => {
-        // The Blob onUploadCompleted webhook carries no cookie, so the token mint is
-        // the auth point. Gate it on claims:manage (admin + manager), not any session.
+      onBeforeGenerateToken: async (pathname) => {
+        // The token mint is the auth point. Gate it on claims:manage (admin +
+        // manager), not any session.
         if ((await requirePermission(req, 'claims:manage')) instanceof NextResponse) throw new Error('unauthorized')
+        assertClientUploadBlobPath(pathname)
         return {
           allowedContentTypes: [
             // Photos (phone camera, screenshots)
@@ -40,7 +49,6 @@ export const POST = withTenantRoute(async (req: NextRequest): Promise<NextRespon
           addRandomSuffix: true,
         }
       },
-      onUploadCompleted: async () => { /* URL is persisted on the claim via the attach action */ },
     })
     return NextResponse.json(result)
   } catch (err) {

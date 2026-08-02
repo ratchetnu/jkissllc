@@ -3,7 +3,7 @@
 // The canonical, DURABLE list of tenants. The typed `Tenant` model already lives
 // in types.ts and the reference seed in jkiss.ts; THIS module is the read/write
 // store that persists them, so tenant resolution and background fan-out can stop
-// depending on a hardcoded array (`activeTenantIds()` in tenant-store.ts).
+// depending on a hardcoded single-tenant array.
 //
 // Storage — the PLATFORM-GLOBAL keyspace (the `platform:` allowlist in keys.ts).
 // A tenant RECORD describes the platform's roster, not any tenant's own data, so
@@ -19,6 +19,8 @@ import { redis } from '../../redis'
 import { platformKey, normalizeTenantId } from './keys'
 import { JKISS_TENANT } from './jkiss'
 import { DEFAULT_TENANT_ID, type Tenant } from './types'
+import { isEnabled } from '../flags'
+import { invalidateTenantRosterCache } from './tenant-roster-cache'
 
 /** Sorted set of known tenant ids (score = createdAt). Platform-global. */
 const INDEX_KEY = platformKey('platform:tenant:index')
@@ -66,6 +68,7 @@ export async function upsertTenant(t: Tenant): Promise<Tenant> {
   const record: Tenant = { ...t, id }
   await redis.set(tenantRecordKey(id), JSON.stringify(record))
   await redis.zadd(INDEX_KEY, record.createdAt, id)
+  invalidateTenantRosterCache()
   return record
 }
 
@@ -86,10 +89,12 @@ export async function ensureReferenceTenant(): Promise<Tenant> {
  * The active tenant ids from the persisted registry (status === 'active'). Falls
  * back to the reference tenant when the registry is empty (not yet provisioned),
  * so background fan-out keeps working with zero new state — single-tenant
- * continuity. This is the durable counterpart to the static `activeTenantIds()`.
+ * continuity. This is the durable source for every background fan-out.
  */
 export async function activeTenantIdsFromRegistry(): Promise<string[]> {
   const tenants = await listTenants()
   const active = tenants.filter((t) => t.status === 'active').map((t) => t.id)
-  return active.length ? active : [DEFAULT_TENANT_ID]
+  if (active.length) return active
+  if (isEnabled('TENANCY_ENABLED')) throw new Error('tenant registry has no active tenants')
+  return [DEFAULT_TENANT_ID]
 }

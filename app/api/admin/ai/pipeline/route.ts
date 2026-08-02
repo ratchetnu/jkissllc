@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requirePermission } from '../../_lib/session'
 import { isEnabled } from '../../../../lib/platform/flags'
 import { getPipelineAggregate, getTracesForBooking } from '../../../../lib/observability/pipeline-read'
+import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -12,7 +13,7 @@ export const maxDuration = 30
 // AI_PIPELINE_OBSERVABILITY_ENABLED flag. Pure aggregation over persisted stage traces —
 // makes ZERO AI calls and mutates nothing. `?booking=<token>` returns that booking's
 // traces instead of the fleet aggregate.
-export async function GET(req: NextRequest) {
+export const GET = withTenantRoute(async function GET(req: NextRequest) {
   const who = await requirePermission(req, 'ai:analytics')
   if (who instanceof NextResponse) return who
 
@@ -34,4 +35,4 @@ export async function GET(req: NextRequest) {
     console.error('[ai/pipeline]', e)
     return NextResponse.json({ error: 'Failed to load pipeline observability.' }, { status: 500 })
   }
-}
+})

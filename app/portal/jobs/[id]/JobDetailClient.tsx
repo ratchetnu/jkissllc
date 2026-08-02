@@ -50,6 +50,13 @@ type PendingCompletion = {
 
 const fmtClock = (ts: number) => new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 
+async function crewCompletionBlobPath(filename: string): Promise<string> {
+  const res = await fetch(`/api/portal/upload?filename=${encodeURIComponent(filename)}`, { credentials: 'same-origin' })
+  const body = await res.json() as { pathname?: string; error?: string; message?: string }
+  if (!res.ok || !body.pathname) throw new Error(body.message ?? body.error ?? 'Unable to prepare photo upload')
+  return body.pathname
+}
+
 // Ask the phone where it is. Best-effort by design: no geolocation, a denied
 // prompt, or a timeout all resolve to null rather than reject — a location prompt
 // must never block a shift. The server records `locationDenied` and saves the time.
@@ -173,7 +180,8 @@ function JobDetail({ id }: { id: string }) {
       for (let index = 0; index < pending.files.length; index++) {
         if (pending.urls[index]) continue
         const f = pending.files[index]
-        const blob = await uploadPresigned(f.name, f, {
+        const pathname = await crewCompletionBlobPath(f.name)
+        const blob = await uploadPresigned(pathname, f, {
           access: 'public',
           handleUploadUrl: '/api/portal/upload',
         })

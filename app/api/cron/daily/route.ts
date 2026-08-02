@@ -10,7 +10,7 @@ import { accrueAllClaims } from '../../../lib/claim-accrual'
 import { sendSms, withSmsSuppressed } from '../../../lib/sms'
 import { getAutomationSettings } from '../../../lib/automation-settings'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
-import { activeTenantIds } from '../../../lib/platform/tenancy/tenant-store'
+import { activeTenantIdsFromRegistry } from '../../../lib/platform/tenancy/tenant-registry'
 import { alert } from '../../../lib/alerts'
 
 export const dynamic = 'force-dynamic'
@@ -225,7 +225,7 @@ export async function GET(req: NextRequest) {
     // reference tenant (no key change); on → keys scope to this tenant, fail-closed if
     // unresolved. One tenant's failure is isolated and never runs under another.
     const tenants: Record<string, unknown>[] = []
-    for (const tenantId of activeTenantIds()) {
+    for (const tenantId of await activeTenantIdsFromRegistry()) {
       try {
         const r = await withBackgroundTenant('cron', () => withSmsSuppressed(async () => {
     const counts = dryRun ? { skipped: 'reminders (dry-run)' } : await run()

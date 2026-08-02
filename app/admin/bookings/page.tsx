@@ -46,6 +46,13 @@ const fmtTs = (ts?: number) => ts ? new Date(ts).toLocaleString('en-US', { dateS
 const netInvoice = (b: Booking) => Math.max(0, b.invoiceAmountCents - (b.discountCents || 0))
 const balanceDue = (b: Booking) => Math.max(0, netInvoice(b) - b.amountPaidCents)
 
+async function invoicePhotoBlobPath(filename: string): Promise<string> {
+  const res = await fetch(`/api/admin/blob-upload?filename=${encodeURIComponent(filename)}`, { credentials: 'same-origin' })
+  const body = await res.json() as { pathname?: string; error?: string }
+  if (!res.ok || !body.pathname) throw new Error(body.error ?? 'Unable to prepare photo upload')
+  return body.pathname
+}
+
 // ISO yyyy-mm-dd → "Jun 27, 2026" (parsed LOCAL so it never slips a day).
 function fmtISO(iso: string): string {
   const [y, m, d] = iso.split('-').map(Number)
@@ -2012,7 +2019,8 @@ function BookingForm({ booking, prefill, onClose, onSaved }: { booking?: Booking
     try {
       for (const file of files) {
         const body = await downscaleImage(file)
-        const blob = await upload(file.name, body, { access: 'public', handleUploadUrl: '/api/admin/blob-upload' })
+        const pathname = await invoicePhotoBlobPath(file.name)
+        const blob = await upload(pathname, body, { access: 'public', handleUploadUrl: '/api/admin/blob-upload' })
         setPhotos(prev => [...prev, { url: blob.url, name: file.name }])
       }
     } catch (e) {

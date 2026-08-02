@@ -15,9 +15,9 @@
 //      their path through scopeBlobPath (a helper), so they'd land in the shared
 //      namespace even with tenancy on.
 //
-// This is a REPORT, not a CI gate: it always exits 0 so it never blocks a parallel
-// branch. Promote a section to a gate (process.exit(1) on UNCLASSIFIED) once the
-// remaining items below are closed. Nothing here imports app code or touches Redis.
+// This is a CI gate. Unknown route boundaries, literal Blob writes, and use of the
+// retired hardcoded tenant fan-out fail the command. Nothing imports app code or
+// touches Redis.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -56,13 +56,24 @@ const EXEMPT_PREAUTH = new Set([
   'app/api/health/route.ts',            // liveness — no data access
   'app/api/opspilot/waitlist/route.ts', // platform (opspilot:) — allowlisted global
   'app/api/admin/opspilot-waitlist/route.ts',
+  'app/api/auth/tenant/route.ts',             // membership directory/switch boundary
+  'app/api/automation/callback/route.ts',     // signed platform-global control plane
+  'app/api/automation/manifest/route.ts',     // signed platform-global control plane
+  'app/api/cron/operion-reconcile/route.ts',  // platform-global release control plane
+  'app/api/cron/operion-sync/route.ts',       // platform-global product registry
+])
+
+const BACKGROUND_DELEGATES = new Set([
+  'app/api/cron/route-auto-cancel/route.ts',   // runAutoCancelJob fans out via registry
 ])
 
 function classifyRoute(p) {
   const src = read(p)
   const r = rel(p)
-  if (/withTenantRoute\s*\(/.test(src)) return 'request-wrapped'
+  if (/with(?:Tenant|PublicToken|PublicHost)Route(?:<[^>]+>)?\s*\(/.test(src)) return 'request-wrapped'
+  if (/runWithTenant\s*\(/.test(src) && /resolveTenant/.test(src)) return 'request-wrapped'
   if (/withBackgroundTenant\s*\(|resolveBackgroundTenant\s*\(/.test(src)) return 'background-context'
+  if (BACKGROUND_DELEGATES.has(r)) return 'background-context'
   if (EXEMPT_PREAUTH.has(r)) return 'exempt-preauth'
   return 'unclassified'
 }
@@ -78,7 +89,7 @@ for (const p of routeFiles) routeBuckets[classifyRoute(p)].push(rel(p))
 const DERIVED_KEY_FAMILIES = [
   { family: 'biz:{name}',        why: 'key derived from business NAME (bizKey)',      re: /`biz:\$\{|biz:\$\{bizKey|biz:\$\{key/ },
   { family: 'promo:{code}',      why: 'key is the admin/customer-typed promo code',   re: /`promo:\$\{/ },
-  { family: 'ship:{bol}',        why: 'key is an external BOL / PO number',           re: /ship:\$\{|normalizeBol\s*\(/ },
+  { family: 'ship:{bol}',        why: 'key is an external BOL / PO number',           re: /[`'"]ship:\$\{|normalizeBol\s*\(/ },
   { family: 'cust:email:{email}',why: 'customer email as an identity key',            re: /cust:email:\$\{/ },
   { family: 'cust:phone:{phone}',why: 'customer phone as an identity key',            re: /cust:phone:\$\{/ },
   { family: 'msg:phone:{e164}',  why: 'consumer phone → thread (cross-tenant merge)', re: /msg:phone:\$\{/ },
@@ -106,19 +117,44 @@ for (const p of libFiles) {
 }
 
 // ── 3. Un-scoped Blob writes ─────────────────────────────────────────────────
-// put(...) / upload(...) whose FIRST argument is not a *BlobPath helper or a
-// scopeBlobPath(...) call. Scans lib + api + admin UI (client uploaders live in
-// app/admin). A raw string path here bypasses the tenant blob chokepoint.
-const BLOB_SCAN_DIRS = [LIB_DIR, API_DIR, path.join(ROOT, 'app', 'admin')]
+// Server and browser-direct Blob writes whose FIRST argument is not produced by a
+// explicitly reviewed path issuers below. Track one-step variable assignments too,
+// so moving a raw literal into `const pathname = ...` cannot evade the gate.
+const BLOB_SCAN_DIRS = [LIB_DIR, API_DIR, path.join(ROOT, 'app', 'admin'), path.join(ROOT, 'app', 'portal')]
 const blobFiles = BLOB_SCAN_DIRS.flatMap((d) => walk(d, (p) => /\.(ts|tsx)$/.test(p)))
-const SCOPED_HELPER = /BlobPath\b|scopeBlobPath\s*\(/
+// This is intentionally an allowlist, not a naming convention. Adding a helper
+// requires reviewing its implementation before the certification gate trusts it.
+const SCOPED_BLOB_PATH_HELPERS = [
+  'scopeBlobPath',
+  'quotePhotoBlobPath',
+  'aiDerivativeBlobPath',
+  'adminPhotoBlobPath',
+  'uniformPhotoBlobPath',
+  'driverDocBlobPath',
+  'crewDocBlobPath',
+  'proofBlobPath',
+  'invoicePhotoBlobPath',
+  'claimEvidenceBlobPath',
+  'crewCompletionBlobPath',
+]
+const SCOPED_HELPER = new RegExp(`\\b(?:${SCOPED_BLOB_PATH_HELPERS.join('|')})\\s*\\(`)
+const codeOnly = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
 const blobWriteHits = []
 for (const p of blobFiles) {
-  const lines = read(p).split('\n')
-  lines.forEach((l, i) => {
-    const m = /\b(put|upload)\s*\(\s*(`[^`]*`|'[^']*'|"[^"]*")/.exec(l) // literal path as 1st arg
-    if (m && !SCOPED_HELPER.test(l)) blobWriteHits.push({ at: `${rel(p)}:${i + 1}`, call: m[1], arg: m[2].slice(0, 48) })
-  })
+  const src = codeOnly(read(p))
+  if (!/from ['"]@vercel\/blob(?:\/client)?['"]/.test(src)) continue
+  const safeVars = new Set()
+  for (const m of src.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*([^;\n]+)/g)) {
+    if (SCOPED_HELPER.test(m[2])) safeVars.add(m[1])
+  }
+  for (const m of src.matchAll(/\b(put|upload|uploadPresigned)\s*\(\s*([^,\n]+)/g)) {
+    const arg = m[2].trim()
+    const safe = SCOPED_HELPER.test(arg) || (/^[A-Za-z_$][\w$]*$/.test(arg) && safeVars.has(arg))
+    if (!safe) {
+      const line = src.slice(0, m.index).split('\n').length
+      blobWriteHits.push({ at: `${rel(p)}:${line}`, call: m[1], arg: arg.slice(0, 48) })
+    }
+  }
 }
 
 // ── report ───────────────────────────────────────────────────────────────────
@@ -138,11 +174,18 @@ for (const h of derivedHits) console.log(`   • ${h.family.padEnd(24)} ${h.at} 
 console.log('   value-embedded name-derived keys (a Redis prefix cannot reach these):')
 for (const v of valueEmbeddedHits) console.log(`   • ${v.what} — ${v.at}`)
 
-console.log('\n3. UN-SCOPED BLOB WRITES (literal path not via a *BlobPath / scopeBlobPath helper)')
+console.log('\n3. UN-SCOPED BLOB WRITES (path not proven to come from a *BlobPath / scopeBlobPath helper)')
 if (!blobWriteHits.length) console.log('   none found')
 for (const h of blobWriteHits) console.log(`   • ${h.at}  ${h.call}(${h.arg}…)`)
 
+const retiredFanoutHits = [...routeFiles, ...libFiles]
+  .filter((p) => /\bactiveTenantIds\s*\(/.test(codeOnly(read(p))))
+  .map(rel)
+console.log('\n4. RETIRED HARDCODED TENANT FAN-OUT')
+if (!retiredFanoutHits.length) console.log('   none found')
+for (const hit of retiredFanoutHits) console.log(`   • ${hit}`)
+
 console.log(`\n${bar}`)
-console.log('Report only — exit 0. See docs/opspilot-os/tenant-isolation/audits/ for the')
-console.log('narrative audit and the phased plan to close these items.\n')
-process.exit(0)
+const blockers = routeBuckets.unclassified.length + blobWriteHits.length + retiredFanoutHits.length
+console.log(blockers ? `FAIL — ${blockers} tenant-boundary blocker(s).\n` : 'PASS — tenant-boundary certification is clean.\n')
+process.exit(blockers ? 1 : 0)

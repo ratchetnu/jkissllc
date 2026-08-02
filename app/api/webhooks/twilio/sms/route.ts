@@ -18,7 +18,7 @@ import { recordMessage, claimProviderMessage, releaseProviderMessageClaim } from
 import { notifyOwnerOfReply } from '../../../../lib/owner-alerts'
 import { redis } from '../../../../lib/redis'
 import { withBackgroundTenant } from '../../../../lib/platform/tenancy/request-context'
-import { activeTenantIds } from '../../../../lib/platform/tenancy/tenant-store'
+import { resolveTenantFromPhoneChannel } from '../../../../lib/platform/tenancy/tenant-channel-resolve'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -73,11 +73,13 @@ export async function POST(req: NextRequest) {
     return new NextResponse(helpTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
   }
 
-  // Tenant-owned work runs inside the resolved tenant context (off → reference
-  // tenant, no key change; on → scoped + fail-closed). Single-tenant deployment →
-  // the tenant is the deployment's own tenant (trusted internal mapping, NEVER the
-  // unsigned payload); a pooled deployment would map the recipient number → tenant.
-  const tenantId = activeTenantIds()[0]
+  // The signed recipient number is the tenant-owned channel binding. Unknown or
+  // ambiguous numbers fail closed; they never inherit the first registered tenant.
+  const tenantId = await resolveTenantFromPhoneChannel({
+    phone: params.To,
+    messagingServiceSid: params.MessagingServiceSid,
+  })
+  if (!tenantId) return twiml()
   return withBackgroundTenant('webhook', async () => {
   const messageSid = params.MessageSid || params.SmsSid || ''
   const fromRaw = params.From || ''

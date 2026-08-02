@@ -477,7 +477,8 @@ test('the cron handler wires per-tenant context and gates the write', () => {
   assert.ok(!/Date\.now\(\)/.test(src.split('\n').filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n')),
     'the job body never reads the clock itself')
   assert.match(src, /withBackgroundTenant\('cron'/, 'each tenant runs in its own context')
-  assert.match(src, /for \(const tenantId of activeTenantIds\(\)\)/, 'per-tenant fan-out')
+  assert.match(src, /activeTenantIdsFromRegistry\(\)/, 'fan-out roster comes from the durable registry')
+  assert.match(src, /for \(const tenantId of activeTenants\)/, 'per-tenant fan-out')
   assert.match(src, /isEnabled\('ROUTE_AUTO_CANCEL_ENABLED'\)/, 'flag-gated')
   assert.match(src, /withRouteLock/, 'writes hold the per-route lock')
   assert.match(src, /if \(!write\)/, 'no write path when reporting only')
@@ -488,7 +489,7 @@ test('the cron handler wires per-tenant context and gates the write', () => {
   assert.match(src, /candidateCount: null/, 'never reports 0 candidates for a truncated scan')
   assert.match(src, /autoCancelRoute\(/, 'single attributed lifecycle write')
   assert.ok(!/setStatus\(/.test(src), 'the old two-entry setStatus+pushAudit pair is gone')
-  assert.match(src, /if \(tenancyOn\)/, 'fails closed when a complete tenant sweep cannot be proven')
+  assert.match(src, /blocked \(tenant registry unavailable\)/, 'fails closed when a complete tenant sweep cannot be proven')
 })
 
 

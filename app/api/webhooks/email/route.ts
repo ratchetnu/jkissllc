@@ -13,7 +13,7 @@ import { listBookings, saveBooking, getBookingByNumber, type Booking } from '../
 import { recordMessage, claimProviderMessage, releaseProviderMessageClaim } from '../../../lib/messages'
 import { notifyOwnerOfReply } from '../../../lib/owner-alerts'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
-import { activeTenantIds } from '../../../lib/platform/tenancy/tenant-store'
+import { resolveTenantFromEmailChannel } from '../../../lib/platform/tenancy/tenant-channel-resolve'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -41,12 +41,6 @@ export async function POST(req: NextRequest) {
     return new NextResponse('webhook not configured', { status: 503 })
   }
 
-  // Tenant-owned work runs inside the resolved tenant context (off → reference
-  // tenant, no key change; on → scoped + fail-closed). Single-tenant deployment →
-  // the tenant is the deployment's own tenant (trusted internal mapping, NEVER the
-  // unsigned payload); a pooled deployment would map the recipient address → tenant.
-  const tenantId = activeTenantIds()[0]
-  return withBackgroundTenant('webhook', async () => {
   // Accept JSON (Apps Script) or form-encoded (parse services).
   let p: Record<string, string> = {}
   try {
@@ -57,6 +51,12 @@ export async function POST(req: NextRequest) {
       form.forEach((v, k) => { p[k] = v })
     }
   } catch { /* tolerate malformed bodies */ }
+
+  // Authentication above makes the forwarded recipient trustworthy. Resolve that
+  // channel through the tenant registry before touching tenant-owned records.
+  const tenantId = await resolveTenantFromEmailChannel(p.to || p.To)
+  if (!tenantId) return NextResponse.json({ ok: true, skipped: 'unknown_recipient' })
+  return withBackgroundTenant('webhook', async () => {
 
   const fromRaw = p.from || p.From || p.sender || ''
   const from = extractEmail(fromRaw)

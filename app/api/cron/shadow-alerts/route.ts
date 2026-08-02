@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runShadowAlertEvaluation } from '../../../lib/estimation/shadow-alert-store'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
-import { activeTenantIds } from '../../../lib/platform/tenancy/tenant-store'
+import { activeTenantIdsFromRegistry } from '../../../lib/platform/tenancy/tenant-registry'
 import { isEnabled } from '../../../lib/platform/flags'
 import { alert } from '../../../lib/alerts'
 
@@ -38,7 +38,15 @@ export async function GET(req: NextRequest) {
 
   const tenants: { tenant: string; opened: number; skipped?: string; error?: string }[] = []
   let opened = 0
-  for (const tenantId of activeTenantIds()) {
+  let tenantIds: string[]
+  try {
+    tenantIds = await activeTenantIdsFromRegistry()
+  } catch (e) {
+    console.error('[cron/shadow-alerts] tenant registry', e)
+    await alert({ type: 'cron_job_failed', severity: 'CRITICAL', route: '/api/cron/shadow-alerts', worker: 'tenant-registry', errorClass: e instanceof Error ? e.name : 'unknown' })
+    return NextResponse.json({ ok: false, error: 'tenant registry unavailable' }, { status: 503 })
+  }
+  for (const tenantId of tenantIds) {
     try {
       await withBackgroundTenant('cron', async () => {
         try {

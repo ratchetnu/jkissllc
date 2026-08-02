@@ -1,8 +1,7 @@
 # Operion Tenant Isolation — Sprint Record
 
-> Branch `opspilot/tenant-isolation` (from `c1c7591`), 2026-07-12.
-> **Not committed, not deployed, not merged, no production data touched.**
-> Gates: `tsc --noEmit` clean · **332/332 tests** · eslint clean.
+> Historical sprint record from 2026-07-12. The foundation has since merged;
+> current hosting readiness is recorded in [16-hosting-phase2-status.md](16-hosting-phase2-status.md).
 
 Moves Operion from tenant-aware *scaffolding* to an **enforceable** tenant data
 boundary — while `TENANCY_ENABLED=false` keeps J KISS byte-identical to today.
@@ -26,6 +25,7 @@ boundary — while `TENANCY_ENABLED=false` keeps J KISS byte-identical to today.
 | [13-results.md](13-results.md) | Gate results |
 | [14-remaining-risks.md](14-remaining-risks.md) | Open risks |
 | [15-next-sprint-recommendation.md](15-next-sprint-recommendation.md) | What's next |
+| [16-hosting-phase2-status.md](16-hosting-phase2-status.md) | Current second-tenant hosting readiness and cutover gates |
 | [diagrams/](diagrams/) | 6 Mermaid views |
 
 ## One-paragraph summary

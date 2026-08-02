@@ -8,6 +8,7 @@
 
 import convert from 'heic-convert' // pure-JS + libheif wasm — serverless-safe
 import { put } from '@vercel/blob'
+import { scopeBlobPath } from './platform/tenancy/blob-keys'
 
 const HEIC_TYPES = new Set(['image/heic', 'image/heif'])
 
@@ -74,7 +75,7 @@ export async function reconvertHeicUrls(
     return { buffer: Buffer.from(await r.arrayBuffer()), contentType: r.headers.get('content-type') || 'image/heic' }
   })
   const putJpeg = deps.putJpeg ?? (async (buf: Buffer) => {
-    const blob = await put(`quote-photos/${crypto.randomUUID()}.jpg`, buf, { access: 'public', contentType: 'image/jpeg', addRandomSuffix: false })
+    const blob = await put(scopeBlobPath(`quote-photos/${crypto.randomUUID()}.jpg`), buf, { access: 'public', contentType: 'image/jpeg', addRandomSuffix: false })
     return blob.url
   })
   let converted = 0

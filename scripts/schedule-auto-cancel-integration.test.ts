@@ -364,7 +364,7 @@ const withTenancy = async <T>(on: boolean, fn: () => Promise<T>): Promise<T> => 
   }
 }
 
-test('TENANCY ON: activation is BLOCKED — no sweep, no writes, explicit reason', async () => {
+test('TENANCY ON: an empty registry BLOCKS activation — no partial sweep or writes', async () => {
   const today = TODAY
   const r = mkRoute({ routeDate: today, assignees: [] })
   await seed(r)
@@ -374,7 +374,7 @@ test('TENANCY ON: activation is BLOCKED — no sweep, no writes, explicit reason
   assert.equal(body.activationBlocked, true)
   assert.equal(body.write, false)
   assert.deepEqual(body.tenants, [], 'no tenant was processed, and none is claimed')
-  assert.match(String(body.activationBlockedReason), /hardcoded single-tenant list/)
+  assert.match(String(body.activationBlockedReason), /active-tenant registry/)
   assert.equal(body.scanComplete, false, 'never claims a complete sweep')
 
   const after = await runWithTenant({ tenantId: 'jkiss' }, () => stored(r.token))

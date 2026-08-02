@@ -18,6 +18,7 @@
     "eval:latency-phase2": "npx --yes tsx@4 scripts/ai-latency-phase2-bench.ts",
     "predeploy": "npx tsc --noEmit && npm run test:ai:regression",
     "test": "npx --yes tsx@4 --test scripts/*.test.ts",
+    "tenant:certify": "node scripts/tenant-readiness-audit.mjs && npx --yes tsx@4 --test scripts/*tenant*.test.ts scripts/dark-launch.test.ts scripts/bypass-detection.test.ts",
     "audit:mobile": "node scripts/mobile-overflow-audit.mjs",
     "operion:sandbox:verify": "node scripts/operion-sandbox-verify.mjs",
     "test:sync": "npx --yes tsx@4 --test scripts/product-sync.test.ts",

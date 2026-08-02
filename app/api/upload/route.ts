@@ -7,6 +7,7 @@ import { scopeBlobPath, sanitizeBlobSegment } from '../../lib/platform/tenancy/b
 import { toModelReadableImage, UnreadableImageError } from '../../lib/image-convert'
 import { optimizeForModel, type OptimizeMetrics } from '../../lib/image-optimize'
 import { imageOptimizationEnabled, resolveImageOptimizeOptions } from '../../lib/ai/image-optimize-config'
+import { withPublicHostRoute } from '../../lib/platform/tenancy/with-public-host-route'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -51,7 +52,7 @@ async function storeAiDerivative(
 
 // POST /api/upload — public image upload for the booking/quote flow. Stores a
 // data-URL image to Vercel Blob and returns its URL. Rate-limited + bot-protected.
-export async function POST(req: NextRequest) {
+export const POST = withPublicHostRoute(async function POST(req: NextRequest) {
   if (await rateLimit(req, 'upload', 20, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many uploads. Please wait a few minutes.' }, { status: 429 })
   }
@@ -99,4 +100,4 @@ export async function POST(req: NextRequest) {
     await alert({ type: 'upload_failed', severity: 'ERROR', route: '/api/upload', errorClass: e instanceof Error ? e.name : 'blob_put_failed' })
     return NextResponse.json({ error: 'Upload failed — please try again.' }, { status: 500 })
   }
-}
+})

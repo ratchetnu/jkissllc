@@ -11,7 +11,6 @@ import { NextRequest } from 'next/server'
 import { withTenantRoute } from '../app/lib/platform/tenancy/with-tenant-route'
 import { withTenantContextFromRequest, resolveBackgroundTenant, withBackgroundTenant } from '../app/lib/platform/tenancy/request-context'
 import { currentTenantId } from '../app/lib/platform/tenancy/context'
-import { activeTenantIds } from '../app/lib/platform/tenancy/tenant-store'
 import { DEFAULT_TENANT_ID } from '../app/lib/platform/tenancy/types'
 import { classifyMismatch, recordComparison } from '../app/lib/platform/tenancy/dark-launch'
 
@@ -113,9 +112,4 @@ test('resolveBackgroundTenant: flag ON + no explicit tenant → throws; flag OFF
   await withFlag('TENANCY_ENABLED', 'false', async () => {
     assert.equal(resolveBackgroundTenant('webhook'), DEFAULT_TENANT_ID) // continuity while off
   })
-})
-
-// (10) The active-tenant set for background fan-out is the reference tenant (single-tenant today).
-test('activeTenantIds returns the reference tenant set', () => {
-  assert.deepEqual(activeTenantIds(), [DEFAULT_TENANT_ID])
 })

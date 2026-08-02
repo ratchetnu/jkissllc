@@ -28,6 +28,17 @@ test('ai_provider is "ok" via Vercel OIDC even without a static AI key (no false
   assert.equal(nowhere.find(c => c.name === 'ai_provider')?.status, 'degraded')
 })
 
+test('tenancy health exposes a named profile and rejects unsafe flag combinations', () => {
+  const off = configChecks(FULL_ENV).find(c => c.name === 'tenancy_profile')
+  assert.equal(off?.status, 'ok')
+  assert.match(off?.detail ?? '', /single_tenant/)
+  const unsafe = configChecks({ ...FULL_ENV, TENANCY_DUAL_WRITE: 'true' }).find(c => c.name === 'tenancy_profile')
+  assert.equal(unsafe?.status, 'degraded')
+  assert.match(unsafe?.detail ?? '', /migration/)
+  const migration = configChecks({ ...FULL_ENV, TENANCY_DUAL_WRITE: 'true', TENANCY_DARK_LAUNCH: 'true' }).find(c => c.name === 'tenancy_profile')
+  assert.equal(migration?.status, 'ok')
+})
+
 test('summarize: critical down → unhealthy; non-critical → degraded; all ok → healthy', () => {
   assert.equal(summarize([{ name: 'kv', critical: true, status: 'ok', detail: '' }]), 'healthy')
   assert.equal(summarize([{ name: 'kv', critical: true, status: 'down', detail: '' }]), 'unhealthy')
@@ -38,7 +49,8 @@ test('configChecks reports presence only — missing config → degraded, never 
   const present = configChecks(FULL_ENV)
   assert.ok(present.every(c => c.status === 'ok'))
   const missing = configChecks({})
-  assert.ok(missing.every(c => c.status === 'degraded'))
+  assert.ok(missing.filter(c => c.name !== 'tenancy_profile').every(c => c.status === 'degraded'))
+  assert.equal(missing.find(c => c.name === 'tenancy_profile')?.status, 'ok')
   // No secret value appears anywhere in the checks.
   assert.ok(!JSON.stringify(present).includes('SECRETVALUE'))
 })

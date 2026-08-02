@@ -5,6 +5,7 @@ import { isBlockedBot } from '../../../lib/botcheck'
 import { addDemoRequest } from '../../../lib/operion-demo'
 import { emailRaw } from '../../../lib/booking-emails'
 import { COMPANY } from '../../../lib/company'
+import { withPublicHostRoute } from '../../../lib/platform/tenancy/with-public-host-route'
 
 const OWNER = process.env.OWNER_EMAIL ?? COMPANY.ownerEmail
 
@@ -16,7 +17,7 @@ const OWNER = process.env.OWNER_EMAIL ?? COMPANY.ownerEmail
  * durable Redis record is the source of truth; the owner email is best-effort
  * (emailRaw swallows its own errors) so a Resend outage never costs us a lead.
  */
-export async function POST(request: NextRequest) {
+export const POST = withPublicHostRoute(async function POST(request: NextRequest) {
   if (await rateLimit(request, 'operion-demo', 5, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many requests. Please wait a few minutes and try again.' }, { status: 429 })
   }
@@ -99,4 +100,4 @@ export async function POST(request: NextRequest) {
   })
 
   return NextResponse.json({ ok: true })
-}
+})
