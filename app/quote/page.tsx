@@ -19,6 +19,10 @@ import {
   type DraftItem, type IsEverythingAnswer, type FollowUpValue, type CustomerFinalState,
 } from '../lib/ai/confirmation-ui'
 import type { FollowUpQuestion } from '../lib/ai/followup-questions'
+import {
+  createPreAnalysisController, preAnalysisKey,
+  type PreAnalysisController,
+} from '../lib/ai/pre-analysis'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // A guided, concierge-style quote experience for the company. Same premium
@@ -58,6 +62,23 @@ type QuoteEstimate = {
   questions: string[]
   reviewReasons: string[]
   note: string
+}
+
+// One analysis result, as the wizard consumes it. `degraded` is the server's
+// structured latency outcome (ai/interactive-policy) — non-null means our own
+// budget stopped the read, not that the customer's photos were unreadable.
+type AnalyzePayload = {
+  estimate: QuoteEstimate
+  followUps: FollowUpQuestion[]
+  degraded: string | null
+}
+
+// Map the real decision onto the progress terminal. The progress view never
+// advances past what actually happened.
+function outcomeFor(decision: QuoteEstimate['decision']): BackendOutcome {
+  return decision === 'manual_review'
+    ? { kind: 'review' }
+    : { kind: 'success', decision: decision === 'instant_quote' ? 'instant_quote' : 'estimate_range' }
 }
 
 // Step keys — dynamic so the guided-confirmation step slots in for job-based
@@ -243,6 +264,10 @@ export default function QuotePage() {
   // AI estimate (job-based services only). Produced when the customer leaves the
   // Photos step; the analysisId is sent on submit so the booking carries it.
   const [analyzing, setAnalyzing] = useState(false)
+  // A speculative analysis running in the background. Deliberately NOT part of
+  // navBlocked: the customer must stay free to press Continue, which joins the
+  // in-flight run rather than starting a second one.
+  const [speculating, setSpeculating] = useState(false)
   const [estimate, setEstimate] = useState<QuoteEstimate | null>(null)
   const analysisIdRef = useRef('')
   // Option A progress lifecycle: the real API outcome (null while in flight) and a
@@ -424,31 +449,90 @@ export default function QuotePage() {
     })
   }
 
+  // ── Speculative pre-analysis ───────────────────────────────────────────────
+  // The analysis used to start when the customer pressed Continue, so they watched
+  // a spinner for the entire model round-trip. It now starts as soon as the photo
+  // set SETTLES, overlapping the model call with the customer's own dwell time on
+  // the Photos step; pressing Continue then usually finds the answer already here.
+  // Every safety property (no partial sets, no duplicate runs, no stale results)
+  // lives in the controller — see lib/ai/pre-analysis.
+  const preAnalysisRef = useRef<PreAnalysisController<AnalyzePayload> | null>(null)
+  if (!preAnalysisRef.current) {
+    preAnalysisRef.current = createPreAnalysisController<AnalyzePayload>({
+      run: async (r, { signal, speculative }) => {
+        const res = await fetch('/api/quote/analyze', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+          // `speculative` is declared so the server can count head-start analyses
+          // separately: they buy latency at the cost of analyzing for customers who
+          // may still abandon, and that trade has to be measurable before rollout.
+          body: JSON.stringify({ photos: r.photoUrls, service: r.service, debris: r.debris, speculative }),
+        })
+        const j = await res.json().catch(() => ({}))
+        if (!res.ok || !j?.estimate) throw new Error('analyze unavailable')
+        return {
+          estimate: j.estimate as QuoteEstimate,
+          followUps: Array.isArray(j.followUps) ? j.followUps as FollowUpQuestion[] : [],
+          degraded: j.analyzed?.degraded ?? null,
+        }
+      },
+      // Adopted ONLY when the result still matches the current inputs. This is what
+      // makes Continue instant: the estimate is already in state when they get there.
+      onResult: v => applyAnalysis(v),
+      onRunningChange: running => setSpeculating(running),
+    })
+  }
+
+  // Apply an analysis to the wizard. Shared by the speculative path and the
+  // press-Continue path so a result is interpreted identically either way.
+  function applyAnalysis(v: AnalyzePayload): void {
+    setEstimate(v.estimate)
+    analysisIdRef.current = v.estimate.analysisId
+    setFollowUps(v.followUps)
+    setConfItems(seedDraftItems((v.estimate.items ?? []) as DetectedItem[]))
+  }
+
+  // Start speculating whenever the settled photo set (or the service/debris that
+  // shape the read) changes. Debounced + fingerprint-keyed inside the controller,
+  // so this may fire as often as React re-renders.
+  useEffect(() => {
+    const c = preAnalysisRef.current
+    if (!c || !svc?.jobBased) return
+    c.schedule(
+      { photoUrls: uploadedUrls, service: svc.bookType, debris: svc.debris },
+      { settled: !anyUploading },
+    )
+    // uploadedUrls is spread by uploadedKey; anyUploading gates on settle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uploadedKey, anyUploading, svc?.bookType, svc?.debris, svc?.jobBased])
+
+  // Abort in-flight speculation on unmount — no setState after teardown.
+  useEffect(() => () => { preAnalysisRef.current?.dispose() }, [])
+
   // AI analysis of the uploaded photo set (job-based services). Fail-soft: on any
   // error the customer simply continues to a hand-priced quote — never blocked.
+  // Reuses the speculative result when there is one, joins the run when it is still
+  // in flight, and starts one immediately when speculation never got the chance.
   async function runAnalysis(): Promise<void> {
     if (!svc || !svc.jobBased || uploadedUrls.length === 0) return
+    const controller = preAnalysisRef.current
+    if (!controller) return
+    const req = { photoUrls: uploadedUrls, service: svc.bookType, debris: svc.debris }
+
+    // Already speculated: apply it without a spinner or a second request.
+    const cached = controller.result(preAnalysisKey(req))
+    if (cached) {
+      applyAnalysis(cached)
+      setProgressOutcome(outcomeFor(cached.estimate.decision))
+      return
+    }
+
     setAnalyzing(true); setErr('')
     // Reset the progress lifecycle for this run (re-analysis re-shows progress).
     setProgressOutcome(null); setProgressDone(false)
     let outcome: BackendOutcome = { kind: 'error' }
     try {
-      const res = await fetch('/api/quote/analyze', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ photos: uploadedUrls, service: svc.bookType, debris: svc.debris }),
-      })
-      const j = await res.json().catch(() => ({}))
-      if (res.ok && j.estimate) {
-        setEstimate(j.estimate as QuoteEstimate)
-        analysisIdRef.current = j.estimate.analysisId
-        setFollowUps(Array.isArray(j.followUps) ? j.followUps : [])
-        setConfItems(seedDraftItems((j.estimate.items ?? []) as DetectedItem[]))
-        // Map the real decision → the progress terminal (never advances past this).
-        const decision = (j.estimate as QuoteEstimate).decision
-        outcome = decision === 'manual_review'
-          ? { kind: 'review' }
-          : { kind: 'success', decision: decision === 'instant_quote' ? 'instant_quote' : 'estimate_range' }
-      }
+      const v = await controller.ensure(req)
+      if (v) { applyAnalysis(v); outcome = outcomeFor(v.estimate.decision) }
     } catch { /* non-blocking — proceed without an instant estimate */ }
     finally {
       setAnalyzing(false)
@@ -741,6 +825,7 @@ export default function QuotePage() {
                           onAdd={addPhotos} onRemove={removePhoto} onRetry={retryPhoto}
                           jobBased={!!svc?.jobBased}
                           everythingPictured={everythingPictured} setEverythingPictured={setEverythingPictured}
+                          analysisStarted={speculating}
                         />
                       )}
                       {stepKey === 'confirm' && (
@@ -1101,6 +1186,8 @@ function StepPhotos(props: {
   photos: PhotoItem[]; dragOver: boolean; setDragOver: (v: boolean) => void
   onAdd: (f: FileList | File[]) => void; onRemove: (id: string) => void; onRetry: (id: string) => void
   jobBased: boolean; everythingPictured: boolean | null; setEverythingPictured: (v: boolean) => void
+  /** A speculative analysis is already running on the settled set (lib/ai/pre-analysis). */
+  analysisStarted: boolean
 }) {
   const [tipsOpen, setTipsOpen] = useState(false)
   const total = props.photos.length
@@ -1113,6 +1200,7 @@ function StepPhotos(props: {
   if (total === 0) status = ''
   else if (uploading > 0) status = `Uploading ${done + 1} of ${total}…`
   else if (failed > 0) status = `${done} of ${total} uploaded · ${failed} failed — tap ↻ to retry`
+  else if (props.analysisStarted) status = `${done} photo${done === 1 ? '' : 's'} uploaded — we've already started reading them`
   else status = `${done} photo${done === 1 ? '' : 's'} uploaded successfully — they'll be included with your booking`
 
   return (

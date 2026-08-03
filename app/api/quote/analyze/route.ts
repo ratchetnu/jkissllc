@@ -49,6 +49,9 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   const nowIso = new Date().toISOString()
 
   await recordFunnelEvent('quote_analyze_started', nowIso)
+  // Head-start analyses are counted separately (never instead) so the speculative
+  // share of total analyses — the cost side of the latency win — is measurable.
+  if (body.speculative === true) await recordFunnelEvent('quote_analyze_speculative', nowIso)
 
   // The full AI → monitor → pricing → critic chain, shared verbatim with the durable
   // server-side worker (app/lib/book-now-ai.ts) so both paths price identically.
