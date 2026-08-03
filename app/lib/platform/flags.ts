@@ -110,6 +110,13 @@ export type FeatureFlag =
   // only when the instant-quote read is borderline. OFF = today's vision critic on
   // every instant quote.
   | 'OPERION_CRITIC_JSON'
+  // Compact primary-analysis prompt (ops.junkAnalysisCompact). Asks the vision model
+  // for ONLY the fields the pricing engine, safety checks, monitor, critic, follow-up
+  // selection, customer view and admin audit actually read — output tokens are the
+  // dominant term in vision latency. The response SCHEMA and every consumer are
+  // unchanged; the dropped fields normalize to the same defaults they already get.
+  // OFF = today's v1 spec, byte-identical. Run both through LAT-002 before switching.
+  | 'AI_COMPACT_ANALYSIS_PROMPT'
   // Event-driven recovery: kick the durable AI worker immediately after enqueue
   // (fire-and-forget, fail-soft) so a recovery job starts in seconds instead of
   // waiting for the next cron tick. OFF = cron-only (unchanged). Cron always remains
@@ -207,6 +214,7 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   BOOKING_ASSIGNMENT_ENABLED: false,
   // AI latency Phase 2 — all OFF by default (byte-identical to today).
   OPERION_CRITIC_JSON: false,
+  AI_COMPACT_ANALYSIS_PROMPT: false,
   OPERION_EVENT_ENQUEUE: false,
   OPERION_DUE_INDEX_DARK_LAUNCH: false,
   OPERION_DUE_INDEX: false,
