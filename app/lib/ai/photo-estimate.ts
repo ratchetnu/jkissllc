@@ -47,7 +47,26 @@ export type PhotoEstimateResult = {
   degraded?: InteractiveDegradeReason
 }
 
-export async function buildPhotoEstimate(input: PhotoEstimateInput): Promise<PhotoEstimateResult> {
+/**
+ * Dependency-injection seam, mirroring analyzePhotosV2's `deps`. Lets the budget
+ * wiring be tested without a provider call or a Redis round-trip. Defaults are the
+ * real implementations, so production behaviour is unchanged.
+ */
+export type PhotoEstimateDeps = {
+  analyze?: typeof analyzeJunkPhotos
+  review?: typeof reviewJunkAnalysis
+  loadSettings?: typeof getDisposalSettings
+  loadCalibration?: typeof getCalibration
+}
+
+export async function buildPhotoEstimate(
+  input: PhotoEstimateInput,
+  deps: PhotoEstimateDeps = {},
+): Promise<PhotoEstimateResult> {
+  const analyze = deps.analyze ?? analyzeJunkPhotos
+  const review = deps.review ?? reviewJunkAnalysis
+  const loadSettings = deps.loadSettings ?? getDisposalSettings
+  const loadCalibration = deps.loadCalibration ?? getCalibration
   const nowIso = new Date().toISOString()
   const serviceLabel = SERVICE_LABELS[input.serviceType] ?? input.serviceType
   const budget = input.budget ?? durableBudget()
@@ -59,7 +78,7 @@ export async function buildPhotoEstimate(input: PhotoEstimateInput): Promise<Pho
   // `ai` stage (its internal preprocessing + provider round-trip are recorded as nested
   // sub-stages). Observability is a no-op when no pipeline trace is active.
   const primary = budget.primary(startedAt)
-  const analyzed = await timeStage('ai', () => analyzeJunkPhotos({
+  const analyzed = await timeStage('ai', () => analyze({
     analysisId: input.analysisId, bookingId: input.bookingId, photoUrls: input.photoUrls, serviceLabel, nowIso,
     timeoutMs: primary.timeoutMs, attempts: primary.attempts,
   }))
@@ -81,7 +100,7 @@ export async function buildPhotoEstimate(input: PhotoEstimateInput): Promise<Pho
     let analysis = applyMonitor(analyzed.analysis, monitor)
 
     // Deterministic pricing + decision. A monitor 'block' forces manual review.
-    const [settings, calibration] = await Promise.all([getDisposalSettings(), getCalibration()])
+    const [settings, calibration] = await Promise.all([loadSettings(), loadCalibration()])
     let decision = decideQuote({ analysis, settings, calibration, serviceType: input.serviceType, debris: input.debris, forceReview: monitor.forceReview })
 
     // Second-opinion critic — only when about to auto-quote. Fail-soft. The reviewer
@@ -100,7 +119,7 @@ export async function buildPhotoEstimate(input: PhotoEstimateInput): Promise<Pho
         criticSkipped = 'budget'
       } else {
         const mode = criticModeFor(analysis.confidence, isEnabled('OPERION_CRITIC_JSON'))
-        critic = await reviewJunkAnalysis({
+        critic = await review({
           analysis, photoUrls: input.photoUrls, serviceLabel, mode,
           timeoutMs: criticSlice.timeoutMs, attempts: criticSlice.attempts,
         })

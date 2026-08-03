@@ -3,8 +3,7 @@ import { after as afterResponse } from 'next/server'
 import { withTenantRoute } from '../../lib/platform/tenancy/with-tenant-route'
 import { withBackgroundTenant } from '../../lib/platform/tenancy/request-context'
 import { currentTenantId } from '../../lib/platform/tenancy/context'
-import { processAiJob } from '../../lib/book-now-ai'
-import { isEnabled } from '../../lib/platform/flags'
+import { processAiJob, shouldKickAiWorker } from '../../lib/book-now-ai'
 import { rateLimit } from '../../lib/rate-limit'
 import { isValidEmail } from '../../lib/validators'
 import { isBlockedBot } from '../../lib/botcheck'
@@ -268,7 +267,7 @@ export const POST = withTenantRoute(async (request: NextRequest) => {
       // fully fail-soft + idempotent (per-booking write-lock + valid-estimate guard):
       // the cron worker remains the safety net if this is cut short or never runs.
       // OFF ⇒ cron-only, byte-identical to today.
-      if (persisted && persisted.aiJob?.status === 'queued' && isEnabled('OPERION_EVENT_ENQUEUE')) {
+      if (persisted && shouldKickAiWorker(persisted)) {
         const token = persisted.token
         const tid = (() => { try { return currentTenantId() } catch { return undefined } })()
         afterResponse(async () => {
