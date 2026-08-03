@@ -85,6 +85,9 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   const nowIso = new Date().toISOString()
 
   await recordFunnelEvent('quote_analyze_started', nowIso)
+  // Head-start analyses are counted separately (never instead) so the speculative
+  // share of total analyses — the cost side of the latency win — is measurable.
+  if (body.speculative === true) await recordFunnelEvent('quote_analyze_speculative', nowIso)
 
   // ── Service-family routing ─────────────────────────────────────────────────
   // The lane is chosen from the SERVICE FAMILY, never from a caller-supplied lane
