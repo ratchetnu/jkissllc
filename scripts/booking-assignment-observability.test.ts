@@ -57,8 +57,28 @@ import { createUserSessionToken } from '../app/api/admin/_lib/session'
 import { NextRequest } from 'next/server'
 import { runWithTenant } from '../app/lib/platform/tenancy/context'
 
+// A fixed clock for the PURE tests. `aggregateAssignmentActivity`, `resolveRange`
+// and `summarizeAssignmentActivity` all accept `now` as a parameter, so every test
+// that calls them directly is deterministic and stays pinned to this constant.
 const NOW = 1_785_200_000_000            // fixed clock; no Date.now() in assertions
 const DAY = 86_400_000
+
+// A clock-relative base for fixtures that flow through the ROUTE HANDLER.
+//
+// The handler calls `summarizeAssignmentActivity(input)` with no `now`, so it always
+// resolves its window from the real `Date.now()` — there is no seam to inject. A
+// fixture pinned to a fixed calendar instant therefore has an EXPIRY DATE: once it
+// falls outside `DEFAULT_RANGE_DAYS` the route correctly returns zero and the
+// assertion fails, with no code change and no defect.
+//
+// That is not hypothetical. Seeding at `NOW - DAY` (2026-07-27T00:53:20Z) put these
+// events outside the seven-day window from 2026-08-03T00:53:20Z onwards, and the
+// suite went red on that boundary for every branch simultaneously.
+//
+// Captured ONCE at module load so every fixture and assertion in a run shares one
+// instant; re-reading `Date.now()` per fixture could straddle the window edge
+// between seeding and asserting.
+const ROUTE_NOW = Date.now()
 const ev = (action: string, at: number, extra: Partial<BookingEvent> = {}): BookingEvent =>
   ({ at, actor: 'crew:c1', action: action as BookingEvent['action'], result: 'c1', meta: { staffId: 'c1' }, ...extra })
 
@@ -189,6 +209,10 @@ test('range defaults to seven days and refuses more than ninety', () => {
   assert.deepEqual(resolveRange({ days: 0 }, NOW), { ok: false, error: 'invalid_date' })
   assert.deepEqual(resolveRange({ days: -3 }, NOW), { ok: false, error: 'invalid_date' })
   assert.deepEqual(resolveRange({ days: 'abc' }, NOW), { ok: false, error: 'invalid_date' })
+  // Pin the LITERALS, not just the constants. Every other assertion here compares
+  // against DEFAULT_RANGE_DAYS/MAX_RANGE_DAYS, so they all move together if someone
+  // edits the constant — the window semantics would change with nothing going red.
+  assert.equal(DEFAULT_RANGE_DAYS, 7)
   assert.equal(MAX_RANGE_DAYS, 90)
 })
 
@@ -220,18 +244,79 @@ test('bookings sitting at the event cap are reported as a lower bound', () => {
 
 // ── Pagination + scan completeness (through the real store) ──────────────────
 
-async function seedBookings(count: number, tenant: string, eventsPer = 1): Promise<void> {
+// `at` is REQUIRED and has no default. A default is what let a fixture silently
+// belong to a different clock than the assertion that reads it back: pass NOW-
+// relative for tests that inject NOW, ROUTE_NOW-relative for tests that go through
+// the route handler. Making it explicit means the mismatch cannot recur silently.
+async function seedBookings(count: number, tenant: string, eventsPer: number, at: number): Promise<void> {
   await runWithTenant({ tenantId: tenant }, async () => {
     for (let i = 0; i < count; i++) {
       await saveBooking({
         token: `${tenant}-tok-${String(i).padStart(5, '0')}`.padEnd(64, 'x'),
         bookingNumber: `JK-${tenant}-${i}`, serviceType: 'junk_removal', status: 'confirmed',
-        customerName: 'Seed Customer', createdAt: NOW - 10 * DAY, updatedAt: NOW - i,
-        events: Array.from({ length: eventsPer }, () => ev('assignment.accepted', NOW - DAY)),
+        // Every timestamp derives from `at`, so a fixture belongs entirely to one
+        // clock. `createdAt`/`updatedAt` are not read by the range filter, but
+        // keeping them consistent stops a future assertion tripping over a record
+        // that claims to have been updated before it was created.
+        customerName: 'Seed Customer', createdAt: at - 9 * DAY, updatedAt: at + i,
+        events: Array.from({ length: eventsPer }, () => ev('assignment.accepted', at)),
       } as unknown as Booking)
     }
   })
 }
+
+// ── The seven-day boundary, pinned at arbitrary dates ────────────────────────
+//
+// `summarizeAssignmentActivity` takes `now`, so these assertions are independent of
+// when the suite runs. They are the reason a broken window calculation cannot hide:
+// the route-level tests above prove the fixture is visible, these prove it is
+// visible for the RIGHT reason and stops being visible at exactly the right instant.
+//
+// Each case runs at several instants decades apart, so a fix that merely re-pins the
+// fixture to a newer calendar date would not satisfy them.
+const BOUNDARY_CLOCKS: [string, number][] = [
+  ['2026-08-03', Date.UTC(2026, 7, 3, 12)],
+  ['2027-01-01', Date.UTC(2027, 0, 1, 12)],
+  ['2030-06-15', Date.UTC(2030, 5, 15, 12)],
+  ['2099-12-31', Date.UTC(2099, 11, 31, 12)],
+]
+
+test('an event just INSIDE the seven-day window is counted, at any date', async () => {
+  for (const [label, clock] of BOUNDARY_CLOCKS) {
+    kv.clear(); zsets.clear()
+    // One second inside the lower edge.
+    await seedBookings(2, 'boundary', 1, clock - DEFAULT_RANGE_DAYS * DAY + 1000)
+    const r = await runWithTenant({ tenantId: 'boundary' }, () =>
+      summarizeAssignmentActivity({}, clock))
+    assert.equal(r.ok, true, `${label}: range must resolve`)
+    assert.equal(r.ok && r.summary.totals.accepted, 2, `${label}: just-inside events must be counted`)
+  }
+})
+
+test('an event just OUTSIDE the seven-day window is excluded, at any date', async () => {
+  for (const [label, clock] of BOUNDARY_CLOCKS) {
+    kv.clear(); zsets.clear()
+    // One second beyond the lower edge.
+    await seedBookings(2, 'boundary', 1, clock - DEFAULT_RANGE_DAYS * DAY - 1000)
+    const r = await runWithTenant({ tenantId: 'boundary' }, () =>
+      summarizeAssignmentActivity({}, clock))
+    assert.equal(r.ok, true, `${label}: range must resolve`)
+    assert.equal(r.ok && r.summary.totals.accepted, 0, `${label}: just-outside events must be excluded`)
+  }
+})
+
+test('the default-window fixture stays inside the window however far the clock advances', async () => {
+  // The regression that produced this test: a fixture pinned to a fixed calendar
+  // instant drifts out of the default window and the suite goes red with no code
+  // change. Seeding relative to the clock the route will use must survive any date.
+  for (const [label, clock] of [...BOUNDARY_CLOCKS, ['+100y', Date.UTC(2126, 0, 1, 12)] as [string, number]]) {
+    kv.clear(); zsets.clear()
+    await seedBookings(2, 'drift', 1, clock - DAY)
+    const r = await runWithTenant({ tenantId: 'drift' }, () =>
+      summarizeAssignmentActivity({}, clock))
+    assert.equal(r.ok && r.summary.totals.accepted, 2, `${label}: a clock-relative fixture never expires`)
+  }
+})
 
 test('a complete scan across many pages reports scanComplete and exact totals', async () => {
   kv.clear(); zsets.clear()
@@ -239,7 +324,7 @@ test('a complete scan across many pages reports scanComplete and exact totals', 
   // hundreds of records. The production defaults are asserted separately below.
   const PAGE = 3
   const N = PAGE * 2 + 1                    // forces three pages, last one partial
-  await seedBookings(N, 'tenantA')
+  await seedBookings(N, 'tenantA', 1, NOW - DAY)
 
   const r = await runWithTenant({ tenantId: 'tenantA' }, () => summarizeAssignmentActivity({ days: 30 }, NOW, { pageSize: PAGE }))
   assert.equal(r.ok, true)
@@ -257,7 +342,7 @@ test('a complete scan across many pages reports scanComplete and exact totals', 
 
 test('an indexed booking whose record is gone makes totals a lower bound', async () => {
   kv.clear(); zsets.clear()
-  await seedBookings(4, 'tenantB')
+  await seedBookings(4, 'tenantB', 1, NOW - DAY)
   // Drop one record but leave its index entry — a real orphan.
   const orphan = [...kv.keys()].find(k => k.startsWith('bk:') && !k.startsWith('bk:num:') && k !== 'bk:index')
   assert.ok(orphan)
@@ -275,7 +360,7 @@ test('an indexed booking whose record is gone makes totals a lower bound', async
 
 test('hitting the page ceiling is never silent — it forces scanComplete false', async () => {
   kv.clear(); zsets.clear()
-  await seedBookings(9, 'tenantCap')
+  await seedBookings(9, 'tenantCap', 1, NOW - DAY)
   // pageSize 2 × maxPages 2 can see at most 4 of 9 — the ceiling stops it early.
   const r = await runWithTenant({ tenantId: 'tenantCap' }, () =>
     summarizeAssignmentActivity({ days: 30 }, NOW, { pageSize: 2, maxPages: 2 }))
@@ -303,8 +388,8 @@ test('TENANCY: one tenant never sees another tenant’s events', async () => {
   kv.clear(); zsets.clear()
   process.env.TENANCY_ENABLED = 'true'
   try {
-    await seedBookings(3, 'tenantX')
-    await seedBookings(5, 'tenantY')
+    await seedBookings(3, 'tenantX', 1, NOW - DAY)
+    await seedBookings(5, 'tenantY', 1, NOW - DAY)
 
     const x = await runWithTenant({ tenantId: 'tenantX' }, () => summarizeAssignmentActivity({ days: 30 }, NOW))
     const y = await runWithTenant({ tenantId: 'tenantY' }, () => summarizeAssignmentActivity({ days: 30 }, NOW))
@@ -363,7 +448,7 @@ test('AUTHZ: manager and crew are 403 — audit:view is admin-only', async () =>
 
 test('AUTHZ: admin is 200 and receives the summary', async () => {
   kv.clear(); zsets.clear()
-  await seedBookings(2, 'default')
+  await seedBookings(2, 'default', 1, ROUTE_NOW - DAY)
   const res = await activityGET(req(await sessionFor('admin')), { params: Promise.resolve({}) } as never)
   assert.equal(res.status, 200)
   const body = await res.json()
@@ -383,7 +468,7 @@ test('AUTHZ: an over-long range is refused with 400, not silently clamped', asyn
 
 test('the audit view is independent of BOOKING_ASSIGNMENT_ENABLED — history survives rollback', async () => {
   kv.clear(); zsets.clear()
-  await seedBookings(2, 'default')
+  await seedBookings(2, 'default', 1, ROUTE_NOW - DAY)
   const prev = process.env.BOOKING_ASSIGNMENT_ENABLED
   try {
     // With the flag OFF every other booking-crew surface 404s. This one must not:
@@ -448,9 +533,12 @@ test('NO LEAK: the response contains only numbers, booleans, and date strings', 
       customerName: 'Jane Q Customer', jobSiteAddress: '123 Secret Lane',
       customerEmail: 'jane@example.com', customerPhone: '555-0100',
       completionNote: 'gate code 9182', completionPhotos: ['https://blob.example/proof.jpg'],
-      invoiceAmountCents: 45_000, createdAt: NOW - DAY, updatedAt: NOW,
+      // ROUTE_NOW: read back through the route handler. The leak assertions do not
+      // depend on the count, but an expired fixture would make this test silently
+      // inspect an EMPTY payload — passing for the wrong reason.
+      invoiceAmountCents: 45_000, createdAt: ROUTE_NOW - DAY, updatedAt: ROUTE_NOW,
       assignees: [{ staffId: 'crew-secret-1', name: 'Bob Crewman', payCents: 15_000 }],
-      events: [ev('assignment.completion_recorded', NOW - 1000, { meta: { staffId: 'crew-secret-1', requestId: 'req-cccccccccccc03' } })],
+      events: [ev('assignment.completion_recorded', ROUTE_NOW - 1000, { meta: { staffId: 'crew-secret-1', requestId: 'req-cccccccccccc03' } })],
     } as unknown as Booking)
   })
 
@@ -483,10 +571,15 @@ test('NO LEAK: the response contains only numbers, booleans, and date strings', 
 
 test('NO LEAK: crew identity is a count, and no per-booking rows are returned', async () => {
   kv.clear(); zsets.clear()
-  await seedBookings(3, 'default')
+  await seedBookings(3, 'default', 1, ROUTE_NOW - DAY)
   const res = await activityGET(req(await sessionFor('admin')), { params: Promise.resolve({}) } as never)
   const body = await res.json()
+  // Assert the seeded data actually came back FIRST. Without this the leak checks
+  // below are satisfied by an empty payload — so an expired or mis-clocked fixture
+  // would make this test pass for the wrong reason, proving nothing about leakage.
+  assert.equal(body.summary.totals.accepted, 3, 'the seeded events must be in range')
   assert.equal(typeof body.summary.distinctCrew, 'number')
+  assert.ok(body.summary.distinctCrew >= 1, 'and must describe real crew activity')
   // No array anywhere in the payload — arrays are how per-booking rows would appear.
   const hasArray = (v: unknown): boolean =>
     Array.isArray(v) || (v !== null && typeof v === 'object' && Object.values(v as object).some(hasArray))
