@@ -20,6 +20,7 @@ import {
   selectDueFromIndex, dueTelemetry, type DueSelection, type DueRunTelemetry,
 } from './ai-due-index'
 import { photoSetFingerprint, samePhotoSet } from './ai/photo-set'
+import { isEnabled } from './platform/flags'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Durable, server-side Book Now AI processing — the RECOVERY path for the
@@ -81,6 +82,25 @@ export function supportsPhotoAi(b: Pick<Booking, 'serviceType'>): boolean {
 export function hasValidEstimate(b: Pick<Booking, 'aiEstimate' | 'invoicePhotos'>): boolean {
   if (!b.aiEstimate || b.aiEstimate.status === 'failed' || !b.aiEstimate.pricing || b.aiEstimate.invalidatedAt) return false
   return !b.aiEstimate.inputPhotoUrls?.length || samePhotoSet(b.aiEstimate.inputPhotoUrls, b.invoicePhotos)
+}
+
+/**
+ * Should the submit route kick the durable worker the moment its response is sent
+ * (OPERION_EVENT_ENQUEUE)? Only for a job that is genuinely QUEUED — never one
+ * already processing, terminal, or absent, because a second starter would race the
+ * one that is already running.
+ *
+ * This is an ACCELERATION, not a mechanism: whatever this returns, the job stays on
+ * the booking and the 15-minute cron remains the safety net. If the kick never runs,
+ * is cut short mid-flight, or the process dies, the cron picks the job up exactly as
+ * it does today. Pure + exported so the gate is unit-testable without Redis.
+ */
+export function shouldKickAiWorker(
+  b: Pick<Booking, 'aiJob'> | null | undefined,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  if (!b?.aiJob || b.aiJob.status !== 'queued') return false
+  return isEnabled('OPERION_EVENT_ENQUEUE', env)
 }
 
 export function aiJobIdempotencyKey(b: Pick<Booking, 'token' | 'invoicePhotos'>, tenantId: string): string {
