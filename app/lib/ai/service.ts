@@ -36,6 +36,11 @@ export type AiTaskInput = {
   maxOutputTokens?: number
   temperature?: number
   timeoutMs?: number               // per-call abort override (slow heavy-detail vision on a long-budget cron)
+  // Per-call attempt override. The default (2) retries a transient failure, which is
+  // right for background work but WRONG on an interactive request: a retry can double
+  // the wall-clock and blow the route's function ceiling. The interactive photo-estimate
+  // path passes 1 so a customer request is always single-shot (see ai/interactive-policy).
+  attempts?: number
   requestChars?: number
   // ── Telemetry attribution (all optional; recorded when supplied) ──
   kind?: AiCallKind                // primary (default) | shadow | fallback | mock | suppressed
@@ -85,7 +90,9 @@ export async function runAiTask<T = Record<string, unknown>>(input: AiTaskInput,
   const accrueCost = deps.accrueCost ?? addCost
   const resolve = deps.resolve ?? resolvePrompt
   const score = deps.score ?? scoreResponse
-  const maxAttempts = Math.max(1, deps.maxAttempts ?? 2)
+  // Caller-declared attempts win over the dep default so an interactive request can
+  // pin itself to a single shot without disturbing every other feature's retry.
+  const maxAttempts = Math.max(1, input.attempts ?? deps.maxAttempts ?? 2)
   const tid = tenantId()
   const callId = crypto.randomUUID()
   const builtinVersion = getPrompt(input.taskId).version   // throws on unknown taskId (guarded by tests)
