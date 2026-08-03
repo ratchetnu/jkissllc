@@ -315,27 +315,70 @@ with a 44 px Try again.
     note and `jobCompletedAt`; it does not end a shift or change `BookingStatus`.
     Actual booking closure remains the owner's explicit status transition, where the
     effective-open-punch gate applies.
-- **Activation is BLOCKED on a targeted open-punch index.** The current Phase C
-  implementation is safe to merge behind its OFF default, but it is not suitable for
-  field activation: each enabled clock-in currently reads the complete route and booking
-  histories before applying the service-date filter. That is approximately one Redis
-  GET per historical record and can exceed the installation's daily request budget in a
-  single interaction at the scan ceilings. The booking index is scored by `updatedAt`,
-  so unrelated booking writes can also reorder it during the opening/closing stability
-  check and turn a legitimate field clock-in into a retryable 503.
-  - Build and backfill a tenant-scoped, service-date + staff open-punch index maintained
-    by every punch and correction transition; prove parity against the Phase A complete
-    scan before it becomes authoritative.
-  - Audit clockable bookings with no deterministic `effectiveServiceDate`. A dateless
-    target must remain blocked, and a dateless historical open punch must not disappear
-    from enforcement merely because same-date comparison is impossible.
-  - Measure lock hold time and concurrent retry behaviour against representative data;
-    the acquisition wait must be designed from that measured indexed lookup, not from
-    the current full-history scan.
-  - Only after those blockers close: read the authenticated Phase A report, exercise
-    public-link and portal paths in Preview with the flag enabled, and submit a separate
-    Production activation proposal. Construction does not imply activation, and no
-    Production flag change is part of Sprint 3.1 B/C implementation.
+- **The targeted open-punch index is BUILT — three of the four activation blockers
+  are closed with measurements.** `OPEN_PUNCH_INDEX_ENABLED` defaults OFF and is
+  separate from `SINGLE_OPEN_PUNCH_ENABLED`, so the index can be built and proven at
+  parity before any enforcement depends on it.
+  - **Shape.** `punchidx:open:{staffId}:{bucket}` (sorted set, score = effective
+    clock-in, member = punchId), `punchidx:loc:{punchId}` (which bucket a punch is
+    filed under, so a rescheduled job can be moved rather than stranded),
+    `punchidx:buckets` (the registry that makes the index enumerable — the Redis
+    chokepoint exposes no KEYS/SCAN, and an index that cannot be enumerated cannot be
+    reconciled), and `punchidx:ready` (the completion marker). All tenant-scoped
+    through the chokepoint.
+  - **Cost — measured, not estimated** (`scripts/open-punch-index-bench.mjs`, counting
+    proxy in front of the store, one clock-in decision):
+
+    | records | scan commands | indexed commands | scan latency | indexed latency |
+    |---|---|---|---|---|
+    | 200 | 212 | 6 | 90.7 ms | 18.2 ms |
+    | 500 | 516 | 6 | 160.7 ms | 18.0 ms |
+    | 1,000 | 1,022 | 6 | 265.0 ms | 17.7 ms |
+    | 2,000 | 2,036 | 6 | 404.5 ms | 18.4 ms |
+
+    The scan is linear in total history; the indexed path is **constant at 6 commands
+    and ~18 ms**. At 2,000 records that is 339x fewer commands for one clock-in.
+  - **`bk:index` reorder instability is gone.** The whole booking index is captured in
+    ONE `ZRANGE`, exactly as `scanAllRoutes` already did, and completeness is judged on
+    count and uniqueness — order-free properties. The previous two-pass ZREVRANGE
+    ordering comparison, which any concurrent booking write could fail, is removed.
+  - **Dateless bookings are defined.** An undated punch is filed under `__undated__`
+    and **blocks every date** — we cannot prove it belongs to another day, so it never
+    disappears from enforcement. Opening a NEW punch on an undated job is refused with
+    a distinct `undated_job` **409** (permanent until dispatch sets a date) rather than
+    a retryable 503 that would invite a retry loop.
+  - **Lock timing follows the critical section.** Indexed: 5 s lease, 25 attempts,
+    20 ms backoff (~0.5 s wait). Scan fallback keeps 10 s / 40 / 50 ms, because
+    applying the indexed timings to a multi-second scan would turn every concurrent
+    clock-in into a spurious `busy`.
+  - **Migration.** `backfillOpenPunchIndex` runs under an atomic lease, pages record
+    reads, re-asserts the lease before writing and again before the marker, removes
+    entries truth no longer holds, and writes the completion marker **last and only on
+    success** — so an interrupted run leaves an index that is never read. Re-running is
+    idempotent; a concurrent second run is refused by the lease.
+  - **Parity and repair.** `reconcileOpenPunchIndex` compares the index against the
+    complete Phase A-equivalent scan and reports `missing` / `extra` / `misfiled`,
+    with opt-in repair that only ever moves the index towards truth. Exposed at
+    `GET/POST /api/admin/operations/punch-index` (`audit:view` to read, `settings:manage`
+    to write); the GET returns a single `atParity` boolean.
+  - **Maintenance covers every transition** that changes effective open-punch state:
+    route clock-in/out (public link and portal), the public-link automatic clock-out on
+    completion, booking clock-in/out, time corrections in both directions (inside
+    `appendCorrection`, which knows the new effective state), and crew unassignment
+    (which deletes the punch outright and would otherwise strand a phantom).
+  - **Evidence.** 20 adversarial tests in `scripts/open-punch-index.test.ts`; the full
+    mutation matrix below is 20/20.
+- **REMAINING activation blocker — representative-scale measurement.** The figures
+  above are from synthetic data at 200–2,000 records. The Production route and booking
+  counts have not been read, so the real per-clock-in cost of the scan fallback, the
+  backfill duration, and the lease headroom are still unknown. Before activation:
+  1. Read the Production route and booking index cardinalities.
+  2. Run the backfill in Preview against a representative copy and record its duration
+     against the 30 s lease.
+  3. `GET /api/admin/operations/punch-index` must report `atParity: true`.
+  4. Only then enable `OPEN_PUNCH_INDEX_ENABLED`, re-verify parity, and submit a
+     SEPARATE proposal for `SINGLE_OPEN_PUNCH_ENABLED`. Construction does not imply
+     activation, and no Production flag change is part of Sprint 3.1 B/C.
 - Verify accept/decline, punches, duplicate taps, and photo recovery at
   320/375/390/430 px on representative iPhone and Android browsers.
 - Run an authenticated Preview mobile flow with forced request interruption and
