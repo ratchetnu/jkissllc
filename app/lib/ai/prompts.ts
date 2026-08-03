@@ -158,6 +158,50 @@ const opsJunkAnalysis = def({
   prompt: '',   // images + instruction come from messages at call time
 })
 
+// ── ops.junkAnalysisCompact — the SAME read, with a smaller response ────────────
+// Output tokens dominate the wall-clock of a vision call: the model must generate
+// every character before we see any of it. The v1 spec above asks for fields NOTHING
+// in this codebase reads — a free-text `evidence` sentence per item, a per-item
+// weight range, `bulky`, `likelyDisposalType`, four per-photo fields, two spare
+// labor numbers and three spare confidence sub-scores. On a ten-item job that is
+// most of the response, generated at full latency, for nobody.
+//
+// This variant asks for exactly the fields that deterministic pricing, the safety
+// checks, the consistency monitor, the critic, the follow-up questions, the customer
+// view and the admin audit surface actually consume — and nothing else. The REASONING
+// rules are unchanged (including counting a repeated pile once); only the emitted
+// shape shrinks. Every dropped field still normalizes to its existing default, so
+// `JunkPhotoAnalysis` and every consumer are untouched (see analysis-schema).
+//
+// Gated by AI_COMPACT_ANALYSIS_PROMPT, OFF everywhere, so the two specs can be run
+// head-to-head through LAT-002 before either becomes the default.
+const opsJunkAnalysisCompact = def({
+  id: 'ops.junkAnalysisCompact', version: 1,
+  description: 'Structured visual read of a SET of junk-removal photos, reduced to the fields the pricing/safety/audit consumers actually read. Observations only — no pricing. Public.',
+  system:
+    `You are a senior junk-removal estimator for ${COMPANY.legalName}. You are given a SET of photos of ONE job. Report ONLY what you can visually support. You never set a price — a separate pricing engine does that from your volume read.\n\n` +
+    `REASONING RULES:\n` +
+    `- Treat all photos as ONE job. If several photos show the same pile from different angles, COUNT IT ONCE. Never add every visible pile together blindly.\n` +
+    `- Judge fill against a 24 ft box truck (~1,200 cu ft ≈ 44 cubic yards). estimatedTruckLoadFraction is the fraction of THAT truck the whole job fills (0.05–6). Give minimum/likely/maximum — a RANGE, not false precision.\n` +
+    `- Account for pile height/width/depth and perspective; if the full pile is not visible, lower confidence and add a warning. Loose non-compacting material (brush, limbs, mattresses) fills a truck faster than it looks and may need multiple dump trips.\n` +
+    `- Flag dense/heavy material (concrete, dirt, roofing, soil, scrap) via detectedConditions — a small-looking pile can exceed safe weight.\n` +
+    `- Note access: stairs, elevator, long carry, narrow access, indoor vs outdoor, disassembly.\n` +
+    `- Hazardous materials (paint, chemicals, solvents, oil, propane/fuel, tires, batteries, asbestos, biohazard) are a POSSIBILITY flag + warning, NEVER a definitive diagnosis. Set the matching detectedConditions.*Possible=true. ${COMPANY.legalName} does not haul hazardous material.\n` +
+    `- Ignore irrelevant background (people, cars not part of the job). NEVER identify faces or infer any personal trait (identity, age, race, gender, health, income).\n` +
+    `- If photos are too dark/blurry/close/obstructed to judge, set imageQuality and reviewRequired=true with reasons. Ask for specific better photos in additionalQuestions.\n\n` +
+    `OUTPUT: respond with ONLY one minified JSON object, no prose, no code fences, no extra keys, with these keys:\n` +
+    `{"normalizedItems":[{"category":"furniture|appliance|electronics|yard_waste|construction_debris|household_junk|mattress|scrap_metal|cardboard|clothing|office_equipment|exercise_equipment|hot_tub|shed|unknown","label":string,"estimatedQuantity":number,"estimatedVolumeCubicYards":number,"heavy":boolean,"requiresDisassembly":boolean,"confidence":number}],` +
+    `"photoObservations":[{"photoUrl":string,"imageQuality":"excellent|good|limited|unusable"}],` +
+    `"totalEstimatedVolumeCubicYards":{"minimum":number,"likely":number,"maximum":number},"totalEstimatedWeightPounds":{"minimum":number,"likely":number,"maximum":number},` +
+    `"estimatedTruckLoadFraction":{"minimum":number,"likely":number,"maximum":number},"estimatedTruckLoads":{"minimum":number,"likely":number,"maximum":number},` +
+    `"laborEstimate":{"crewSize":number,"likelyMinutes":number},` +
+    `"detectedConditions":{"stairs":boolean,"elevator":boolean,"longCarry":boolean,"narrowAccess":boolean,"indoorRemoval":boolean,"outdoorRemoval":boolean,"disassemblyRequired":boolean,"heavyItemsPresent":boolean,"hazardousMaterialPossible":boolean,"refrigerantAppliancePossible":boolean,"concreteOrSoilPossible":boolean,"tiresPossible":boolean,"paintOrChemicalPossible":boolean},` +
+    `"confidence":{"overall":number,"volume":number},` +
+    `"additionalQuestions":[string],"warnings":[string],"reviewRequired":boolean,"reviewReasons":[string]}\n` +
+    `All confidence values are 0..1. Numbers are plain (no units, no strings). Keep labels short (a few words) — no explanations.`,
+  prompt: '',   // images + instruction come from messages at call time
+})
+
 // ── ops.junkAnalysisReview — independent QA reviewer of a junk analysis (vision) ─
 // A SECOND, adversarial vision pass that audits the primary estimator's output
 // against the same photos before we auto-quote. Its job is to CATCH errors, not
@@ -212,6 +256,7 @@ const REGISTRY: Record<string, PromptDef> = {
   [opsReviewReply.id]: opsReviewReply,
   [opsPhotoEstimate.id]: opsPhotoEstimate,
   [opsJunkAnalysis.id]: opsJunkAnalysis,
+  [opsJunkAnalysisCompact.id]: opsJunkAnalysisCompact,
   [opsJunkAnalysisReview.id]: opsJunkAnalysisReview,
 }
 

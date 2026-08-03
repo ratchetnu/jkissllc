@@ -145,6 +145,13 @@ export type FeatureFlag =
   // this lane existed. A moving job is NEVER priced by the disposal engine in
   // either state — that fall-through is the defect this lane replaces.
   | 'OPERION_MOVING_LANE'
+  // Compact primary-analysis prompt (ops.junkAnalysisCompact). Asks the vision model
+  // for ONLY the fields the pricing engine, safety checks, monitor, critic, follow-up
+  // selection, customer view and admin audit actually read — output tokens are the
+  // dominant term in vision latency. The response SCHEMA and every consumer are
+  // unchanged; the dropped fields normalize to the same defaults they already get.
+  // OFF = today's v1 spec, byte-identical. Run both through LAT-002 before switching.
+  | 'AI_COMPACT_ANALYSIS_PROMPT'
   // Event-driven recovery: kick the durable AI worker immediately after enqueue
   // (fire-and-forget, fail-soft) so a recovery job starts in seconds instead of
   // waiting for the next cron tick. OFF = cron-only (unchanged). Cron always remains
@@ -249,6 +256,7 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   AI_EVAL_TELEMETRY_ENABLED: false,
   OPERION_CRITIC_JSON: false,
   OPERION_MOVING_LANE: false,
+  AI_COMPACT_ANALYSIS_PROMPT: false,
   OPERION_EVENT_ENQUEUE: false,
   OPERION_DUE_INDEX_DARK_LAUNCH: false,
   OPERION_DUE_INDEX: false,

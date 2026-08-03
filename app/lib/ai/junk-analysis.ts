@@ -16,6 +16,7 @@ import type { ModelMessage } from 'ai'
 import { runAiTask } from './service'
 import { truckVars } from './truck-vars'
 import { updateAiCall } from './telemetry'
+import { isEnabled } from '../platform/flags'
 import { timeStage, markStage, markStageFailure } from '../observability/pipeline-trace'
 import { isAllowedPhotoUrl } from '../photo-url'
 import { resolveAiPhotoUrls } from './photo-optimize'
@@ -54,6 +55,11 @@ export type AnalyzeJunkPhotosResult = {
 }
 
 const providerOf = (model: string): string => (model.includes('/') ? model.split('/')[0] : 'vercel-ai-gateway')
+
+/** Which primary-analysis prompt spec runs. Flag OFF ⇒ the shipped v1 spec. */
+export function analysisTaskId(env: Record<string, string | undefined> = process.env): string {
+  return isEnabled('AI_COMPACT_ANALYSIS_PROMPT', env) ? 'ops.junkAnalysisCompact' : 'ops.junkAnalysis'
+}
 
 export interface VisionAnalysisProvider {
   analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<AnalyzeJunkPhotosResult>
@@ -100,7 +106,11 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
   const messages = prep.messages
 
   const res = await runAiTask({
-    taskId: 'ops.junkAnalysis',
+    // The prompt VARIANT is selectable; the FEATURE is not. Keeping `feature` fixed
+    // means model routing, cost dashboards and the AI audit log continue to see one
+    // feature, while `taskId` records which spec actually ran — which is what makes
+    // the two directly comparable in a LAT-002 report.
+    taskId: analysisTaskId(),
     feature: 'ops.junkAnalysis',
     vars: await truckVars(),
     messages,
