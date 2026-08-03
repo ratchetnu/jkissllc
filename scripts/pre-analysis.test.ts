@@ -3,7 +3,7 @@
 // speculation is only safe if a result can never be attributed to the wrong inputs:
 // every hazard the controller claims to handle is reproduced here.
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import test, { after } from 'node:test'
 
 import {
   createPreAnalysisController, preAnalysisKey,
@@ -27,6 +27,13 @@ function fakeTimers() {
   }
 }
 
+// Several tests deliberately leave a run in flight — that IS the scenario under test.
+// Leaving one pending is fine; AWAITING one the test never settles is not, and would
+// hang the file forever under the runner's per-file process isolation. Registered
+// here and drained at the end so a future edit cannot reintroduce that hang.
+const LEAKED: Array<() => void> = []
+after(() => { for (const settle of LEAKED.splice(0)) settle() })
+
 // A runner whose promises are resolved BY THE TEST, so completion order is exact.
 function controlledRunner() {
   const calls: Array<{
@@ -36,6 +43,7 @@ function controlledRunner() {
   const run = (req: PreAnalysisRequest, ctx: { key: string; signal: AbortSignal; speculative: boolean }) =>
     new Promise<string>((resolve, reject) => {
       calls.push({ key: ctx.key, req, signal: ctx.signal, speculative: ctx.speculative, resolve, reject })
+      LEAKED.push(() => resolve('drained'))
     })
   return { run, calls }
 }
@@ -315,8 +323,12 @@ test('scheduled runs are flagged speculative; ensure() runs are not', async () =
   r.calls[0].resolve('OK')
   await Promise.resolve(); await Promise.resolve()
 
-  await c.ensure(req(['b']))
+  // Start it, assert, THEN settle — awaiting a run the test never resolves would
+  // hang the file forever under the runner's per-file process isolation.
+  const demanded = c.ensure(req(['b']))
   assert.equal(r.calls[1].speculative, false, 'the customer is waiting on this one')
+  r.calls[1].resolve('OK')
+  await demanded
 })
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
