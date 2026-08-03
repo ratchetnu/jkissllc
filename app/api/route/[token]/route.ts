@@ -14,6 +14,7 @@ import { getStaff, staffUsesTimeclock } from '../../../lib/staff'
 import { effectivePunch, listCorrections, punchId } from '../../../lib/time-corrections'
 import { applyPunch, coord, type ClockAction } from '../../../lib/crew-timeclock'
 import { withSingleOpenPunchPolicy } from '../../../lib/timeclock/punch-policy'
+import { syncAssigneePunchIndex } from '../../../lib/timeclock/punch-index-sync'
 import { isEnabled } from '../../../lib/platform/flags'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
@@ -158,6 +159,10 @@ export const POST = withPublicTokenRoute(async (req: NextRequest, { params }: { 
         // does not become Completed and the punch is not half-closed. Atomicity here
         // is structural, not bolted on.
         try { await saveRoute(route) } catch { return saveFail }
+        // Completion may have closed this crew member's punch automatically. The
+        // index has to learn that here, or the shift stays "open" in enforcement
+        // and blocks their next job.
+        await syncAssigneePunchIndex('route', route.token, route.routeDate, assignee)
         return { response: NextResponse.json({ ok: true, route: pub(), clockedOut: punchOpen }) }
       }
 
@@ -193,6 +198,7 @@ export const POST = withPublicTokenRoute(async (req: NextRequest, { params }: { 
         pushAudit(route, 'contractor',
           `${assignee.name} ${clockAction === 'clock_in' ? 'clocked in' : 'clocked out'} · ${fmtCoord(lat, lng)}${punch.denied ? ' (location off)' : ''}`)
         try { await saveRoute(route) } catch { return saveFail }
+        await syncAssigneePunchIndex('route', route.token, route.routeDate, assignee)
         // Location off → tell the carrier in real time (best-effort; runs after the lock).
         const crewName = assignee.name
         return {
@@ -245,7 +251,11 @@ export const POST = withPublicTokenRoute(async (req: NextRequest, { params }: { 
       if (!governed.ok) {
         outcome = governed.block === 'other_open_punch'
           ? { response: NextResponse.json({ error: 'You’re still clocked into another job on this service date. Clock out there first.' }, { status: 409 }) }
-          : { response: NextResponse.json({ error: 'Could not verify your other punches — please try again.' }, { status: 503 }) }
+          // Permanent until dispatch sets a date. Saying "try again" would invite a
+          // retry loop against a condition the crew member cannot change.
+          : governed.block === 'undated_job'
+            ? { response: NextResponse.json({ error: 'This job has no service date yet. Ask dispatch to set one before clocking in.' }, { status: 409 }) }
+            : { response: NextResponse.json({ error: 'Could not verify your other punches — please try again.' }, { status: 503 }) }
       } else {
         outcome = governed.value
       }
