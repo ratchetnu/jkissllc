@@ -15,6 +15,8 @@ import {
 } from '../../../lib/crew-timeclock'
 import { punchBookingClock } from '../../../lib/booking-assignment'
 import { centralToday } from '../../../lib/dates'
+import { isEnabled } from '../../../lib/platform/flags'
+import { withSingleOpenPunchPolicy } from '../../../lib/timeclock/punch-policy'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -73,7 +75,11 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
 
   // One shift at a time — refuse a second concurrent clock-in on a DIFFERENT job
   // (route or booking). Clock-out and idempotent re-taps of the same job are unaffected.
-  if (action === 'clock_in' && hasOtherOpenPunch(clockable, target.assigneeToken)) {
+  if (
+    action === 'clock_in' &&
+    !isEnabled('SINGLE_OPEN_PUNCH_ENABLED') &&
+    hasOtherOpenPunch(clockable, target.assigneeToken)
+  ) {
     return NextResponse.json({ error: 'You’re still clocked into another job. Clock out there first.' }, { status: 409 })
   }
 
@@ -85,56 +91,78 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     if (!r.ok) {
       if (r.error === 'not_confirmed') return NextResponse.json({ error: 'Please confirm the job before clocking in.' }, { status: 409 })
       if (r.error === 'not_clocked_in') return NextResponse.json({ error: 'Clock in before you clock out.' }, { status: 409 })
+      if (r.error === 'other_open_punch') return NextResponse.json({ error: 'You’re still clocked into another job on this service date. Clock out there first.' }, { status: 409 })
+      if (r.error === 'punch_policy_unavailable') return NextResponse.json({ error: 'Could not verify your other punches — please try again.' }, { status: 503 })
       if (r.error === 'conflict') return NextResponse.json({ error: 'The job is being updated — please try again.' }, { status: 503 })
       return NextResponse.json({ error: 'not_found' }, { status: 404 })
     }
     return NextResponse.json({ ok: true, already: r.already, denied: r.denied })
   }
 
-  let outcome: PunchResult | undefined
-  let ownershipOk = true
-  let crewName = ''
+  const writeRoutePunch = async (): Promise<NextResponse> => {
+    let outcome: PunchResult | undefined
+    let ownershipOk = true
+    let crewName = ''
 
-  let res
-  try {
-    res = await mutateByConfirmToken(target.assigneeToken, (route, assignee) => {
-      // Defense in depth: the token must still map to THIS crew member under the lock.
-      if (assignee.staffId !== who.staffId) {
-        ownershipOk = false
-        return false
-      }
-      crewName = assignee.name
-      const r = applyPunch(assignee, action, gps, Date.now())
-      outcome = r
-      if (!r.ok || !r.changed) return false // no save on error / idempotent no-op
-      pushEvent(route, action)
-      pushAuditFor(route, { sub: who.sub, role: who.role }, 'contractor',
-        `${assignee.name} ${action === 'clock_in' ? 'clocked in' : 'clocked out'} from the portal${r.denied ? ' (location off)' : ''}`)
-      return true
-    })
-  } catch (e) {
-    if (e instanceof RouteBusyError) {
-      return NextResponse.json({ error: 'The route is being updated — please try again.' }, { status: 503 })
-    }
-    throw e
-  }
-
-  if (res === null || !ownershipOk) return NextResponse.json({ error: 'not_found' }, { status: 404 })
-  if (!outcome) return NextResponse.json({ error: 'Could not clock — please try again.' }, { status: 500 })
-  if (!outcome.ok) {
-    if (outcome.code === 'not_confirmed')
-      return NextResponse.json({ error: 'Please confirm the route before clocking in.' }, { status: 409 })
-    return NextResponse.json({ error: 'Clock in before you clock out.' }, { status: 409 })
-  }
-
-  // Location off → tell the owner in real time (best-effort, after the lock releases).
-  if (outcome.changed && outcome.denied) {
+    let res
     try {
-      await alertOwnerClockLocationOff(res.route, { name: crewName }, action)
-    } catch {
-      /* non-fatal */
+      res = await mutateByConfirmToken(target.assigneeToken, (route, assignee) => {
+        // Defense in depth: the token must still map to THIS crew member under the lock.
+        if (assignee.staffId !== who.staffId) {
+          ownershipOk = false
+          return false
+        }
+        if (
+          isEnabled('SINGLE_OPEN_PUNCH_ENABLED') &&
+          route.routeDate !== target.routeDate
+        ) return false
+        crewName = assignee.name
+        const r = applyPunch(assignee, action, gps, Date.now())
+        outcome = r
+        if (!r.ok || !r.changed) return false // no save on error / idempotent no-op
+        pushEvent(route, action)
+        pushAuditFor(route, { sub: who.sub, role: who.role }, 'contractor',
+          `${assignee.name} ${action === 'clock_in' ? 'clocked in' : 'clocked out'} from the portal${r.denied ? ' (location off)' : ''}`)
+        return true
+      })
+    } catch (e) {
+      if (e instanceof RouteBusyError) {
+        return NextResponse.json({ error: 'The route is being updated — please try again.' }, { status: 503 })
+      }
+      throw e
     }
+
+    if (res === null || !ownershipOk) return NextResponse.json({ error: 'not_found' }, { status: 404 })
+    if (!outcome) {
+      return isEnabled('SINGLE_OPEN_PUNCH_ENABLED')
+        ? NextResponse.json({ error: 'The route was updated — please try again.' }, { status: 503 })
+        : NextResponse.json({ error: 'Could not clock — please try again.' }, { status: 500 })
+    }
+    if (!outcome.ok) {
+      if (outcome.code === 'not_confirmed')
+        return NextResponse.json({ error: 'Please confirm the route before clocking in.' }, { status: 409 })
+      return NextResponse.json({ error: 'Clock in before you clock out.' }, { status: 409 })
+    }
+
+    // Location off → tell the owner in real time (best-effort, after the lock releases).
+    if (outcome.changed && outcome.denied) {
+      try {
+        await alertOwnerClockLocationOff(res.route, { name: crewName }, action)
+      } catch {
+        /* non-fatal */
+      }
+    }
+
+    return NextResponse.json({ ok: true, already: outcome.already, denied: outcome.denied })
   }
 
-  return NextResponse.json({ ok: true, already: outcome.already, denied: outcome.denied })
+  const governed = await withSingleOpenPunchPolicy(action, {
+    type: 'route', jobToken: target.routeToken, staffId: who.staffId, serviceDate: target.routeDate,
+  }, writeRoutePunch)
+  if (!governed.ok) {
+    return governed.block === 'other_open_punch'
+      ? NextResponse.json({ error: 'You’re still clocked into another job on this service date. Clock out there first.' }, { status: 409 })
+      : NextResponse.json({ error: 'Could not verify your other punches — please try again.' }, { status: 503 })
+  }
+  return governed.value
 })

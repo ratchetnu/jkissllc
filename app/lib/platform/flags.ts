@@ -103,6 +103,11 @@ export type FeatureFlag =
   // today. Turning it on only lets the OWNER assign real crew from the roster — it
   // sends nothing, prices nothing, and changes no customer behavior.
   | 'BOOKING_ASSIGNMENT_ENABLED'
+  // Sprint 3.1 Phase C — enforce the existing portal rule on every punch ingress:
+  // one effective open punch per crew member on a shared service date. OFF keeps
+  // the pre-Phase-C write behaviour byte-identical; activation is a separate owner
+  // decision after the Phase A overlap report has been read.
+  | 'SINGLE_OPEN_PUNCH_ENABLED'
   // ── OPERION AI latency (Phase 2) — all default OFF; each is additive + fail-soft,
   //    gated so OFF = byte-identical to today, and preserves quote accuracy. ──
   // Critic dedup: the second-opinion reviewer runs on the STRUCTURED analysis JSON by
@@ -205,6 +210,7 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   // Staff-linked crew + equipment on customer Bookings. OFF = the new fields are
   // never written or read and the booking path is byte-identical to today.
   BOOKING_ASSIGNMENT_ENABLED: false,
+  SINGLE_OPEN_PUNCH_ENABLED: false,
   // AI latency Phase 2 — all OFF by default (byte-identical to today).
   OPERION_CRITIC_JSON: false,
   OPERION_EVENT_ENQUEUE: false,

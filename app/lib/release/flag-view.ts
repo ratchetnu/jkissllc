@@ -55,6 +55,7 @@ const META: Partial<Record<FeatureFlag, FlagMeta>> = {
   OPERION_AUTOMATIC_ROLLBACK_ENABLED: { label: 'Automatic rollback', description: 'Allow automatic rollback where a verified path exists.', category: 'Release Automation' },
   SHADOW_ANALYTICS_ENABLED: { label: 'Shadow analytics', description: 'Read-only AI-evaluation dashboards over persisted shadow jobs. Enables no shadow processing.', category: 'Shadow Analytics' },
   SHADOW_ALERTING_ENABLED: { label: 'Shadow alerting', description: 'Read-only alert evaluation over the same shadow jobs. Sends no customer anything.', category: 'Shadow Analytics' },
+  SINGLE_OPEN_PUNCH_ENABLED: { label: 'Single open punch', description: 'Enforce one effective open punch per crew member on the same service date across every clock ingress.', category: 'Platform' },
 }
 
 const humanize = (name: string) =>

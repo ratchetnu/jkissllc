@@ -31,7 +31,7 @@ export const dynamic = 'force-dynamic'
 
 const notFound = () => NextResponse.json({ error: 'not_found' }, { status: 404 })
 
-const ERRORS: Record<AssignmentError | 'not_confirmed' | 'not_clocked_in', { status: number; message: string }> = {
+const ERRORS: Record<AssignmentError | 'not_confirmed' | 'not_clocked_in' | 'other_open_punch' | 'punch_policy_unavailable', { status: number; message: string }> = {
   disabled:          { status: 404, message: 'Not found.' },
   not_found:         { status: 404, message: 'Job not found.' },
   not_assigned:      { status: 404, message: 'Job not found.' },   // never confirm a job exists to someone not on it
@@ -43,6 +43,8 @@ const ERRORS: Record<AssignmentError | 'not_confirmed' | 'not_clocked_in', { sta
   invalid:           { status: 400, message: 'That action is not valid.' },
   not_confirmed:     { status: 409, message: 'Accept the job before you clock in.' },
   not_clocked_in:    { status: 409, message: 'Clock in before you clock out.' },
+  other_open_punch:  { status: 409, message: 'You’re still clocked into another job on this service date. Clock out there first.' },
+  punch_policy_unavailable: { status: 503, message: 'Could not verify your other punches — please try again.' },
 }
 
 const fail = (e: keyof typeof ERRORS) =>
