@@ -13,6 +13,7 @@ test('all sprint flags default OFF except the inert capability registry', () => 
   assert.equal(d.INSIGHTS_UI_ENABLED, false)
   assert.equal(d.DESIGN_SYSTEM_REFERENCE_ENABLED, false)
   assert.equal(d.SINGLE_OPEN_PUNCH_ENABLED, false)
+  assert.equal(d.OPEN_PUNCH_INDEX_ENABLED, false)
   // The registry is inert data; enabling it changes no behavior, so it defaults true.
   assert.equal(d.CAPABILITY_REGISTRY_ENABLED, true)
 })
