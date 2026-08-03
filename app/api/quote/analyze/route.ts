@@ -13,9 +13,20 @@ import { SERVICE_TYPES, serviceFamily, type ServiceType } from '../../../lib/boo
 import { buildMovingEstimate, customerMovingEstimateView, type StoredMovingEstimate } from '../../../lib/ai/moving-estimate'
 import type { MovingJobFacts } from '../../../lib/pricing/moving-quote'
 import { isEnabled } from '../../../lib/platform/flags'
+import { interactiveBudget, INTERACTIVE_ROUTE_CEILING_MS } from '../../../lib/ai/interactive-policy'
 
 export const runtime = 'nodejs'
+// The interactive latency budget is sized against THIS number. They are declared in
+// two places by necessity (Next reads `maxDuration` as a static export; the budget is
+// a runtime value), so assert they agree at module load rather than let them drift —
+// a silently-raised ceiling would hand the customer a longer wait, not a better answer.
 export const maxDuration = 60
+if (maxDuration * 1000 !== INTERACTIVE_ROUTE_CEILING_MS) {
+  throw new Error(
+    `[quote/analyze] maxDuration ${maxDuration}s disagrees with INTERACTIVE_ROUTE_CEILING_MS ` +
+    `${INTERACTIVE_ROUTE_CEILING_MS}ms — update ai/interactive-policy together with this route.`,
+  )
+}
 
 /**
  * Non-visual move facts, read defensively from an untrusted body. Absent stays
@@ -126,9 +137,19 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
 
   // The full AI → monitor → pricing → critic chain, shared verbatim with the durable
   // server-side worker (app/lib/book-now-ai.ts) so both paths price identically.
-  const { stored, analyzedOk } = await buildPhotoEstimate({ analysisId, bookingId: 'draft', photoUrls: photos, serviceType, debris })
+  // The BUDGET is the only difference: a customer is waiting on this one, so every
+  // stage is sliced against the route's own ceiling and the whole thing is single-shot.
+  // The durable worker calls buildPhotoEstimate with no budget and keeps its longer,
+  // patient retry policy (150s deadline, 5 attempts, exponential backoff).
+  const budget = interactiveBudget(Date.now())
+  const { stored, analyzedOk, degraded } = await buildPhotoEstimate({
+    analysisId, bookingId: 'draft', photoUrls: photos, serviceType, debris, budget,
+  })
 
   await recordFunnelEvent(analyzedOk ? 'ai_analysis_completed' : 'ai_analysis_failed', nowIso)
+  // A budget overrun is its own funnel outcome. Before the interactive policy this
+  // case was invisible: the platform killed the function and nothing was recorded.
+  if (degraded) await recordFunnelEvent('ai_analysis_timeout', nowIso)
   await recordFunnelEvent(
     stored.decision === 'instant_quote' ? 'instant_quote_displayed'
       : stored.decision === 'estimate_range' ? 'estimate_range_displayed'
@@ -160,5 +181,14 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   const estate = serviceType === 'estate-cleanout' || serviceType === 'garage-cleanout' || serviceType === 'eviction'
   const followUps = selectFollowUpQuestions({ serviceFamily: serviceFamily(serviceType), analysis: stored.analysis, estate })
 
-  return NextResponse.json({ ok: true, estimate: customerEstimateView(stored), followUps })
+  // `analyzed` is the structured outcome the client needs to distinguish "the model
+  // read your photos and routed you to review" from "we ran out of time". Both still
+  // return 200 with a usable estimate shell — the booking is never lost, and the
+  // browser never sees a killed request.
+  return NextResponse.json({
+    ok: true,
+    estimate: customerEstimateView(stored),
+    followUps,
+    analyzed: { ok: analyzedOk, degraded: degraded ?? null },
+  })
 })

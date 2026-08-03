@@ -14,6 +14,10 @@ export type FunnelEvent =
   | 'quote_analyze_started'
   | 'ai_analysis_completed'
   | 'ai_analysis_failed'
+  // The interactive latency budget (ai/interactive-policy) cut a customer-facing
+  // analysis short. Distinct from 'ai_analysis_failed' (the provider rejected us):
+  // this is OUR deadline firing, and it is the rate a rollout has to watch.
+  | 'ai_analysis_timeout'
   | 'instant_quote_displayed'
   | 'estimate_range_displayed'
   | 'manual_review_required'
@@ -31,7 +35,7 @@ export type FunnelEvent =
   | 'confirmation_resumed'
 
 export const FUNNEL_EVENTS: FunnelEvent[] = [
-  'quote_analyze_started', 'ai_analysis_completed', 'ai_analysis_failed',
+  'quote_analyze_started', 'ai_analysis_completed', 'ai_analysis_failed', 'ai_analysis_timeout',
   'instant_quote_displayed', 'estimate_range_displayed', 'manual_review_required',
   'quote_request_persisted',
   'confirmation_started', 'confirmation_item_corrected', 'confirmation_conflict_detected',
