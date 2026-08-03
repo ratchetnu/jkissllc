@@ -15,17 +15,16 @@
 
 import { scanAllRoutes } from '../routes'
 import {
-  countBookingIndex,
   effectiveServiceDate,
   readBookingsByTokens,
-  scanBookingIndexPage,
   type Booking,
 } from '../bookings'
 import { isEnabled } from '../platform/flags'
 import { withLock } from '../kv-lock'
 import { effectivePunch, listCorrectionsForPunches, punchId } from '../time-corrections'
+import { UNDATED_BUCKET, bucketFor, indexIsAuthoritative, lookupOtherOpenPunch } from './open-punch-index'
+import { snapshotBookingTokens } from './open-punch-backfill'
 
-const BOOKING_SCAN_MAX = 20_000
 const BOOKING_READ_PAGE = 500
 
 export type PunchTarget = {
@@ -35,7 +34,7 @@ export type PunchTarget = {
   serviceDate: string
 }
 
-export type PunchPolicyBlock = 'other_open_punch' | 'coverage_unavailable' | 'busy'
+export type PunchPolicyBlock = 'other_open_punch' | 'coverage_unavailable' | 'busy' | 'undated_job'
 
 export type PunchPolicyResult<T> =
   | { ok: true; value: T }
@@ -47,29 +46,22 @@ type Candidate = {
   clockOutAt: number | null
 }
 
+// The booking index is captured in ONE command by `snapshotBookingTokens`, so
+// completeness is judged on count and uniqueness only. The previous version took
+// two ZREVRANGE passes and compared their ORDER — and because `bk:index` is scored
+// by updatedAt, any concurrent booking write reordered it and failed the check,
+// turning ordinary booking traffic into clock-in refusals.
 async function scanAllBookings(): Promise<{ complete: true; bookings: Booking[] } | { complete: false }> {
-  const total = await countBookingIndex()
-  if (total > BOOKING_SCAN_MAX) return { complete: false }
-
-  const opening = total ? await scanBookingIndexPage(0, total) : []
-  const unique = Array.from(new Set(opening))
-  if (opening.length !== total || unique.length !== total) return { complete: false }
+  const snap = await snapshotBookingTokens()
+  if (!snap.ok) return { complete: false }
 
   const bookings: Booking[] = []
-  for (let start = 0; start < unique.length; start += BOOKING_READ_PAGE) {
-    const page = unique.slice(start, start + BOOKING_READ_PAGE)
+  for (let start = 0; start < snap.tokens.length; start += BOOKING_READ_PAGE) {
+    const page = snap.tokens.slice(start, start + BOOKING_READ_PAGE)
     const loaded = await readBookingsByTokens(page)
     if (loaded.missing) return { complete: false }
     bookings.push(...loaded.bookings)
   }
-
-  const closingTotal = await countBookingIndex()
-  const closing = closingTotal ? await scanBookingIndexPage(0, closingTotal) : []
-  if (
-    closingTotal !== total ||
-    closing.length !== opening.length ||
-    !closing.every((token, index) => token === opening[index])
-  ) return { complete: false }
 
   return { complete: true, bookings }
 }
@@ -86,8 +78,15 @@ async function inspectOtherEffectiveOpenPunch(target: PunchTarget): Promise<bool
   const targetId = punchId(target.type, target.jobToken, target.staffId)
   const candidates: Candidate[] = []
 
+  // An UNDATED candidate conflicts with everything. We cannot prove it belongs to
+  // a different day, and letting it fall out of the comparison is exactly how a
+  // real open punch disappears from enforcement. The index applies the same rule
+  // via its `__undated__` bucket, so both paths answer identically.
+  const conflictsWithTarget = (serviceDate: string) =>
+    bucketFor(serviceDate) === UNDATED_BUCKET || serviceDate === target.serviceDate
+
   for (const route of routes.routes) {
-    if (route.routeDate !== target.serviceDate) continue
+    if (!conflictsWithTarget(route.routeDate)) continue
     for (const assignee of route.assignees ?? []) {
       if (assignee.staffId !== target.staffId) continue
       const id = punchId('route', route.token, assignee.staffId)
@@ -101,7 +100,7 @@ async function inspectOtherEffectiveOpenPunch(target: PunchTarget): Promise<bool
   }
 
   for (const booking of bookingScan.bookings) {
-    if (effectiveServiceDate(booking) !== target.serviceDate) continue
+    if (!conflictsWithTarget(effectiveServiceDate(booking))) continue
     for (const assignee of booking.assignees ?? []) {
       if (assignee.staffId !== target.staffId) continue
       const id = punchId('booking', booking.token, assignee.staffId)
@@ -129,7 +128,25 @@ async function inspectOtherEffectiveOpenPunch(target: PunchTarget): Promise<bool
   })
 }
 
-async function hasOtherEffectiveOpenPunch(target: PunchTarget): Promise<boolean | null> {
+/**
+ * Answer from the INDEX when it is authoritative, otherwise from the complete
+ * scan. `null` means the answer is unknown and the caller must fail closed.
+ *
+ * The index is authoritative only when its flag is on AND a completion marker
+ * from a successful backfill exists, so a half-built index is never consulted. A
+ * store failure on the indexed path returns `null` rather than falling back to the
+ * scan: silently swapping in a lookup that costs thousands of Redis commands is
+ * how a degraded store becomes an outage.
+ */
+async function hasOtherEffectiveOpenPunch(target: PunchTarget, indexed: boolean): Promise<boolean | null> {
+  if (indexed) {
+    const hit = await lookupOtherOpenPunch(
+      target.staffId,
+      target.serviceDate,
+      punchId(target.type, target.jobToken, target.staffId),
+    )
+    return hit.ok ? hit.otherOpen : null
+  }
   try {
     return await inspectOtherEffectiveOpenPunch(target)
   } catch {
@@ -153,14 +170,32 @@ export async function withSingleOpenPunchPolicy<T>(
   if (action !== 'clock_in' || !isEnabled('SINGLE_OPEN_PUNCH_ENABLED')) {
     return { ok: true, value: await write() }
   }
-  if (!target.staffId.trim() || !target.jobToken.trim() || !target.serviceDate.trim()) {
+  if (!target.staffId.trim() || !target.jobToken.trim()) {
     return { ok: false, block: 'coverage_unavailable' }
   }
+  // A job with no service date has no "same service date" to compare against, so
+  // the rule is undefined for it. Refusing is the fail-closed answer, and it is a
+  // PERMANENT condition rather than a retryable one — dispatch has to set a date —
+  // so it gets its own block reason instead of the retryable 503. An undated punch
+  // that is already OPEN still blocks others; only opening a new one is refused.
+  if (!target.serviceDate.trim()) {
+    return { ok: false, block: 'undated_job' }
+  }
+
+  // Lock timing follows the critical section it protects. The indexed lookup is two
+  // sorted-set reads, so a holder is gone in milliseconds and a short, snappy retry
+  // clears contention. The scan fallback loads every route and booking, so it keeps
+  // the long lease and the patient retry — using the indexed timings there would
+  // turn every concurrent clock-in into a spurious `busy`.
+  const indexed = await indexIsAuthoritative()
+  const timings = indexed
+    ? { ttlMs: 5_000, attempts: 25, backoffMs: 20 }
+    : { ttlMs: 10_000, attempts: 40, backoffMs: 50 }
 
   return withLock<PunchPolicyResult<T>>(
     `time:staff-lock:${target.staffId}`,
     async lock => {
-      const otherOpen = await hasOtherEffectiveOpenPunch(target)
+      const otherOpen = await hasOtherEffectiveOpenPunch(target, indexed)
       if (otherOpen == null) return { ok: false, block: 'coverage_unavailable' }
       if (otherOpen) return { ok: false, block: 'other_open_punch' }
       try {
@@ -171,9 +206,7 @@ export async function withSingleOpenPunchPolicy<T>(
       return { ok: true, value: await write() }
     },
     {
-      ttlMs: 10_000,
-      attempts: 40,
-      backoffMs: 50,
+      ...timings,
       renew: true,
       holder: `punch-${target.staffId}`,
       onStoreError: 'busy',

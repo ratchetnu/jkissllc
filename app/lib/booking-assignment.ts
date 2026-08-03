@@ -33,6 +33,7 @@ import { getEquipment } from './equipment'
 import { isEnabled } from './platform/flags'
 import { getStaff } from './staff'
 import { withSingleOpenPunchPolicy } from './timeclock/punch-policy'
+import { syncAssigneePunchIndex } from './timeclock/punch-index-sync'
 import {
   type CompletionPhotoPolicy, type JobAssignee,
   applyPaySnapshot, clearJobPay, deriveLegacyCrewNames,
@@ -334,7 +335,7 @@ export async function declineBookingAssignment(
 // guard all behave identically across both lanes.
 export type BookingPunch =
   | { ok: true; booking: Booking; already: boolean; denied: boolean }
-  | { ok: false; error: AssignmentError | 'not_confirmed' | 'not_clocked_in' | 'other_open_punch' | 'punch_policy_unavailable' }
+  | { ok: false; error: AssignmentError | 'not_confirmed' | 'not_clocked_in' | 'other_open_punch' | 'punch_policy_unavailable' | 'undated_job' }
 
 export async function punchBookingClock(
   token: string,
@@ -364,6 +365,13 @@ export async function punchBookingClock(
     if (!res.ok) return { ok: false, error: res.error }
     if (!punch) return { ok: false, error: 'invalid' }
     if (!punch.ok) return { ok: false, error: punch.code }
+    // The booking write is durable; file the punch's new effective state. Uses the
+    // service date of the booking as SAVED, not the one read before the lock, so a
+    // concurrent reschedule cannot file the punch under a date that no longer applies.
+    if (punch.changed) {
+      const saved = (res.booking.assignees ?? []).find(x => x.staffId === staffId)
+      if (saved) await syncAssigneePunchIndex('booking', token, effectiveServiceDate(res.booking), saved)
+    }
     return { ok: true, booking: res.booking, already: punch.already, denied: punch.denied }
   }
 
@@ -388,7 +396,10 @@ export async function punchBookingClock(
   if (!governed.ok) {
     return {
       ok: false,
-      error: governed.block === 'other_open_punch' ? 'other_open_punch' : 'punch_policy_unavailable',
+      error:
+        governed.block === 'other_open_punch' ? 'other_open_punch'
+        : governed.block === 'undated_job' ? 'undated_job'
+        : 'punch_policy_unavailable',
     }
   }
   return governed.value

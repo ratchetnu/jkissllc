@@ -17,6 +17,7 @@ import { punchBookingClock } from '../../../lib/booking-assignment'
 import { centralToday } from '../../../lib/dates'
 import { isEnabled } from '../../../lib/platform/flags'
 import { withSingleOpenPunchPolicy } from '../../../lib/timeclock/punch-policy'
+import { syncAssigneePunchIndex } from '../../../lib/timeclock/punch-index-sync'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -93,6 +94,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
       if (r.error === 'not_clocked_in') return NextResponse.json({ error: 'Clock in before you clock out.' }, { status: 409 })
       if (r.error === 'other_open_punch') return NextResponse.json({ error: 'You’re still clocked into another job on this service date. Clock out there first.' }, { status: 409 })
       if (r.error === 'punch_policy_unavailable') return NextResponse.json({ error: 'Could not verify your other punches — please try again.' }, { status: 503 })
+      if (r.error === 'undated_job') return NextResponse.json({ error: 'This job has no service date yet. Ask dispatch to set one before clocking in.' }, { status: 409 })
       if (r.error === 'conflict') return NextResponse.json({ error: 'The job is being updated — please try again.' }, { status: 503 })
       return NextResponse.json({ error: 'not_found' }, { status: 404 })
     }
@@ -132,6 +134,12 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
       throw e
     }
 
+    // The route lock has been released and the write is durable; file the punch's
+    // new effective state so enforcement sees it on the next clock-in.
+    if (res && ownershipOk && outcome?.ok && outcome.changed) {
+      await syncAssigneePunchIndex('route', res.route.token, res.route.routeDate, res.assignee)
+    }
+
     if (res === null || !ownershipOk) return NextResponse.json({ error: 'not_found' }, { status: 404 })
     if (!outcome) {
       return isEnabled('SINGLE_OPEN_PUNCH_ENABLED')
@@ -160,9 +168,14 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     type: 'route', jobToken: target.routeToken, staffId: who.staffId, serviceDate: target.routeDate,
   }, writeRoutePunch)
   if (!governed.ok) {
-    return governed.block === 'other_open_punch'
-      ? NextResponse.json({ error: 'You’re still clocked into another job on this service date. Clock out there first.' }, { status: 409 })
-      : NextResponse.json({ error: 'Could not verify your other punches — please try again.' }, { status: 503 })
+    if (governed.block === 'other_open_punch') {
+      return NextResponse.json({ error: 'You’re still clocked into another job on this service date. Clock out there first.' }, { status: 409 })
+    }
+    // Permanent until dispatch sets a date, so it is a 409, not a retryable 503.
+    if (governed.block === 'undated_job') {
+      return NextResponse.json({ error: 'This job has no service date yet. Ask dispatch to set one before clocking in.' }, { status: 409 })
+    }
+    return NextResponse.json({ error: 'Could not verify your other punches — please try again.' }, { status: 503 })
   }
   return governed.value
 })
