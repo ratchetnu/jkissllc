@@ -71,6 +71,12 @@ export async function reviewJunkAnalysis(input: {
   photoUrls: string[]
   serviceLabel?: string
   mode?: CriticMode          // defaults to 'vision' (backward-compatible)
+  // Latency policy (ai/interactive-policy). Omitted ⇒ platform default timeout +
+  // the AI service's retry. The interactive path pins a single-shot slice sized to
+  // whatever survived the primary call; it skips the critic entirely rather than
+  // start one it cannot afford to finish.
+  timeoutMs?: number
+  attempts?: number
 }): Promise<CriticVerdict | null> {
   const mode: CriticMode = input.mode ?? 'vision'
   const allowed = input.photoUrls.filter(u => /^https?:\/\/\S+$/i.test(u)).slice(0, 8)
@@ -105,6 +111,8 @@ export async function reviewJunkAnalysis(input: {
   const res = await runAiTask({
     taskId: 'ops.junkAnalysisReview', feature: 'ops.junkAnalysisReview',
     vars: {}, messages, maxOutputTokens: 500, temperature: 0.1,
+    ...(input.timeoutMs && input.timeoutMs > 0 ? { timeoutMs: input.timeoutMs } : {}),
+    ...(input.attempts && input.attempts > 0 ? { attempts: input.attempts } : {}),
     requestChars: useVision ? photos.join(',').length : JSON.stringify(summary).length,
     // Telemetry attribution: an independent second-opinion (fallback/backup) pass.
     // imageCount distinguishes a vision pass (>0) from the JSON-only pass (0).

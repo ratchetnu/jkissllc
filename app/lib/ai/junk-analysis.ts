@@ -15,6 +15,7 @@
 import type { ModelMessage } from 'ai'
 import { runAiTask } from './service'
 import { updateAiCall } from './telemetry'
+import { isEnabled } from '../platform/flags'
 import { timeStage, markStage, markStageFailure } from '../observability/pipeline-trace'
 import { isAllowedPhotoUrl } from '../photo-url'
 import { resolveAiPhotoUrls } from './photo-optimize'
@@ -30,6 +31,12 @@ export type AnalyzeJunkPhotosInput = {
   photoUrls: string[]        // Vercel Blob public URLs (server-fetched by the model)
   serviceLabel?: string
   nowIso: string             // caller supplies the timestamp
+  // Latency policy (ai/interactive-policy). Omitted ⇒ today's defaults: the platform
+  // 30s per-call timeout and the AI service's transient retry — the right policy for
+  // the durable worker. The interactive route passes an explicit single-shot slice so
+  // the customer's request can never outlive its function ceiling.
+  timeoutMs?: number
+  attempts?: number
 }
 
 export type AnalyzeJunkPhotosResult = {
@@ -39,9 +46,18 @@ export type AnalyzeJunkPhotosResult = {
   model?: string
   latencyMs?: number
   outcome: string            // telemetry outcome or a local reason
+  // Coarse failure class from the AI service ('network' for a timeout/abort, 'billing',
+  // 'auth', …). Surfaced so the interactive path can tell "we ran out of budget" apart
+  // from "the provider rejected us" and report the right outcome to the customer.
+  errorClass?: string
 }
 
 const providerOf = (model: string): string => (model.includes('/') ? model.split('/')[0] : 'vercel-ai-gateway')
+
+/** Which primary-analysis prompt spec runs. Flag OFF ⇒ the shipped v1 spec. */
+export function analysisTaskId(env: Record<string, string | undefined> = process.env): string {
+  return isEnabled('AI_COMPACT_ANALYSIS_PROMPT', env) ? 'ops.junkAnalysisCompact' : 'ops.junkAnalysis'
+}
 
 export interface VisionAnalysisProvider {
   analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<AnalyzeJunkPhotosResult>
@@ -84,12 +100,20 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
   const messages = prep.messages
 
   const res = await runAiTask({
-    taskId: 'ops.junkAnalysis',
+    // The prompt VARIANT is selectable; the FEATURE is not. Keeping `feature` fixed
+    // means model routing, cost dashboards and the AI audit log continue to see one
+    // feature, while `taskId` records which spec actually ran — which is what makes
+    // the two directly comparable in a LAT-002 report.
+    taskId: analysisTaskId(),
     feature: 'ops.junkAnalysis',
     vars: {},
     messages,
     maxOutputTokens: 1600,
     temperature: 0.2,
+    // Interactive callers pin an explicit slice + single shot; the durable worker
+    // passes neither and keeps the platform default timeout and retry.
+    ...(input.timeoutMs && input.timeoutMs > 0 ? { timeoutMs: input.timeoutMs } : {}),
+    ...(input.attempts && input.attempts > 0 ? { attempts: input.attempts } : {}),
     requestChars: photos.join(',').length,
     // Telemetry attribution: the authoritative (primary) V1 Book Now vision pass.
     kind: 'primary',
@@ -106,7 +130,8 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
     // Provider error / budget / invalid — preserve the booking as review-required.
     return {
       analysis: reviewFallbackAnalysis(ctx, [`Automated analysis was unavailable (${res.outcome}). A team member will review your photos.`]),
-      ok: false, callId: res.callId, outcome: res.outcome,
+      ok: false, callId: res.callId, outcome: res.outcome, errorClass: res.errorClass,
+      latencyMs: res.latencyMs,
     }
   }
 

@@ -43,6 +43,21 @@ export type StoredAiEstimate = {
   // reviewer (both auditable, shown in OpsPilot).
   monitor?: MonitorReport
   critic?: CriticVerdict
+  // ── Interactive latency accounting (ai/interactive-policy) ──────────────────
+  // Present only on the customer-facing path, so the rate at which the interactive
+  // budget degrades a run is MEASURABLE rather than inferred from missing data.
+  // `degraded` records why the read fell short; `criticSkipped` records that the
+  // second opinion never ran because too little budget survived the primary call
+  // (semantically identical to today's critic-failure path, which also leaves the
+  // primary analysis unchanged — but recorded instead of silent).
+  latency?: {
+    mode: 'interactive' | 'durable'
+    degraded?: 'primary_timeout' | 'budget_exhausted'
+    criticSkipped?: 'budget'
+    primaryTimeoutMs?: number
+    criticTimeoutMs?: number
+    elapsedMs?: number
+  }
   // Owner adjustment — recorded, never silently overwriting the AI number. The
   // original `analysis`, `critic`, and `pricing` are always preserved; this is a
   // separate, additive record of the owner's Modify Estimate changes.
