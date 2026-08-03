@@ -255,12 +255,31 @@ with a 44 px Try again.
   D1 has actually happened — currently-open duplicate punches and historical overlapping
   intervals, each reported both globally and restricted to a shared service date, split
   by route/route, route/booking and booking/booking, with per-lane scan completeness.
-  It enforces nothing and changes no punch. Phases B (consolidate the duplicated punch
-  logic) and C (enforce one open punch) remain unstarted and unapproved.
+  It enforces nothing and changes no punch.
   - Note the portal's existing guard is **day-scoped** (`selectClockable` filters on
     `routeDate`), so the same-date figure is what today's rule would have prevented and
     the global figure is what a stricter rule would catch. That asymmetry is a decision
     for Phase C, not an accident to fix silently.
+- **Sprint 3.1 Phase B (consolidation) is built in the current change**: the public
+  contractor route no longer owns a second copy of the clock-in/clock-out mutation.
+  Public links, portal routes and booking jobs all delegate timestamp, idempotency and
+  GPS handling to `applyPunch`; each surface retains only its own authorization, audit,
+  notification and record-lock adapter.
+- **Sprint 3.1 Phase C (one open punch) is built but not activated**:
+  `SINGLE_OPEN_PUNCH_ENABLED` defaults OFF, so merging the implementation does not
+  change a live punch. When enabled, every clock ingress enforces the portal's existing
+  **same-service-date** rule. This deliberately closes the public-link divergence
+  without silently promoting the stricter global count reported by Phase A into a new
+  payroll rule.
+  - The decision uses correction-adjusted punches, matching Timesheets and Phase A;
+    a correction-closed punch does not falsely block, and a correction-open punch does.
+  - A tenant-scoped per-staff lock surrounds the complete scan and write, so simultaneous
+    clock-ins on two different jobs cannot both pass a stale pre-write check.
+  - Route and booking indexes are scanned completely with bounded ceilings and stable
+    membership checks. Missing records, scan churn, correction-read failure or lock
+    loss refuses the clock-in with a retryable response instead of guessing.
+  - Historical booking punches remain part of the decision even if booking assignment
+    is later disabled; switching off a feature does not erase payroll evidence.
   - Surface attribution is **inferred, best-effort**: a punch record carries no marker
     (`Assignee` has `confirmedVia` but no `clockedVia`), so it is read from the audit
     trail, which is capped at 200 entries per route. Punches outlive that evidence, so
@@ -296,14 +315,27 @@ with a 44 px Try again.
     note and `jobCompletedAt`; it does not end a shift or change `BookingStatus`.
     Actual booking closure remains the owner's explicit status transition, where the
     effective-open-punch gate applies.
-- **Two divergences that remain deliberately untouched**, because both alter live
-  contractor write behaviour and need their own owner-approved change:
-  1. The public surface does **not** enforce `hasOtherOpenPunch`. The portal refuses a
-     second concurrent clock-in on a different job; a contractor holding two route links
-     can hold two open punches at once. Payroll-relevant.
-  2. The public API implements `clock_in`/`clock_out` **inline** instead of using the
-     shared, tested `applyPunch` that both the portal and the booking lane use — two
-     copies of one rule.
+- **Activation is BLOCKED on a targeted open-punch index.** The current Phase C
+  implementation is safe to merge behind its OFF default, but it is not suitable for
+  field activation: each enabled clock-in currently reads the complete route and booking
+  histories before applying the service-date filter. That is approximately one Redis
+  GET per historical record and can exceed the installation's daily request budget in a
+  single interaction at the scan ceilings. The booking index is scored by `updatedAt`,
+  so unrelated booking writes can also reorder it during the opening/closing stability
+  check and turn a legitimate field clock-in into a retryable 503.
+  - Build and backfill a tenant-scoped, service-date + staff open-punch index maintained
+    by every punch and correction transition; prove parity against the Phase A complete
+    scan before it becomes authoritative.
+  - Audit clockable bookings with no deterministic `effectiveServiceDate`. A dateless
+    target must remain blocked, and a dateless historical open punch must not disappear
+    from enforcement merely because same-date comparison is impossible.
+  - Measure lock hold time and concurrent retry behaviour against representative data;
+    the acquisition wait must be designed from that measured indexed lookup, not from
+    the current full-history scan.
+  - Only after those blockers close: read the authenticated Phase A report, exercise
+    public-link and portal paths in Preview with the flag enabled, and submit a separate
+    Production activation proposal. Construction does not imply activation, and no
+    Production flag change is part of Sprint 3.1 B/C implementation.
 - Verify accept/decline, punches, duplicate taps, and photo recovery at
   320/375/390/430 px on representative iPhone and Android browsers.
 - Run an authenticated Preview mobile flow with forced request interruption and
