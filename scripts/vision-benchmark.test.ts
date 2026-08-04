@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  licenseDecision, piiRisk, validateEntry, hasGroundTruth,
+  licenseDecision, piiRisk, validateEntry, hasGroundTruth, validateLabel,
   AUTO_ACCEPT_LICENSES, type ManifestEntry,
 } from '../tools/vision-benchmark/schema'
 import {
@@ -32,6 +32,8 @@ const entry = (over: Partial<ManifestEntry> = {}): ManifestEntry => ({
   expectedTruckSpaceRangePercent: null, expectedHandlingFlags: [],
   lighting: null, clutter: null, imageQuality: null, containsPeople: null,
   reviewStatus: 'pending', notes: '',
+  labelStatus: 'unlabelled', expectedCrewRange: null, expectedLaborHoursRange: null,
+  disposalFlags: [], accessConcerns: [], labelConfidence: null, difficulty: null,
   storedPath: 'junk_removal/mattress/a.jpg', sha256: 'a'.repeat(64), phash: '0000000000000000',
   widthPx: 1200, heightPx: 900, bytes: 100_000, attribution: 'x / flickr / cc0',
   fetchedAt: '2026-08-03T00:00:00.000Z', split: 'unassigned',
@@ -104,11 +106,15 @@ test('an inverted ground-truth range is rejected', () => {
   assert.ok(validateEntry(entry({ expectedVolumeRangeCubicYards: { min: 9, max: 2 } })).some(p => /bad range/.test(p)))
 })
 
-test('ground truth counts only when a human approved AND labelled it', () => {
+test('ground truth counts only when a human approved AND VERIFIED it', () => {
   const labelled = { expectedObjects: ['mattress'], expectedVolumeRangeCubicYards: { min: 2, max: 4 } }
-  assert.equal(hasGroundTruth(entry({ ...labelled, reviewStatus: 'pending' })), false)
-  assert.equal(hasGroundTruth(entry({ reviewStatus: 'approved' })), false, 'approved but unlabelled is not ground truth')
-  assert.equal(hasGroundTruth(entry({ ...labelled, reviewStatus: 'approved' })), true)
+  const verified = { ...labelled, labelStatus: 'verified' as const }
+  assert.equal(hasGroundTruth(entry({ ...verified, reviewStatus: 'pending' })), false)
+  assert.equal(hasGroundTruth(entry({ reviewStatus: 'approved', labelStatus: 'verified' })), false,
+    'approved and verified but with no objects is not ground truth')
+  // Filled in but never verified — a human's draft is excluded exactly like a blank.
+  assert.equal(hasGroundTruth(entry({ ...labelled, reviewStatus: 'approved' })), false)
+  assert.equal(hasGroundTruth(entry({ ...verified, reviewStatus: 'approved' })), true)
 })
 
 // ── Hashing + duplicates ─────────────────────────────────────────────────────
@@ -278,4 +284,70 @@ test('visually similar images from DIFFERENT categories are never grouped', () =
 
 test('a lone image is not a multi-photo job', () => {
   assert.equal(proposeGroups([entry({ id: 'a' })], []).length, 0)
+})
+
+// ── Label validation — the rules that gate verification ──────────────────────
+
+test('a range with min greater than max is refused', () => {
+  for (const [field, val] of [
+    ['expectedQuantityRange', { min: 5, max: 2 }],
+    ['expectedVolumeRangeCubicYards', { min: 9, max: 3 }],
+    ['expectedTruckSpaceRangePercent', { min: 80, max: 20 }],
+    ['expectedCrewRange', { min: 4, max: 2 }],
+    ['expectedLaborHoursRange', { min: 6, max: 1 }],
+  ] as const) {
+    const problems = validateLabel(entry({ [field]: val } as Partial<ManifestEntry>))
+    assert.ok(problems.some(p => /greater than max/.test(p)), `${field} must reject min>max`)
+  }
+})
+
+test('negative quantities and negative ranges are refused', () => {
+  assert.ok(validateLabel(entry({ expectedQuantityRange: { min: -1, max: 3 } })).some(p => /negative/.test(p)))
+  assert.ok(validateLabel(entry({ expectedCrewRange: { min: -2, max: -1 } })).some(p => /negative/.test(p)))
+})
+
+test('truck space is held to 0–100 percent', () => {
+  assert.deepEqual(validateLabel(entry({ expectedTruckSpaceRangePercent: { min: 0, max: 100 } })), [])
+  assert.ok(validateLabel(entry({ expectedTruckSpaceRangePercent: { min: 10, max: 140 } })).some(p => /maximum 100/.test(p)))
+})
+
+test('implausible cubic yards are refused', () => {
+  assert.deepEqual(validateLabel(entry({ expectedVolumeRangeCubicYards: { min: 2, max: 4 } })), [])
+  // Six truckloads is the ceiling; 500 cu yd is a mis-key, not a job.
+  assert.ok(validateLabel(entry({ expectedVolumeRangeCubicYards: { min: 1, max: 500 } })).some(p => /maximum/.test(p)))
+})
+
+test('a draft may be as incomplete as the labeller likes', () => {
+  assert.deepEqual(validateLabel(entry({ labelStatus: 'draft' })), [], 'drafts are never blocked')
+})
+
+const complete = {
+  reviewStatus: 'approved' as const,
+  labelStatus: 'verified' as const,
+  expectedObjects: ['couch'],
+  expectedVolumeRangeCubicYards: { min: 3, max: 5 },
+  expectedTruckSpaceRangePercent: { min: 7, max: 12 },
+  labelConfidence: 'high' as const,
+  difficulty: 'easy' as const,
+}
+
+test('verification requires every mandatory field', () => {
+  assert.deepEqual(validateLabel(entry(complete)), [], 'a complete label verifies')
+  for (const missing of ['expectedObjects', 'expectedVolumeRangeCubicYards', 'expectedTruckSpaceRangePercent', 'labelConfidence', 'difficulty'] as const) {
+    const partial = { ...complete, [missing]: missing === 'expectedObjects' ? [] : null }
+    assert.ok(validateLabel(entry(partial as Partial<ManifestEntry>)).length > 0, `${missing} must block verification`)
+  }
+})
+
+test('an unapproved image can never be verified', () => {
+  assert.ok(validateLabel(entry({ ...complete, reviewStatus: 'pending' })).some(p => /only an approved image/.test(p)))
+  assert.ok(validateLabel(entry({ ...complete, reviewStatus: 'rejected' })).some(p => /only an approved image/.test(p)))
+})
+
+test('ground truth counts only when APPROVED and VERIFIED', () => {
+  const labelled = { expectedObjects: ['couch'], expectedVolumeRangeCubicYards: { min: 3, max: 5 } }
+  assert.equal(hasGroundTruth(entry({ ...labelled, reviewStatus: 'approved', labelStatus: 'draft' })), false,
+    'a draft is excluded from scoring exactly like a blank')
+  assert.equal(hasGroundTruth(entry({ ...labelled, reviewStatus: 'approved', labelStatus: 'verified' })), true)
+  assert.equal(hasGroundTruth(entry({ ...labelled, reviewStatus: 'rejected', labelStatus: 'verified' })), false)
 })

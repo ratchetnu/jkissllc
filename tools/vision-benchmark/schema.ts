@@ -24,6 +24,16 @@ export type Lighting = 'bright' | 'normal' | 'dim'
 export type Clutter = 'low' | 'medium' | 'high'
 export type ImageQuality = 'high' | 'medium' | 'low'
 export type ReviewStatus = 'pending' | 'approved' | 'rejected'
+/**
+ * Label lifecycle, deliberately separate from `reviewStatus`. An image can be
+ * APPROVED (licence + content cleared) yet carry no ground truth at all. Only
+ * `verified` counts for accuracy — a draft is a human's work-in-progress and is
+ * excluded from scoring exactly like a blank.
+ */
+export type LabelStatus = 'unlabelled' | 'draft' | 'verified'
+export type LabelConfidence = 'high' | 'medium' | 'low'
+/** How hard this case is for a human — drives the easy/normal/difficult mix. */
+export type Difficulty = 'easy' | 'normal' | 'difficult'
 /** Which slice of the dataset an image belongs to. Assigned once, never moved. */
 export type Split = 'development' | 'holdout' | 'edge_case' | 'unassigned'
 
@@ -55,6 +65,15 @@ export type ManifestEntry = {
   containsPeople: boolean | null
   reviewStatus: ReviewStatus
   notes: string
+  // ── Human ground truth (all optional; blank is honest, a guess is not) ──
+  labelStatus: LabelStatus
+  expectedCrewRange: Range | null
+  expectedLaborHoursRange: Range | null
+  disposalFlags: string[]
+  accessConcerns: string[]
+  labelConfidence: LabelConfidence | null
+  difficulty: Difficulty | null
+  verifiedAt?: string
   // ── Provenance + quality control (tooling-owned, not human-entered) ──
   storedPath: string          // relative to the external dataset root
   sha256: string              // exact-duplicate detection
@@ -165,9 +184,67 @@ export function validateEntry(e: Partial<ManifestEntry>): string[] {
   return problems
 }
 
-/** True when an entry carries enough human ground truth to score accuracy against. */
+/**
+ * A 24 ft box truck is ~44 cubic yards. Anything above ~6 truckloads is either a
+ * mis-keyed label or a job nobody quotes from a photo, so it is refused rather
+ * than silently accepted into the accuracy maths.
+ */
+export const MAX_PLAUSIBLE_CUBIC_YARDS = 264
+export const TRUCK_CUBIC_YARDS = 44
+
+/** Flags a labeller may attach. Free text is not accepted — it cannot be aggregated. */
+export const DISPOSAL_FLAGS = [
+  'appliance_fee', 'refrigerant', 'mattress_fee', 'tire_fee', 'electronics',
+  'construction_debris', 'concrete_dense', 'yard_waste', 'hazardous_suspected',
+] as const
+export const ACCESS_CONCERNS = [
+  'stairs', 'elevator', 'long_carry', 'narrow_access', 'indoor', 'outdoor',
+  'curbside', 'disassembly_required', 'obstructed_view',
+] as const
+
+/** Range sanity, shared by every numeric ground-truth field. */
+function rangeProblems(label: string, r: Range | null, opts: { min?: number; max?: number } = {}): string[] {
+  if (!r) return []
+  const out: string[] = []
+  if (typeof r.min !== 'number' || typeof r.max !== 'number' || !Number.isFinite(r.min) || !Number.isFinite(r.max)) {
+    return [`${label}: not a number`]
+  }
+  if (r.min > r.max) out.push(`${label}: min (${r.min}) is greater than max (${r.max})`)
+  if (r.min < 0 || r.max < 0) out.push(`${label}: cannot be negative`)
+  if (opts.min != null && r.min < opts.min) out.push(`${label}: below the allowed minimum ${opts.min}`)
+  if (opts.max != null && r.max > opts.max) out.push(`${label}: above the allowed maximum ${opts.max}`)
+  return out
+}
+
+/**
+ * Validate the human label. Returns the problems that BLOCK verification —
+ * empty means the entry may be marked verified. Drafts are never blocked; a
+ * labeller can save partial work and come back to it.
+ */
+export function validateLabel(e: Partial<ManifestEntry>): string[] {
+  const problems: string[] = []
+  problems.push(...rangeProblems('quantity', e.expectedQuantityRange ?? null))
+  problems.push(...rangeProblems('cubic yards', e.expectedVolumeRangeCubicYards ?? null, { max: MAX_PLAUSIBLE_CUBIC_YARDS }))
+  problems.push(...rangeProblems('truck space %', e.expectedTruckSpaceRangePercent ?? null, { max: 100 }))
+  problems.push(...rangeProblems('crew size', e.expectedCrewRange ?? null, { max: 12 }))
+  problems.push(...rangeProblems('labor hours', e.expectedLaborHoursRange ?? null, { max: 80 }))
+
+  // Required only to VERIFY. A draft may be as incomplete as the labeller likes.
+  if (e.labelStatus === 'verified') {
+    if (e.reviewStatus !== 'approved') problems.push('only an approved image can be verified')
+    if (!e.expectedObjects?.length) problems.push('visible objects are required')
+    if (!e.expectedVolumeRangeCubicYards) problems.push('cubic-yard range is required')
+    if (!e.expectedTruckSpaceRangePercent) problems.push('truck-space range is required')
+    if (!e.labelConfidence) problems.push('label confidence is required')
+    if (!e.difficulty) problems.push('difficulty is required')
+  }
+  return problems
+}
+
+/** True when an entry carries enough VERIFIED human ground truth to score against. */
 export function hasGroundTruth(e: ManifestEntry): boolean {
   return e.reviewStatus === 'approved'
+    && e.labelStatus === 'verified'
     && e.expectedObjects.length > 0
     && e.expectedVolumeRangeCubicYards != null
 }
