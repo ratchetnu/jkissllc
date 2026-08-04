@@ -29,7 +29,7 @@
 
 import { createServer } from 'node:http'
 import { Script } from 'node:vm'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, appendFileSync, mkdirSync } from 'node:fs'
 import { join, extname } from 'node:path'
 import { datasetRoot, paths, loadManifest, saveManifest } from './dataset'
 import {
@@ -257,14 +257,15 @@ function render(){
     </div>
     <div class="fld"><label>ambiguity notes (add #edge for the edge-case set)</label><textarea class="notes">\${(e.notes||'').replace(/^(AUTO|REVIEW):[^\\n]*\\n?/,'')}</textarea></div>
     <label style="text-transform:none"><input type="checkbox" class="ppl" \${e.containsPeople?'checked':''} style="width:auto"> contains identifiable people / documents / plates</label>
-    <div class="actions">
-      <button class="act save" onclick="save('draft')">Save draft</button>
-      <button class="act ver" onclick="save('verified')">Mark verified</button>
-    </div>
-    <div class="actions">
-      <button class="act ok" onclick="review('approved')">Approve</button>
-      <button class="act no" onclick="review('rejected')">Reject</button>
-    </div>
+    <button class="act ver" style="width:100%;padding:12px;font-size:14px" onclick="save('verified')">✓ Save &amp; mark verified</button>
+    <div class="actions"><button class="act save" onclick="save('draft')">Save draft (keep working)</button></div>
+    <details class="fine"><summary>change review status (licence / content triage)</summary>
+      <div class="actions" style="margin-top:6px">
+        <button class="act ok" onclick="review('approved')">Approve</button>
+        <button class="act no" onclick="review('rejected')">Reject</button>
+      </div>
+      <div class="hint">These do NOT save your label — they only mark whether the image belongs in the benchmark at all.</div>
+    </details>
     <div class="ref"><b>Volume reference</b> (static, not model output)
       <table>\${REF.map(r=>'<tr><td>'+r[0]+'</td><td>'+r[1]+'</td></tr>').join('')}</table>
     </div>
@@ -405,11 +406,22 @@ createServer((req, res) => {
       const json = (code: number, payload: unknown) => {
         res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(payload))
       }
+      // Append-only audit of every mutation. Three labelling sessions were lost
+      // and each diagnosis was guesswork because nothing recorded what the client
+      // actually sent. This makes the next failure readable instead of inferred.
+      const audit = (event: string, detail: Record<string, unknown>) => {
+        try {
+          mkdirSync(p.root, { recursive: true })
+          appendFileSync(join(p.root, 'label-audit.log'),
+            JSON.stringify({ at: new Date().toISOString(), event, ...detail }) + '\n')
+        } catch { /* auditing must never break labelling */ }
+      }
       try {
         const patch = JSON.parse(body) as Partial<ManifestEntry> & { id: string }
+        audit('request', { id: patch.id, fields: Object.keys(patch).filter(k => k !== 'id') })
         const entries = loadManifest(root)
         const idx = entries.findIndex(e => e.id === patch.id)
-        if (idx < 0) return json(404, { ok: false, error: 'unknown id' })
+        if (idx < 0) { audit('reject', { id: patch.id, why: 'unknown id' }); return json(404, { ok: false, error: 'unknown id' }) }
 
         const prev = entries[idx]
         const next: ManifestEntry = { ...prev, ...patch, labelStatus: patch.labelStatus ?? prev.labelStatus }
@@ -443,13 +455,20 @@ createServer((req, res) => {
         // at read time, not by destroying data.
 
         const problems = validateLabel(next)
-        if (problems.length) return json(200, { ok: false, problems })
+        if (problems.length) { audit('invalid', { id: patch.id, problems }); return json(200, { ok: false, problems }) }
 
         if (next.labelStatus === 'verified' && prev.labelStatus !== 'verified') {
           next.verifiedAt = new Date().toISOString()
         }
         entries[idx] = next
         saveManifest(entries, root)
+        audit('saved', {
+          id: next.id,
+          review: `${prev.reviewStatus}→${next.reviewStatus}`,
+          label: `${prev.labelStatus}→${next.labelStatus}`,
+          objects: next.expectedObjects.length,
+          truck: next.expectedTruckSpaceRangePercent,
+        })
         return json(200, { ok: true, entry: next })
       } catch (e) {
         return json(400, { ok: false, error: e instanceof Error ? e.message : 'bad request' })
