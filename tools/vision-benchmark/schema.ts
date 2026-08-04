@@ -229,6 +229,27 @@ export function validateLabel(e: Partial<ManifestEntry>): string[] {
   problems.push(...rangeProblems('crew size', e.expectedCrewRange ?? null, { max: 12 }))
   problems.push(...rangeProblems('labor hours', e.expectedLaborHoursRange ?? null, { max: 80 }))
 
+  // Cross-check: truck-space % and cubic yards describe the SAME quantity
+  // (% = cuYd / 44). A large disagreement means one of them was mis-keyed, and
+  // the pair would then be scored as if both were true. Tolerance is generous —
+  // these are eyeballed estimates, not measurements — but a 3x gap is an error.
+  const vol = e.expectedVolumeRangeCubicYards
+  const truck = e.expectedTruckSpaceRangePercent
+  if (vol && truck) {
+    const volMid = (vol.min + vol.max) / 2
+    const truckMid = (truck.min + truck.max) / 2
+    const impliedPct = (volMid / TRUCK_CUBIC_YARDS) * 100
+    if (volMid > 0 && truckMid > 0) {
+      const ratio = Math.max(impliedPct / truckMid, truckMid / impliedPct)
+      if (ratio > 3) {
+        problems.push(
+          `cubic yards and truck space disagree: ${volMid} cu yd implies ~${impliedPct.toFixed(0)}% ` +
+          `of a ${TRUCK_CUBIC_YARDS} cu yd truck, but ${truckMid}% was entered`,
+        )
+      }
+    }
+  }
+
   // Required only to VERIFY. A draft may be as incomplete as the labeller likes.
   if (e.labelStatus === 'verified') {
     if (e.reviewStatus !== 'approved') problems.push('only an approved image can be verified')

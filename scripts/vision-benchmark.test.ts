@@ -351,3 +351,26 @@ test('ground truth counts only when APPROVED and VERIFIED', () => {
   assert.equal(hasGroundTruth(entry({ ...labelled, reviewStatus: 'approved', labelStatus: 'verified' })), true)
   assert.equal(hasGroundTruth(entry({ ...labelled, reviewStatus: 'rejected', labelStatus: 'verified' })), false)
 })
+
+test('cubic yards and truck space must agree with each other', () => {
+  // 4 cu yd of a 44 cu yd truck is ~9%. Consistent.
+  assert.deepEqual(validateLabel(entry({
+    expectedVolumeRangeCubicYards: { min: 3, max: 5 },
+    expectedTruckSpaceRangePercent: { min: 7, max: 12 },
+  })), [])
+  // 10 cu yd implies ~23%, not 5% — one of the two was mis-keyed, and scoring
+  // both as true would corrupt whichever metric the report used.
+  const problems = validateLabel(entry({
+    expectedVolumeRangeCubicYards: { min: 10, max: 10 },
+    expectedTruckSpaceRangePercent: { min: 5, max: 5 },
+  }))
+  assert.ok(problems.some(p => /disagree/.test(p)), 'a 4x mismatch must be caught')
+})
+
+test('the volume/truck cross-check tolerates ordinary eyeball error', () => {
+  // 5 cu yd implies ~11%; 8% entered. Within tolerance — a human estimate, not a bug.
+  assert.deepEqual(validateLabel(entry({
+    expectedVolumeRangeCubicYards: { min: 4, max: 6 },
+    expectedTruckSpaceRangePercent: { min: 6, max: 10 },
+  })), [])
+})

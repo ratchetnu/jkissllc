@@ -231,7 +231,7 @@ function render(){
     </div>
     <div class="keys">
       <kbd>←</kbd>/<kbd>→</kbd> prev/next · <kbd>u</kbd> next unlabelled · <kbd>z</kbd> zoom<br>
-      <kbd>s</kbd> save draft · <kbd>v</kbd> mark verified · <kbd>a</kbd> approve · <kbd>r</kbd> reject<br>
+      <kbd>s</kbd> save draft · <kbd>v</kbd> mark verified · <kbd>⇧A</kbd> approve · <kbd>⇧R</kbd> reject<br>
       * required before an image can be verified
     </div>\`;
   document.querySelectorAll('.side input, .side select, .side textarea')
@@ -274,7 +274,17 @@ async function post(patch){
   dirty = false; render(); return true;
 }
 async function save(status){ await post({...collect(), labelStatus: status}) }
-async function review(status){ if (await post({...collect(), reviewStatus: status})) go(1) }
+// Approve/reject change ONLY reviewStatus. They must never submit the form:
+// doing so wrote whatever was on screen — including empty fields — over saved
+// ground truth, which is how six completed labels were destroyed.
+async function review(status){
+  const e = list[i];
+  const hasWork = (e.expectedObjects||[]).length || e.expectedVolumeRangeCubicYards || e.labelStatus !== 'unlabelled';
+  if (status === 'rejected' && hasWork &&
+      !confirm('This image has label data. Rejecting removes it from the benchmark.\n\nReject anyway?')) return;
+  if (dirty && !confirm('Unsaved edits will be discarded. Continue?')) return;
+  if (await post({ id: e.id, reviewStatus: status })) go(1);
+}
 
 document.getElementById('onlyApproved').addEventListener('change', rebuild);
 document.addEventListener('keydown', ev => {
@@ -286,8 +296,10 @@ document.addEventListener('keydown', ev => {
   else if (k === 'z') document.getElementById('img').classList.toggle('zoom');
   else if (k === 's') save('draft');
   else if (k === 'v') save('verified');
-  else if (k === 'a') review('approved');
-  else if (k === 'r') review('rejected');
+  // Approve/reject need Shift. Bare 'r' sat one key from 'v' (verify) and
+  // rejecting is destructive and advances — a single mis-key cost real work.
+  else if (k === 'a' && ev.shiftKey) review('approved');
+  else if (k === 'r' && ev.shiftKey) review('rejected');
 });
 window.addEventListener('beforeunload', ev => { if (dirty){ ev.preventDefault(); ev.returnValue = '' } });
 rebuild();
@@ -335,12 +347,22 @@ createServer((req, res) => {
         if (idx < 0) return json(404, { ok: false, error: 'unknown id' })
 
         const prev = entries[idx]
-        // Editing a verified label silently would let a bad edit ride on a
-        // "verified" badge. Any change to a verified entry drops it back to draft
-        // unless it is being re-verified in this same request.
-        const next: ManifestEntry = {
-          ...prev, ...patch,
-          labelStatus: patch.labelStatus ?? (prev.labelStatus === 'verified' ? 'draft' : prev.labelStatus),
+        const next: ManifestEntry = { ...prev, ...patch, labelStatus: patch.labelStatus ?? prev.labelStatus }
+
+        // Demote a verified label to draft ONLY when the ground truth itself
+        // changed. The earlier rule demoted on ANY save, so re-saving a finished
+        // label silently un-verified it — verification has to survive an
+        // unrelated edit, or nobody can trust the badge.
+        if (prev.labelStatus === 'verified' && patch.labelStatus !== 'verified') {
+          const GROUND_TRUTH: Array<keyof ManifestEntry> = [
+            'expectedObjects', 'expectedQuantityRange', 'expectedVolumeRangeCubicYards',
+            'expectedTruckSpaceRangePercent', 'expectedCrewRange', 'expectedLaborHoursRange',
+            'expectedHandlingFlags', 'disposalFlags', 'accessConcerns',
+            'labelConfidence', 'difficulty',
+          ]
+          const changed = GROUND_TRUTH.some(k =>
+            k in patch && JSON.stringify(patch[k]) !== JSON.stringify(prev[k]))
+          next.labelStatus = changed ? 'draft' : 'verified'
         }
         // Splits are permanent — never accept one from the client.
         next.split = prev.split
@@ -349,8 +371,11 @@ createServer((req, res) => {
           if (!next.licenseVerified) return json(200, { ok: false, problems: ['cannot approve: licence not verified on the source page'] })
           if (next.containsPeople) return json(200, { ok: false, problems: ['cannot approve: marked as containing identifiable people — reject it'] })
         }
-        // A rejected image can never carry ground truth into the benchmark.
-        if (next.reviewStatus === 'rejected') next.labelStatus = 'unlabelled'
+        // A rejected image is excluded from the benchmark by `hasGroundTruth`,
+        // which already requires reviewStatus === 'approved'. It is NOT necessary
+        // to erase the label to achieve that, and erasing it made a mis-keyed
+        // rejection unrecoverable. Keep the human's work; exclusion is enforced
+        // at read time, not by destroying data.
 
         const problems = validateLabel(next)
         if (problems.length) return json(200, { ok: false, problems })
