@@ -239,7 +239,11 @@ export function validateLabel(e: Partial<ManifestEntry>): string[] {
     const volMid = (vol.min + vol.max) / 2
     const truckMid = (truck.min + truck.max) / 2
     const impliedPct = (volMid / TRUCK_CUBIC_YARDS) * 100
-    if (volMid > 0 && truckMid > 0) {
+    // Skip once the percentage saturates: a multi-truckload job is labelled by
+    // cubic yards, and 100% is the ceiling the field allows — the two genuinely
+    // cannot agree beyond that, so demanding it would block a real case.
+    const saturated = truck.max >= 100
+    if (volMid > 0 && truckMid > 0 && !saturated) {
       const ratio = Math.max(impliedPct / truckMid, truckMid / impliedPct)
       if (ratio > 3) {
         problems.push(

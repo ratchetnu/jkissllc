@@ -374,3 +374,25 @@ test('the volume/truck cross-check tolerates ordinary eyeball error', () => {
     expectedTruckSpaceRangePercent: { min: 6, max: 10 },
   })), [])
 })
+
+test('a multi-truckload job is not blocked by the saturated cross-check', () => {
+  // 88 cu yd is two truckloads; truck space is capped at 100, so the two cannot
+  // agree by construction. Saturation skips the check rather than blocking it.
+  assert.deepEqual(validateLabel(entry({
+    expectedVolumeRangeCubicYards: { min: 80, max: 96 },
+    expectedTruckSpaceRangePercent: { min: 95, max: 100 },
+  })), [])
+})
+
+test('load buckets derive a consistent cubic-yard range', () => {
+  // What the labeller clicks (a % bucket) must always satisfy the cross-check.
+  for (const [minPct, maxPct] of [[5, 20], [20, 42], [42, 66], [66, 90], [90, 100]]) {
+    const problems = validateLabel(entry({
+      expectedTruckSpaceRangePercent: { min: minPct, max: maxPct },
+      expectedVolumeRangeCubicYards: {
+        min: +(minPct / 100 * 44).toFixed(1), max: +(maxPct / 100 * 44).toFixed(1),
+      },
+    }))
+    assert.deepEqual(problems, [], `bucket ${minPct}-${maxPct}% must be self-consistent`)
+  }
+})

@@ -46,6 +46,24 @@ const HANDLING_FLAGS = [
   'heavy', 'bulky', 'fragile', 'requires_disassembly', 'two_person_lift', 'awkward_shape',
 ]
 
+/**
+ * The SAME load buckets the pricing engine uses (quote-decision.ts loadBucket)
+ * and the same words the booking wizard shows a customer. A labeller should not
+ * have to think in cubic yards — nobody quotes that way. They pick the bucket
+ * they would quote, and the cubic-yard range is derived from it.
+ *
+ * `full` is clamped to 100% because the truck-space field is defined as 0–100.
+ * A genuinely multi-load job is labelled by cubic yards directly, and the
+ * volume/truck cross-check is skipped once the percentage saturates.
+ */
+const LOAD_BUCKETS: Array<{ key: string; label: string; minPct: number; maxPct: number }> = [
+  { key: 'few-items', label: 'A few items', minPct: 5, maxPct: 20 },
+  { key: 'quarter', label: 'About a quarter truck', minPct: 20, maxPct: 42 },
+  { key: 'half', label: 'About a half truck', minPct: 42, maxPct: 66 },
+  { key: 'three-quarter', label: 'About three-quarter truck', minPct: 66, maxPct: 90 },
+  { key: 'full', label: 'Full truck load', minPct: 90, maxPct: 100 },
+]
+
 /** Static domain reference — NOT model output. Helps a human calibrate quickly. */
 const VOLUME_REFERENCE = [
   ['24 ft box truck (full)', `${TRUCK_CUBIC_YARDS} cu yd = 100%`],
@@ -94,6 +112,14 @@ button.act{flex:1;border:0;border-radius:7px;padding:9px;font-weight:700;cursor:
 .b-app{background:#1f6f43}.b-rej{background:#7a2230}.b-pend{background:#33333b;color:#9b9ba4}
 .warn{background:#3a2f10;border:1px solid #6b5518;color:#f0d68a;padding:6px 8px;border-radius:6px;font-size:11px;margin-bottom:8px}
 .err{background:#3a1010;border:1px solid #7a2230;color:#ffb4b4;padding:6px 8px;border-radius:6px;font-size:11px;margin-bottom:8px;white-space:pre-line}
+.buckets{display:flex;flex-direction:column;gap:4px}
+.buckets button{background:#1b1b21;border:1px solid #33333b;color:#e7e7ea;border-radius:7px;padding:7px 10px;cursor:pointer;font-size:12px;text-align:left}
+.buckets button:hover{background:#25252d;border-color:#4a4a55}
+.buckets button.on{background:#1d4ed8;border-color:#1d4ed8;color:#fff;font-weight:700}
+.derived{margin-top:6px;font-size:12px;color:#7aa2f7;min-height:18px}
+.fine{margin-bottom:8px}
+.fine summary{font-size:11px;color:#8b8b95;cursor:pointer}
+.hint{font-size:10px;color:#6b6b75;margin-top:2px}
 .ref{font-size:11px;color:#8b8b95;border-top:1px solid #26262c;margin-top:12px;padding-top:10px}
 .ref table{width:100%;border-collapse:collapse}
 .ref td{padding:1px 0}.ref td:last-child{text-align:right;color:#c9c9d1}
@@ -128,6 +154,8 @@ const DISPOSAL = ${j(DISPOSAL_FLAGS)};
 const ACCESS = ${j(ACCESS_CONCERNS)};
 const HANDLING = ${j(HANDLING_FLAGS)};
 const REF = ${j(VOLUME_REFERENCE)};
+const BUCKETS = ${j(LOAD_BUCKETS)};
+const TRUCK_CU_YD = ${TRUCK_CUBIC_YARDS};
 let list = [], i = 0, dirty = false;
 
 function rebuild(){
@@ -189,14 +217,24 @@ function render(){
       <div><label>qty min</label><input class="qmin" type="number" min="0" value="\${gt(e.expectedQuantityRange,'min')}"></div>
       <div><label>qty max</label><input class="qmax" type="number" min="0" value="\${gt(e.expectedQuantityRange,'max')}"></div>
     </div>
-    <div class="row">
-      <div><label>cubic yards min *</label><input class="vmin" type="number" step="0.5" min="0" value="\${gt(e.expectedVolumeRangeCubicYards,'min')}"></div>
-      <div><label>cubic yards max *</label><input class="vmax" type="number" step="0.5" min="0" value="\${gt(e.expectedVolumeRangeCubicYards,'max')}"></div>
+    <div class="fld">
+      <label>how much of a 24 ft truck would this fill? *</label>
+      <div class="buckets">\${BUCKETS.map(b =>
+        '<button type="button" class="bk" data-min="'+b.minPct+'" data-max="'+b.maxPct+'" onclick="pickBucket('+b.minPct+','+b.maxPct+')">'+b.label+'</button>').join('')}</div>
+      <div class="derived" id="derived">—</div>
     </div>
-    <div class="row">
-      <div><label>truck space % min *</label><input class="tmin" type="number" min="0" max="100" value="\${gt(e.expectedTruckSpaceRangePercent,'min')}"></div>
-      <div><label>truck space % max *</label><input class="tmax" type="number" min="0" max="100" value="\${gt(e.expectedTruckSpaceRangePercent,'max')}"></div>
-    </div>
+    <details class="fine">
+      <summary>fine-tune the numbers</summary>
+      <div class="row" style="margin-top:7px">
+        <div><label>truck space % min *</label><input class="tmin" type="number" min="0" max="100" value="\${gt(e.expectedTruckSpaceRangePercent,'min')}"></div>
+        <div><label>truck space % max *</label><input class="tmax" type="number" min="0" max="100" value="\${gt(e.expectedTruckSpaceRangePercent,'max')}"></div>
+      </div>
+      <div class="row">
+        <div><label>cubic yards min *</label><input class="vmin" type="number" step="0.5" min="0" value="\${gt(e.expectedVolumeRangeCubicYards,'min')}"></div>
+        <div><label>cubic yards max *</label><input class="vmax" type="number" step="0.5" min="0" value="\${gt(e.expectedVolumeRangeCubicYards,'max')}"></div>
+      </div>
+      <div class="hint">More than one truckload? Enter cubic yards directly and set truck space to 100.</div>
+    </details>
     <div class="row">
       <div><label>crew size min</label><input class="cmin" type="number" min="0" value="\${gt(e.expectedCrewRange,'min')}"></div>
       <div><label>crew size max</label><input class="cmax" type="number" min="0" value="\${gt(e.expectedCrewRange,'max')}"></div>
@@ -237,6 +275,32 @@ function render(){
     </div>\`;
   document.querySelectorAll('.side input, .side select, .side textarea')
     .forEach(el => el.addEventListener('input', () => { dirty = true }));
+  ['tmin','tmax','vmin','vmax'].forEach(c => {
+    const el = document.querySelector('.'+c);
+    if (el) el.addEventListener('input', syncDerived);
+  });
+  syncDerived();
+}
+
+// Clicking a bucket fills BOTH numeric fields consistently, so the volume/truck
+// cross-check passes by construction rather than by the labeller doing arithmetic.
+function pickBucket(minPct, maxPct){
+  const q = c => document.querySelector('.'+c);
+  q('tmin').value = minPct; q('tmax').value = maxPct;
+  q('vmin').value = +(minPct / 100 * TRUCK_CU_YD).toFixed(1);
+  q('vmax').value = +(maxPct / 100 * TRUCK_CU_YD).toFixed(1);
+  dirty = true; syncDerived();
+}
+function syncDerived(){
+  const q = c => document.querySelector('.'+c);
+  const el = document.getElementById('derived'); if (!el) return;
+  const tmin = parseFloat(q('tmin').value), tmax = parseFloat(q('tmax').value);
+  const vmin = parseFloat(q('vmin').value), vmax = parseFloat(q('vmax').value);
+  document.querySelectorAll('.bk').forEach(b => b.classList.toggle('on',
+    Number(b.dataset.min) === tmin && Number(b.dataset.max) === tmax));
+  el.textContent = Number.isFinite(tmin) && Number.isFinite(tmax)
+    ? \`\${tmin}–\${tmax}% of a truck  ≈  \${Number.isFinite(vmin)?vmin:'?'}–\${Number.isFinite(vmax)?vmax:'?'} cubic yards\`
+    : '— pick a load size above, or type the numbers in fine-tune';
 }
 
 function collect(){
