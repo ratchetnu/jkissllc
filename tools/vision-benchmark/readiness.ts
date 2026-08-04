@@ -17,14 +17,44 @@ import { datasetRoot, loadManifest, distributions } from './dataset'
 import { hasGroundTruth, type JobType, type ManifestEntry } from './schema'
 import { ALL_CATEGORIES } from './queries'
 
-/** Minimums below which a result is a demo, not a measurement. */
+/**
+ * SMALL-PILOT gates. Deliberately lowered from the original ten because the
+ * owner's own review found only five of eleven stock images to be truck-loadable
+ * junk-removal jobs — the Openverse pool simply does not contain many real ones.
+ *
+ * Five images is enough to measure inference success, structured-output
+ * validity, latency, token use, cost, critic invocation and decision
+ * distribution. It is NOT enough for accuracy, calibration or category-general
+ * claims, and PILOT_LIMITATIONS below must accompany every result.
+ */
 export const READINESS_GATES = {
-  minVerified: 10,
-  minCategories: 5,
-  minDifficulties: 2,
+  minVerified: 5,
+  minCategories: 5,          // five distinct categories across five images
+  minDifficulties: 1,        // relaxed for the first latency/cost pilot
   maxSourceConcentration: 0.6,
-  minDevelopmentVerified: 8,
+  minDevelopmentVerified: 4, // the single holdout image stays frozen
 }
+
+/**
+ * At or below this many verified images, every artefact must carry PILOT_BANNER.
+ * Ten was the original gate; the pilot runs under it deliberately, so the
+ * warning is bound to the actual sample size rather than to a flag someone has
+ * to remember to unset later.
+ */
+export const SMALL_PILOT_MAX_VERIFIED = 9
+
+/** Must appear on every artefact produced from this pilot. */
+export const PILOT_BANNER = 'small pilot — directional only'
+export const PILOT_LIMITATIONS = [
+  'Sample is 5 images: latency percentiles are directional, not statistically meaningful.',
+  'Does NOT establish production accuracy.',
+  'Does NOT establish representative junk-removal coverage.',
+  'Does NOT establish reliable confidence calibration.',
+  'Does NOT establish final volume accuracy.',
+  'Does NOT establish final pricing accuracy.',
+  'Does NOT establish category-general performance.',
+  'Difficulty banding relaxed to a single band for this run.',
+]
 
 export type ReadinessGate = { name: string; pass: boolean; detail: string }
 /**
@@ -81,7 +111,8 @@ function main(): void {
   const approved = ofType.filter(e => e.reviewStatus === 'approved')
   const verified = approved.filter(hasGroundTruth)
 
-  console.log(`\n=== Benchmark readiness — ${jobType} ===\n`)
+  console.log(`\n=== Benchmark readiness — ${jobType} ===`)
+  console.log(`    ${PILOT_BANNER.toUpperCase()}\n`)
   console.log(`  approved        : ${r.approved}`)
   console.log(`  verified labels : ${r.verified}`)
   console.log(`  drafts          : ${r.drafts}`)
@@ -111,6 +142,9 @@ function main(): void {
   const taxonomy = ALL_CATEGORIES.filter(c => c.jobType === jobType).map(c => c.category)
   const missing = taxonomy.filter(c => !approvedCats.has(c))
   console.log(`  Never sourced   : ${missing.length}/${taxonomy.length}${missing.length ? ` — ${missing.slice(0, 12).join(', ')}${missing.length > 12 ? ' …' : ''}` : ''}`)
+
+  console.log('\n  Limitations that MUST accompany any result from this pilot:')
+  for (const l of PILOT_LIMITATIONS) console.log(`    • ${l}`)
 
   console.log(`\n  VERDICT: ${r.ready ? '✅ ready to run once credits are added' : '❌ NOT ready'}`)
   if (r.ready && r.caveats.some(c => c.triggered)) {

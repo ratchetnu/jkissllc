@@ -85,9 +85,36 @@ The acquirer is deliberately incapable of approving anything. Four decisions are
 - **Ground truth** — cubic yards and truck-space percentage cannot be derived from a stranger's photo by the system under test. If the model supplied the answers, the benchmark would be grading its own homework.
 - **Hazard classification and operational reasonableness** — safety calls.
 
+**Twelve fields are required to verify** — objects, quantity, cubic yards, truck space,
+crew size, labor hours, the three flag groups, ambiguity notes, difficulty and human
+confidence. Not the four the first gate checked. A five-image pilot has no redundancy: if
+crew size is blank on two of five, the labor section covers 60% of the sample and reads as
+if it covered all of it. The flag groups share one gate — each may honestly be empty, so
+what is required is the labeller's confirmation that they were considered.
+
 Ground truth is entered as a **range**, never a point value. For most photos the honest label is "between 2 and 4 cubic yards", and forcing a single number manufactures precision the accuracy report would then treat as fact. Leaving a field blank is better than guessing: blank is excluded from scoring, a guess corrupts it.
 
 ---
+
+## The small pilot
+
+The first run is **five verified images**, not ten. The owner's own review found only five
+of eleven stock candidates to be truck-loadable junk-removal jobs; the Openverse pool does
+not contain many real ones. `READINESS_GATES` is set for that (`minVerified: 5`,
+`minDevelopmentVerified: 4`, one difficulty band), and both `readiness.ts` and `report.ts`
+stamp **small pilot — directional only** on their output whenever nine or fewer images are
+verified. The banner is bound to the sample size, not to a flag, so it cannot be left
+switched off once the dataset grows or switched off early while it has not.
+
+It may measure: inference success, structured-output validity, provider-error rate, timeout
+rate, directional p50/p90/p95, output tokens, estimated cost, critic invocation, quote
+completion, decision distribution, obvious item-detection failures, operational
+reasonableness.
+
+It may **not** claim: production accuracy, representative coverage, reliable confidence
+calibration, final volume accuracy, final pricing accuracy, category-general performance.
+
+Real accuracy needs real jobs — see `docs/opspilot-os/vision-estimation/04-real-job-dataset.md`.
 
 ## Splits
 
@@ -150,6 +177,6 @@ Token usage and cost are **not copied** into the evaluation record — `recordAi
 
 A 429 is not a result: the runner honours `Retry-After` (both delta-seconds and HTTP-date forms), retries the same job up to 4 times, and records the wait against the job rather than as a latency sample. Results are checkpointed after **every** job, so `--resume` skips work already completed against the model — and only genuine completions count, never a 429 or a transport failure.
 
-## Cost## Cost
+## Cost
 
 Live runs make real provider calls (~$0.03/job). `run-benchmark.ts` prints its estimated spend before starting, refuses any non-Preview target, and honours `--limit` and `--dry-run`.

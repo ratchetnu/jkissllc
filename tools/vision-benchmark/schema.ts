@@ -73,6 +73,13 @@ export type ManifestEntry = {
   accessConcerns: string[]
   labelConfidence: LabelConfidence | null
   difficulty: Difficulty | null
+  /**
+   * The three flag groups (handling / disposal / access) are legitimately empty
+   * on plenty of jobs, so emptiness cannot distinguish "nothing applies" from
+   * "nobody looked". This box is the labeller stating they looked. Without it a
+   * blank flag set would silently count as ground truth.
+   */
+  flagsReviewed?: boolean
   verifiedAt?: string
   // ── Provenance + quality control (tooling-owned, not human-entered) ──
   storedPath: string          // relative to the external dataset root
@@ -257,19 +264,52 @@ export function validateLabel(e: Partial<ManifestEntry>): string[] {
   // Required only to VERIFY. A draft may be as incomplete as the labeller likes.
   if (e.labelStatus === 'verified') {
     if (e.reviewStatus !== 'approved') problems.push('only an approved image can be verified')
-    if (!e.expectedObjects?.length) problems.push('visible objects are required')
-    if (!e.expectedVolumeRangeCubicYards) problems.push('cubic-yard range is required')
-    if (!e.expectedTruckSpaceRangePercent) problems.push('truck-space range is required')
-    if (!e.labelConfidence) problems.push('label confidence is required')
-    if (!e.difficulty) problems.push('difficulty is required')
+    for (const f of missingRequiredFields(e)) problems.push(`${f} is required`)
   }
   return problems
+}
+
+/**
+ * The twelve fields an image must carry before it counts as ground truth.
+ *
+ * This is deliberately the FULL set rather than the four the earlier gate
+ * checked. A five-image pilot has no redundancy: if crew size or access
+ * concerns are blank on two of five, the corresponding report section covers
+ * 60% of the sample and reads as though it covered all of it. Twelve-of-twelve
+ * on five images is the only way a sample this small stays honest.
+ *
+ * `notes` is included as the ambiguity note: on a photo a stranger took, what
+ * the labeller could NOT tell is as much a part of the answer key as what they
+ * could, and it is the field that explains a later disagreement with the model.
+ */
+export const REQUIRED_FOR_VERIFICATION: Array<{
+  label: string
+  present: (e: Partial<ManifestEntry>) => boolean
+}> = [
+  { label: 'visible objects', present: e => !!e.expectedObjects?.length },
+  { label: 'quantity range', present: e => e.expectedQuantityRange != null },
+  { label: 'cubic-yard range', present: e => e.expectedVolumeRangeCubicYards != null },
+  { label: 'truck-space range', present: e => e.expectedTruckSpaceRangePercent != null },
+  { label: 'crew-size range', present: e => e.expectedCrewRange != null },
+  { label: 'labor-hour range', present: e => e.expectedLaborHoursRange != null },
+  // The three flag groups share one gate: each may honestly be empty, so what is
+  // required is the confirmation that they were considered, not a tick in each.
+  { label: 'handling flags', present: e => !!e.flagsReviewed || !!e.expectedHandlingFlags?.length },
+  { label: 'disposal flags', present: e => !!e.flagsReviewed || !!e.disposalFlags?.length },
+  { label: 'access concerns', present: e => !!e.flagsReviewed || !!e.accessConcerns?.length },
+  { label: 'ambiguity notes', present: e => !!e.notes?.trim() },
+  { label: 'difficulty', present: e => !!e.difficulty },
+  { label: 'human confidence', present: e => !!e.labelConfidence },
+]
+
+/** Which of the twelve are still blank. Empty = ready to verify. */
+export function missingRequiredFields(e: Partial<ManifestEntry>): string[] {
+  return REQUIRED_FOR_VERIFICATION.filter(f => !f.present(e)).map(f => f.label)
 }
 
 /** True when an entry carries enough VERIFIED human ground truth to score against. */
 export function hasGroundTruth(e: ManifestEntry): boolean {
   return e.reviewStatus === 'approved'
     && e.labelStatus === 'verified'
-    && e.expectedObjects.length > 0
-    && e.expectedVolumeRangeCubicYards != null
+    && missingRequiredFields(e).length === 0
 }

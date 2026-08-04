@@ -243,9 +243,10 @@ function render(){
       <div><label>labor hours min</label><input class="hmin" type="number" step="0.5" min="0" value="\${gt(e.expectedLaborHoursRange,'min')}"></div>
       <div><label>labor hours max</label><input class="hmax" type="number" step="0.5" min="0" value="\${gt(e.expectedLaborHoursRange,'max')}"></div>
     </div>
-    <div class="fld"><label>handling flags</label><div class="flags">\${flagRow(HANDLING,'fl-h',e.expectedHandlingFlags)}</div></div>
-    <div class="fld"><label>disposal flags</label><div class="flags">\${flagRow(DISPOSAL,'fl-d',e.disposalFlags)}</div></div>
-    <div class="fld"><label>access concerns</label><div class="flags">\${flagRow(ACCESS,'fl-a',e.accessConcerns)}</div></div>
+    <div class="fld"><label>handling flags *</label><div class="flags">\${flagRow(HANDLING,'fl-h',e.expectedHandlingFlags)}</div></div>
+    <div class="fld"><label>disposal flags *</label><div class="flags">\${flagRow(DISPOSAL,'fl-d',e.disposalFlags)}</div></div>
+    <div class="fld"><label>access concerns *</label><div class="flags">\${flagRow(ACCESS,'fl-a',e.accessConcerns)}</div></div>
+    <label style="text-transform:none"><input type="checkbox" class="flrev" \${e.flagsReviewed?'checked':''} style="width:auto"> I checked all three flag groups above — any left empty are deliberately empty</label>
     <div class="row3">
       <div><label>lighting</label>\${sel('light',['bright','normal','dim'],e.lighting)}</div>
       <div><label>clutter</label>\${sel('clut',['low','medium','high'],e.clutter)}</div>
@@ -255,8 +256,9 @@ function render(){
       <div><label>difficulty *</label>\${sel('diff',['easy','normal','difficult'],e.difficulty)}</div>
       <div><label>label confidence *</label>\${sel('lc',['high','medium','low'],e.labelConfidence)}</div>
     </div>
-    <div class="fld"><label>ambiguity notes (add #edge for the edge-case set)</label><textarea class="notes">\${(e.notes||'').replace(/^(AUTO|REVIEW):[^\\n]*\\n?/,'')}</textarea></div>
+    <div class="fld"><label>ambiguity notes * — what you could NOT tell from this photo (add #edge for the edge-case set)</label><textarea class="notes">\${(e.notes||'').replace(/^(AUTO|REVIEW):[^\\n]*\\n?/,'')}</textarea></div>
     <label style="text-transform:none"><input type="checkbox" class="ppl" \${e.containsPeople?'checked':''} style="width:auto"> contains identifiable people / documents / plates</label>
+    <div id="missing"></div>
     <button class="act ver" style="width:100%;padding:12px;font-size:14px" onclick="save('verified')">✓ Save &amp; mark verified</button>
     <div class="actions"><button class="act save" onclick="save('draft')">Save draft (keep working)</button></div>
     <details class="fine"><summary>change review status (licence / content triage)</summary>
@@ -275,12 +277,41 @@ function render(){
       * required before an image can be verified
     </div>\`;
   document.querySelectorAll('.side input, .side select, .side textarea')
-    .forEach(el => el.addEventListener('input', () => { dirty = true }));
+    .forEach(el => el.addEventListener('input', () => { dirty = true; syncMissing() }));
   ['tmin','tmax','vmin','vmax'].forEach(c => {
     const el = document.querySelector('.'+c);
     if (el) el.addEventListener('input', syncDerived);
   });
-  syncDerived();
+  syncDerived(); syncMissing();
+}
+
+// Live mirror of REQUIRED_FOR_VERIFICATION. Advisory only — /save re-checks with
+// the real validator, so a drift here can delay a verify but can never let an
+// incomplete label through.
+function missingFields(){
+  const d = collect();
+  const fl = d.flagsReviewed;
+  return [
+    [d.expectedObjects.length, 'visible objects'],
+    [d.expectedQuantityRange, 'quantity range'],
+    [d.expectedVolumeRangeCubicYards, 'cubic-yard range'],
+    [d.expectedTruckSpaceRangePercent, 'truck-space range'],
+    [d.expectedCrewRange, 'crew-size range'],
+    [d.expectedLaborHoursRange, 'labor-hour range'],
+    [fl || d.expectedHandlingFlags.length, 'handling flags'],
+    [fl || d.disposalFlags.length, 'disposal flags'],
+    [fl || d.accessConcerns.length, 'access concerns'],
+    [d.notes.trim(), 'ambiguity notes'],
+    [d.difficulty, 'difficulty'],
+    [d.labelConfidence, 'human confidence'],
+  ].filter(([ok]) => !ok).map(([, name]) => name);
+}
+function syncMissing(){
+  const box = document.getElementById('missing'); if (!box) return;
+  const m = missingFields();
+  box.innerHTML = m.length
+    ? '<div class="warn">Still needed to verify (' + m.length + ' of 12): ' + m.join(', ') + '</div>'
+    : '<div class="hint">All 12 fields present — ready to verify.</div>';
 }
 
 // Clicking a bucket fills BOTH numeric fields consistently, so the volume/truck
@@ -320,6 +351,7 @@ function collect(){
     expectedHandlingFlags: flags('fl-h'),
     disposalFlags: flags('fl-d'),
     accessConcerns: flags('fl-a'),
+    flagsReviewed: q('flrev').checked,
     lighting: q('light').value || null,
     clutter: q('clut').value || null,
     imageQuality: q('iq').value || null,
@@ -502,5 +534,7 @@ createServer((req, res) => {
   console.log(`  dataset  : ${root}`)
   console.log(`  approved : ${approved.length} (${approved.filter(e => e.jobType === 'junk_removal').length} junk removal)`)
   console.log(`  verified : ${entries.filter(e => e.labelStatus === 'verified').length}`)
-  console.log(`\n  Nothing is prefilled. Verify requires: objects, cubic yards, truck %, difficulty, confidence.\n`)
+  console.log('\n  Nothing is prefilled. Verify requires all 12 fields:')
+  console.log('    objects · quantity · cubic yards · truck % · crew · labor hours')
+  console.log('    handling/disposal/access flags (confirmed) · ambiguity notes · difficulty · confidence\n')
 })

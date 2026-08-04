@@ -12,6 +12,7 @@ import test from 'node:test'
 
 import {
   licenseDecision, piiRisk, validateEntry, hasGroundTruth, validateLabel,
+  missingRequiredFields, REQUIRED_FOR_VERIFICATION,
   AUTO_ACCEPT_LICENSES, type ManifestEntry,
 } from '../tools/vision-benchmark/schema'
 import {
@@ -107,7 +108,14 @@ test('an inverted ground-truth range is rejected', () => {
 })
 
 test('ground truth counts only when a human approved AND VERIFIED it', () => {
-  const labelled = { expectedObjects: ['mattress'], expectedVolumeRangeCubicYards: { min: 2, max: 4 } }
+  const labelled = {
+    expectedObjects: ['mattress'], expectedQuantityRange: { min: 1, max: 1 },
+    expectedVolumeRangeCubicYards: { min: 2, max: 4 },
+    expectedTruckSpaceRangePercent: { min: 5, max: 9 },
+    expectedCrewRange: { min: 2, max: 2 }, expectedLaborHoursRange: { min: 0.5, max: 1 },
+    flagsReviewed: true, notes: 'stains suggest it may be soaked — weight uncertain',
+    labelConfidence: 'high' as const, difficulty: 'easy' as const,
+  }
   const verified = { ...labelled, labelStatus: 'verified' as const }
   assert.equal(hasGroundTruth(entry({ ...verified, reviewStatus: 'pending' })), false)
   assert.equal(hasGroundTruth(entry({ reviewStatus: 'approved', labelStatus: 'verified' })), false,
@@ -321,22 +329,59 @@ test('a draft may be as incomplete as the labeller likes', () => {
   assert.deepEqual(validateLabel(entry({ labelStatus: 'draft' })), [], 'drafts are never blocked')
 })
 
+/** All twelve required fields present — the only shape that may be verified. */
 const complete = {
   reviewStatus: 'approved' as const,
   labelStatus: 'verified' as const,
   expectedObjects: ['couch'],
+  expectedQuantityRange: { min: 1, max: 1 },
   expectedVolumeRangeCubicYards: { min: 3, max: 5 },
   expectedTruckSpaceRangePercent: { min: 7, max: 12 },
+  expectedCrewRange: { min: 2, max: 2 },
+  expectedLaborHoursRange: { min: 0.5, max: 1 },
+  expectedHandlingFlags: ['bulky'],
+  disposalFlags: [],
+  accessConcerns: ['curbside'],
+  flagsReviewed: true,
+  notes: 'cushions may be missing — cannot tell from this angle',
   labelConfidence: 'high' as const,
   difficulty: 'easy' as const,
 }
 
-test('verification requires every mandatory field', () => {
+test('verification requires every one of the twelve mandatory fields', () => {
   assert.deepEqual(validateLabel(entry(complete)), [], 'a complete label verifies')
-  for (const missing of ['expectedObjects', 'expectedVolumeRangeCubicYards', 'expectedTruckSpaceRangePercent', 'labelConfidence', 'difficulty'] as const) {
-    const partial = { ...complete, [missing]: missing === 'expectedObjects' ? [] : null }
-    assert.ok(validateLabel(entry(partial as Partial<ManifestEntry>)).length > 0, `${missing} must block verification`)
+  const blank: Partial<Record<keyof ManifestEntry, unknown>> = {
+    expectedObjects: [], expectedQuantityRange: null, expectedVolumeRangeCubicYards: null,
+    expectedTruckSpaceRangePercent: null, expectedCrewRange: null, expectedLaborHoursRange: null,
+    notes: '', labelConfidence: null, difficulty: null,
   }
+  for (const [field, empty] of Object.entries(blank)) {
+    const partial = { ...complete, [field]: empty }
+    assert.ok(validateLabel(entry(partial as Partial<ManifestEntry>)).length > 0, `${field} must block verification`)
+  }
+  // The three flag groups share one gate: each may honestly be empty, so what
+  // blocks is the missing confirmation that they were considered at all.
+  const unconfirmed = {
+    ...complete, flagsReviewed: false,
+    expectedHandlingFlags: [], disposalFlags: [], accessConcerns: [],
+  }
+  const problems = validateLabel(entry(unconfirmed))
+  assert.ok(problems.some(p => /handling flags/.test(p)), 'unreviewed empty flags block verification')
+  assert.deepEqual(
+    validateLabel(entry({ ...unconfirmed, flagsReviewed: true })), [],
+    'confirming the groups were checked lets deliberately-empty flags through',
+  )
+})
+
+test('missingRequiredFields names exactly what is blank', () => {
+  assert.deepEqual(missingRequiredFields(complete), [])
+  assert.deepEqual(
+    missingRequiredFields({ ...complete, expectedCrewRange: null, difficulty: null }),
+    ['crew-size range', 'difficulty'],
+  )
+  assert.equal(missingRequiredFields({}).length, REQUIRED_FOR_VERIFICATION.length,
+    'an empty entry is missing all twelve')
+  assert.equal(REQUIRED_FOR_VERIFICATION.length, 12)
 })
 
 test('an unapproved image can never be verified', () => {
@@ -345,11 +390,14 @@ test('an unapproved image can never be verified', () => {
 })
 
 test('ground truth counts only when APPROVED and VERIFIED', () => {
-  const labelled = { expectedObjects: ['couch'], expectedVolumeRangeCubicYards: { min: 3, max: 5 } }
-  assert.equal(hasGroundTruth(entry({ ...labelled, reviewStatus: 'approved', labelStatus: 'draft' })), false,
+  assert.equal(hasGroundTruth(entry({ ...complete, labelStatus: 'draft' })), false,
     'a draft is excluded from scoring exactly like a blank')
-  assert.equal(hasGroundTruth(entry({ ...labelled, reviewStatus: 'approved', labelStatus: 'verified' })), true)
-  assert.equal(hasGroundTruth(entry({ ...labelled, reviewStatus: 'rejected', labelStatus: 'verified' })), false)
+  assert.equal(hasGroundTruth(entry(complete)), true)
+  assert.equal(hasGroundTruth(entry({ ...complete, reviewStatus: 'rejected' })), false)
+  // A five-image pilot has no redundancy: a partially-labelled entry counted as
+  // ground truth would silently shrink a report section's real coverage.
+  assert.equal(hasGroundTruth(entry({ ...complete, expectedCrewRange: null })), false,
+    'a partial label is not ground truth even when verified')
 })
 
 test('cubic yards and truck space must agree with each other', () => {

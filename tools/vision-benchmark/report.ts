@@ -31,6 +31,7 @@ import {
 import { ALL_CATEGORIES } from './queries'
 import { hasGroundTruth, type ManifestEntry, type JobType } from './schema'
 import type { BenchResult } from './run-benchmark'
+import { PILOT_BANNER, PILOT_LIMITATIONS, SMALL_PILOT_MAX_VERIFIED } from './readiness'
 
 const pct = (n: number, d: number) => d === 0 ? '—' : `${((n / d) * 100).toFixed(0)}%`
 const UNAVAILABLE = 'unavailable — no human-labelled ground truth yet'
@@ -259,11 +260,23 @@ const results = explicit
   ? (JSON.parse(readFileSync(explicit, 'utf8')) as { results?: BenchResult[] }).results ?? []
   : latestRun(p.results)
 
+const verifiedCount = entries.filter(e => hasGroundTruth(e)).length
+// Bound to the sample, not to a flag: the banner cannot be left switched off by
+// accident once the dataset grows, and cannot be switched off early while it
+// has not.
+const smallPilot = verifiedCount > 0 && verifiedCount <= SMALL_PILOT_MAX_VERIFIED
+const pilotBlock = smallPilot
+  ? [`> ## ⚠ ${PILOT_BANNER.toUpperCase()}`, `>`,
+     `> Only **${verifiedCount}** verified image${verifiedCount === 1 ? '' : 's'} back this report.`,
+     ...PILOT_LIMITATIONS.map(l => `> - ${l}`), ``]
+  : []
+
 const doc = [
   `# Vision benchmark report`,
   ``,
+  ...pilotBlock,
   `- dataset: \`${root}\``,
-  `- images: **${entries.length}** · approved: **${entries.filter(e => e.reviewStatus === 'approved').length}** · labelled: **${entries.filter(e => hasGroundTruth(e)).length}**`,
+  `- images: **${entries.length}** · approved: **${entries.filter(e => e.reviewStatus === 'approved').length}** · labelled: **${verifiedCount}**`,
   `- job groups: **${loadGroups(root).length}** · rejected sources logged: **${loadRejected(root).length}**`,
   `- benchmark jobs in this run: **${results.length}**`,
   ``,
