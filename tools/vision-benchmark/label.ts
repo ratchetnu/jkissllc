@@ -28,6 +28,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { createServer } from 'node:http'
+import { Script } from 'node:vm'
 import { readFileSync, existsSync } from 'node:fs'
 import { join, extname } from 'node:path'
 import { datasetRoot, paths, loadManifest, saveManifest } from './dataset'
@@ -281,7 +282,7 @@ async function review(status){
   const e = list[i];
   const hasWork = (e.expectedObjects||[]).length || e.expectedVolumeRangeCubicYards || e.labelStatus !== 'unlabelled';
   if (status === 'rejected' && hasWork &&
-      !confirm('This image has label data. Rejecting removes it from the benchmark.\n\nReject anyway?')) return;
+      !confirm('This image has label data. Rejecting removes it from the benchmark. Reject anyway?')) return;
   if (dirty && !confirm('Unsaved edits will be discarded. Continue?')) return;
   if (await post({ id: e.id, reviewStatus: status })) go(1);
 }
@@ -396,6 +397,23 @@ createServer((req, res) => {
   res.writeHead(404).end('not found')
 }).listen(PORT, () => {
   const entries = loadManifest(root)
+
+  // The page is generated as a STRING, so a template-literal mistake produces a
+  // browser SyntaxError and a silently blank page — the server still returns 200
+  // and the terminal shows nothing wrong. That happened once: a `\n` inside the
+  // template expanded to a real newline inside a JS string literal. Compile the
+  // generated script at startup (compile only — it is never executed here) so a
+  // broken page fails loudly in the terminal instead of quietly in the browser.
+  if (entries.length > 0) {
+    const script = /<script>([\s\S]*)<\/script>/.exec(page(entries))?.[1] ?? ''
+    try {
+      new Script(script)
+    } catch (e) {
+      console.error(`\n  ✖ GENERATED PAGE IS BROKEN — the browser would render a blank screen.`)
+      console.error(`    ${e instanceof Error ? e.message : e}\n`)
+      process.exit(1)
+    }
+  }
   const approved = entries.filter(e => e.reviewStatus === 'approved')
   console.log(`\n  Benchmark labelling → http://localhost:${PORT}`)
   console.log(`  dataset  : ${root}`)
