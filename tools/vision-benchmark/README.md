@@ -33,10 +33,12 @@ npx tsx tools/vision-benchmark/organize.ts --apply
 # 3. Review + label — REQUIRED before anything runs
 npx tsx tools/vision-benchmark/label.ts                    # http://localhost:7391
 
-# 4. Benchmark — Preview only
+# 4. Benchmark — Preview only, paced, resumable
+#    Requires AI_EVAL_TELEMETRY_ENABLED=1 in Preview BEFORE running.
 BENCH_TARGET=https://<preview>.vercel.app \
 VERCEL_AUTOMATION_BYPASS_SECRET=… \
   npx tsx tools/vision-benchmark/run-benchmark.ts --split=development
+#    Interrupted? Re-run the same command with --resume; completed jobs are skipped.
 
 # 5. Report
 npx tsx tools/vision-benchmark/report.ts
@@ -110,22 +112,34 @@ The most important column in the calibration report is **false-high-confidence**
 
 ---
 
-## Instrumentation gap
+## Instrumentation — how the internals are measured
 
-Five of the metrics a rollout needs **cannot be measured from the analyze endpoint's response**, because `customerEstimateView` is a deliberately customer-safe projection:
+`customerEstimateView` is a customer-safe projection. It exposes `estimatedTruckLoads` — a whole-number load count computed as `max(1, ceil(fraction))` — but not `estimatedTruckLoadFraction`, the value pricing actually consumes. A benchmark reading only the public response sees "1 load" for a single couch, and deriving volume from it produces numbers wrong by an order of magnitude. An earlier revision of `report.ts` did exactly that.
 
-| Metric | Why it isn't observable |
+The fix is **evaluation telemetry**: `app/lib/ai/eval-telemetry.ts` records the estimate-side facts to KV, keyed by analysis id, and `/api/diagnostics/analysis/[analysisId]` reads them back joined to the AI audit log.
+
+| Source | Carries |
 |---|---|
-| Volume (cubic yards) | The response carries `estimatedTruckLoads`, a whole-number load count derived as `max(1, ceil(fraction))`. Every sub-full-truck job reports **1**. `estimatedTruckLoadFraction` — what pricing actually consumes — is not exposed. |
-| Truck-space percentage | Same root cause. `loads × 100%` reads 100% for a single couch. |
-| Output token usage | Not in the response. |
-| Estimated cost | Not in the response. |
-| Critic invocation + added latency | Not in the response. |
+| Evaluation record | truck-load **fraction** (real %), volume, all five confidence sub-scores, monitor concerns, critic verdict, decision, quote |
+| AI audit log (joined by `callId`) | input/output tokens, estimated + actual cost, attempts, retries, provider latency |
 
-**An earlier revision of `report.ts` computed volume as `loads × 44` and truck-space as `loads × 100%`.** Those produce 44 cu yd and 100% for a one-item job — wrong by an order of magnitude, and plausible enough to be believed. The columns were removed rather than left to print confident nonsense. Accuracy now scores **item detection**, and calibration scores **false-high-confidence on item detection** — the only correctness signal the public response actually supports.
+Token usage and cost are **not copied** into the evaluation record — `recordAiCall` is already their single source of truth, and a second copy could drift from the first. The reader joins them.
 
-Closing the gap needs a **Preview-only, flag-gated instrumentation block** on the analyze response carrying the fraction, token usage, cost and critic state. That is a change to a customer-facing route, so it is proposed rather than built — decide before the first paid run, because without it the accuracy and cost halves of the report stay empty no matter how many images are labelled.
+**Three gates, all required:** the route and the recorder both 404 / no-op when `VERCEL_ENV=production` regardless of flags; `AI_EVAL_TELEMETRY_ENABLED` is OFF everywhere by default; Preview deployment protection fronts the host. The customer response, the quote and the decision are byte-identical whether the flag is on or off.
 
-## Cost
+**The flag must be set before the analysis runs** — the record is written during the request, so enabling it afterwards cannot recover data for an analysis that already happened.
+
+## Pacing
+
+`/api/quote/analyze` allows **10 requests per 10 minutes**. The first Preview run ignored that: 10 succeeded, 17 returned 429 in ~110ms each, and those fast rejections then dragged the latency percentiles down.
+
+`pacing.ts` keeps two clocks strictly apart:
+
+- **Wait time** — respecting the limit, or honouring a server `Retry-After`. Reported separately, never latency.
+- **Inference time** — the request span only. The sole thing measured.
+
+A 429 is not a result: the runner honours `Retry-After` (both delta-seconds and HTTP-date forms), retries the same job up to 4 times, and records the wait against the job rather than as a latency sample. Results are checkpointed after **every** job, so `--resume` skips work already completed against the model — and only genuine completions count, never a 429 or a transport failure.
+
+## Cost## Cost
 
 Live runs make real provider calls (~$0.03/job). `run-benchmark.ts` prints its estimated spend before starting, refuses any non-Preview target, and honours `--limit` and `--dry-run`.

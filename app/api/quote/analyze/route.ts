@@ -7,6 +7,7 @@ import { saveDraftEstimate, customerEstimateView } from '../../../lib/ai/estimat
 import { selectFollowUpQuestions } from '../../../lib/ai/followup-questions'
 import { recordFunnelEvent } from '../../../lib/analytics-events'
 import { filterPhotoUrls } from '../../../lib/photo-url'
+import { buildEvaluationRecord, recordEvaluation } from '../../../lib/ai/eval-telemetry'
 import { SERVICE_TYPES, serviceFamily, type ServiceType } from '../../../lib/bookings'
 import { buildMovingEstimate, customerMovingEstimateView, type StoredMovingEstimate } from '../../../lib/ai/moving-estimate'
 import type { MovingJobFacts } from '../../../lib/pricing/moving-quote'
@@ -117,6 +118,17 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
 
   // Persist the draft estimate so /api/quote can attach it on submit.
   try { await saveDraftEstimate(stored) } catch (e) { console.error('[quote/analyze] save draft', e) }
+
+  // Evaluation telemetry (Preview only, flag OFF by default). Records the
+  // estimate-side facts the customer-safe response omits, so a benchmark can
+  // measure volume, truck utilisation, confidence inputs and critic behaviour.
+  // Fire-and-forget and fail-soft — it never touches the response or the quote.
+  try {
+    await recordEvaluation(buildEvaluationRecord({
+      stored, serviceType, debris, imageCount: photos.length,
+      analyzedOk, outcome: stored.status, at: nowIso,
+    }))
+  } catch (e) { console.error('[quote/analyze] eval telemetry', e) }
 
   // Governed follow-up question selection (server-side; the client only renders).
   const estate = serviceType === 'estate-cleanout' || serviceType === 'garage-cleanout' || serviceType === 'eviction'

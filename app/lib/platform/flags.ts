@@ -116,6 +116,14 @@ export type FeatureFlag =
   // The route ALSO refuses when VERCEL_ENV=production, so this flag can never
   // expose it there even if it were set by mistake. OFF everywhere by default.
   | 'AI_PROVIDER_DIAGNOSTIC_ENABLED'
+  // Evaluation telemetry — records the ESTIMATE-side facts a benchmark needs and
+  // the customer-safe response deliberately omits (truck-load FRACTION, all five
+  // confidence sub-scores, monitor concerns, critic verdict), joined to the AI
+  // audit log by call id for token usage and cost. Writes one KV record per
+  // analysis; changes no response, no quote and no decision. The recorder also
+  // refuses to run when VERCEL_ENV=production, so this is Preview-only even if
+  // the flag were set there by mistake. OFF everywhere by default.
+  | 'AI_EVAL_TELEMETRY_ENABLED'
   | 'OPERION_CRITIC_JSON'
   // Moving lane: route moving-family services to the dedicated moving schema,
   // prompt and labor/crew/travel pricing engine. OFF = the vision pass still runs
@@ -220,6 +228,7 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   BOOKING_ASSIGNMENT_ENABLED: false,
   // AI latency Phase 2 — all OFF by default (byte-identical to today).
   AI_PROVIDER_DIAGNOSTIC_ENABLED: false,
+  AI_EVAL_TELEMETRY_ENABLED: false,
   OPERION_CRITIC_JSON: false,
   OPERION_MOVING_LANE: false,
   OPERION_EVENT_ENQUEUE: false,
