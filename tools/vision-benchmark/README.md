@@ -110,6 +110,22 @@ The most important column in the calibration report is **false-high-confidence**
 
 ---
 
+## Instrumentation gap
+
+Five of the metrics a rollout needs **cannot be measured from the analyze endpoint's response**, because `customerEstimateView` is a deliberately customer-safe projection:
+
+| Metric | Why it isn't observable |
+|---|---|
+| Volume (cubic yards) | The response carries `estimatedTruckLoads`, a whole-number load count derived as `max(1, ceil(fraction))`. Every sub-full-truck job reports **1**. `estimatedTruckLoadFraction` — what pricing actually consumes — is not exposed. |
+| Truck-space percentage | Same root cause. `loads × 100%` reads 100% for a single couch. |
+| Output token usage | Not in the response. |
+| Estimated cost | Not in the response. |
+| Critic invocation + added latency | Not in the response. |
+
+**An earlier revision of `report.ts` computed volume as `loads × 44` and truck-space as `loads × 100%`.** Those produce 44 cu yd and 100% for a one-item job — wrong by an order of magnitude, and plausible enough to be believed. The columns were removed rather than left to print confident nonsense. Accuracy now scores **item detection**, and calibration scores **false-high-confidence on item detection** — the only correctness signal the public response actually supports.
+
+Closing the gap needs a **Preview-only, flag-gated instrumentation block** on the analyze response carrying the fraction, token usage, cost and critic state. That is a change to a customer-facing route, so it is proposed rather than built — decide before the first paid run, because without it the accuracy and cost halves of the report stay empty no matter how many images are labelled.
+
 ## Cost
 
 Live runs make real provider calls (~$0.03/job). `run-benchmark.ts` prints its estimated spend before starting, refuses any non-Preview target, and honours `--limit` and `--dry-run`.

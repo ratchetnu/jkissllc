@@ -29,7 +29,7 @@ import {
   coverage, distributions, findDuplicates, splitLeakage,
 } from './dataset'
 import { ALL_CATEGORIES } from './queries'
-import { hasGroundTruth, type ManifestEntry, type JobType, type Range } from './schema'
+import { hasGroundTruth, type ManifestEntry, type JobType } from './schema'
 import type { BenchResult } from './run-benchmark'
 
 const pct = (n: number, d: number) => d === 0 ? '—' : `${((n / d) * 100).toFixed(0)}%`
@@ -96,7 +96,12 @@ export function latencyReport(results: BenchResult[]): string {
     ['junk_removal', results.filter(r => r.jobType === 'junk_removal')],
     ['moving', results.filter(r => r.jobType === 'moving')],
   ]
-  for (const [name, rs] of groups) {
+  for (const [name, all] of groups) {
+    // Latency is measured over runs where the MODEL actually ran. A 429 returns in
+    // ~110ms and a transport failure in ~0ms; counting either as a latency sample
+    // makes the analyzer look faster the more often it is refused service. Queue
+    // and rate-limit time is reported separately below, never blended in here.
+    const rs = all.filter(r => r.ok && r.httpStatus !== 429)
     if (rs.length === 0) { out.push(`| ${name} | 0 | — | — | — | — | — | — | — | — |`); continue }
     const lat = rs.map(r => r.latencyMs)
     const p50 = percentile(lat, 50), p90 = percentile(lat, 90), p95 = percentile(lat, 95)
@@ -105,6 +110,9 @@ export function latencyReport(results: BenchResult[]): string {
     out.push(`| ${name} | ${rs.length} | ${p50} | ${p90} | ${p95} | ${Math.max(...lat)} | ${ok(p50, t.p50Max)} | ${ok(p90, t.p90Max)} | ${ok(p95, t.p95Max)} | ${over} |`)
   }
   out.push('', `Targets: p50 ≤ ${t.p50Max / 1000}s · p90 ≤ ${t.p90Max / 1000}s · p95 ≤ ${t.p95Max / 1000}s · hard ceiling ${t.hardCeiling / 1000}s`)
+  const limited = results.filter(r => r.httpStatus === 429).length
+  const failed = results.filter(r => !r.ok && r.httpStatus !== 429).length
+  out.push(`n counts runs where the model actually ran. Excluded: **${limited}** rate-limited (429), **${failed}** failed before inference — reported separately, never blended into latency.`)
 
   const timeouts = results.filter(r => r.degraded != null).length
   const kills = results.filter(r => !r.ok && r.httpStatus >= 500).length
@@ -122,14 +130,6 @@ export function latencyReport(results: BenchResult[]): string {
 }
 
 // ── 4. Accuracy (per job type, labelled images only) ─────────────────────────
-const mid = (r: Range) => (r.min + r.max) / 2
-const withinRange = (v: number, r: Range) => v >= r.min && v <= r.max
-/** Signed error against the nearest edge of the accepted range; 0 when inside. */
-function rangeError(v: number, r: Range): number {
-  if (withinRange(v, r)) return 0
-  return v < r.min ? (v - r.min) / Math.max(1e-6, mid(r)) : (v - r.max) / Math.max(1e-6, mid(r))
-}
-
 export function accuracyReport(entries: ManifestEntry[], results: BenchResult[]): string {
   const out: string[] = ['## Accuracy', '']
   const byId = new Map(entries.map(e => [e.id, e]))
@@ -141,13 +141,12 @@ export function accuracyReport(entries: ManifestEntry[], results: BenchResult[])
       'the model grading its own homework.')
     return out.join('\n')
   }
-  out.push('| job type | n | item recall | vol. within range | truck-space within range | mean vol. error | underquote | overquote |')
-  out.push('|---|---:|---:|---:|---:|---:|---:|---:|')
+  out.push('| job type | n | item recall | quote produced | manual review |')
+  out.push('|---|---:|---:|---:|---:|')
   for (const jt of ['junk_removal', 'moving'] as JobType[]) {
     const rs = scorable.filter(r => r.jobType === jt)
-    if (rs.length === 0) { out.push(`| ${jt} | 0 | — | — | — | — | — | — |`); continue }
-    let recallNum = 0, recallDen = 0, volIn = 0, volDen = 0, truckIn = 0, truckDen = 0
-    let volErrSum = 0, under = 0, over = 0
+    if (rs.length === 0) { out.push(`| ${jt} | 0 | — | — | — |`); continue }
+    let recallNum = 0, recallDen = 0
     for (const r of rs) {
       const gt = byId.get(r.imageIds[0])!
       const detected = r.items.map(i => i.label.toLowerCase())
@@ -155,22 +154,22 @@ export function accuracyReport(entries: ManifestEntry[], results: BenchResult[])
         recallDen++
         if (detected.some(d => d.includes(expected.toLowerCase()) || expected.toLowerCase().includes(d))) recallNum++
       }
-      // Truck loads → cubic yards using the same 44 cu yd truck the analyzer assumes.
-      if (gt.expectedVolumeRangeCubicYards && r.estimatedTruckLoads != null) {
-        const cuYd = r.estimatedTruckLoads * 44
-        volDen++
-        if (withinRange(cuYd, gt.expectedVolumeRangeCubicYards)) volIn++
-        const err = rangeError(cuYd, gt.expectedVolumeRangeCubicYards)
-        volErrSum += Math.abs(err)
-        if (err < 0) under++; else if (err > 0) over++
-      }
-      if (gt.expectedTruckSpaceRangePercent && r.estimatedTruckLoads != null) {
-        truckDen++
-        if (withinRange(r.estimatedTruckLoads * 100, gt.expectedTruckSpaceRangePercent)) truckIn++
-      }
     }
-    out.push(`| ${jt} | ${rs.length} | ${pct(recallNum, recallDen)} | ${pct(volIn, volDen)} | ${pct(truckIn, truckDen)} | ${volDen ? (volErrSum / volDen * 100).toFixed(0) + '%' : '—'} | ${pct(under, volDen)} | ${pct(over, volDen)} |`)
+    const quoted = rs.filter(r => r.lowUsd != null && r.highUsd != null).length
+    const review = rs.filter(r => r.decision === 'manual_review').length
+    out.push(`| ${jt} | ${rs.length} | ${pct(recallNum, recallDen)} | ${pct(quoted, rs.length)} | ${pct(review, rs.length)} |`)
   }
+  out.push('', '### Volume, truck-space and labor agreement — NOT MEASURABLE from the public response', '')
+  out.push('The analyze endpoint returns `estimatedTruckLoads`, a whole-number LOAD COUNT that the')
+  out.push('normalizer derives as `max(1, ceil(fraction))`. Every job below a full truck therefore')
+  out.push('reports 1. Deriving cubic yards as `loads x 44` or truck-space as `loads x 100%` yields')
+  out.push('44 cu yd and 100% for a single couch — numbers that look plausible and are wrong by an')
+  out.push('order of magnitude. An earlier revision of this file did exactly that; the columns were')
+  out.push('removed rather than left to produce confident nonsense.')
+  out.push('')
+  out.push('`estimatedTruckLoadFraction` — the value the pricing engine actually consumes — is not in')
+  out.push('the customer-safe projection. Measuring volume, truck-space or labor accuracy requires a')
+  out.push('Preview-only instrumentation block on the response (see README → Instrumentation gap).')
   out.push('', `Scored over ${scorable.length} single-image jobs with human labels. Multi-photo groups are excluded until group-level ground truth exists.`)
   return out.join('\n')
 }
@@ -191,21 +190,25 @@ export function calibrationReport(entries: ManifestEntry[], results: BenchResult
     ['0.9–1.0', c => c >= 0.9], ['0.8–0.9', c => c >= 0.8 && c < 0.9],
     ['0.7–0.8', c => c >= 0.7 && c < 0.8], ['< 0.7', c => c < 0.7],
   ]
-  out.push('| confidence band | n | within volume range | false-high-confidence | manual review |')
+  out.push('| confidence band | n | items detected correctly | false-high-confidence | manual review |')
   out.push('|---|---:|---:|---:|---:|')
   for (const [label, pred] of bands) {
     const rs = scorable.filter(r => pred(r.confidence!))
     if (rs.length === 0) { out.push(`| ${label} | 0 | — | — | — |`); continue }
-    let inRange = 0, falseHigh = 0
+    let correct = 0, falseHigh = 0
     for (const r of rs) {
       const gt = byId.get(r.imageIds[0])!
-      const cuYd = (r.estimatedTruckLoads ?? 0) * 44
-      const ok = gt.expectedVolumeRangeCubicYards ? withinRange(cuYd, gt.expectedVolumeRangeCubicYards) : false
-      if (ok) inRange++
-      // The serious failure: confident AND materially wrong.
-      if (!ok && r.confidence! >= 0.8) falseHigh++
+      const detected = r.items.map(i => i.label.toLowerCase())
+      // "Correct" = every human-listed object was detected. Item detection is the
+      // only correctness signal the public response supports; volume and truck-space
+      // are not derivable from it (see the accuracy section).
+      const hit = gt.expectedObjects.every(e =>
+        detected.some(d => d.includes(e.toLowerCase()) || e.toLowerCase().includes(d)))
+      if (hit) correct++
+      // The serious failure: confident AND wrong.
+      if (!hit && r.confidence! >= 0.8) falseHigh++
     }
-    out.push(`| ${label} | ${rs.length} | ${pct(inRange, rs.length)} | ${pct(falseHigh, rs.length)} | ${pct(rs.filter(r => r.decision === 'manual_review').length, rs.length)} |`)
+    out.push(`| ${label} | ${rs.length} | ${pct(correct, rs.length)} | ${pct(falseHigh, rs.length)} | ${pct(rs.filter(r => r.decision === 'manual_review').length, rs.length)} |`)
   }
   out.push('', 'A confident-and-wrong result is worse than an uncertain one: the customer is quoted a',
     'number nobody checked. `false-high-confidence` is therefore the column that matters most,',
