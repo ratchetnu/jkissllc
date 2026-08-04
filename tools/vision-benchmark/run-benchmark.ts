@@ -79,7 +79,12 @@ export type BenchResult = {
 }
 
 /** Build the job list: explicit groups first, then every ungrouped approved image. */
-export function buildJobs(entries: ManifestEntry[], groups: ReturnType<typeof loadGroups>, split?: Split): BenchJob[] {
+export function buildJobs(
+  entries: ManifestEntry[],
+  groups: ReturnType<typeof loadGroups>,
+  split?: Split,
+  jobType?: JobType,
+): BenchJob[] {
   const approved = entries.filter(e => e.reviewStatus === 'approved')
   const byId = new Map(approved.map(e => [e.id, e]))
   const grouped = new Set<string>()
@@ -96,7 +101,12 @@ export function buildJobs(entries: ManifestEntry[], groups: ReturnType<typeof lo
     if (grouped.has(e.id)) continue
     jobs.push({ jobId: `single_${e.id}`, jobType: e.jobType, category: e.category, imageIds: [e.id], split: e.split })
   }
-  return split ? jobs.filter(j => j.split === split) : jobs
+  const bySplit = split ? jobs.filter(j => j.split === split) : jobs
+  // Moving is deliberately excludable: the analyze route does not gate on service
+  // family, so a moving photo would be read by the junk-removal prompt and priced
+  // by the disposal engine. That returns a confident JUNK-REMOVAL quote for a
+  // moving job. Junk removal is validated first; moving needs its own lane.
+  return jobType ? bySplit.filter(j => j.jobType === jobType) : bySplit
 }
 
 /** Refuse anything that is not a Vercel preview host. */
@@ -188,13 +198,14 @@ export function completedJobIds(resultsDir: string): Set<string> {
 
 export async function run(opts: {
   target: string; bypass?: string; split?: Split; limit?: number; dryRun: boolean; resume?: boolean
+  jobType?: JobType
 }): Promise<BenchResult[]> {
   assertPreviewTarget(opts.target)
   const root = datasetRoot()
   const p = paths(root)
   const entries = loadManifest(root)
   const byId = new Map(entries.map(e => [e.id, e]))
-  let jobs = buildJobs(entries, loadGroups(root), opts.split)
+  let jobs = buildJobs(entries, loadGroups(root), opts.split, opts.jobType)
   if (opts.limit) jobs = jobs.slice(0, opts.limit)
 
   const headers: Record<string, string> = {}
@@ -212,7 +223,7 @@ export async function run(opts: {
 
   const photoCount = jobs.reduce((n, j) => n + j.imageIds.length, 0)
   console.log(`\n  target : ${opts.target}`)
-  console.log(`  jobs   : ${jobs.length} (${photoCount} photos)${opts.split ? ` · split=${opts.split}` : ''}`)
+  console.log(`  jobs   : ${jobs.length} (${photoCount} photos)${opts.split ? ` · split=${opts.split}` : ''}${opts.jobType ? ` · ${opts.jobType} only` : ''}`)
   console.log(`  est.   : ~$${(jobs.length * 0.03).toFixed(2)} in live model calls`)
   console.log(`  pacing : ${ANALYZE_LIMIT.requests} req / ${ANALYZE_LIMIT.windowMs / 60000} min — waits are excluded from latency\n`)
   if (opts.dryRun) { jobs.forEach(j => console.log(`  [would run] ${j.jobId} (${j.imageIds.length} photo)`)); return [] }
@@ -366,6 +377,7 @@ function main(): void {
     limit: Number(argv.find(a => a.startsWith('--limit='))?.split('=')[1]) || undefined,
     dryRun: argv.includes('--dry-run'),
     resume: argv.includes('--resume'),
+    jobType: (argv.find(a => a.startsWith('--job-type='))?.split('=')[1] as JobType) || undefined,
   }).catch(e => { console.error(`\n  ${e instanceof Error ? e.message : e}\n`); process.exitCode = 1 })
   } else {
   console.log('\n  BENCH_TARGET is required (a Vercel Preview URL).')

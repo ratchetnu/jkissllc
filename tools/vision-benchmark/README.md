@@ -33,16 +33,26 @@ npx tsx tools/vision-benchmark/organize.ts --apply
 # 3. Review + label — REQUIRED before anything runs
 npx tsx tools/vision-benchmark/label.ts                    # http://localhost:7391
 
-# 4. Benchmark — Preview only, paced, resumable
-#    Requires AI_EVAL_TELEMETRY_ENABLED=1 in Preview BEFORE running.
+# 4. Benchmark + report — ONE command. Junk removal only, preflight-gated.
+#    Preview env first (never Production):
+#      AI_PROVIDER_DIAGNOSTIC_ENABLED=1
+#      AI_EVAL_TELEMETRY_ENABLED=1        ← must be set BEFORE the run
 BENCH_TARGET=https://<preview>.vercel.app \
 VERCEL_AUTOMATION_BYPASS_SECRET=… \
-  npx tsx tools/vision-benchmark/run-benchmark.ts --split=development
-#    Interrupted? Re-run the same command with --resume; completed jobs are skipped.
-
-# 5. Report
-npx tsx tools/vision-benchmark/report.ts
+  npm run bench:junk
+#    Interrupted?  … npm run bench:junk -- --resume
+#    Preview only:  … npm run bench:junk -- --dry-run
 ```
+
+`bench:junk` runs **preflight → benchmark → report**. The preflight is a spend
+gate: it calls the provider diagnostic and stops before any model call if
+inference cannot run, naming the fix owner. Discovering an empty gateway balance
+costs two seconds instead of ten model calls.
+
+It is **junk removal only** by default. `--job-type=moving` exists but should not
+be used yet: the analyze route does not gate on service family, so a moving photo
+is read by the junk-removal prompt and priced by the disposal engine — a
+confident junk-removal quote for a moving job, silently tabulated as "moving".
 
 ---
 
