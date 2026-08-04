@@ -42,6 +42,7 @@ const API = 'https://api.openverse.org/v1/images/'
 const REQUEST_GAP_MS = 1_200        // deliberate rate limiting; be a good citizen
 const MIN_EDGE_PX = 480             // below this the model cannot resolve objects
 const MAX_BYTES = 12 * 1024 * 1024
+const CHECKPOINT_EVERY = 10          // flush the manifest this often, so a killed run loses nothing
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
@@ -205,6 +206,12 @@ export async function acquire(opts: AcquireOptions): Promise<void> {
       perCategoryCount.set(q.category, (perCategoryCount.get(q.category) ?? 0) + 1)
       accepted++
       console.log(`  [+] ${id} (${fp.width}×${fp.height}, ${decision.license})`)
+
+      // Checkpoint. A long acquisition run interrupted at minute nine would
+      // otherwise leave images on disk with NO manifest row — bytes whose licence
+      // and provenance we no longer know, which is exactly the thing we must never
+      // have. Cheap insurance: the manifest is small and the write is local.
+      if (accepted % CHECKPOINT_EVERY === 0) { saveManifest(manifest, root); saveRejected(rejected, root) }
     }
   }
 
