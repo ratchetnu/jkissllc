@@ -54,7 +54,10 @@ export function gatewayCaller(opts: GatewayOptions = {}): VisionCaller {
           req.imageDataUrl ? { type: 'image', image: req.imageDataUrl } : imagePart(req.imagePath),
         ],
       }] as never,
-      maxOutputTokens: opts.maxOutputTokens ?? 900,
+      // Gemini 2.5 Flash spends output budget on internal reasoning before it emits
+      // any visible text, so a 900-token ceiling truncated the verifier mid-JSON.
+      // The contract is small; the headroom costs nothing when it is unused.
+      maxOutputTokens: opts.maxOutputTokens ?? 3000,
       temperature: 0,
       timeoutMs: opts.timeoutMs ?? 60_000,
     })

@@ -72,6 +72,7 @@ export async function POST(req: Request): Promise<NextResponse> {
       label: outcome.label ?? null,
       verifier: outcome.verifier ?? null,
       failure: outcome.failure ?? null,
+      rawByRole: outcome.rawByRole ?? {},
       wallMs: Date.now() - started,
       warnings: ind.warnings,
     })

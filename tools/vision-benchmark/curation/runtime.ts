@@ -162,6 +162,9 @@ export type CandidateOutcome = {
   latencyMs: number
   cachedCalls: number
   failure?: { kind: FailureKind; message: string }
+  /** Diagnostic only: raw text per role, so a calibration pass can see what the
+   *  model actually said rather than what survived parsing. Never persisted. */
+  rawByRole?: Record<string, string>
 }
 
 export type PipelineOptions = {
@@ -184,6 +187,7 @@ export async function runCandidate(
   assertIndependent(roles)
 
   let usd = 0, latencyMs = 0, cachedCalls = 0
+  const rawByRole: Record<string, string> = {}
   const imagePath = join(opts.imageRoot, entry.storedPath)
   const sha = entry.sha256 || entry.id
 
@@ -193,7 +197,7 @@ export async function runCandidate(
     createdAt: opts.now, humanReviewed: false,
   }
   const finish = (decision: ConsensusDecision, extra: Partial<CandidateOutcome> = {}): CandidateOutcome => ({
-    id: entry.id, decision, adjudicated: false, usd, latencyMs, cachedCalls,
+    id: entry.id, decision, adjudicated: false, usd, latencyMs, cachedCalls, rawByRole,
     provenance: appendRevision([], {
       ...provenanceBase, confidence: { consensus: decision.confidence },
       disagreements: decision.criticalDisagreements,
@@ -220,6 +224,7 @@ export async function runCandidate(
       ...(opts.imageDataUrl ? { imageDataUrl: opts.imageDataUrl } : {}),
     }, sha)
     usd += r.usd; latencyMs += r.latencyMs; if (r.cached) cachedCalls++
+    rawByRole[role] = r.text
     return r.text
   }
 
@@ -228,7 +233,9 @@ export async function runCandidate(
     const classifier = parseClassifier(await call('classifier', `category hint: ${entry.category}`))
 
     // 3) labeler — never receives production estimator output
-    const label = parseLabel(await call('labeler', `lane: ${classifier.lane}; category hint: ${entry.category}`))
+    // Lane only. A category hint made the labeler echo it back on 13/13 images
+    // in the diagnostic; the category must come from the image.
+    const label = parseLabel(await call('labeler', `lane: ${classifier.lane}`))
 
     // 4) verifier — image + proposed label ONLY, never the labeler's reasoning.
     //    `evidence` is stripped for the same reason.
