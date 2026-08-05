@@ -93,7 +93,7 @@ test('a successful call accrues its estimated cost toward the daily total', asyn
 })
 
 // ── 3. Migrated features + public multimodal path ────────────────────────────
-test('the four migrated prompts are registered at v1 and build from their vars', () => {
+test('the four migrated prompts are registered at their built-in version and build from their vars', () => {
   const msg = getPrompt('ops.message').build({ intentInstruction: 'a reminder', ctxJson: '{"customer":"Sam"}', extra: 'be brief' })
   assert.match(msg.prompt, /a reminder/)
   assert.match(msg.prompt, /Sam/)
@@ -106,9 +106,12 @@ test('the four migrated prompts are registered at v1 and build from their vars',
   const photo = getPrompt('ops.photoEstimate').build({})
   assert.match(photo.system, /junk-removal/)
   assert.match(photo.system, /loadSize/)
-  for (const id of ['ops.message', 'ops.insights', 'ops.reviewReply', 'ops.photoEstimate']) {
+  for (const id of ['ops.message', 'ops.insights', 'ops.reviewReply']) {
     assert.equal(getPrompt(id).version, 1)
   }
+  // ops.photoEstimate is at v2: its truck-capacity anchor moved from a hardcoded
+  // 1,200 cu ft to the tenant's configured truck. See scripts/truck-anchor.test.ts.
+  assert.equal(getPrompt('ops.photoEstimate').version, 2)
 })
 
 test('the public multimodal path runs with no principal: passes messages, omits prompt, stamps role=public', async () => {

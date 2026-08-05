@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { rateLimit } from '../../../lib/rate-limit'
 import { isBlockedBot } from '../../../lib/botcheck'
 import { runAiTask } from '../../../lib/ai/service'
+import { truckVars } from '../../../lib/ai/truck-vars'
 import { ESTIMATE_SCHEMA } from '../../../lib/ai/schema'
 import { toModelReadableDataUrl } from '../../../lib/image-convert'
 import { optimizeDataUrlForModel } from '../../../lib/image-optimize'
@@ -43,7 +44,7 @@ export const POST = withPublicHostRoute(async function POST(req: NextRequest) {
   // response is recorded as invalid_response, not silently logged as success (AUDIT-F1).
   const result = await runAiTask<{ loadSize: string; low: number; high: number; summary: string }>({
     taskId: 'ops.photoEstimate', feature: 'ops.photoEstimate',
-    vars: {}, schema: ESTIMATE_SCHEMA,
+    vars: await truckVars(), schema: ESTIMATE_SCHEMA,
     messages: [{
       role: 'user',
       content: [

@@ -18,7 +18,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   const numKeys: (keyof DisposalSettings)[] = [
     'serviceMinimumCents', 'defaultDisposalCents', 'dumpTripCents', 'laborMinCents', 'laborFullLoadCents',
     'perTonCents', 'perCubicYardCents', 'perLoadCents',
-    'minDisposalFeePerTripCents', 'truckCapacityCuFt', 'laborRatePerHourCents',
+    'minDisposalFeePerTripCents', 'truckCapacityCuFt', 'truckLengthFt', 'laborRatePerHourCents',
     'landfillRoundTripMinutes', 'unloadMinutesPerTrip', 'equipmentOpPerLoadCents', 'travelToJobCents',
   ]
   for (const k of numKeys) if (body[k] !== undefined) (patch as Record<string, number>)[k] = Math.max(0, Math.round(Number(body[k]) || 0))
