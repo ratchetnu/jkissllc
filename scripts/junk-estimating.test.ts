@@ -36,6 +36,9 @@ const goodRaw = (over: Record<string, unknown> = {}) => ({
 test('valid model output normalizes without forcing review', () => {
   const a = normalizeAnalysis(goodRaw(), ctx())
   assert.equal(a.normalizedItems.length, 2)
+  assert.equal(a.normalizedItems[0].catalogId, 'standard_sofa')
+  assert.deepEqual(a.normalizedItems[0].catalogVolumeCubicFeet, { minimum: 65, maximum: 90 })
+  assert.ok(a.normalizedItems[0].operationalHandlingFlags?.includes('rigid'))
   assert.equal(a.reviewRequired, false)
   assert.ok(a.estimatedTruckLoadFraction.likely > 0)
 })
