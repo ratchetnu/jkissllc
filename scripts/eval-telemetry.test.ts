@@ -84,6 +84,22 @@ test('truck utilisation is a real percentage, not a ceil()d load count', () => {
   assert.equal(rec.estimatedVolumeCubicYards, 4, 'and 4 cubic yards, not 44')
 })
 
+test('catalog calibration records per-item volume and agreement without evidence or photos', () => {
+  const item = build().catalogItems[0]
+  assert.deepEqual(item, {
+    itemIndex: 0,
+    catalogId: 'standard_sofa',
+    quantity: 1,
+    modelVolumeCubicFeet: 108,
+    catalogVolumeCubicFeet: { minimum: 65, maximum: 90 },
+    catalogAgreement: 1,
+  })
+  const serialized = JSON.stringify(item).toLowerCase()
+  for (const forbidden of ['label', 'evidence', 'photo', 'url', 'booking']) {
+    assert.ok(!serialized.includes(forbidden), `${forbidden} must not enter catalog telemetry`)
+  }
+})
+
 test('all five confidence sub-scores are captured, not just overall', () => {
   const c = build().confidence
   for (const k of ['overall', 'volume', 'weight', 'itemClassification', 'accessDifficulty'] as const) {

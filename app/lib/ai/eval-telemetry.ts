@@ -33,6 +33,16 @@ import type { ServiceType } from '../bookings'
 
 export type EvalJobType = 'junk_removal' | 'moving' | 'other'
 
+/** Privacy-safe, lane-neutral item data used to calibrate catalog agreement. */
+export type CatalogEvaluationItem = {
+  itemIndex: number
+  catalogId: string | null
+  quantity: number
+  modelVolumeCubicFeet: number
+  catalogVolumeCubicFeet: { minimum: number; maximum: number } | null
+  catalogAgreement: number | null
+}
+
 export type EvaluationRecord = {
   analysisId: string
   at: string
@@ -52,6 +62,7 @@ export type EvaluationRecord = {
   degraded?: string | null
   // ── What the model saw ──
   detectedItems: Array<{ label: string; category: string; quantity: number; confidence: number }>
+  catalogItems: CatalogEvaluationItem[]
   itemCount: number
   estimatedVolumeCubicYards: number
   /** The number the customer response does NOT expose. 0–600 (>100% = multi-load). */
@@ -115,6 +126,7 @@ export type MovingEvaluationRecord = {
     label: string; category: string; quantity: number; sizeClass: string
     fragile: boolean; requiresDisassembly: boolean; isAppliance: boolean; confidence: number
   }>
+  catalogItems: CatalogEvaluationItem[]
   itemCount: number
   boxCount: { minimum: number; likely: number; maximum: number }
   estimatedVolumeCubicFeet: { minimum: number; likely: number; maximum: number }
@@ -176,6 +188,14 @@ export function buildMovingEvaluationRecord(input: {
       label: i.label, category: i.category, quantity: i.quantity.likely, sizeClass: i.sizeClass,
       fragile: i.fragile, requiresDisassembly: i.requiresDisassembly, isAppliance: i.isAppliance,
       confidence: i.confidence,
+    })),
+    catalogItems: a.normalizedItems.slice(0, 40).map((i, itemIndex) => ({
+      itemIndex,
+      catalogId: i.catalogId ?? null,
+      quantity: i.quantity.likely,
+      modelVolumeCubicFeet: i.estimatedVolumeCubicFeet,
+      catalogVolumeCubicFeet: i.catalogVolumeCubicFeet ?? null,
+      catalogAgreement: i.catalogAgreement ?? null,
     })),
     itemCount: a.normalizedItems.length,
     boxCount: a.boxCount,
@@ -254,6 +274,14 @@ export function buildEvaluationRecord(input: {
     degraded: input.degraded ?? null,
     detectedItems: a.normalizedItems.slice(0, 40).map(i => ({
       label: i.label, category: i.category, quantity: i.estimatedQuantity, confidence: i.confidence,
+    })),
+    catalogItems: a.normalizedItems.slice(0, 40).map((i, itemIndex) => ({
+      itemIndex,
+      catalogId: i.catalogId ?? null,
+      quantity: i.estimatedQuantity,
+      modelVolumeCubicFeet: i.estimatedVolumeCubicYards * 27,
+      catalogVolumeCubicFeet: i.catalogVolumeCubicFeet ?? null,
+      catalogAgreement: i.catalogAgreement ?? null,
     })),
     itemCount: a.normalizedItems.length,
     estimatedVolumeCubicYards: a.totalEstimatedVolumeCubicYards?.likely ?? 0,
