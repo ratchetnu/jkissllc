@@ -50,6 +50,7 @@ export type DetectedMovingItem = {
   confidence: number            // 0..1
   /** Index of the photo the item was seen in — the compact contract's only evidence. */
   photoIndex?: number
+  sourcePhotoIds?: string[]
   evidence: string
 }
 
@@ -252,6 +253,7 @@ function item(raw: unknown): DetectedMovingItem | null {
     requiresDisassembly: bool(o.requiresDisassembly),
     isAppliance: bool(o.isAppliance) || o.category === 'appliance',
     confidence: clamp(num(o.confidence, 0.5), 0, 1),
+    sourcePhotoIds: strList(o.sourcePhotoIds, 8),
     evidence: str(o.evidence, 240),
   }
 }
@@ -346,7 +348,9 @@ function compactItem(raw: unknown): DetectedMovingItem | null {
   // Only TRUE flags are transmitted; an absent key means false, not unknown.
   const fl = Array.isArray(o.fl) ? o.fl.map(x => String(x)) : []
   const cat = CAT_CODES[str(o.cat, 8)] ?? 'unknown'
-  const p = Number.isFinite(num(o.p, NaN)) ? Math.max(0, Math.round(num(o.p, 0))) : undefined
+  const photoIndexes = (Array.isArray(o.p) ? o.p : [o.p])
+    .map(value => num(value, NaN)).filter(Number.isFinite).map(value => Math.max(0, Math.round(value)))
+  const p = photoIndexes[0]
   return {
     category: cat,
     label,
@@ -359,6 +363,7 @@ function compactItem(raw: unknown): DetectedMovingItem | null {
     isAppliance: fl.includes('a') || cat === 'appliance',
     confidence: clamp(num(o.c, 0.5), 0, 1),
     photoIndex: p,
+    sourcePhotoIds: photoIndexes.map(index => `p${index}`),
     evidence: '',
   }
 }

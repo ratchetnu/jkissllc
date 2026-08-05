@@ -131,7 +131,7 @@ const opsPhotoEstimate = def({
 // (lib/disposal.priceJob) turns the truck-fill fraction into the customer number.
 // The images + per-call instruction are passed as `messages` at call time.
 const opsJunkAnalysis = def({
-  id: 'ops.junkAnalysis', version: 3, defaults: TRUCK_PROMPT_DEFAULTS,
+  id: 'ops.junkAnalysis', version: 4, defaults: TRUCK_PROMPT_DEFAULTS,
   description: 'Structured visual read of a SET of junk-removal photos (items, volume, weight, access, hazards, confidence). Observations only — no pricing. Public.',
   system: composeEstimatorPrompt({
     role: `You are a senior junk-removal estimator for ${COMPANY.legalName}.`,
@@ -145,7 +145,7 @@ const opsJunkAnalysis = def({
       `If photos are too dark/blurry/close/obstructed to judge, set imageQuality and reviewRequired=true with reasons, and ask for specific better photos in additionalQuestions.\n` +
       `Mark a repeated view with possibleDuplicateViewOfOtherPhoto=true and a shared duplicateGroupId.\n\n` +
       `OUTPUT: respond with ONLY one minified JSON object, no prose, no code fences, with these keys:\n` +
-    `{"normalizedItems":[{"category":"furniture|appliance|electronics|yard_waste|construction_debris|household_junk|mattress|scrap_metal|cardboard|clothing|office_equipment|exercise_equipment|hot_tub|shed|unknown","label":string,"estimatedQuantity":number,"estimatedVolumeCubicYards":number,"estimatedWeightPounds":{"minimum":number,"likely":number,"maximum":number},"bulky":boolean,"heavy":boolean,"requiresDisassembly":boolean,"likelyDisposalType":"landfill|recycling|donation|special_handling|unknown","confidence":number,"evidence":string}],` +
+    `{"normalizedItems":[{"category":"furniture|appliance|electronics|yard_waste|construction_debris|household_junk|mattress|scrap_metal|cardboard|clothing|office_equipment|exercise_equipment|hot_tub|shed|unknown","label":string,"estimatedQuantity":number,"estimatedVolumeCubicYards":number,"estimatedWeightPounds":{"minimum":number,"likely":number,"maximum":number},"bulky":boolean,"heavy":boolean,"requiresDisassembly":boolean,"likelyDisposalType":"landfill|recycling|donation|special_handling|unknown","confidence":number,"sourcePhotoIds":[string],"evidence":string}],` +
     `"photoObservations":[{"photoUrl":string,"estimatedPhotoVolumeCubicYards":number,"accessObservations":[string],"possibleDuplicateViewOfOtherPhoto":boolean,"duplicateGroupId":string,"imageQuality":"excellent|good|limited|unusable"}],` +
     `"totalEstimatedVolumeCubicYards":{"minimum":number,"likely":number,"maximum":number},"totalEstimatedWeightPounds":{"minimum":number,"likely":number,"maximum":number},` +
     `"estimatedTruckLoadFraction":{"minimum":number,"likely":number,"maximum":number},"estimatedTruckLoads":{"minimum":number,"likely":number,"maximum":number},` +
@@ -181,7 +181,7 @@ const opsJunkAnalysisReview = def({
 // a load of material to be hauled off, and every number after that is wrong in the
 // same direction. Observations only; the deterministic engine prices the move.
 const opsMovingAnalysis = def({
-  id: 'ops.movingAnalysis', version: 4, defaults: TRUCK_PROMPT_DEFAULTS,
+  id: 'ops.movingAnalysis', version: 5, defaults: TRUCK_PROMPT_DEFAULTS,
   description: 'Structured relocation inventory from a SET of moving photos (compact wire format). Observations only — no pricing. Public.',
   system: composeEstimatorPrompt({
     role: `You are a senior MOVING estimator for ${COMPANY.legalName}.`,
@@ -193,7 +193,7 @@ const opsMovingAnalysis = def({
       `"o" summarises the other confidence dimensions and must not exceed the weakest of i/q/v/a.\n` +
       `ENUMS. cat: furn|appl|elec|matt|box|frag|art|exer|patio|over|unk. s (size): s|m|l|x. Ranges are [min,likely,max] arrays.\n\n` +
       `Output ONLY one minified JSON object:\n` +
-      `{"items":[{"cat":string,"l":string,"q":number|[number,number],"s":string,"v":number,"fl":[string],"c":number,"p":number}],` +
+      `{"items":[{"cat":string,"l":string,"q":number|[number,number],"s":string,"v":number,"fl":[string],"c":number,"p":number|[number]}],` +
       `"photos":[{"p":number,"iq":"excellent|good|limited|unusable","dup":number}],` +
       `"box":[number,number,number],"vol":[number,number,number],"truck":[number,number,number],` +
       `"crew":[number,number,number],"load":[number,number,number],"unload":[number,number,number],` +

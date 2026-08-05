@@ -20,6 +20,7 @@ import { timeStage, markStage, markStageFailure } from '../observability/pipelin
 import { isAllowedPhotoUrl } from '../photo-url'
 import { resolveAiPhotoUrls } from './photo-optimize'
 import { imageOptimizationEnabled } from './image-optimize-config'
+import { reconcilePhotoSet } from './photo-reconciliation'
 import {
   normalizeAnalysis, reviewFallbackAnalysis,
   type JunkPhotoAnalysis, type NormalizeCtx,
@@ -55,10 +56,11 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
   // images to the provider.
   const prep = await timeStage('image_preprocess', async () => {
     const allowed = input.photoUrls.filter(isAllowedPhotoUrl).slice(0, 8)
+    const reconciled = await reconcilePhotoSet(allowed)
     // When image optimization is on, swap each original for its stored optimized
     // derivative (smaller = fewer image tokens + faster fetch). Off or missing → the
     // original URL is used, so this is byte-identical to today when the flag is off.
-    const { urls: photos } = await resolveAiPhotoUrls(allowed, { enabled: imageOptimizationEnabled() })
+    const { urls: photos } = await resolveAiPhotoUrls(reconciled.active.map(p => p.url), { enabled: imageOptimizationEnabled() })
     if (photos.length === 0) return { photos, messages: [] as ModelMessage[] }
     const content: Array<{ type: 'text'; text: string } | { type: 'image'; image: string }> = [
       {
@@ -68,7 +70,10 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
           (input.serviceLabel ? ` The customer selected: ${input.serviceLabel}.` : '') +
           ` Photos are ordered; some may show the same pile from different angles — do not double-count. Return ONLY the JSON object described in your instructions.`,
       },
-      ...photos.map((url) => ({ type: 'image' as const, image: url })),
+      ...photos.flatMap((url, i) => [
+        { type: 'text' as const, text: `Photo p${i}${reconciled.active[i].nearDuplicateOf ? '; possible alternate view of an earlier photo' : ''}.` },
+        { type: 'image' as const, image: url },
+      ]),
     ]
     return { photos, messages: [{ role: 'user', content }] as ModelMessage[] }
   })

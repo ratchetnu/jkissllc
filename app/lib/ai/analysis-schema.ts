@@ -41,6 +41,7 @@ export type DetectedJunkItem = {
   requiresDisassembly: boolean
   likelyDisposalType: DisposalType
   confidence: number            // 0..1
+  sourcePhotoIds?: string[]
   evidence: string
 }
 
@@ -141,6 +142,7 @@ function normalizeItem(v: unknown): DetectedJunkItem | null {
     requiresDisassembly: boolOr(v.requiresDisassembly),
     likelyDisposalType: asDisposal(v.likelyDisposalType),
     confidence: clamp01(v.confidence),
+    sourcePhotoIds: strArr(v.sourcePhotoIds, 8, 20),
     evidence: strOr(v.evidence, '', 240),
   }
 }
