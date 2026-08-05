@@ -28,6 +28,7 @@
 import { redis } from '../redis'
 import { isEnabled } from '../platform/flags'
 import type { StoredAiEstimate } from './estimate-store'
+import type { StoredMovingEstimate } from './moving-estimate'
 import type { ServiceType } from '../bookings'
 
 export type EvalJobType = 'junk_removal' | 'moving' | 'other'
@@ -78,13 +79,142 @@ export type EvaluationRecord = {
   reviewReasons: string[]
 }
 
+/**
+ * The MOVING lane's evaluation record.
+ *
+ * A separate type, not extra optional fields on the junk one. A move has no
+ * landfill trip, no debris weight and no truck-load COUNT; a junk job has no
+ * loading/unloading split and no box count. Folding both into one shape would
+ * make every field optional and let a reader average across lanes without
+ * noticing — which is the exact mistake the two-lane split exists to prevent.
+ * `jobType` discriminates, and the benchmark's scoring specs refuse a mismatch.
+ *
+ * Token usage, estimated cost, attempts, retries and structured-output validity
+ * are DELIBERATELY ABSENT here. They are already recorded by `recordAiCall`
+ * against `aiCallId`, and the diagnostics reader joins them. A second copy could
+ * drift from the first, and then neither would be trustworthy.
+ */
+export type MovingEvaluationRecord = {
+  analysisId: string
+  at: string
+  jobType: 'moving'
+  serviceType: string
+  imageCount: number
+  // ── Provider ── (the join key; usage/cost/attempts/retries/validity live there)
+  provider: string
+  model: string
+  aiCallId?: string
+  /** The provider round-trip alone. */
+  modelLatencyMs?: number
+  /** Vision + normalization + pricing + decision, measured by the route. */
+  totalLatencyMs?: number
+  outcome: string
+  analyzedOk: boolean
+  // ── What the model saw ──
+  detectedItems: Array<{
+    label: string; category: string; quantity: number; sizeClass: string
+    fragile: boolean; requiresDisassembly: boolean; isAppliance: boolean; confidence: number
+  }>
+  itemCount: number
+  boxCount: { minimum: number; likely: number; maximum: number }
+  estimatedVolumeCubicFeet: { minimum: number; likely: number; maximum: number }
+  /** Fraction of the configured truck — the value pricing consumes. */
+  truckSpaceFraction: { minimum: number; likely: number; maximum: number }
+  crewSize: { minimum: number; likely: number; maximum: number }
+  loadingHours: { minimum: number; likely: number; maximum: number }
+  unloadingHours: { minimum: number; likely: number; maximum: number }
+  access: Record<string, boolean>
+  missingInformation: string[]
+  // ── Confidence: all five moving dimensions, not just `overall` ──
+  confidence: {
+    overall: number; inventory: number; volume: number; access: number; labor: number
+  }
+  // ── QA layers ──
+  // The moving lane runs NO second vision pass (see moving-analysis.ts: a full
+  // re-read would double the cost of every quote to re-count an inventory).
+  // Recorded explicitly as false rather than omitted, so a reader can tell "no
+  // critic ran" from "this field was never populated".
+  criticInvoked: boolean
+  criticTrigger: string
+  criticLatencyMs: number
+  // ── Result ──
+  decision: string
+  status: string
+  priced: boolean
+  recommendedUsd: number
+  lowUsd: number
+  highUsd: number
+  reviewReasons: string[]
+}
+
+/** Build the moving record. PURE — no clock, no I/O, no env reads. */
+export function buildMovingEvaluationRecord(input: {
+  stored: StoredMovingEstimate
+  serviceType: ServiceType | string
+  imageCount: number
+  analyzedOk: boolean
+  outcome: string
+  totalLatencyMs?: number
+  at: string
+}): MovingEvaluationRecord {
+  const { stored, at } = input
+  const a = stored.analysis
+  return {
+    analysisId: stored.id,
+    at,
+    jobType: 'moving',
+    serviceType: String(input.serviceType),
+    imageCount: input.imageCount,
+    provider: stored.provider,
+    model: stored.model,
+    aiCallId: stored.callId,
+    modelLatencyMs: stored.latencyMs,
+    totalLatencyMs: input.totalLatencyMs,
+    outcome: input.outcome,
+    analyzedOk: input.analyzedOk,
+    detectedItems: a.normalizedItems.slice(0, 40).map(i => ({
+      label: i.label, category: i.category, quantity: i.quantity.likely, sizeClass: i.sizeClass,
+      fragile: i.fragile, requiresDisassembly: i.requiresDisassembly, isAppliance: i.isAppliance,
+      confidence: i.confidence,
+    })),
+    itemCount: a.normalizedItems.length,
+    boxCount: a.boxCount,
+    estimatedVolumeCubicFeet: a.totalEstimatedVolumeCubicFeet,
+    truckSpaceFraction: a.estimatedTruckSpaceFraction,
+    crewSize: a.recommendedCrewSize,
+    loadingHours: a.estimatedLoadingHours,
+    unloadingHours: a.estimatedUnloadingHours,
+    access: { ...a.access },
+    // The DECISION's list, not the analysis's. The decision unions what the model
+    // could not tell with the non-visual facts the booking never supplied
+    // (destination, distance, stairs) — and that union is what actually produced
+    // `needs_information`. Recording only the model's half would leave the
+    // benchmark unable to explain the decision it is scoring.
+    missingInformation: stored.missingInformation.slice(0, 10),
+    confidence: {
+      overall: a.confidence.overall, inventory: a.confidence.inventory, volume: a.confidence.volume,
+      access: a.confidence.access, labor: a.confidence.labor,
+    },
+    criticInvoked: false,
+    criticTrigger: 'none — the moving lane runs no second vision pass',
+    criticLatencyMs: 0,
+    decision: stored.decision,
+    status: stored.status,
+    priced: stored.pricing.priced,
+    recommendedUsd: stored.pricing.recommendedUsd,
+    lowUsd: stored.pricing.lowUsd,
+    highUsd: stored.pricing.highUsd,
+    reviewReasons: stored.reviewReasons.slice(0, 10),
+  }
+}
+
 const KEY = (id: string) => `eval:${id}`
 const INDEX = 'eval:index'
 const TTL_MS = 7 * 24 * 60 * 60 * 1000     // a benchmark run is analysed within days
 const INDEX_CAP = 2000
 const ID_RE = /^[a-z0-9-]{8,}$/i
 
-/** Junk removal is the only lane validated so far; moving is explicitly out of scope. */
+/** Map a service type onto a benchmark lane. Both lanes now record telemetry. */
 export function evalJobType(serviceType: string): EvalJobType {
   if (serviceType === 'moving') return 'moving'
   if (['junk-removal', 'estate-cleanout', 'garage-cleanout', 'eviction'].includes(serviceType)) return 'junk_removal'
@@ -160,7 +290,7 @@ export function evalTelemetryEnabled(env: NodeJS.ProcessEnv = process.env): bool
  * Persist one evaluation record. Fire-and-forget and fail-soft: a telemetry
  * failure must never affect the customer's quote, so every error is swallowed.
  */
-export async function recordEvaluation(rec: EvaluationRecord): Promise<void> {
+export async function recordEvaluation(rec: EvaluationRecord | MovingEvaluationRecord): Promise<void> {
   if (!evalTelemetryEnabled()) return
   if (!ID_RE.test(rec.analysisId)) return
   try {
@@ -179,11 +309,11 @@ export async function recordEvaluation(rec: EvaluationRecord): Promise<void> {
   }
 }
 
-export async function getEvaluation(analysisId: string): Promise<EvaluationRecord | null> {
+export async function getEvaluation(analysisId: string): Promise<EvaluationRecord | MovingEvaluationRecord | null> {
   if (!ID_RE.test(analysisId)) return null
   try {
     const raw = await redis.get(KEY(analysisId))
-    return raw ? JSON.parse(raw) as EvaluationRecord : null
+    return raw ? JSON.parse(raw) as EvaluationRecord | MovingEvaluationRecord : null
   } catch { return null }
 }
 
