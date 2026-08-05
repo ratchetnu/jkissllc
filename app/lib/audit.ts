@@ -31,6 +31,10 @@ export type AuditAction =
   | 'time.correction.created' | 'time.correction.superseded'
   // ── Crew compensation (immutable per-assignment snapshots) ──
   | 'crew.compensation.set'
+  // ── Pricing configuration. These fifteen numbers ARE the price of every move,
+  // so the entry records which fields moved and their old → new values, not the
+  // bare fact that "settings changed". ──
+  | 'settings.moving_pricing_updated'
 
 export type AuditOutcome = 'success' | 'denied' | 'failure'
 

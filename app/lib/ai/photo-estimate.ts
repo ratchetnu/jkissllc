@@ -91,6 +91,7 @@ export async function buildPhotoEstimate(input: PhotoEstimateInput): Promise<Pho
       lowUsd: decision.rangeUsd.low,
       highUsd: decision.rangeUsd.high,
       breakdown: decision.breakdown,
+      priced: decision.priced,
     },
     reviewReasons: decision.reviewReasons,
     monitor,

@@ -110,6 +110,12 @@ export type FeatureFlag =
   // only when the instant-quote read is borderline. OFF = today's vision critic on
   // every instant quote.
   | 'OPERION_CRITIC_JSON'
+  // Moving lane: route moving-family services to the dedicated moving schema,
+  // prompt and labor/crew/travel pricing engine. OFF = the vision pass still runs
+  // but the move is returned UNPRICED for a human, which is what shipped before
+  // this lane existed. A moving job is NEVER priced by the disposal engine in
+  // either state — that fall-through is the defect this lane replaces.
+  | 'OPERION_MOVING_LANE'
   // Event-driven recovery: kick the durable AI worker immediately after enqueue
   // (fire-and-forget, fail-soft) so a recovery job starts in seconds instead of
   // waiting for the next cron tick. OFF = cron-only (unchanged). Cron always remains
@@ -207,6 +213,7 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   BOOKING_ASSIGNMENT_ENABLED: false,
   // AI latency Phase 2 — all OFF by default (byte-identical to today).
   OPERION_CRITIC_JSON: false,
+  OPERION_MOVING_LANE: false,
   OPERION_EVENT_ENQUEUE: false,
   OPERION_DUE_INDEX_DARK_LAUNCH: false,
   OPERION_DUE_INDEX: false,

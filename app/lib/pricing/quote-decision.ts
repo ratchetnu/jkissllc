@@ -12,7 +12,8 @@
 // never lost when the AI is unsure or unavailable.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { priceJob, categoryFor, type DisposalSettings, type DisposalQuote, type CalibrationBias } from '../disposal'
+import { priceJob, categoryFor, type DisposalSettings, type DisposalQuote, type CalibrationBias, type DebrisCategory } from '../disposal'
+import { serviceFamily, type ServiceType } from '../bookings'
 import type { JunkPhotoAnalysis } from '../ai/analysis-schema'
 import { hasDenseMaterialEvidence } from './dense-material'
 
@@ -63,6 +64,24 @@ export type QuoteDecisionResult = {
   // The single number we show the customer (the protected floor is `low`).
   recommendedUsd: number
   rangeUsd: { low: number; high: number }
+  // FALSE means "no price was computed", which is NOT the same as "the price is
+  // $0". Every money field on an unpriced result is zero because there is nothing
+  // to put there — read this flag before reporting, charting or comparing them.
+  priced: boolean
+}
+
+// A DisposalQuote for a job this engine must not price. Zeroed rather than
+// omitted, because the shape is consumed in a dozen places and an undefined
+// would fail somewhere far from here; `priced: false` on the result is the
+// signal that carries the meaning.
+function unpricedQuote(category: DebrisCategory, why: string): DisposalQuote {
+  return {
+    low: 0, high: 0, sellingPriceCents: 0, disposalCents: 0, laborCents: 0,
+    costBasisCents: 0, profitLowCents: 0,
+    fillPct: 0, truckLoads: 0, landfillTrips: 0,
+    requiresReview: true, breakdown: [], confidence: 'low', category,
+    assumptions: [why],
+  }
 }
 
 const round5 = (n: number) => Math.round(n / 5) * 5
@@ -111,6 +130,31 @@ export function decideQuote(opts: {
   const t: QuoteThresholds = { ...DEFAULT_QUOTE_THRESHOLDS, ...(opts.thresholds ?? {}) }
   const a = opts.analysis
   const c = a.detectedConditions
+
+  // ── Service-family gate ────────────────────────────────────────────────────
+  // priceJob is the DISPOSAL engine: it prices landfill trips, dump fees and
+  // debris weight. A moving job has none of those — nothing goes to a landfill —
+  // so running it here does not produce a rough price, it produces a confident
+  // wrong one, in the correct shape, with a plausible number on it. That is worse
+  // than refusing, because nothing downstream can tell it apart from a real quote.
+  //
+  // The vision pass still runs (the caller has already done it): a moving photo
+  // yields a usable inventory and volume read. Only the PRICING is refused, and a
+  // human takes it from there — which is what stairs, carry distance, parking and
+  // truck time require anyway.
+  if (serviceFamily(opts.serviceType as ServiceType) === 'moving') {
+    const why = 'Moving jobs are priced by a person — photos show the inventory, but not stairs, carry distance, parking or truck time.'
+    const quote = unpricedQuote(categoryFor(opts.serviceType, opts.debris), why)
+    return {
+      decision: 'manual_review',
+      quote,
+      breakdown: buildBreakdown(quote),
+      reviewReasons: Array.from(new Set<string>([...a.reviewReasons, why])),
+      recommendedUsd: 0,
+      rangeUsd: { low: 0, high: 0 },
+      priced: false,
+    }
+  }
 
   // Run the deterministic engine, seeding it with the model's truck-fill reading.
   const category = categoryFor(opts.serviceType, opts.debris)
@@ -169,5 +213,6 @@ export function decideQuote(opts: {
     reviewReasons: Array.from(reasons),
     recommendedUsd,
     rangeUsd: { low: quote.low, high: quote.high },
+    priced: true,
   }
 }

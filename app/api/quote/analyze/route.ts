@@ -8,9 +8,43 @@ import { selectFollowUpQuestions } from '../../../lib/ai/followup-questions'
 import { recordFunnelEvent } from '../../../lib/analytics-events'
 import { filterPhotoUrls } from '../../../lib/photo-url'
 import { SERVICE_TYPES, serviceFamily, type ServiceType } from '../../../lib/bookings'
+import { buildMovingEstimate, customerMovingEstimateView, type StoredMovingEstimate } from '../../../lib/ai/moving-estimate'
+import type { MovingJobFacts } from '../../../lib/pricing/moving-quote'
+import { isEnabled } from '../../../lib/platform/flags'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
+
+/**
+ * Non-visual move facts, read defensively from an untrusted body. Absent stays
+ * ABSENT — a missing distance must surface as `needs_information`, and coercing
+ * it to 0 would silently price a cross-town move as a next-door one.
+ */
+function readMovingFacts(body: Record<string, unknown>): MovingJobFacts {
+  const posNum = (v: unknown): number | undefined => {
+    const n = typeof v === 'number' ? v : typeof v === 'string' ? parseFloat(v) : NaN
+    return Number.isFinite(n) && n >= 0 ? n : undefined
+  }
+  return {
+    travelMiles: posNum(body.travelMiles),
+    originStairsFlights: posNum(body.originStairsFlights),
+    destinationStairsFlights: posNum(body.destinationStairsFlights),
+    elevatorRequired: body.elevatorRequired === true,
+    packingRequested: body.packingRequested === true,
+    destinationKnown: typeof body.destinationAddress === 'string' && body.destinationAddress.trim().length > 0,
+  }
+}
+
+/** Lane flag OFF: keep the analysis, withhold the money, route to a human. */
+function withheldPricing(e: StoredMovingEstimate): StoredMovingEstimate {
+  return {
+    ...e,
+    decision: 'manual_review',
+    status: 'review',
+    pricing: { ...e.pricing, recommendedUsd: 0, lowUsd: 0, highUsd: 0, priced: false, costLines: [], sellingPriceCents: 0 },
+    reviewReasons: Array.from(new Set([...e.reviewReasons, 'Moving quotes are confirmed by a team member.'])),
+  }
+}
 
 // POST /api/quote/analyze — the AI estimating step (Phase 9).
 // Body: { photos: string[] (Blob URLs), service, debris?, idempotencyKey? }
@@ -38,6 +72,36 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   const nowIso = new Date().toISOString()
 
   await recordFunnelEvent('quote_analyze_started', nowIso)
+
+  // ── Service-family routing ─────────────────────────────────────────────────
+  // The lane is chosen from the SERVICE FAMILY, never from a caller-supplied lane
+  // or pricing hint: `service` is validated against SERVICE_TYPES first, then
+  // mapped by serviceFamily(), so a request cannot select the moving engine for a
+  // junk job or the reverse. An unrecognised service falls back to junk-removal —
+  // the pre-existing default, and the conservative one, since that is the lane
+  // carrying the review gates and the critic.
+  //
+  // A moving job NEVER reaches the disposal engine from here. With the lane flag
+  // OFF it is analysed and returned unpriced for a human; with it ON it is priced
+  // on labor, crew, travel and access. Neither state invents a landfill trip.
+  if (serviceFamily(serviceType) === 'moving') {
+    const { stored, analyzedOk } = await buildMovingEstimate({
+      analysisId, bookingId: 'draft', photoUrls: photos, serviceType, facts: readMovingFacts(body),
+    })
+    await recordFunnelEvent(analyzedOk ? 'ai_analysis_completed' : 'ai_analysis_failed', nowIso)
+    await recordFunnelEvent(
+      stored.decision === 'instant_quote' ? 'instant_quote_displayed'
+        : stored.decision === 'estimate_range' ? 'estimate_range_displayed'
+          : 'manual_review_required',
+      nowIso,
+    )
+    // Flag OFF ⇒ the read is real but the price is withheld: a human quotes the
+    // move. This is what shipped before the lane existed, minus the junk price.
+    const view = customerMovingEstimateView(
+      isEnabled('OPERION_MOVING_LANE') ? stored : withheldPricing(stored),
+    )
+    return NextResponse.json({ ok: true, estimate: view, followUps: [] })
+  }
 
   // The full AI → monitor → pricing → critic chain, shared verbatim with the durable
   // server-side worker (app/lib/book-now-ai.ts) so both paths price identically.
