@@ -138,8 +138,13 @@ function normalizeItem(v: unknown): DetectedJunkItem | null {
   if (!isObj(v)) return null
   const label = strOr(v.label, '', 120).trim()
   const category = asCategory(v.category)
-  const modelVolumeReported = typeof v.estimatedVolumeCubicYards === 'number'
-    && Number.isFinite(v.estimatedVolumeCubicYards)
+  const rawModelVolume = v.estimatedVolumeCubicYards
+  const parsedModelVolume = typeof rawModelVolume === 'number'
+    ? rawModelVolume
+    : typeof rawModelVolume === 'string' && rawModelVolume.trim() !== ''
+      ? Number(rawModelVolume)
+      : Number.NaN
+  const modelVolumeReported = Number.isFinite(parsedModelVolume)
   if (!label && category === 'unknown') return null
   const detected: DetectedJunkItem = {
     category,

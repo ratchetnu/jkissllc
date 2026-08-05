@@ -118,6 +118,23 @@ test('catalog calibration preserves an omitted junk volume as null, not a disagr
     'telemetry must not present the normalizer fallback as a model observation')
 })
 
+test('numeric-string junk volume is attributed consistently with normalizer coercion', () => {
+  const numericString = normalizeAnalysis({
+    normalizedItems: [{
+      category: 'furniture', label: 'couch', estimatedQuantity: 1,
+      estimatedVolumeCubicYards: '2.5', heavy: false,
+      requiresDisassembly: false, confidence: 0.88,
+    }],
+    photoObservations: [{ photoUrl: ctx.photoUrls[0], imageQuality: 'good' }],
+    confidence: { overall: 0.88 }, reviewRequired: false, reviewReasons: [],
+    warnings: [], additionalQuestions: [],
+  }, ctx)
+  const rec = build({ analysis: numericString })
+  assert.equal(numericString.normalizedItems[0].modelVolumeReported, true)
+  assert.equal(rec.catalogItems[0].modelVolumeCubicFeet, 67.5)
+  assert.equal(rec.catalogItems[0].catalogAgreement, 1)
+})
+
 test('all five confidence sub-scores are captured, not just overall', () => {
   const c = build().confidence
   for (const k of ['overall', 'volume', 'weight', 'itemClassification', 'accessDifficulty'] as const) {
