@@ -77,7 +77,7 @@ test('[routing] the moving prompt is registered and free of disposal vocabulary'
         `"${word}" appears in the moving prompt outside a negation: …${around.trim()}…`)
     }
   }
-  assert.ok(/relocation|MOVED/i.test(system), 'the moving prompt must frame the job as a move')
+  assert.ok(/relocat/i.test(system), 'the moving prompt must frame the job as a move')
   assert.ok(!/estimatedTruckLoadFraction/.test(system), 'the moving prompt must not use the junk lane field name')
 })
 
@@ -87,9 +87,35 @@ test('[schema] a valid moving read normalizes without forcing review', () => {
   const a = normalizeMovingAnalysis(movingRaw(), ctx())
   assert.equal(a.schemaVersion, MOVING_ANALYSIS_SCHEMA_VERSION)
   assert.equal(a.normalizedItems.length, 3)
+  assert.equal(a.normalizedItems[0].catalogId, 'sectional')
+  assert.deepEqual(a.normalizedItems[0].catalogVolumeCubicFeet, { minimum: 130, maximum: 210 })
+  assert.ok(a.normalizedItems[0].operationalHandlingFlags?.includes('requires_disassembly'))
+  assert.equal(a.normalizedItems[2].isAppliance, true)
   assert.equal(a.reviewRequired, false)
   assert.equal(a.boxCount.likely, 14)
   assert.ok(a.estimatedTruckSpaceFraction.likely > 0)
+})
+
+test('[schema] catalog disagreement preserves model volume without an uncalibrated global review gate', () => {
+  const a = normalizeMovingAnalysis(movingRaw({ normalizedItems: [{
+    category: 'appliance', label: 'refrigerator', quantity: 1, sizeClass: 'large',
+    estimatedVolumeCubicFeet: 10, confidence: 0.9,
+  }] }), ctx())
+  assert.equal(a.normalizedItems[0].estimatedVolumeCubicFeet, 10)
+  assert.equal(a.normalizedItems[0].catalogAgreement, 0.55)
+  assert.equal(a.reviewRequired, false)
+})
+
+test('[schema] identity and handling survive when the requested size has no catalog range', () => {
+  const a = normalizeMovingAnalysis(movingRaw({ normalizedItems: [{
+    category: 'appliance', label: 'washer', quantity: 1, sizeClass: 'large',
+    estimatedVolumeCubicFeet: 30, confidence: 0.9,
+  }] }), ctx())
+  assert.equal(a.normalizedItems[0].catalogId, 'washer')
+  assert.equal(a.normalizedItems[0].catalogVolumeCubicFeet, undefined)
+  assert.equal(a.normalizedItems[0].catalogAgreement, undefined)
+  assert.equal(a.normalizedItems[0].isAppliance, true)
+  assert.ok(a.normalizedItems[0].operationalHandlingFlags?.includes('two_person_lift'))
 })
 
 test('[schema] quantity, crew and labor ranges stay ordered and bounded', () => {

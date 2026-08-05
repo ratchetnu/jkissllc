@@ -58,7 +58,7 @@ export type AiTaskDeps = {
 }
 
 export type AiTaskResult<T> =
-  | { ok: true; data: T; text: string; callId: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number }; latencyMs: number; model: string; promptVersion: number; qualityScore: number }
+  | { ok: true; data: T; text: string; callId: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number }; latencyMs: number; model: string; promptVersion: number; qualityScore: number; finishReason?: string; outputTruncated?: boolean; maxOutputTokens?: number }
   // latencyMs/retryable are populated ONLY on the provider-execution failure path
   // (surfaced for observability's provider fail-stage); other failures omit them.
   | { ok: false; error: string; status: number; callId: string; outcome: AiCallOutcome; errorClass: string; latencyMs?: number; retryable?: boolean }
@@ -174,6 +174,13 @@ export async function runAiTask<T = Record<string, unknown>>(input: AiTaskInput,
     estCostUsd, actualCostUsd: hasActual ? (gen.providerCostUsd as number) : undefined, costSource,
     costTableVersion: cost.tableVersion, rateFallback: cost.rateFallback,
     qualityScore: quality.score, qualityFlags: quality.flags,
+    // Truncation facts. `outputTruncated` is derived from BOTH signals rather than
+    // either alone: finishReason is the provider's own word, and the token equality
+    // catches a provider that reports 'stop' while having stopped at the ceiling.
+    finishReason: gen.finishReason,
+    maxOutputTokens: input.maxOutputTokens,
+    outputTruncated: gen.finishReason === 'length'
+      || (input.maxOutputTokens != null && gen.usage.outputTokens >= input.maxOutputTokens),
   }
 
   // 7) Structured, schema-validated response (invalid → rejected).
@@ -184,9 +191,9 @@ export async function runAiTask<T = Record<string, unknown>>(input: AiTaskInput,
       return { ok: false, error: 'The AI returned an unexpected response.', status: 502, callId, outcome: 'invalid_response', errorClass: 'schema' }
     }
     await write({ ...usageBase, ok: true, outcome: 'success', responseValid: true })
-    return { ok: true, data: v.value as T, text: gen.text, callId, usage: gen.usage, latencyMs, model: gen.model, promptVersion, qualityScore: quality.score }
+    return { ok: true, data: v.value as T, text: gen.text, callId, usage: gen.usage, latencyMs, model: gen.model, promptVersion, qualityScore: quality.score, finishReason: usageBase.finishReason, outputTruncated: usageBase.outputTruncated, maxOutputTokens: usageBase.maxOutputTokens }
   }
 
   await write({ ...usageBase, ok: true, outcome: 'success', responseValid: true })
-  return { ok: true, data: {} as T, text: gen.text, callId, usage: gen.usage, latencyMs, model: gen.model, promptVersion, qualityScore: quality.score }
+  return { ok: true, data: {} as T, text: gen.text, callId, usage: gen.usage, latencyMs, model: gen.model, promptVersion, qualityScore: quality.score, finishReason: usageBase.finishReason, outputTruncated: usageBase.outputTruncated, maxOutputTokens: usageBase.maxOutputTokens }
 }

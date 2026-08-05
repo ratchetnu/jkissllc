@@ -7,6 +7,9 @@
 // buried in a route handler.
 
 import { COMPANY } from '../company'
+import {
+  composeEstimatorPrompt, JUNK_ESTIMATOR_MODULE, MOVING_ESTIMATOR_MODULE,
+} from './estimator-core'
 
 export type BuiltPrompt = { system: string; prompt: string }
 export type PromptDef = {
@@ -128,21 +131,21 @@ const opsPhotoEstimate = def({
 // (lib/disposal.priceJob) turns the truck-fill fraction into the customer number.
 // The images + per-call instruction are passed as `messages` at call time.
 const opsJunkAnalysis = def({
-  id: 'ops.junkAnalysis', version: 2, defaults: TRUCK_PROMPT_DEFAULTS,
+  id: 'ops.junkAnalysis', version: 4, defaults: TRUCK_PROMPT_DEFAULTS,
   description: 'Structured visual read of a SET of junk-removal photos (items, volume, weight, access, hazards, confidence). Observations only — no pricing. Public.',
-  system:
-    `You are a senior junk-removal estimator for ${COMPANY.legalName}. You are given a SET of photos of ONE job. Report ONLY what you can visually support. You never set a price — a separate pricing engine does that from your volume read.\n\n` +
-    `REASONING RULES:\n` +
-    `- Treat all photos as ONE job. If several photos show the same pile from different angles, COUNT IT ONCE and mark those observations possibleDuplicateViewOfOtherPhoto=true with a shared duplicateGroupId. Never add every visible pile together blindly.\n` +
-    `- Judge fill against a {{truckLengthFt}} ft box truck holding ~{{truckCuFt}} cu ft ({{truckCuYd}} cubic yards) of loadable space. estimatedTruckLoadFraction is the fraction of THAT truck the whole job fills (0.05–6). Give minimum/likely/maximum — a RANGE, not false precision.\n` +
-    `- Account for pile height/width/depth and perspective; if the full pile is not visible, lower confidence and add a warning. Loose non-compacting material (brush, limbs, mattresses) fills a truck faster than it looks and may need multiple dump trips.\n` +
-    `- Flag dense/heavy material (concrete, dirt, roofing, soil, scrap) via detectedConditions — a small-looking pile can exceed safe weight.\n` +
-    `- Note access: stairs, elevator, long carry, narrow access, indoor vs outdoor, disassembly.\n` +
-    `- Hazardous materials (paint, chemicals, solvents, oil, propane/fuel, tires, batteries, asbestos, biohazard) are a POSSIBILITY flag + warning, NEVER a definitive diagnosis. Set the matching detectedConditions.*Possible=true. ${COMPANY.legalName} does not haul hazardous material.\n` +
-    `- Ignore irrelevant background (people, cars not part of the job). NEVER identify faces or infer any personal trait (identity, age, race, gender, health, income).\n` +
-    `- If photos are too dark/blurry/close/obstructed to judge, set imageQuality and reviewRequired=true with reasons. Ask for specific better photos in additionalQuestions.\n\n` +
-    `OUTPUT: respond with ONLY one minified JSON object, no prose, no code fences, with these keys:\n` +
-    `{"normalizedItems":[{"category":"furniture|appliance|electronics|yard_waste|construction_debris|household_junk|mattress|scrap_metal|cardboard|clothing|office_equipment|exercise_equipment|hot_tub|shed|unknown","label":string,"estimatedQuantity":number,"estimatedVolumeCubicYards":number,"estimatedWeightPounds":{"minimum":number,"likely":number,"maximum":number},"bulky":boolean,"heavy":boolean,"requiresDisassembly":boolean,"likelyDisposalType":"landfill|recycling|donation|special_handling|unknown","confidence":number,"evidence":string}],` +
+  system: composeEstimatorPrompt({
+    role: `You are a senior junk-removal estimator for ${COMPANY.legalName}.`,
+    module: JUNK_ESTIMATOR_MODULE,
+    contract:
+      `Judge fill against a {{truckLengthFt}} ft box truck holding ~{{truckCuFt}} cu ft ({{truckCuYd}} cubic yards) of loadable space. estimatedTruckLoadFraction is the fraction of THAT truck the whole job fills (0.05-6), as minimum/likely/maximum.\n` +
+      `Account for pile height/width/depth and perspective; if the full pile is not visible, lower confidence and add a warning.\n` +
+      `Flag dense/heavy material (concrete, dirt, roofing, soil, scrap) via detectedConditions — a small-looking pile can exceed safe weight. Note access: stairs, elevator, long carry, narrow access, indoor vs outdoor, disassembly.\n` +
+      `Hazardous materials (paint, chemicals, solvents, oil, propane/fuel, tires, batteries, asbestos, biohazard) are a POSSIBILITY flag + warning, NEVER a definitive diagnosis. Set the matching detectedConditions.*Possible=true. ${COMPANY.legalName} does not haul hazardous material.\n` +
+      `Ignore irrelevant background (people, cars not part of the job). NEVER identify faces or infer any personal trait (identity, age, race, gender, health, income).\n` +
+      `If photos are too dark/blurry/close/obstructed to judge, set imageQuality and reviewRequired=true with reasons, and ask for specific better photos in additionalQuestions.\n` +
+      `Mark a repeated view with possibleDuplicateViewOfOtherPhoto=true and a shared duplicateGroupId.\n\n` +
+      `OUTPUT: respond with ONLY one minified JSON object, no prose, no code fences, with these keys:\n` +
+    `{"normalizedItems":[{"category":"furniture|appliance|electronics|yard_waste|construction_debris|household_junk|mattress|scrap_metal|cardboard|clothing|office_equipment|exercise_equipment|hot_tub|shed|unknown","label":string,"estimatedQuantity":number,"estimatedVolumeCubicYards":number,"estimatedWeightPounds":{"minimum":number,"likely":number,"maximum":number},"bulky":boolean,"heavy":boolean,"requiresDisassembly":boolean,"likelyDisposalType":"landfill|recycling|donation|special_handling|unknown","confidence":number,"sourcePhotoIds":[string],"evidence":string}],` +
     `"photoObservations":[{"photoUrl":string,"estimatedPhotoVolumeCubicYards":number,"accessObservations":[string],"possibleDuplicateViewOfOtherPhoto":boolean,"duplicateGroupId":string,"imageQuality":"excellent|good|limited|unusable"}],` +
     `"totalEstimatedVolumeCubicYards":{"minimum":number,"likely":number,"maximum":number},"totalEstimatedWeightPounds":{"minimum":number,"likely":number,"maximum":number},` +
     `"estimatedTruckLoadFraction":{"minimum":number,"likely":number,"maximum":number},"estimatedTruckLoads":{"minimum":number,"likely":number,"maximum":number},` +
@@ -151,6 +154,7 @@ const opsJunkAnalysis = def({
     `"confidence":{"overall":number,"volume":number,"weight":number,"itemClassification":number,"accessDifficulty":number},` +
     `"additionalQuestions":[string],"warnings":[string],"reviewRequired":boolean,"reviewReasons":[string]}\n` +
     `All confidence values are 0..1. Numbers are plain (no units, no strings).`,
+  }),
   prompt: '',   // images + instruction come from messages at call time
 })
 
@@ -177,34 +181,26 @@ const opsJunkAnalysisReview = def({
 // a load of material to be hauled off, and every number after that is wrong in the
 // same direction. Observations only; the deterministic engine prices the move.
 const opsMovingAnalysis = def({
-  id: 'ops.movingAnalysis', version: 1, defaults: TRUCK_PROMPT_DEFAULTS,
-  description: 'Structured visual read of a SET of moving photos (inventory, volume, truck space, access, crew, labor hours). Observations only — no pricing. Public.',
-  system:
-    `You are a senior MOVING estimator for ${COMPANY.legalName}. You are given a SET of photos of ONE relocation. These items are being MOVED — packed, carried, loaded, transported, and unloaded at a new address. They are NOT junk, NOT debris, and NOT going to a landfill. Never describe them as discard material and never estimate disposal of any kind.\n\n` +
-    `Report ONLY what you can visually support. You never set a price — a separate pricing engine does that from your inventory and labor read.\n\n` +
-    `REASONING RULES:\n` +
-    `- Treat all photos as ONE job. If several photos show the same room from different angles, COUNT IT ONCE and mark those observations possibleDuplicateViewOfOtherPhoto=true with a shared duplicateGroupId. Never add every visible room together blindly.\n` +
-    `- Distinguish, and classify every item as exactly one of: furniture, appliance, electronics, mattress, box_container, fragile, artwork, exercise_equipment, outdoor_patio, oversized_specialty, unknown.\n` +
-    `- Count boxes and containers separately in boxCount. Stacked boxes are countable only approximately — give a RANGE.\n` +
-    `- sizeClass is small | medium | large | oversized, and drives crew and handling independently of cubic volume. A piano is oversized; a nightstand is small.\n` +
-    `- Judge truck space against a {{truckLengthFt}} ft box truck holding ~{{truckCuFt}} cu ft ({{truckCuYd}} cubic yards) of loadable space. estimatedTruckSpaceFraction is the fraction of THAT truck the whole move fills (0.05–6). Moving loads are stacked and padded, not compacted — they use MORE space than the same objects thrown in loose.\n` +
-    `- Flag fragile (glass, mirrors, artwork, TVs), requiresDisassembly (bed frames, sectionals, large tables), and isAppliance (washer, dryer, fridge, range) per item.\n` +
-    `- Access: report stairsVisible, elevatorVisible, longCarryLikely, narrowAccess ONLY when the photo shows them. If you cannot see it, leave it false and say so in missingInformation — do NOT guess.\n` +
-    `- recommendedCrewSize, estimatedLoadingHours and estimatedUnloadingHours are RANGES. Unloading is usually faster than loading unless stairs or long carry are involved at the destination.\n` +
-    `- missingInformation lists what a photo CANNOT tell you but the price depends on: destination address, travel distance, floor number, elevator availability, parking or truck access, packing services needed.\n` +
-    `- Every range is minimum/likely/maximum — a RANGE, never false precision. Lower confidence when the full inventory is clearly not visible.\n\n` +
-    `Output ONLY one minified JSON object, no prose, no markdown, no code fences:\n` +
-    `{"normalizedItems":[{"category":string,"label":string,"quantity":{"minimum":number,"likely":number,"maximum":number},"sizeClass":string,"estimatedVolumeCubicFeet":number,"bulky":boolean,"fragile":boolean,"requiresDisassembly":boolean,"isAppliance":boolean,"confidence":number,"evidence":string}],` +
-    `"photoObservations":[{"photoUrl":string,"visibleItems":[],"possibleDuplicateViewOfOtherPhoto":boolean,"duplicateGroupId":string,"imageQuality":"excellent|good|limited|unusable"}],` +
-    `"boxCount":{"minimum":number,"likely":number,"maximum":number},` +
-    `"totalEstimatedVolumeCubicFeet":{"minimum":number,"likely":number,"maximum":number},` +
-    `"estimatedTruckSpaceFraction":{"minimum":number,"likely":number,"maximum":number},` +
-    `"recommendedCrewSize":{"minimum":number,"likely":number,"maximum":number},` +
-    `"estimatedLoadingHours":{"minimum":number,"likely":number,"maximum":number},` +
-    `"estimatedUnloadingHours":{"minimum":number,"likely":number,"maximum":number},` +
-    `"access":{"stairsVisible":boolean,"elevatorVisible":boolean,"longCarryLikely":boolean,"narrowAccess":boolean,"disassemblyRequired":boolean,"applianceHandling":boolean,"fragileHandling":boolean,"oversizedItemPresent":boolean},` +
-    `"confidence":{"overall":number,"inventory":number,"volume":number,"access":number,"labor":number},` +
-    `"missingInformation":[string],"additionalQuestions":[string],"warnings":[string],"reviewRequired":boolean,"reviewReasons":[string]}`,
+  id: 'ops.movingAnalysis', version: 5, defaults: TRUCK_PROMPT_DEFAULTS,
+  description: 'Structured relocation inventory from a SET of moving photos (compact wire format). Observations only — no pricing. Public.',
+  system: composeEstimatorPrompt({
+    role: `You are a senior MOVING estimator for ${COMPANY.legalName}.`,
+    module: MOVING_ESTIMATOR_MODULE,
+    contract:
+      `Judge truck space against a {{truckLengthFt}} ft box truck holding ~{{truckCuFt}} cu ft ({{truckCuYd}} cubic yards) of loadable space. "truck" is the fraction of THAT truck the whole move fills (0.05-6). Moving loads are stacked and padded, not compacted — they use MORE space than the same objects thrown in loose.\n` +
+      `"q" is an exact count when countable (q:3), or [min,max] when genuinely uncertain (q:[8,12]) — stacked boxes usually are. "fl" lists only TRUE flags; omit it when none apply. Codes: b=bulky, f=fragile, d=needs disassembly, a=appliance.\n` +
+      `"acc" lists only access facts you can SEE. Codes: stairs, elev, carry, narrow. "miss" lists what a photo cannot tell you, codes only: dest, dist, stairs, park, pack.\n` +
+      `"o" summarises the other confidence dimensions and must not exceed the weakest of i/q/v/a.\n` +
+      `ENUMS. cat: furn|appl|elec|matt|box|frag|art|exer|patio|over|unk. s (size): s|m|l|x. Ranges are [min,likely,max] arrays.\n\n` +
+      `Output ONLY one minified JSON object:\n` +
+      `{"items":[{"cat":string,"l":string,"q":number|[number,number],"s":string,"v":number,"fl":[string],"c":number,"p":number|[number]}],` +
+      `"photos":[{"p":number,"iq":"excellent|good|limited|unusable","dup":number}],` +
+      `"box":[number,number,number],"vol":[number,number,number],"truck":[number,number,number],` +
+      `"crew":[number,number,number],"load":[number,number,number],"unload":[number,number,number],` +
+      `"acc":[string],"miss":[string],"conf":{"o":number,"i":number,"q":number,"v":number,"a":number,"l":number},` +
+      `"rev":boolean,"why":[string]}\n` +
+      `"v" is cubic FEET for that one item. "box" is the box/container count. "vol" is total cubic feet. "why" holds short codes only, and only when rev is true.`,
+  }),
   prompt: '',   // images + per-call instruction come from messages at call time
 })
 
