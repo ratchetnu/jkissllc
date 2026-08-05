@@ -67,11 +67,23 @@ export const OPERATIONAL_ITEM_CATALOG: OperationalItem[] = [
 
 const clean = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 
+const tokenMatches = (token: string, aliasToken: string): boolean =>
+  token === aliasToken || token === `${aliasToken}s` || token === `${aliasToken}es`
+
+const containsAlias = (label: string, alias: string): boolean => {
+  const labelTokens = label.split(' ')
+  const aliasTokens = alias.split(' ')
+  if (aliasTokens.length > labelTokens.length) return false
+  return labelTokens.some((_, start) => aliasTokens.every((aliasToken, offset) =>
+    tokenMatches(labelTokens[start + offset] ?? '', aliasToken),
+  ))
+}
+
 export function resolveCatalogItem(label: string): OperationalItem | null {
   const needle = clean(label)
   if (!needle) return null
   const matches = OPERATIONAL_ITEM_CATALOG.flatMap(entry => entry.aliases.map(alias => ({ entry, alias: clean(alias) })))
-    .filter(match => needle === match.alias || needle.includes(match.alias))
+    .filter(match => containsAlias(needle, match.alias))
     .sort((a, b) => b.alias.length - a.alias.length)
   return matches[0]?.entry ?? null
 }

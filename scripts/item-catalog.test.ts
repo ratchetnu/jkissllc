@@ -4,7 +4,12 @@ import { OPERATIONAL_ITEM_CATALOG, catalogMatch, catalogVolume, resolveCatalogIt
 
 test('aliases resolve to the controlled category', () => {
   assert.equal(resolveCatalogItem('green three-seat couch')?.id, 'standard_sofa')
+  assert.equal(resolveCatalogItem('three couches')?.id, 'standard_sofa')
   assert.equal(resolveCatalogItem('clothes dryer')?.id, 'dryer')
+})
+
+test('aliases match whole tokens rather than fragments inside unrelated words', () => {
+  assert.equal(resolveCatalogItem('orange chair'), null)
 })
 
 test('sectional never resolves as a loveseat', () => {
