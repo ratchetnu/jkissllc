@@ -33,6 +33,14 @@ export type StoredAiEstimate = {
     lowUsd: number
     highUsd: number
     breakdown: PricingBreakdown
+    /**
+     * FALSE = the deterministic engine declined to price this job (today: any
+     * moving-family service, which has no landfill trip to price). The money
+     * fields are then zero because there IS no price, not because the price is
+     * zero. Optional so estimates written before this field existed still parse;
+     * absent means "priced", which every one of them was.
+     */
+    priced?: boolean
   }
   reviewReasons: string[]
   /** Set when the booking's source-photo set changes; history stays visible. */
@@ -92,6 +100,10 @@ export function customerEstimateView(e: StoredAiEstimate) {
     recommendedUsd: e.pricing.recommendedUsd,
     lowUsd: e.pricing.lowUsd,
     highUsd: e.pricing.highUsd,
+    // Explicit, so a consumer reading three zeros knows whether it is looking at a
+    // free job or at a job this engine refused to price. Absent on older records
+    // (all of which were priced), hence the `!== false`.
+    priced: e.pricing.priced !== false,
     photoCount: e.inputPhotoUrls.length,
     confidence: e.analysis.confidence.overall,
     // Richer per-item shape for the guided confirmation review (governed category,

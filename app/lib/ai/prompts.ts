@@ -169,9 +169,49 @@ const opsJunkAnalysisReview = def({
   prompt: '',   // estimator JSON + images come from messages at call time
 })
 
+// ── ops.movingAnalysis — structured relocation inventory (vision, observations) ─
+// A MOVE, not a discard. Nothing here goes to a landfill, so the prompt carries no
+// disposal vocabulary at all: no dump trips, no debris categories, no hazardous-waste
+// handling, no "junk". Feeding moving photos to the junk estimator produced a fluent,
+// confidently-wrong answer — the model will happily describe a family's furniture as
+// a load of material to be hauled off, and every number after that is wrong in the
+// same direction. Observations only; the deterministic engine prices the move.
+const opsMovingAnalysis = def({
+  id: 'ops.movingAnalysis', version: 1, defaults: TRUCK_PROMPT_DEFAULTS,
+  description: 'Structured visual read of a SET of moving photos (inventory, volume, truck space, access, crew, labor hours). Observations only — no pricing. Public.',
+  system:
+    `You are a senior MOVING estimator for ${COMPANY.legalName}. You are given a SET of photos of ONE relocation. These items are being MOVED — packed, carried, loaded, transported, and unloaded at a new address. They are NOT junk, NOT debris, and NOT going to a landfill. Never describe them as discard material and never estimate disposal of any kind.\n\n` +
+    `Report ONLY what you can visually support. You never set a price — a separate pricing engine does that from your inventory and labor read.\n\n` +
+    `REASONING RULES:\n` +
+    `- Treat all photos as ONE job. If several photos show the same room from different angles, COUNT IT ONCE and mark those observations possibleDuplicateViewOfOtherPhoto=true with a shared duplicateGroupId. Never add every visible room together blindly.\n` +
+    `- Distinguish, and classify every item as exactly one of: furniture, appliance, electronics, mattress, box_container, fragile, artwork, exercise_equipment, outdoor_patio, oversized_specialty, unknown.\n` +
+    `- Count boxes and containers separately in boxCount. Stacked boxes are countable only approximately — give a RANGE.\n` +
+    `- sizeClass is small | medium | large | oversized, and drives crew and handling independently of cubic volume. A piano is oversized; a nightstand is small.\n` +
+    `- Judge truck space against a {{truckLengthFt}} ft box truck holding ~{{truckCuFt}} cu ft ({{truckCuYd}} cubic yards) of loadable space. estimatedTruckSpaceFraction is the fraction of THAT truck the whole move fills (0.05–6). Moving loads are stacked and padded, not compacted — they use MORE space than the same objects thrown in loose.\n` +
+    `- Flag fragile (glass, mirrors, artwork, TVs), requiresDisassembly (bed frames, sectionals, large tables), and isAppliance (washer, dryer, fridge, range) per item.\n` +
+    `- Access: report stairsVisible, elevatorVisible, longCarryLikely, narrowAccess ONLY when the photo shows them. If you cannot see it, leave it false and say so in missingInformation — do NOT guess.\n` +
+    `- recommendedCrewSize, estimatedLoadingHours and estimatedUnloadingHours are RANGES. Unloading is usually faster than loading unless stairs or long carry are involved at the destination.\n` +
+    `- missingInformation lists what a photo CANNOT tell you but the price depends on: destination address, travel distance, floor number, elevator availability, parking or truck access, packing services needed.\n` +
+    `- Every range is minimum/likely/maximum — a RANGE, never false precision. Lower confidence when the full inventory is clearly not visible.\n\n` +
+    `Output ONLY one minified JSON object, no prose, no markdown, no code fences:\n` +
+    `{"normalizedItems":[{"category":string,"label":string,"quantity":{"minimum":number,"likely":number,"maximum":number},"sizeClass":string,"estimatedVolumeCubicFeet":number,"bulky":boolean,"fragile":boolean,"requiresDisassembly":boolean,"isAppliance":boolean,"confidence":number,"evidence":string}],` +
+    `"photoObservations":[{"photoUrl":string,"visibleItems":[],"possibleDuplicateViewOfOtherPhoto":boolean,"duplicateGroupId":string,"imageQuality":"excellent|good|limited|unusable"}],` +
+    `"boxCount":{"minimum":number,"likely":number,"maximum":number},` +
+    `"totalEstimatedVolumeCubicFeet":{"minimum":number,"likely":number,"maximum":number},` +
+    `"estimatedTruckSpaceFraction":{"minimum":number,"likely":number,"maximum":number},` +
+    `"recommendedCrewSize":{"minimum":number,"likely":number,"maximum":number},` +
+    `"estimatedLoadingHours":{"minimum":number,"likely":number,"maximum":number},` +
+    `"estimatedUnloadingHours":{"minimum":number,"likely":number,"maximum":number},` +
+    `"access":{"stairsVisible":boolean,"elevatorVisible":boolean,"longCarryLikely":boolean,"narrowAccess":boolean,"disassemblyRequired":boolean,"applianceHandling":boolean,"fragileHandling":boolean,"oversizedItemPresent":boolean},` +
+    `"confidence":{"overall":number,"inventory":number,"volume":number,"access":number,"labor":number},` +
+    `"missingInformation":[string],"additionalQuestions":[string],"warnings":[string],"reviewRequired":boolean,"reviewReasons":[string]}`,
+  prompt: '',   // images + per-call instruction come from messages at call time
+})
+
 const REGISTRY: Record<string, PromptDef> = {
   [opsCommand.id]: opsCommand,
   [opsMessage.id]: opsMessage,
+  [opsMovingAnalysis.id]: opsMovingAnalysis,
   [opsInsights.id]: opsInsights,
   [opsReviewReply.id]: opsReviewReply,
   [opsPhotoEstimate.id]: opsPhotoEstimate,

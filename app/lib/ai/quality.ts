@@ -77,6 +77,7 @@ const SCORERS: Record<string, Scorer> = {
   'ops.reviewReply': scoreReviewReply,
   'ops.command': scoreStructured,
   'ops.photoEstimate': scoreStructured,
+  'ops.movingAnalysis': scoreStructured,
 }
 
 // Public entry — always returns a result; unknown features get a neutral score so a

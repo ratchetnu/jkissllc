@@ -59,6 +59,12 @@ export const AI_FEATURES: AiFeatureDef[] = [
     access: 'public', input: 'multimodal', structured: true, writes: false, status: 'ga',
   },
   {
+    taskId: 'ops.movingAnalysis', name: 'Moving Photo Analysis',
+    description: 'Structured relocation inventory from a photo set (items, boxes, volume, truck space, access, crew, labor). Observations only — the deterministic moving engine prices it.',
+    surface: 'Public quote page', owner: 'Growth',
+    access: 'public', input: 'multimodal', structured: true, writes: false, status: 'beta',
+  },
+  {
     taskId: 'ops.junkAnalysis', name: 'Junk Photo Analysis',
     description: 'Primary vision pass: itemizes a junk-removal job from photos (volume, truck fill, labor) as observations only — never a price. Feeds the deterministic pricing engine.',
     surface: 'Public quote page (Book Now)', owner: 'Growth',
