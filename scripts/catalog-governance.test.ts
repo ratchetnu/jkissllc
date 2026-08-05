@@ -21,6 +21,45 @@ test('pricing-like keys are rejected even when nested or compound', () => {
   assert.ok(issues.some(issue => issue.includes('dumpFeeCents')))
 })
 
+test('fee-prefixed keys are rejected without catching the cubic-feet unit', () => {
+  // `fee(?!t)` was written to spare `volumeCubicFeet`, but the /i flag made the
+  // lookahead case-insensitive and spared every `fee`+t key with it.
+  for (const key of ['feeType', 'feeTier', 'feeTable', 'disposalFeeSchedule', 'flatRate', 'pricingTier']) {
+    const mutated = structuredClone(OPERATIONAL_ITEM_CATALOG) as Array<Record<string, unknown>>
+    mutated[0][key] = 1
+    assert.ok(
+      catalogGovernanceIssues(mutated as typeof OPERATIONAL_ITEM_CATALOG).some(issue => issue.includes(key)),
+      `pricing-owned key not rejected: ${key}`,
+    )
+  }
+  // The real catalog carries volumeCubicFeet and must stay clean — and a word
+  // that merely CONTAINS a money word is not a pricing key either.
+  const innocent = structuredClone(OPERATIONAL_ITEM_CATALOG) as Array<Record<string, unknown>>
+  innocent[0].separateNotes = 'kept apart'
+  innocent[0].feetOfClearance = 3
+  assert.deepEqual(catalogGovernanceIssues(innocent as typeof OPERATIONAL_ITEM_CATALOG), [])
+})
+
+test('an alias the matcher cannot distinguish counts as a collision', () => {
+  // `couches` is a new string but not a new claim: it resolves the same labels
+  // as standard_sofa's `couch`, and the longest-alias tie-break would hand
+  // `couch` itself to the newcomer. Governance must see that as a collision.
+  const mutated = structuredClone(OPERATIONAL_ITEM_CATALOG)
+  mutated.find(entry => entry.id === 'sectional')!.aliases.push('couches')
+  assert.ok(catalogGovernanceIssues(mutated).some(issue => issue.startsWith('alias collision:')))
+
+  // Punctuation and casing were already equivalent; keep that covered.
+  const spaced = structuredClone(OPERATIONAL_ITEM_CATALOG)
+  spaced.find(entry => entry.id === 'sectional')!.aliases.push('  L-Shaped  Couch ')
+  assert.ok(catalogGovernanceIssues(spaced).some(issue => issue.startsWith('alias collision:')))
+
+  // A genuinely distinct alias must NOT be reported — the check has to stay
+  // usable for real expansion, not just reject everything.
+  const distinct = structuredClone(OPERATIONAL_ITEM_CATALOG)
+  distinct.find(entry => entry.id === 'sectional')!.aliases.push('corner suite')
+  assert.deepEqual(catalogGovernanceIssues(distinct), [])
+})
+
 test('identity collisions and unknown handling vocabulary fail governance', () => {
   const mutated = structuredClone(OPERATIONAL_ITEM_CATALOG)
   mutated[1].id = mutated[0].id

@@ -1,5 +1,5 @@
 import { INVENTORY_TAXONOMY } from './inventory-taxonomy'
-import { OPERATIONAL_ITEM_CATALOG, type OperationalItem } from './item-catalog'
+import { OPERATIONAL_ITEM_CATALOG, aliasMatchKey, type OperationalItem } from './item-catalog'
 
 export const OPERATIONAL_CATALOG_VERSION = 1
 
@@ -14,15 +14,40 @@ export const JUNK_HANDLING_FLAGS = [
   'sharp_edges', 'special_disposal_review',
 ] as const
 
-const PRICING_KEY = /(price|cost|fee(?!t)|usd|dollar|rate|debrisCategory|disposalClass|perUnit)/i
+/**
+ * Money-owned vocabulary, matched as WHOLE WORDS of a camelCase key.
+ *
+ * A substring test cannot express this rule. The previous `fee(?!t)` guard
+ * existed so `volumeCubicFeet` would not read as a fee, but `/i` makes the
+ * lookahead case-insensitive too, so it also exempted `feeType`, `feeTier` and
+ * `feeTable`. Splitting the key into words removes the need for the guard
+ * entirely — `feet` is simply not `fee` — and drops the mirror-image false
+ * positives a substring test produced (`separateNotes` matching `rate`).
+ */
+const PRICING_WORDS = new Set([
+  'price', 'prices', 'pricing', 'priced',
+  'cost', 'costs', 'costing',
+  'fee', 'fees',
+  'usd', 'dollar', 'dollars',
+  'rate', 'rates',
+])
 
-const canonical = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+/** Pricing-owned field names that survive word splitting and must be matched whole. */
+const PRICING_COMPOUNDS = ['debriscategory', 'disposalclass', 'perunit']
 
-function pricingKeys(value: unknown, path = 'catalog'): string[] {
-  if (!value || typeof value !== 'object') return []
+const keyWords = (key: string): string[] =>
+  key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+
+const isPricingKey = (key: string): boolean =>
+  keyWords(key).some(word => PRICING_WORDS.has(word))
+  || PRICING_COMPOUNDS.some(compound => key.toLowerCase().replace(/[^a-z0-9]+/g, '').includes(compound))
+
+function pricingKeys(value: unknown, path = 'catalog', seen = new Set<object>()): string[] {
+  if (!value || typeof value !== 'object' || seen.has(value)) return []
+  seen.add(value)
   return Object.entries(value).flatMap(([key, child]) => [
-    ...(PRICING_KEY.test(key) ? [`${path}.${key}`] : []),
-    ...pricingKeys(child, `${path}.${key}`),
+    ...(isPricingKey(key) ? [`${path}.${key}`] : []),
+    ...pricingKeys(child, `${path}.${key}`, seen),
   ])
 }
 
@@ -51,7 +76,11 @@ export function catalogGovernanceIssues(
     }
 
     for (const alias of entry.aliases) {
-      const key = canonical(alias)
+      // Compare by what the MATCHER can reach, not by raw text. `couch` and
+      // `couches` are different strings but claim the same labels, and the
+      // resolver's longest-alias tie-break means the newcomer wins — so an
+      // alias that merely looks new can silently take over an existing one.
+      const key = aliasMatchKey(alias)
       const owner = aliases.get(key)
       if (!key) issues.push(`${entry.id}: empty alias`)
       else if (owner) issues.push(`alias collision: ${key} (${owner}, ${entry.id})`)
