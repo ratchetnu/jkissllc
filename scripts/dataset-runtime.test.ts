@@ -1,0 +1,230 @@
+// Curation runtime — transport seam, cache, retry, checkpoint and the pipeline.
+// The transport is injected, so every rule here is exercised without a network,
+// a credential or a cent of spend, on the SAME code path the paid pilot uses.
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import {
+  callRole, classifyFailure, runCandidate, memoryCache, memoryCheckpoint,
+  CallFailure, type VisionCaller, type VisionRequest,
+} from '../tools/vision-benchmark/curation/runtime'
+import { parseClassifier, parseLabel, parseVerifier, SchemaError } from '../tools/vision-benchmark/curation/contract'
+import { DEFAULT_ROLES, PRODUCTION_ESTIMATOR } from '../tools/vision-benchmark/curation/roles'
+import type { ManifestEntry } from '../tools/vision-benchmark/schema'
+
+const OK_CLASSIFIER = JSON.stringify({
+  operational: true, lane: 'junk_removal', category: 'curbside_pile',
+  privacyRisk: false, licenseRisk: false, confidence: 0.95,
+})
+const OK_LABEL = JSON.stringify({
+  lane: 'junk_removal', category: 'curbside_pile', visibleItems: ['sofa'],
+  quantityRange: { min: 1, max: 2 }, volumeCubicFeet: { min: 90, max: 150 },
+  truckSpacePercent: { min: 9, max: 15 }, handlingFlags: [], hazardousIndicators: [],
+  crewRange: { min: 2, max: 2 }, laborHoursRange: { min: 1, max: 2 },
+  difficulty: 'normal', ambiguityNotes: '', fieldConfidence: { volume: 0.9 },
+  evidence: { visibleEvidence: ['sofa at kerb'], missingInformation: [], ambiguityFlags: [] },
+})
+const OK_VERIFIER = JSON.stringify({ verdict: 'approve', disagreements: [], confidence: 0.95 })
+
+const entry = (over: Partial<ManifestEntry> = {}): ManifestEntry => ({
+  id: 'e1', jobType: 'junk_removal', category: 'curbside_pile', sourcePageUrl: 'u',
+  sourceImageUrl: '', sourceDomain: 'x.org', license: 'cc0', licenseVerified: true,
+  downloadPermitted: true, searchQuery: '', expectedObjects: [], expectedQuantityRange: null,
+  expectedVolumeRangeCubicYards: null, expectedTruckSpaceRangePercent: null,
+  expectedHandlingFlags: [], lighting: null, clutter: null, imageQuality: 'high',
+  containsPeople: false, reviewStatus: 'pending', notes: '', storedPath: 'a.jpg', sha256: 'h1',
+  phash: '', widthPx: 1600, heightPx: 1200, bytes: 1, attribution: '', fetchedAt: '',
+  split: 'development', labelStatus: 'unlabelled', expectedCrewRange: null,
+  expectedLaborHoursRange: null, disposalFlags: [], accessConcerns: [],
+  labelConfidence: null, difficulty: null, ...over,
+} as ManifestEntry)
+
+/** A scripted transport: one canned reply per role, plus a call log. */
+function scripted(replies: Partial<Record<string, string>>, opts: { throwOn?: string; kind?: string } = {}) {
+  const calls: VisionRequest[] = []
+  const caller: VisionCaller = async (req) => {
+    calls.push(req)
+    const role = req.promptVersion.split('.')[1]
+    if (opts.throwOn === role) throw new CallFailure((opts.kind ?? 'unknown') as never, `simulated ${opts.kind}`)
+    const text = replies[role]
+    if (text === undefined) throw new CallFailure('unknown', `no scripted reply for ${role}`)
+    return { text, inputTokens: 100, outputTokens: 50, latencyMs: 10, usd: 0.01 }
+  }
+  return { caller, calls }
+}
+
+const ctx = (caller: VisionCaller, cache = memoryCache()) => ({ caller, cache })
+const opts = { imageRoot: '/tmp', now: '2026-08-05T00:00:00Z' }
+
+// ── contract ────────────────────────────────────────────────────────────────
+
+test('strict parsing rejects malformed responses instead of coercing them', () => {
+  assert.throws(() => parseClassifier('not json'), SchemaError)
+  assert.throws(() => parseClassifier('{"lane":"banana","operational":true,"privacyRisk":false,"licenseRisk":false,"confidence":0.9}'), SchemaError)
+  assert.throws(() => parseVerifier('{"verdict":"approve","disagreements":["made_up_code"],"confidence":0.9}'), /unknown disagreement codes/)
+  assert.throws(() => parseVerifier('{"verdict":"approve","disagreements":[],"confidence":5}'), /outside 0\.\.1/)
+  assert.doesNotThrow(() => parseLabel(OK_LABEL))
+})
+
+test('a label carrying freeform reasoning is refused by contract', () => {
+  const withProse = JSON.stringify({ ...JSON.parse(OK_LABEL), reasoning: 'I think because...' })
+  assert.throws(() => parseLabel(withProse), /forbids it/)
+})
+
+// ── retry rules ─────────────────────────────────────────────────────────────
+
+test('only transient failures retry; auth, credit and licence never do', () => {
+  assert.equal(classifyFailure('Request timed out'), 'timeout')
+  assert.equal(classifyFailure('429 too many requests'), 'rate_limit')
+  assert.equal(classifyFailure('401 unauthorized'), 'auth')
+  assert.equal(classifyFailure('insufficient funds / billing'), 'credit_exhausted')
+  assert.equal(classifyFailure('licence not permitted'), 'license')
+  assert.equal(classifyFailure('something odd'), 'unknown', 'unknown must NOT be retried')
+})
+
+test('a transient failure retries and a credit failure aborts on the first attempt', async () => {
+  let attempts = 0
+  const flaky: VisionCaller = async () => {
+    attempts++
+    if (attempts < 3) throw new CallFailure('rate_limit', '429')
+    return { text: OK_VERIFIER, inputTokens: 1, outputTokens: 1, latencyMs: 1, usd: 0.01 }
+  }
+  const r = await callRole(ctx(flaky), { model: 'm', promptVersion: 'curation.verifier.v1', system: 's', user: 'u', imagePath: 'p' }, 'h1')
+  assert.equal(attempts, 3)
+  assert.equal(r.cached, false)
+
+  let creditAttempts = 0
+  const broke: VisionCaller = async () => { creditAttempts++; throw new CallFailure('credit_exhausted', 'billing') }
+  await assert.rejects(
+    () => callRole(ctx(broke), { model: 'm', promptVersion: 'curation.verifier.v1', system: 's', user: 'u', imagePath: 'p' }, 'h2'),
+    /billing/,
+  )
+  assert.equal(creditAttempts, 1, 'a credit failure must not be retried')
+})
+
+// ── cache ───────────────────────────────────────────────────────────────────
+
+test('a cache hit never repeats the paid call, and the key covers what matters', async () => {
+  const cache = memoryCache()
+  let calls = 0
+  const caller: VisionCaller = async () => { calls++; return { text: OK_VERIFIER, inputTokens: 1, outputTokens: 1, latencyMs: 1, usd: 0.01 } }
+  const req = { model: 'm', promptVersion: 'curation.verifier.v1' as const, system: 's', user: 'u', imagePath: 'p' }
+  const a = await callRole(ctx(caller, cache), req, 'hashA')
+  const b = await callRole(ctx(caller, cache), req, 'hashA')
+  assert.equal(calls, 1)
+  assert.equal(b.cached, true)
+  assert.equal(b.usd, 0, 'a cached call costs nothing')
+
+  await callRole(ctx(caller, cache), req, 'hashB')          // different image
+  await callRole(ctx(caller, cache), { ...req, model: 'other' }, 'hashA')  // different model
+  assert.equal(calls, 3)
+})
+
+// ── checkpoint ──────────────────────────────────────────────────────────────
+
+test('checkpoint marks completion so a resumed run skips finished candidates', () => {
+  const cp = memoryCheckpoint(['done-1'])
+  assert.equal(cp.done('done-1'), true)
+  assert.equal(cp.done('fresh'), false)
+  cp.record('fresh', 'auto_verified')
+  assert.equal(cp.done('fresh'), true)
+})
+
+// ── pipeline ────────────────────────────────────────────────────────────────
+
+test('a clean candidate runs classifier→labeler→verifier and auto-verifies as Silver', async () => {
+  const s = scripted({ classifier: OK_CLASSIFIER, labeler: OK_LABEL, verifier: OK_VERIFIER })
+  const out = await runCandidate(entry(), ctx(s.caller), opts, new Map())
+  assert.equal(out.decision.state, 'auto_verified')
+  assert.equal(out.decision.tier, 'silver')
+  assert.equal(out.adjudicated, false, 'no disagreement means no adjudicator call')
+  assert.equal(s.calls.length, 3)
+  assert.deepEqual(s.calls.map(c => c.promptVersion),
+    ['curation.classifier.v1', 'curation.labeler.v1', 'curation.verifier.v1'])
+})
+
+test('the verifier never receives the labeler reasoning or evidence block', async () => {
+  const s = scripted({ classifier: OK_CLASSIFIER, labeler: OK_LABEL, verifier: OK_VERIFIER })
+  await runCandidate(entry(), ctx(s.caller), opts, new Map())
+  const verifierCall = s.calls.find(c => c.promptVersion === 'curation.verifier.v1')!
+  assert.ok(verifierCall.user.includes('proposed label'))
+  assert.equal(verifierCall.user.includes('visibleEvidence'), false, 'evidence must be stripped')
+  assert.equal(verifierCall.user.includes('sofa at kerb'), false)
+  assert.ok(verifierCall.system.includes('no access to the labeller'))
+})
+
+test('the adjudicator runs ONLY on disagreement', async () => {
+  const disagree = JSON.stringify({ verdict: 'revise', disagreements: ['quantity_overstated'], confidence: 0.7 })
+  const s = scripted({
+    classifier: OK_CLASSIFIER, labeler: OK_LABEL, verifier: disagree,
+    adjudicator: JSON.stringify({ verdict: 'reject', disagreements: ['quantity_overstated'], confidence: 0.8 }),
+  })
+  const out = await runCandidate(entry(), ctx(s.caller), opts, new Map())
+  assert.equal(out.adjudicated, true)
+  assert.equal(s.calls.length, 4)
+  assert.equal(out.decision.state, 'needs_human_review', 'a resolved disagreement still goes to a human')
+})
+
+test('deterministic pre-screen blocks before any paid call is made', async () => {
+  const s = scripted({})
+  for (const [e, expected] of [
+    [entry({ reviewStatus: 'rejected' }), 'auto_rejected'],
+    [entry({ containsPeople: true }), 'privacy_blocked'],
+    [entry({ downloadPermitted: false }), 'license_blocked'],
+  ] as const) {
+    const out = await runCandidate(e, ctx(s.caller), opts, new Map())
+    assert.equal(out.decision.state, expected)
+  }
+  assert.equal(s.calls.length, 0, 'an unusable image must never reach a paid call')
+  assert.equal(await (async () => (await runCandidate(entry({ sha256: 'dup' }), ctx(s.caller), opts,
+    new Map([['dup', 'other']]))).decision.state)(), 'duplicate')
+})
+
+test('a schema failure is terminal for the candidate and never auto-verifies', async () => {
+  const s = scripted({ classifier: OK_CLASSIFIER, labeler: '{"lane":"banana"}' })
+  const out = await runCandidate(entry(), ctx(s.caller), opts, new Map())
+  assert.equal(out.decision.state, 'needs_human_review')
+  assert.equal(out.failure?.kind, 'schema')
+  assert.notEqual(out.decision.tier, 'gold')
+})
+
+test('a missing model fails closed rather than falling back to the estimator', async () => {
+  const s = scripted({ classifier: OK_CLASSIFIER })
+  await assert.rejects(
+    () => runCandidate(entry(), ctx(s.caller), { ...opts, roles: [] }, new Map()),
+    /refusing to run|no model assigned/,
+  )
+})
+
+test('a role assigned to the production estimator aborts the run', async () => {
+  const poisoned = DEFAULT_ROLES.map(r => r.role === 'labeler' ? { ...r, model: PRODUCTION_ESTIMATOR } : r)
+  const s = scripted({ classifier: OK_CLASSIFIER })
+  await assert.rejects(
+    () => runCandidate(entry(), ctx(s.caller), { ...opts, roles: poisoned }, new Map()),
+    /refusing to run/,
+  )
+  assert.equal(s.calls.length, 0, 'independence is asserted before the first call')
+})
+
+test('no pipeline path can emit a Gold label', async () => {
+  const variants = [
+    { classifier: OK_CLASSIFIER, labeler: OK_LABEL, verifier: OK_VERIFIER },
+    { classifier: OK_CLASSIFIER, labeler: OK_LABEL, verifier: JSON.stringify({ verdict: 'approve', disagreements: [], confidence: 0.99 }) },
+  ]
+  for (const v of variants) {
+    const out = await runCandidate(entry(), ctx(scripted(v).caller), opts, new Map())
+    assert.notEqual(out.decision.tier, 'gold')
+  }
+})
+
+test('provenance records the decision and never carries model reasoning', async () => {
+  const s = scripted({ classifier: OK_CLASSIFIER, labeler: OK_LABEL, verifier: OK_VERIFIER })
+  const out = await runCandidate(entry(), ctx(s.caller), opts, new Map())
+  const p = out.provenance[0]
+  assert.equal(p.revision, 1)
+  assert.equal(p.humanReviewed, false)
+  assert.equal(p.schemaVersion, 1)
+  assert.equal(p.tier, 'silver')
+  assert.ok(p.roles.length >= 2)
+  assert.equal(JSON.stringify(p).includes('reasoning'), false)
+})
