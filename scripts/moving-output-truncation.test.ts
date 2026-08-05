@@ -166,8 +166,10 @@ test('no disposal vocabulary survives anywhere in the moving contract', () => {
 test('the compact prompt forbids prose and states the enums', () => {
   const { system } = getPrompt('ops.movingAnalysis').build({})
   assert.ok(getPrompt('ops.movingAnalysis').version >= 2, 'the compact contract is v2 or later')
-  assert.match(system, /COMPACT ON PURPOSE/)
-  assert.match(system, /no prose, no markdown, no code fences/)
+  // Compactness is now stated once, in the shared estimator core.
+  assert.match(system, /every sentence you write is inventory that gets cut off/i)
+  assert.match(system, /no prose/i)
+  assert.match(system, /no code fences/i)
   assert.match(system, /furn\|appl\|elec/, 'category codes must be stated or the model invents them')
   // The old verbose field names must be gone, or the model answers in both shapes.
   // Check the FIELD names in the output contract, not the words: the prompt still
@@ -175,5 +177,6 @@ test('the compact prompt forbids prose and states the enums', () => {
   for (const gone of ['"estimatedTruckSpaceFraction"', '"recommendedCrewSize"', '"normalizedItems"', '"evidence"']) {
     assert.ok(!system.includes(gone), `the compact prompt must not still ask for ${gone}`)
   }
-  assert.match(system, /do NOT write descriptions/, 'and it must explicitly forbid evidence prose')
+  // Evidence prose is forbidden once, in the shared core, rather than per lane.
+  assert.match(system, /no explanations/i, 'and it must forbid explanatory prose')
 })

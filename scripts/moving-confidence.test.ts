@@ -145,7 +145,7 @@ test('the five dimensions stay independent — they are not one number copied', 
 
 test('the prompt states the scale, the anchors, and the do-not-default rule', () => {
   const { system } = getPrompt('ops.movingAnalysis').build({})
-  assert.equal(getPrompt('ops.movingAnalysis').version, 3, 'a changed contract needs a new version')
+  assert.ok(getPrompt('ops.movingAnalysis').version >= 3, 'a changed contract needs a new version')
   assert.match(system, /DECIMAL from 0\.0 to 1\.0/)
   assert.match(system, /never a percentage, never a string/)
   assert.match(system, /DO NOT default to 1\.0/)

@@ -99,7 +99,7 @@ export const FIXTURES: FeatureFixture[] = [
     // tokens per item and truncated a three-bedroom inventory at the cap; these
     // assertions fail loudly if the prompt ever drifts back to it, or drops the
     // "NOT junk" framing.
-    renderMustInclude: ['"truck":', '"crew":', 'COMPACT ON PURPOSE', 'NOT junk'],
+    renderMustInclude: ['"truck":', '"crew":', 'DO NOT default to 1.0', 'NOT junk'],
     cases: [
       { name: 'plausible relocation inventory', response: '{"items":[{"cat":"furn","l":"sectional sofa","q":1,"s":"l","v":90,"fl":["b","d"],"c":0.9,"p":0}],"box":[10,14,18],"truck":[0.15,0.2,0.3],"crew":[2,2,3],"conf":{"o":0.8,"i":0.8,"v":0.75,"a":0.6,"l":0.7}}', minScore: 60 },
     ],

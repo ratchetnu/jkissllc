@@ -77,7 +77,7 @@ test('[routing] the moving prompt is registered and free of disposal vocabulary'
         `"${word}" appears in the moving prompt outside a negation: …${around.trim()}…`)
     }
   }
-  assert.ok(/relocation|MOVED/i.test(system), 'the moving prompt must frame the job as a move')
+  assert.ok(/relocat/i.test(system), 'the moving prompt must frame the job as a move')
   assert.ok(!/estimatedTruckLoadFraction/.test(system), 'the moving prompt must not use the junk lane field name')
 })
 
