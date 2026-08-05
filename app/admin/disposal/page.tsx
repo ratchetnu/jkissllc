@@ -5,7 +5,7 @@ import AdminGate from '../AdminGate'
 
 type Settings = {
   serviceMinimumCents: number; defaultDisposalCents: number; marginPct: number
-  minDisposalFeePerTripCents: number; truckCapacityCuFt: number
+  minDisposalFeePerTripCents: number; truckCapacityCuFt: number; truckLengthFt: number
   laborMinCents: number; laborFullLoadCents: number; laborRatePerHourCents: number
   landfillRoundTripMinutes: number; unloadMinutesPerTrip: number
   dumpTripCents: number; equipmentOpPerLoadCents: number; travelToJobCents: number
@@ -95,8 +95,11 @@ function DisposalManager() {
             <input inputMode="decimal" defaultValue={Math.round(s.marginPct * 100)} onBlur={e => save({ marginPct: (parseFloat(e.target.value) || 0) / 100 })} style={iStyle} /></div>
           <div><label style={lab}>Truck capacity (cu ft)</label>
             <input inputMode="decimal" defaultValue={s.truckCapacityCuFt} onBlur={e => save({ truckCapacityCuFt: Math.round(parseFloat(e.target.value) || 0) })} style={iStyle} /></div>
+          <div><label style={lab}>Truck length (ft)</label>
+            <input inputMode="decimal" defaultValue={s.truckLengthFt} onBlur={e => save({ truckLengthFt: Math.round(parseFloat(e.target.value) || 0) })} style={iStyle} /></div>
         </div>
         <p className="text-xs mt-2" style={{ color: 'var(--muted)' }}>Disposal = (landfill trips × fee/trip). 2 trips = 2× the fee. The quote is never generated below the resulting minimum selling price.</p>
+        <p className="text-xs mt-2" style={{ color: 'var(--muted)' }}>Truck capacity is <strong>loadable</strong> space, not the gross interior of an empty box — a 24 ft box loads ~1,000 cu ft, a 26 ft ~1,400. The AI estimator judges photo fill against this number, so changing it moves every quote proportionally.</p>
       </div>
 
       {/* Itemized job costs */}

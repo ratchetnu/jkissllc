@@ -38,8 +38,40 @@ export function renderPrompt(tpls: { system: string; prompt: string }, vars: Rec
 }
 
 // Helper to declare a prompt whose build() is just "render my templates".
-function def(d: Omit<PromptDef, 'build'>): PromptDef {
-  return { ...d, build: (vars) => renderPrompt({ system: d.system, prompt: d.prompt }, vars) }
+function def(d: Omit<PromptDef, 'build'> & { defaults?: Record<string, unknown> }): PromptDef {
+  const { defaults, ...rest } = d
+  return {
+    ...rest,
+    // Defaults merge UNDER the caller's vars. A {{tag}} with no value renders as an
+    // empty string, which for a fact like truck capacity is worse than a stale
+    // number: "a box truck holding about  cubic feet" invites the model to invent
+    // one. Any prompt stating a physical fact declares a default here, so a caller
+    // that forgets a var degrades to the house truck rather than to nothing.
+    build: (vars) => renderPrompt({ system: d.system, prompt: d.prompt }, { ...defaults, ...vars }),
+  }
+}
+
+/**
+ * Truck capacity is fleet-dependent — J KISS runs a 24 ft box, a branded clone may
+ * run a 26 ft — so it is NOT a constant in this file. It comes from the tenant's
+ * disposal settings (`truckCapacityCuFt`, admin-editable at /admin/disposal) and is
+ * rendered into every prompt that asks the model to judge fill.
+ *
+ * `estimatedTruckLoadFraction` is the fraction of THAT truck, and it is the single
+ * value the deterministic pricing engine consumes. Anchor the model to the wrong
+ * truck and every quote downstream is wrong by the same ratio, silently.
+ */
+export const TRUCK_PROMPT_DEFAULTS = { truckCuFt: '1,000', truckCuYd: 37, truckLengthFt: 24 }
+
+/** Render-ready truck facts. Cubic yards is derived — never separately configured. */
+export function truckPromptVars(s: { truckCapacityCuFt?: number; truckLengthFt?: number }): Record<string, unknown> {
+  const cuFt = Number(s.truckCapacityCuFt)
+  if (!Number.isFinite(cuFt) || cuFt <= 0) return { ...TRUCK_PROMPT_DEFAULTS }
+  return {
+    truckCuFt: Math.round(cuFt).toLocaleString('en-US'),
+    truckCuYd: Math.round(cuFt / 27),
+    truckLengthFt: Number(s.truckLengthFt) > 0 ? Math.round(Number(s.truckLengthFt)) : TRUCK_PROMPT_DEFAULTS.truckLengthFt,
+  }
 }
 
 // ── ops.command — the ⌘K natural-language command palette ────────────────────
@@ -83,9 +115,9 @@ const opsReviewReply = def({
 // ── ops.photoEstimate — public junk-removal estimate from a photo (multimodal) ─
 // The image + user text are passed as `messages` by the route (runtime data); this
 // def carries the versioned system prompt (the pricing guide + output contract).
-const PHOTO_GUIDE = `Operations use a 24 ft box truck that holds about 1,000 cubic feet of loadable space. Judge how much of THAT truck the items would fill. Every job includes a landfill trip, so pricing starts in the low hundreds. Pricing guide (USD): a few items $200–325; quarter of the 24 ft truck $325–475; half $475–650; three-quarter $650–850; a full 24 ft truck load $900–1,150; more than one truckload $1,500+. Loose non-compacting loads — brush, tree limbs, mattresses — fill the truck far faster than they look and often need multiple dump trips, so price those toward the high end or above. Heavy items, stairs, or long carries also push toward the high end. ${COMPANY.legalName} does NOT haul hazardous materials (paint, chemicals, solvents, motor oil, propane/gas tanks, tires, batteries, asbestos, or medical/biohazard waste) — exclude any such items from the estimate. If the load is mostly hazardous, set low and high to 0 and use the summary to say we can't haul hazardous materials and to contact us.`
+const PHOTO_GUIDE = `Operations use a {{truckLengthFt}} ft box truck that holds about {{truckCuFt}} cubic feet ({{truckCuYd}} cubic yards) of loadable space. Judge how much of THAT truck the items would fill. Every job includes a landfill trip, so pricing starts in the low hundreds. Pricing guide (USD): a few items $200–325; quarter of the truck $325–475; half $475–650; three-quarter $650–850; a full truck load $900–1,150; more than one truckload $1,500+. Loose non-compacting loads — brush, tree limbs, mattresses — fill the truck far faster than they look and often need multiple dump trips, so price those toward the high end or above. Heavy items, stairs, or long carries also push toward the high end. ${COMPANY.legalName} does NOT haul hazardous materials (paint, chemicals, solvents, motor oil, propane/gas tanks, tires, batteries, asbestos, or medical/biohazard waste) — exclude any such items from the estimate. If the load is mostly hazardous, set low and high to 0 and use the summary to say we can't haul hazardous materials and to contact us.`
 const opsPhotoEstimate = def({
-  id: 'ops.photoEstimate', version: 1,
+  id: 'ops.photoEstimate', version: 2, defaults: TRUCK_PROMPT_DEFAULTS,
   description: 'Estimate junk-removal load size + price from a customer photo. Public, read-only.',
   system: `You are an estimator for ${COMPANY.legalName}, a DFW junk-removal company. From a photo, estimate how much truck space the items take and a ballpark price. ${PHOTO_GUIDE} Be encouraging but honest, and note that the final quote is confirmed on site. Respond with ONLY minified JSON: {"loadSize": string, "low": number, "high": number, "summary": string}. loadSize is one of: "A few items","About a quarter truck","About a half truck","About three-quarter truck","Full truck load","More than one truck". low/high are whole-dollar numbers. summary is one friendly sentence (max 20 words).`,
   prompt: '',   // image + instruction come from messages at call time
@@ -96,13 +128,13 @@ const opsPhotoEstimate = def({
 // (lib/disposal.priceJob) turns the truck-fill fraction into the customer number.
 // The images + per-call instruction are passed as `messages` at call time.
 const opsJunkAnalysis = def({
-  id: 'ops.junkAnalysis', version: 1,
+  id: 'ops.junkAnalysis', version: 2, defaults: TRUCK_PROMPT_DEFAULTS,
   description: 'Structured visual read of a SET of junk-removal photos (items, volume, weight, access, hazards, confidence). Observations only — no pricing. Public.',
   system:
     `You are a senior junk-removal estimator for ${COMPANY.legalName}. You are given a SET of photos of ONE job. Report ONLY what you can visually support. You never set a price — a separate pricing engine does that from your volume read.\n\n` +
     `REASONING RULES:\n` +
     `- Treat all photos as ONE job. If several photos show the same pile from different angles, COUNT IT ONCE and mark those observations possibleDuplicateViewOfOtherPhoto=true with a shared duplicateGroupId. Never add every visible pile together blindly.\n` +
-    `- Judge fill against a 24 ft box truck holding ~1,000 cu ft ≈ 37 cubic yards of loadable space. estimatedTruckLoadFraction is the fraction of THAT truck the whole job fills (0.05–6). Give minimum/likely/maximum — a RANGE, not false precision.\n` +
+    `- Judge fill against a {{truckLengthFt}} ft box truck holding ~{{truckCuFt}} cu ft ({{truckCuYd}} cubic yards) of loadable space. estimatedTruckLoadFraction is the fraction of THAT truck the whole job fills (0.05–6). Give minimum/likely/maximum — a RANGE, not false precision.\n` +
     `- Account for pile height/width/depth and perspective; if the full pile is not visible, lower confidence and add a warning. Loose non-compacting material (brush, limbs, mattresses) fills a truck faster than it looks and may need multiple dump trips.\n` +
     `- Flag dense/heavy material (concrete, dirt, roofing, soil, scrap) via detectedConditions — a small-looking pile can exceed safe weight.\n` +
     `- Note access: stairs, elevator, long carry, narrow access, indoor vs outdoor, disassembly.\n` +
@@ -127,13 +159,13 @@ const opsJunkAnalysis = def({
 // against the same photos before we auto-quote. Its job is to CATCH errors, not
 // rubber-stamp. Verdict only — it never sets a price.
 const opsJunkAnalysisReview = def({
-  id: 'ops.junkAnalysisReview', version: 1,
+  id: 'ops.junkAnalysisReview', version: 2, defaults: TRUCK_PROMPT_DEFAULTS,
   description: 'Independent QA review of a junk-removal photo analysis: catch double-counting, over/under-estimated volume, missed items/hazards, access issues. Verdict only.',
   system:
     `You are an INDEPENDENT quality reviewer for ${COMPANY.legalName}'s junk-removal estimates. Another estimator produced the JSON estimate you'll be given, from the same photos. Judge the photos YOURSELF first, then critique the estimate — do NOT just agree.\n\n` +
     `Look hard for: the same pile double-counted across different-angle photos; volume over- or under-estimated (loose brush/mattresses fill a truck faster than they look); items missed or invented; missed heavy/dense material (concrete, dirt, roofing, soil) that risks weight limits; missed hazardous material (paint, chemicals, propane, tires); access (stairs/long carry) not reflected; confidence higher than the photos justify.\n\n` +
     `Decide a recommendation: "accept" only if the estimate is sound AND safe to auto-quote; "range" if roughly right but uncertain (show a range, don't commit); "review" if it is wrong, unsafe, hazardous, or you can't verify it.\n\n` +
-    `Output ONLY one minified JSON object: {"agrees":boolean,"recommend":"accept|range|review","adjustedTruckLoadFraction":number,"confidence":number,"concerns":[string]}. adjustedTruckLoadFraction is YOUR OWN estimate of the fraction of a 24 ft box truck (0.05–6). confidence is 0..1. concerns lists the specific problems you found (empty if none).`,
+    `Output ONLY one minified JSON object: {"agrees":boolean,"recommend":"accept|range|review","adjustedTruckLoadFraction":number,"confidence":number,"concerns":[string]}. adjustedTruckLoadFraction is YOUR OWN estimate of the fraction of a {{truckLengthFt}} ft box truck holding ~{{truckCuFt}} cu ft of loadable space (0.05–6). confidence is 0..1. concerns lists the specific problems you found (empty if none).`,
   prompt: '',   // estimator JSON + images come from messages at call time
 })
 

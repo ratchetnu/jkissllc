@@ -14,6 +14,7 @@
 
 import type { ModelMessage } from 'ai'
 import { runAiTask } from './service'
+import { truckVars } from './truck-vars'
 import { updateAiCall } from './telemetry'
 import { timeStage, markStage, markStageFailure } from '../observability/pipeline-trace'
 import { isAllowedPhotoUrl } from '../photo-url'
@@ -86,7 +87,7 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
   const res = await runAiTask({
     taskId: 'ops.junkAnalysis',
     feature: 'ops.junkAnalysis',
-    vars: {},
+    vars: await truckVars(),
     messages,
     maxOutputTokens: 1600,
     temperature: 0.2,

@@ -10,6 +10,7 @@
 
 import type { ModelMessage } from 'ai'
 import { runAiTask } from './service'
+import { truckVars } from './truck-vars'
 import { resolveAiPhotoUrls } from './photo-optimize'
 import { imageOptimizationEnabled } from './image-optimize-config'
 import type { JunkPhotoAnalysis } from './analysis-schema'
@@ -104,7 +105,7 @@ export async function reviewJunkAnalysis(input: {
 
   const res = await runAiTask({
     taskId: 'ops.junkAnalysisReview', feature: 'ops.junkAnalysisReview',
-    vars: {}, messages, maxOutputTokens: 500, temperature: 0.1,
+    vars: await truckVars(), messages, maxOutputTokens: 500, temperature: 0.1,
     requestChars: useVision ? photos.join(',').length : JSON.stringify(summary).length,
     // Telemetry attribution: an independent second-opinion (fallback/backup) pass.
     // imageCount distinguishes a vision pass (>0) from the JSON-only pass (0).

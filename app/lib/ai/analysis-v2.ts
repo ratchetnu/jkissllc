@@ -24,6 +24,7 @@
 
 import type { ModelMessage } from 'ai'
 import { runAiTask } from './service'
+import { truckVars } from './truck-vars'
 import { isAllowedPhotoUrl } from '../photo-url'
 import { evaluatePhotoQuality, type PhotoDescriptor, type PhotoQualityGateResult } from './photo-quality-gate'
 import { dedupePhotoUrls } from './photo-dedup'
@@ -202,7 +203,7 @@ export async function analyzePhotosV2(
     res = await runAi({
       taskId: 'ops.junkAnalysis',
       feature: 'ops.junkAnalysis',
-      vars: {},
+      vars: await truckVars(),
       messages,
       maxOutputTokens: 4000,
       temperature: 0.15,
@@ -257,7 +258,7 @@ export async function analyzePhotosV2(
     const repair = await runAi({
       taskId: 'ops.junkAnalysis',
       feature: 'ops.junkAnalysis',
-      vars: {},
+      vars: await truckVars(),
       messages: [{ role: 'user', content: buildContent(repairText) }],
       maxOutputTokens: 4000,
       temperature: 0,

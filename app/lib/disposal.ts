@@ -26,7 +26,12 @@ export type DisposalSettings = {
 
   // ── Per-trip disposal (the core of the model) ──────────────────────────────
   minDisposalFeePerTripCents: number  // $75 default — charged EVERY landfill trip
-  truckCapacityCuFt: number           // 1,000 (24 ft box truck, loadable) — reference only
+  // Loadable space in the truck this tenant quotes against — NOT the gross interior
+  // of an empty box, which measures larger. This is no longer "reference only": it is
+  // the anchor the AI estimator judges fill against, so estimatedTruckLoadFraction —
+  // and every price derived from it — scales directly with this number.
+  truckCapacityCuFt: number           // 1,000 = J KISS 24 ft box. A 26 ft box is ~1,400.
+  truckLengthFt: number               // 24 — the label shown to the model and the admin
 
   // ── Itemized job costs (all admin-tunable) ─────────────────────────────────
   laborMinCents: number               // floor for on-site loading labor
@@ -70,6 +75,7 @@ export const DEFAULT_DISPOSAL: DisposalSettings = {
 
   minDisposalFeePerTripCents: 7500,   // $75 minimum per landfill trip
   truckCapacityCuFt: 1000,
+  truckLengthFt: 24,
 
   laborMinCents: 6000,
   laborFullLoadCents: 24000,
