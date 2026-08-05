@@ -80,9 +80,80 @@ export type MovingAccessConditions = {
 export type MovingConfidence = {
   overall: number
   inventory: number       // did we see the whole inventory?
+  quantity: number        // are the counts right? (stacked boxes, occluded piles)
   volume: number          // is the cubic estimate sound?
   access: number          // stairs / carry / doorways
   labor: number           // crew + hours
+}
+
+/** The dimensions `overall` is not allowed to materially exceed. */
+/** What an unparseable or absent confidence becomes: uncertain, not confident. */
+export const UNKNOWN_CONFIDENCE = 0.3
+
+export const CRITICAL_CONFIDENCE_DIMENSIONS = ['inventory', 'quantity', 'volume', 'access'] as const
+
+/**
+ * Parse ONE confidence value under a strict contract.
+ *
+ * Every live moving case came back 1.0 on all five dimensions, which put the whole
+ * sample in the top calibration band with a 56% false-high rate. The old parser
+ * took `num(v, 0.5)` and clamped to 0..1 — so a model answering in percent (85)
+ * became a perfect 1.0, and a string or a missing field became 0.5 with no trace.
+ * Clamping an out-of-contract value is what manufactured the confidence.
+ *
+ * Now: numbers only, finite only, 0..1 only. Anything else is REJECTED — reported
+ * as invalid and treated as unknown, never silently rewritten to 1.0.
+ */
+export function parseConfidenceValue(v: unknown): { value: number | null; problem?: string } {
+  if (v === undefined || v === null) return { value: null, problem: 'missing' }
+  if (typeof v === 'string') return { value: null, problem: 'string' }
+  if (typeof v !== 'number' || !Number.isFinite(v)) return { value: null, problem: 'not-a-number' }
+  // 85 is a percentage, not a confidence. Clamping it to 1 is how "certain" was invented.
+  if (v > 1) return { value: null, problem: 'above-1 (percentage?)' }
+  if (v < 0) return { value: null, problem: 'negative' }
+  return { value: v }
+}
+
+/** Evidence weaknesses that must pull confidence down, whatever the model claimed. */
+export type ConfidencePenaltyInput = {
+  incompleteCoverage: boolean     // limited/unusable photos, or a self-flagged partial read
+  duplicateUncertainty: boolean   // the same room possibly counted twice
+  uncertainVolume: boolean        // a wide volume range is not a confident one
+  missingAccessInfo: boolean      // no access view, or access facts asked for in `miss`
+}
+
+/** Ceiling applied to a dimension when the evidence behind it is weak. */
+const WEAK_EVIDENCE_CEILING = 0.6
+/** `overall` may sit at most this far above the weakest critical dimension. */
+const OVERALL_TOLERANCE = 0.05
+
+/**
+ * Bring a claimed confidence object back to what the evidence supports.
+ *
+ * The model is not asked to be humble and then trusted to be — the penalties are
+ * applied here, from facts the normalizer can see for itself: photo quality, a
+ * duplicate flag, the width of the volume range, whether access was ever visible.
+ * A read with any of those weaknesses cannot come out all-1.0.
+ */
+export function normalizeConfidence(claimed: MovingConfidence, ev: ConfidencePenaltyInput): MovingConfidence {
+  const out: MovingConfidence = { ...claimed }
+  const cap = (k: keyof MovingConfidence) => { out[k] = Math.min(out[k], WEAK_EVIDENCE_CEILING) }
+
+  if (ev.incompleteCoverage) { cap('inventory'); cap('quantity'); cap('volume'); cap('overall') }
+  if (ev.duplicateUncertainty) { cap('quantity'); cap('overall') }
+  if (ev.uncertainVolume) { cap('volume'); cap('overall') }
+  if (ev.missingAccessInfo) { cap('access') }
+
+  // `overall` is a summary, not an independent claim: it cannot outrun the weakest
+  // thing it summarises. Without this, a model can report inventory 0.4 and overall
+  // 1.0, and every downstream threshold reads the 1.0.
+  const weakest = Math.min(...CRITICAL_CONFIDENCE_DIMENSIONS.map(k => out[k]))
+  out.overall = Math.min(out.overall, weakest + OVERALL_TOLERANCE, 1)
+
+  for (const k of Object.keys(out) as (keyof MovingConfidence)[]) {
+    out[k] = Math.max(0, Math.min(1, Math.round(out[k] * 100) / 100))
+  }
+  return out
 }
 
 export type MovingPhotoAnalysis = {
@@ -329,11 +400,23 @@ function normalizeCompact(o: Record<string, unknown>, ctx: NormalizeMovingCtx): 
   }
 
   const rawConf = (o.conf && typeof o.conf === 'object' ? o.conf : {}) as Record<string, unknown>
-  const cf = (k: string) => clamp(num(rawConf[k], 0.5), 0, 1)
+  // Strict: an invalid or missing value is NOT quietly turned into a number the
+  // model never gave. It lands at UNKNOWN_CONFIDENCE and is named in the warnings,
+  // so a run full of unparseable confidence looks like a defect rather than like
+  // an unusually sure model.
+  const confProblems: string[] = []
+  const cf = (k: string, label: string) => {
+    const r = parseConfidenceValue(rawConf[k])
+    if (r.value === null) { confProblems.push(`${label} confidence ${r.problem}`); return UNKNOWN_CONFIDENCE }
+    return r.value
+  }
 
   const volFromItems = items.reduce((sum, i) => sum + i.estimatedVolumeCubicFeet * Math.max(1, i.quantity.likely), 0)
-  const missing = (Array.isArray(o.miss) ? o.miss : [])
-    .map(x => MISSING_CODES[String(x)] ?? String(x).slice(0, 80)).slice(0, 10)
+  const volRange = tuple(o.vol, 0, 12000, {
+    minimum: volFromItems * 0.8, likely: volFromItems, maximum: volFromItems * 1.25,
+  })
+  const missCodes = (Array.isArray(o.miss) ? o.miss : []).map(x => String(x))
+  const missing = missCodes.map(x => MISSING_CODES[x] ?? x.slice(0, 80)).slice(0, 10)
 
   const reviewReasons = (Array.isArray(o.why) ? o.why.map(x => String(x).slice(0, 120)) : [])
   const unusable = observations.length > 0 && observations.every(p => p.imageQuality === 'unusable')
@@ -347,18 +430,32 @@ function normalizeCompact(o: Record<string, unknown>, ctx: NormalizeMovingCtx): 
     normalizedItems: items,
     photoObservations: observations,
     boxCount: tuple(o.box, 0, 1000, { minimum: 0, likely: 0, maximum: 0 }),
-    totalEstimatedVolumeCubicFeet: tuple(o.vol, 0, 12000, {
-      minimum: volFromItems * 0.8, likely: volFromItems, maximum: volFromItems * 1.25,
-    }),
+    totalEstimatedVolumeCubicFeet: volRange,
     estimatedTruckSpaceFraction: tuple(o.truck, 0, 6, { minimum: 0, likely: 0, maximum: 0 }),
     recommendedCrewSize: tuple(o.crew, 1, 8, { minimum: 2, likely: 2, maximum: 3 }),
     estimatedLoadingHours: tuple(o.load, 0, 40, { minimum: 0, likely: 0, maximum: 0 }),
     estimatedUnloadingHours: tuple(o.unload, 0, 40, { minimum: 0, likely: 0, maximum: 0 }),
     access,
-    confidence: { overall: cf('o'), inventory: cf('i'), volume: cf('v'), access: cf('a'), labor: cf('l') },
+    confidence: normalizeConfidence(
+      {
+        overall: cf('o', 'overall'), inventory: cf('i', 'inventory'), quantity: cf('q', 'quantity'),
+        volume: cf('v', 'volume'), access: cf('a', 'access'), labor: cf('l', 'labour'),
+      },
+      {
+        // Every signal below is observed here, not taken on trust from the model.
+        incompleteCoverage: observations.some(p => p.imageQuality === 'limited' || p.imageQuality === 'unusable')
+          || o.rev === true || items.length === 0,
+        duplicateUncertainty: observations.some(p => p.possibleDuplicateViewOfOtherPhoto),
+        // A volume range wider than 1.5x from end to end is an uncertain one.
+        uncertainVolume: volRange.minimum > 0 && volRange.maximum / volRange.minimum > 1.5,
+        // Access was never seen, or the model itself asked for it.
+        missingAccessInfo: accCodes.length === 0
+          || missCodes.includes('stairs') || missCodes.includes('park'),
+      },
+    ),
     missingInformation: missing,
     additionalQuestions: [],
-    warnings: [],
+    warnings: confProblems.slice(0, 6),
     reviewRequired: o.rev === true || items.length === 0 || unusable,
     reviewReasons: Array.from(new Set(reviewReasons)).slice(0, 8),
   }
@@ -385,7 +482,7 @@ export function reviewFallbackMovingAnalysis(ctx: NormalizeMovingCtx, reasons: s
       stairsVisible: false, elevatorVisible: false, longCarryLikely: false, narrowAccess: false,
       disassemblyRequired: false, applianceHandling: false, fragileHandling: false, oversizedItemPresent: false,
     },
-    confidence: { overall: 0, inventory: 0, volume: 0, access: 0, labor: 0 },
+    confidence: { overall: 0, inventory: 0, quantity: 0, volume: 0, access: 0, labor: 0 },
     missingInformation: [],
     additionalQuestions: [],
     warnings: [],
@@ -436,8 +533,8 @@ export function normalizeMovingAnalysis(raw: unknown, ctx: NormalizeMovingCtx): 
   const rawConf = (o.confidence && typeof o.confidence === 'object' ? o.confidence : {}) as Record<string, unknown>
   const conf = (k: string, d = 0.5) => clamp(num(rawConf[k], d), 0, 1)
   const confidence: MovingConfidence = {
-    overall: conf('overall'), inventory: conf('inventory'), volume: conf('volume'),
-    access: conf('access'), labor: conf('labor'),
+    overall: conf('overall'), inventory: conf('inventory'), quantity: conf('quantity'),
+    volume: conf('volume'), access: conf('access'), labor: conf('labor'),
   }
 
   const volumeFromItems = items.reduce((sum, i) => sum + i.estimatedVolumeCubicFeet * Math.max(1, i.quantity.likely), 0)

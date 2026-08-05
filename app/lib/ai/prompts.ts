@@ -177,7 +177,7 @@ const opsJunkAnalysisReview = def({
 // a load of material to be hauled off, and every number after that is wrong in the
 // same direction. Observations only; the deterministic engine prices the move.
 const opsMovingAnalysis = def({
-  id: 'ops.movingAnalysis', version: 2, defaults: TRUCK_PROMPT_DEFAULTS,
+  id: 'ops.movingAnalysis', version: 3, defaults: TRUCK_PROMPT_DEFAULTS,
   description: 'Structured relocation inventory from a SET of moving photos (compact wire format). Observations only — no pricing. Public.',
   system:
     `You are a senior MOVING estimator for ${COMPANY.legalName}. You are given a SET of photos of ONE relocation. These items are being MOVED — packed, carried, loaded, transported, and unloaded at a new address. They are NOT junk, NOT debris, and NOT going to a landfill. Never describe them as discard material and never estimate disposal of any kind.\n\n` +
@@ -191,14 +191,20 @@ const opsMovingAnalysis = def({
     `- "acc" lists only the access facts you can SEE. Codes: stairs, elev, carry, narrow. If you cannot see it, leave it out and put the code in "miss" — do NOT guess.\n` +
     `- "miss" lists what a photo CANNOT tell you but the price depends on. Codes only: dest (destination address), dist (travel distance), stairs (stairs/elevator at either end), park (parking or truck access), pack (packing services needed).\n` +
     `- Judge truck space against a {{truckLengthFt}} ft box truck holding ~{{truckCuFt}} cu ft ({{truckCuYd}} cubic yards) of loadable space. "truck" is the fraction of THAT truck the whole move fills (0.05–6). Moving loads are stacked and padded, not compacted — they use MORE space than the same objects thrown in loose.\n` +
-    `- Ranges are [min,likely,max] arrays. Lower confidence when the full inventory is clearly not visible.\n\n` +
+    `- Ranges are [min,likely,max] arrays.\n\n` +
+    `CONFIDENCE. Every value in "conf" is a DECIMAL from 0.0 to 1.0 — never a percentage, never a string.\n` +
+    `  0.0 = no reliable evidence · 0.5 = partial, uncertain, obstructed or incomplete evidence · 1.0 = exceptionally clear, complete, fully supported evidence.\n` +
+    `  DO NOT default to 1.0. 1.0 means you can see everything that matters and nothing is in doubt — that is rare in a photograph.\n` +
+    `  Score each dimension INDEPENDENTLY: o=overall, i=inventory (did you see the whole inventory), q=quantity (are the counts right), v=volume (is the cubic estimate sound), a=access (stairs/carry/doorways), l=labour (crew and hours).\n` +
+    `  Lower the relevant dimensions for: partial room coverage, occluded or stacked items, uncertain quantities, the same room possibly shown twice, poor lighting, no view of the access route, an uncertain volume, or inventory you suspect is out of frame.\n` +
+    `  "o" summarises the others and must not exceed the weakest of i/q/v/a.\n\n` +
     `ENUMS. cat: furn|appl|elec|matt|box|frag|art|exer|patio|over|unk. s (size): s|m|l|x.\n\n` +
     `Output ONLY one minified JSON object, no prose, no markdown, no code fences:\n` +
     `{"items":[{"cat":string,"l":string,"q":number|[number,number],"s":string,"v":number,"fl":[string],"c":number,"p":number}],` +
     `"photos":[{"p":number,"iq":"excellent|good|limited|unusable","dup":number}],` +
     `"box":[number,number,number],"vol":[number,number,number],"truck":[number,number,number],` +
     `"crew":[number,number,number],"load":[number,number,number],"unload":[number,number,number],` +
-    `"acc":[string],"miss":[string],"conf":{"o":number,"i":number,"v":number,"a":number,"l":number},` +
+    `"acc":[string],"miss":[string],"conf":{"o":number,"i":number,"q":number,"v":number,"a":number,"l":number},` +
     `"rev":boolean,"why":[string]}\n` +
     `"v" is cubic FEET for that one item. "box" is the box/container count. "vol" is total cubic feet. "why" is only present when rev is true, and holds short codes, not sentences.`,
   prompt: '',   // images + per-call instruction come from messages at call time

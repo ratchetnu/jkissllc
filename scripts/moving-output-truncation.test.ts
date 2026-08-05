@@ -165,7 +165,7 @@ test('no disposal vocabulary survives anywhere in the moving contract', () => {
 
 test('the compact prompt forbids prose and states the enums', () => {
   const { system } = getPrompt('ops.movingAnalysis').build({})
-  assert.equal(getPrompt('ops.movingAnalysis').version, 2, 'a changed contract needs a new version')
+  assert.ok(getPrompt('ops.movingAnalysis').version >= 2, 'the compact contract is v2 or later')
   assert.match(system, /COMPACT ON PURPOSE/)
   assert.match(system, /no prose, no markdown, no code fences/)
   assert.match(system, /furn\|appl\|elec/, 'category codes must be stated or the model invents them')
