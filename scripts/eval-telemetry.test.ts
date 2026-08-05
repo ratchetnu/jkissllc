@@ -50,7 +50,7 @@ const ctx: NormalizeCtx = {
   modelProvider: 'vercel-ai-gateway', modelName: 'test-model', analyzedAt: '2026-08-04T00:00:00.000Z',
 }
 
-/** One couch: ~4 cu yd, ~9% of a 44 cu yd truck — well under a single load. */
+/** One couch: ~4 cu yd, roughly a tenth of the truck — well under a single load. */
 const ONE_COUCH = normalizeAnalysis({
   normalizedItems: [{ category: 'furniture', label: 'couch', estimatedQuantity: 1, estimatedVolumeCubicYards: 4, heavy: false, requiresDisassembly: false, confidence: 0.88 }],
   photoObservations: [{ photoUrl: ctx.photoUrls[0], imageQuality: 'good' }],

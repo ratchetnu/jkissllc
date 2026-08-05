@@ -36,6 +36,28 @@ export const READINESS_GATES = {
 }
 
 /**
+ * MOVING gates. Not a relaxed copy of the junk pilot — the moving set is the one
+ * that is actually complete. The owner labelled the whole approved moving queue:
+ * ten verified images, one of them the frozen holdout, so nine development labels
+ * are the maximum obtainable and the gate says nine rather than "most of them".
+ *
+ * minVerified is TEN, not five. There is no reason to lower it: unlike the junk
+ * pool, this one is already full. If a moving image is later rejected, the honest
+ * response is to promote a replacement — not to move this number.
+ */
+export const MOVING_READINESS_GATES = {
+  minVerified: 10,
+  minCategories: 5,
+  minDifficulties: 1,
+  maxSourceConcentration: 0.6,
+  minDevelopmentVerified: 9, // ten verified minus the one frozen holdout
+}
+
+export function gatesFor(jobType: JobType): typeof READINESS_GATES {
+  return jobType === 'moving' ? MOVING_READINESS_GATES : READINESS_GATES
+}
+
+/**
  * At or below this many verified images, every artefact must carry PILOT_BANNER.
  * Ten was the original gate; the pilot runs under it deliberately, so the
  * warning is bound to the actual sample size rather than to a flag someone has
@@ -79,7 +101,7 @@ export function assessReadiness(entries: ManifestEntry[], jobType: JobType): {
   const diffs = new Set(verified.map(e => e.difficulty).filter(Boolean))
   const devVerified = verified.filter(e => e.split === 'development').length
   const conc = distributions(approved).topDomainShare
-  const g = READINESS_GATES
+  const g = gatesFor(jobType)
 
   const gates: ReadinessGate[] = [
     { name: 'verified labels', pass: verified.length >= g.minVerified,
@@ -111,8 +133,15 @@ function main(): void {
   const approved = ofType.filter(e => e.reviewStatus === 'approved')
   const verified = approved.filter(hasGroundTruth)
 
+  // Bound to THIS LANE's verified count, which is what the banner always claimed
+  // to be. It was printed unconditionally, and that was invisible only while every
+  // lane happened to be small: the complete ten-image moving set was being stamped
+  // "small pilot — directional only" alongside the five-image junk one.
+  const smallPilot = r.verified > 0 && r.verified <= SMALL_PILOT_MAX_VERIFIED
+
   console.log(`\n=== Benchmark readiness — ${jobType} ===`)
-  console.log(`    ${PILOT_BANNER.toUpperCase()}\n`)
+  if (smallPilot) console.log(`    ${PILOT_BANNER.toUpperCase()}\n`)
+  else console.log('')
   console.log(`  approved        : ${r.approved}`)
   console.log(`  verified labels : ${r.verified}`)
   console.log(`  drafts          : ${r.drafts}`)
@@ -143,8 +172,16 @@ function main(): void {
   const missing = taxonomy.filter(c => !approvedCats.has(c))
   console.log(`  Never sourced   : ${missing.length}/${taxonomy.length}${missing.length ? ` — ${missing.slice(0, 12).join(', ')}${missing.length > 12 ? ' …' : ''}` : ''}`)
 
-  console.log('\n  Limitations that MUST accompany any result from this pilot:')
-  for (const l of PILOT_LIMITATIONS) console.log(`    • ${l}`)
+  // The limitation list describes an UNDERSIZED sample. Printing it under a
+  // complete one would train the reader to skip it, which is the one thing a
+  // warning must never become.
+  if (smallPilot) {
+    console.log('\n  Limitations that MUST accompany any result from this pilot:')
+    for (const l of PILOT_LIMITATIONS) console.log(`    • ${l}`)
+  } else {
+    console.log(`\n  Sample: ${r.verified} verified ${jobType} labels — above the small-pilot threshold of ${SMALL_PILOT_MAX_VERIFIED}.`)
+    console.log('  Still NOT production accuracy: stock photos, one dominant source, no real job outcomes.')
+  }
 
   console.log(`\n  VERDICT: ${r.ready ? '✅ ready to run once credits are added' : '❌ NOT ready'}`)
   if (r.ready && r.caveats.some(c => c.triggered)) {

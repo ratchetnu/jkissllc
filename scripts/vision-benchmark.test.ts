@@ -24,6 +24,23 @@ import { generateQueries, ALL_CATEGORIES, JUNK_CATEGORIES, MOVING_CATEGORIES } f
 import { buildJobs, assertPreviewTarget, serviceFor } from '../tools/vision-benchmark/run-benchmark'
 import { proposeGroups } from '../tools/vision-benchmark/organize'
 
+/**
+ * A fully VERIFIED entry — everything `hasGroundTruth` requires. Job building now
+ * takes verified cases only, so a fixture that is merely `approved` builds zero
+ * jobs and every grouping assertion below it silently passes on an empty list.
+ */
+const verified = (over: Partial<ManifestEntry> = {}): ManifestEntry => entry({
+  reviewStatus: 'approved', labelStatus: 'verified',
+  expectedObjects: ['mattress'], expectedQuantityRange: { min: 1, max: 1 },
+  expectedVolumeRangeCubicYards: { min: 2, max: 3 },
+  expectedTruckSpaceRangePercent: { min: 5, max: 10 },
+  expectedCrewRange: { min: 2, max: 2 }, expectedLaborHoursRange: { min: 1, max: 2 },
+  lighting: 'daylight', clutter: 'light', imageQuality: 'good', containsPeople: false,
+  labelConfidence: 'high', difficulty: 'easy', flagsReviewed: true,
+  notes: 'nothing hidden behind it', verifiedAt: '2026-08-04T00:00:00.000Z',
+  ...over,
+})
+
 const entry = (over: Partial<ManifestEntry> = {}): ManifestEntry => ({
   id: 'jr_x_0000000001', jobType: 'junk_removal', category: 'mattress',
   sourcePageUrl: 'https://example.org/p', sourceImageUrl: 'https://example.org/i.jpg',
@@ -225,8 +242,14 @@ test('distributions surface source concentration', () => {
 
 // ── Benchmark job construction ───────────────────────────────────────────────
 
-test('only APPROVED images become benchmark jobs', () => {
-  const es = [entry({ id: 'a', reviewStatus: 'approved' }), entry({ id: 'b', reviewStatus: 'pending' })]
+test('only APPROVED and VERIFIED images become benchmark jobs', () => {
+  const es = [
+    verified({ id: 'a' }),
+    entry({ id: 'b', reviewStatus: 'pending' }),
+    // Approved but unlabelled: it would run, cost money, and be unscorable —
+    // indistinguishable in the totals from a job that scored badly.
+    entry({ id: 'c', reviewStatus: 'approved' }),
+  ]
   const jobs = buildJobs(es, [])
   assert.equal(jobs.length, 1)
   assert.deepEqual(jobs[0].imageIds, ['a'])
@@ -234,9 +257,9 @@ test('only APPROVED images become benchmark jobs', () => {
 
 test('a multi-photo group is ONE job, and its images are not also run alone', () => {
   const es = [
-    entry({ id: 'a', reviewStatus: 'approved' }),
-    entry({ id: 'b', reviewStatus: 'approved', sha256: '2'.repeat(64) }),
-    entry({ id: 'c', reviewStatus: 'approved', sha256: '3'.repeat(64) }),
+    verified({ id: 'a' }),
+    verified({ id: 'b', sha256: '2'.repeat(64) }),
+    verified({ id: 'c', sha256: '3'.repeat(64) }),
   ]
   const jobs = buildJobs(es, [{
     id: 'grp1', jobType: 'junk_removal', category: 'mattress',
@@ -248,7 +271,7 @@ test('a multi-photo group is ONE job, and its images are not also run alone', ()
 })
 
 test('a pending group does not run, and its images fall back to single jobs', () => {
-  const es = [entry({ id: 'a', reviewStatus: 'approved' })]
+  const es = [verified({ id: 'a' })]
   const jobs = buildJobs(es, [{
     id: 'grp1', jobType: 'junk_removal', category: 'mattress',
     imageIds: ['a'], reviewStatus: 'pending', notes: '', split: 'development',
@@ -401,12 +424,12 @@ test('ground truth counts only when APPROVED and VERIFIED', () => {
 })
 
 test('cubic yards and truck space must agree with each other', () => {
-  // 4 cu yd of a 44 cu yd truck is ~9%. Consistent.
+  // 4 cu yd of a 37 cu yd truck is ~11%. Consistent.
   assert.deepEqual(validateLabel(entry({
     expectedVolumeRangeCubicYards: { min: 3, max: 5 },
     expectedTruckSpaceRangePercent: { min: 7, max: 12 },
   })), [])
-  // 10 cu yd implies ~23%, not 5% — one of the two was mis-keyed, and scoring
+  // 10 cu yd implies ~27%, not 5% — one of the two was mis-keyed, and scoring
   // both as true would corrupt whichever metric the report used.
   const problems = validateLabel(entry({
     expectedVolumeRangeCubicYards: { min: 10, max: 10 },

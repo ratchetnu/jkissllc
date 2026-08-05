@@ -23,7 +23,7 @@ import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { readdirSync } from 'node:fs'
 import { datasetRoot, paths, loadManifest, loadGroups } from './dataset'
-import type { ManifestEntry, JobType, Split } from './schema'
+import { hasGroundTruth, type ManifestEntry, type JobType, type Split } from './schema'
 import { createPacer, parseRetryAfter, fallbackBackoffMs, ANALYZE_LIMIT } from './pacing'
 
 const UPLOAD_GAP_MS = 400
@@ -85,7 +85,12 @@ export function buildJobs(
   split?: Split,
   jobType?: JobType,
 ): BenchJob[] {
-  const approved = entries.filter(e => e.reviewStatus === 'approved')
+  // VERIFIED only. Approved-but-unlabelled used to enter the run, which meant a
+  // job could execute, cost money and appear in the latency percentiles while
+  // being unscorable — and an unscorable job is indistinguishable in the totals
+  // from one that scored badly. Rejected, pending, draft and unlabelled entries
+  // now enter neither lane.
+  const approved = entries.filter(e => e.reviewStatus === 'approved' && hasGroundTruth(e))
   const byId = new Map(approved.map(e => [e.id, e]))
   const grouped = new Set<string>()
   const jobs: BenchJob[] = []
@@ -102,10 +107,12 @@ export function buildJobs(
     jobs.push({ jobId: `single_${e.id}`, jobType: e.jobType, category: e.category, imageIds: [e.id], split: e.split })
   }
   const bySplit = split ? jobs.filter(j => j.split === split) : jobs
-  // Moving is deliberately excludable: the analyze route does not gate on service
-  // family, so a moving photo would be read by the junk-removal prompt and priced
-  // by the disposal engine. That returns a confident JUNK-REMOVAL quote for a
-  // moving job. Junk removal is validated first; moving needs its own lane.
+  // Each lane sees ONLY its own verified cases. The junk-only default that used to
+  // live here existed because a moving photo would have been read by the junk
+  // prompt and priced by the disposal engine; PR #157 gives moving its own schema,
+  // prompt and pricing engine, so the two are now separated by job type rather
+  // than by refusing to run one of them. Omitting jobType returns both, which is
+  // what `bench:all` uses — it still runs and reports them independently.
   return jobType ? bySplit.filter(j => j.jobType === jobType) : bySplit
 }
 

@@ -32,6 +32,7 @@ import { ALL_CATEGORIES } from './queries'
 import { hasGroundTruth, type ManifestEntry, type JobType } from './schema'
 import type { BenchResult } from './run-benchmark'
 import { PILOT_BANNER, PILOT_LIMITATIONS, SMALL_PILOT_MAX_VERIFIED } from './readiness'
+import { scoringFor, assertLane, scorableDimensions } from './scoring'
 
 const pct = (n: number, d: number) => d === 0 ? '—' : `${((n / d) * 100).toFixed(0)}%`
 const UNAVAILABLE = 'unavailable — no human-labelled ground truth yet'
@@ -147,9 +148,15 @@ export function accuracyReport(entries: ManifestEntry[], results: BenchResult[])
   for (const jt of ['junk_removal', 'moving'] as JobType[]) {
     const rs = scorable.filter(r => r.jobType === jt)
     if (rs.length === 0) { out.push(`| ${jt} | 0 | — | — | — |`); continue }
+    const spec = scoringFor(jt)
     let recallNum = 0, recallDen = 0
     for (const r of rs) {
       const gt = byId.get(r.imageIds[0])!
+      // Structural guard: this label and this result must be the same lane, and
+      // the spec must be that lane's. A moving result scored with junk fields
+      // would produce a plausible percentage and mean nothing, so it throws
+      // rather than quietly shrinking the sample.
+      assertLane(spec, gt, r.jobType)
       const detected = r.items.map(i => i.label.toLowerCase())
       for (const expected of gt.expectedObjects) {
         recallDen++
@@ -160,11 +167,24 @@ export function accuracyReport(entries: ManifestEntry[], results: BenchResult[])
     const review = rs.filter(r => r.decision === 'manual_review').length
     out.push(`| ${jt} | ${rs.length} | ${pct(recallNum, recallDen)} | ${pct(quoted, rs.length)} | ${pct(review, rs.length)} |`)
   }
+  // What each lane was actually scored on, by its OWN spec. Printed per type so a
+  // reader cannot mistake a junk dimension for a moving one.
+  for (const jt of ['junk_removal', 'moving'] as JobType[]) {
+    const rs = scorable.filter(r => r.jobType === jt)
+    if (rs.length === 0) continue
+    const spec = scoringFor(jt)
+    const labelled = new Set<string>()
+    for (const r of rs) for (const d of scorableDimensions(spec, byId.get(r.imageIds[0])!)) labelled.add(d.label)
+    out.push('', `### ${jt} — dimensions with ground truth (${spec.jobType} spec)`, '')
+    for (const l of labelled) out.push(`- ${l}`)
+    for (const u of spec.unavailable) out.push(`- ~~${u.label}~~ — unavailable: ${u.reason}`)
+  }
+
   out.push('', '### Volume, truck-space and labor agreement — NOT MEASURABLE from the public response', '')
   out.push('The analyze endpoint returns `estimatedTruckLoads`, a whole-number LOAD COUNT that the')
   out.push('normalizer derives as `max(1, ceil(fraction))`. Every job below a full truck therefore')
-  out.push('reports 1. Deriving cubic yards as `loads x 44` or truck-space as `loads x 100%` yields')
-  out.push('44 cu yd and 100% for a single couch — numbers that look plausible and are wrong by an')
+  out.push('reports 1. Deriving cubic yards as `loads x 37` or truck-space as `loads x 100%` yields')
+  out.push('37 cu yd and 100% for a single couch — numbers that look plausible and are wrong by an')
   out.push('order of magnitude. An earlier revision of this file did exactly that; the columns were')
   out.push('removed rather than left to produce confident nonsense.')
   out.push('')
@@ -260,10 +280,27 @@ const results = explicit
   ? (JSON.parse(readFileSync(explicit, 'utf8')) as { results?: BenchResult[] }).results ?? []
   : latestRun(p.results)
 
-const verifiedCount = entries.filter(e => hasGroundTruth(e)).length
+// ── Lane scope ───────────────────────────────────────────────────────────────
+// A report describes ONE job type. Junk-removal and moving labels answer different
+// questions, so a document containing both invites exactly one thing: an average
+// across them. `--job-type=` scopes the manifest, the results and every section
+// below it; the small-pilot banner is then computed from THAT lane's sample, not
+// from a dataset-wide count that would hide an undersized lane behind a healthy one.
+const jobTypeArg = process.argv.slice(2).find(a => a.startsWith('--job-type='))?.split('=')[1]
+const laneJobType = (jobTypeArg === 'moving' || jobTypeArg === 'junk_removal') ? jobTypeArg as JobType : undefined
+const laneEntries = laneJobType ? entries.filter(e => e.jobType === laneJobType) : entries
+const laneResults = laneJobType ? results.filter(r => r.jobType === laneJobType) : results
+const spec = laneJobType ? scoringFor(laneJobType) : undefined
+
+const verifiedCount = laneEntries.filter(e => hasGroundTruth(e)).length
+const holdoutVerified = laneEntries.filter(e => hasGroundTruth(e) && e.split === 'holdout').length
+const devVerified = laneEntries.filter(e => hasGroundTruth(e) && e.split === 'development').length
 // Bound to the sample, not to a flag: the banner cannot be left switched off by
 // accident once the dataset grows, and cannot be switched off early while it
 // has not.
+// The undersized-sample warning belongs to the lane that is undersized. The junk
+// pilot runs at five; the moving set is complete at ten and must not inherit a
+// warning that is not true of it — nor lose one if it ever shrinks.
 const smallPilot = verifiedCount > 0 && verifiedCount <= SMALL_PILOT_MAX_VERIFIED
 const pilotBlock = smallPilot
   ? [`> ## ⚠ ${PILOT_BANNER.toUpperCase()}`, `>`,
@@ -271,25 +308,36 @@ const pilotBlock = smallPilot
      ...PILOT_LIMITATIONS.map(l => `> - ${l}`), ``]
   : []
 
+const unavailableBlock = spec && spec.unavailable.length > 0
+  ? ['## Dimensions this dataset cannot score', '',
+     'Reported as unavailable, NOT as zero. These are fields the labelling UI never',
+     'asked for; the existing labels remain valid for everything else.', '',
+     '| dimension | why |', '|---|---|',
+     ...spec.unavailable.map(u => `| ${u.label} | ${u.reason} |`), '']
+  : []
+
 const doc = [
-  `# Vision benchmark report`,
+  `# Vision benchmark report${laneJobType ? ` — ${laneJobType}` : ''}`,
   ``,
   ...pilotBlock,
   `- dataset: \`${root}\``,
-  `- images: **${entries.length}** · approved: **${entries.filter(e => e.reviewStatus === 'approved').length}** · labelled: **${verifiedCount}**`,
+  `- lane: **${laneJobType ?? 'ALL JOB TYPES (unscoped — sections still report per type and are never pooled)'}**`,
+  `- images in lane: **${laneEntries.length}** · approved: **${laneEntries.filter(e => e.reviewStatus === 'approved').length}** · verified: **${verifiedCount}**`,
+  `- split: development **${devVerified}** · holdout **${holdoutVerified}** (frozen — labelled, never tuned against)`,
   `- job groups: **${loadGroups(root).length}** · rejected sources logged: **${loadRejected(root).length}**`,
-  `- benchmark jobs in this run: **${results.length}**`,
+  `- benchmark jobs in this run: **${laneResults.length}**`,
   ``,
-  coverageReport(entries), ``,
-  duplicateReport(entries), ``,
-  latencyReport(results), ``,
-  accuracyReport(entries, results), ``,
-  calibrationReport(entries, results), ``,
-  failureReport(entries, results), ``,
+  ...unavailableBlock,
+  coverageReport(laneEntries), ``,
+  duplicateReport(laneEntries), ``,
+  latencyReport(laneResults), ``,
+  accuracyReport(laneEntries, laneResults), ``,
+  calibrationReport(laneEntries, laneResults), ``,
+  failureReport(laneEntries, laneResults), ``,
 ].join('\n')
 
 mkdirSync(p.reports, { recursive: true })
-const out = join(p.reports, 'report.md')
+const out = join(p.reports, laneJobType ? `report-${laneJobType}.md` : 'report.md')
 writeFileSync(out, doc)
 console.log(doc)
 console.log(`\n  written → ${out}\n`)

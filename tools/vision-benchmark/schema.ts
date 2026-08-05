@@ -192,12 +192,17 @@ export function validateEntry(e: Partial<ManifestEntry>): string[] {
 }
 
 /**
- * A 24 ft box truck is ~44 cubic yards. Anything above ~6 truckloads is either a
- * mis-keyed label or a job nobody quotes from a photo, so it is refused rather
- * than silently accepted into the accuracy maths.
+ * The J KISS 24 ft box truck holds 1,000 cubic feet of loadable space — 37 cubic
+ * yards, per the owner. That is the real truck, not a spec-sheet gross interior:
+ * an empty 24 ft box measures larger, but 1,000 cu ft is what gets loaded. Every
+ * fill percentage in this dataset is a fraction of THAT.
+ *
+ * Anything above ~6 truckloads is either a mis-keyed label or a job nobody quotes
+ * from a photo, so it is refused rather than silently accepted into the accuracy
+ * maths.
  */
-export const MAX_PLAUSIBLE_CUBIC_YARDS = 264
-export const TRUCK_CUBIC_YARDS = 44
+export const MAX_PLAUSIBLE_CUBIC_YARDS = 222
+export const TRUCK_CUBIC_YARDS = 37
 
 /** Flags a labeller may attach. Free text is not accepted — it cannot be aggregated. */
 export const DISPOSAL_FLAGS = [
@@ -237,7 +242,7 @@ export function validateLabel(e: Partial<ManifestEntry>): string[] {
   problems.push(...rangeProblems('labor hours', e.expectedLaborHoursRange ?? null, { max: 80 }))
 
   // Cross-check: truck-space % and cubic yards describe the SAME quantity
-  // (% = cuYd / 44). A large disagreement means one of them was mis-keyed, and
+  // (% = cuYd / TRUCK_CUBIC_YARDS). A large disagreement means one of them was mis-keyed, and
   // the pair would then be scored as if both were true. Tolerance is generous —
   // these are eyeballed estimates, not measurements — but a 3x gap is an error.
   const vol = e.expectedVolumeRangeCubicYards
