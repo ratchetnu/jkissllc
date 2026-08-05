@@ -10,7 +10,7 @@
 
 import { analyzeMovingPhotos } from './moving-analysis'
 import { getMovingSettings, type MovingJobFacts } from '../pricing/moving-quote'
-import { decideMovingQuote, type MovingDecisionResult } from '../pricing/moving-decision'
+import { decideMovingQuote, MOVING_DECISION_VERSION, type MovingDecisionResult } from '../pricing/moving-decision'
 import { timeStage } from '../observability/pipeline-trace'
 import { SERVICE_LABELS, type ServiceType } from '../bookings'
 import type { MovingPhotoAnalysis } from './analysis-schema-moving'
@@ -60,6 +60,26 @@ export type MovingEstimateResult = {
   callId?: string
 }
 
+/** A decision carrying the vision read but no price, for when pricing cannot run. */
+function unpricedDecision(analysis: MovingPhotoAnalysis): MovingDecisionResult {
+  return {
+    decision: 'manual_review',
+    quote: {
+      low: 0, high: 0, recommendedUsd: 0, crewSize: analysis.recommendedCrewSize.likely || 2,
+      laborHours: { minimum: 0, likely: 0, maximum: 0 },
+      truckSpaceFraction: analysis.estimatedTruckSpaceFraction.likely,
+      costBasisCents: 0, sellingPriceCents: 0, minimumApplied: false,
+      breakdown: [], assumptions: ['Pricing configuration was unavailable.'],
+    },
+    reviewReasons: Array.from(new Set([...analysis.reviewReasons, 'Pricing configuration was unavailable — a team member will confirm your price.'])),
+    missingInformation: analysis.missingInformation,
+    recommendedUsd: 0,
+    rangeUsd: { low: 0, high: 0 },
+    priced: false,
+    decisionVersion: MOVING_DECISION_VERSION,
+  }
+}
+
 export async function buildMovingEstimate(input: MovingEstimateInput): Promise<MovingEstimateResult> {
   const nowIso = new Date().toISOString()
   const serviceLabel = SERVICE_LABELS[input.serviceType] ?? input.serviceType
@@ -68,10 +88,20 @@ export async function buildMovingEstimate(input: MovingEstimateInput): Promise<M
     analysisId: input.analysisId, bookingId: input.bookingId, photoUrls: input.photoUrls, serviceLabel, nowIso,
   }))
 
-  const decision = await timeStage('pricing', async () => {
-    const settings = await getMovingSettings()
-    return decideMovingQuote({ analysis: analyzed.analysis, settings, facts: input.facts })
-  })
+  // If the rate card cannot be read we do NOT fall back to the default rates: that
+  // would quote this tenant's move on numbers they never agreed to, and it would
+  // look exactly like a successful quote. An unreadable rate card is a job for a
+  // human, and the vision read is kept either way.
+  let decision: MovingDecisionResult
+  try {
+    decision = await timeStage('pricing', async () => {
+      const settings = await getMovingSettings()
+      return decideMovingQuote({ analysis: analyzed.analysis, settings, facts: input.facts })
+    })
+  } catch (e) {
+    console.error('[moving-estimate] settings read failed', e)
+    decision = unpricedDecision(analyzed.analysis)
+  }
 
   const stored: StoredMovingEstimate = {
     id: input.analysisId,

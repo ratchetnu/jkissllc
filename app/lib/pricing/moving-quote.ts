@@ -53,10 +53,17 @@ export const DEFAULT_MOVING: MovingSettings = {
   marginPct: 0.35,
 }
 
-const KEY = 'cfg:moving'
+/** Tenant-owned: `cfg:` is not on the platform-global allowlist, so every read and
+ * write is scoped to the ambient tenant by the Redis chokepoint. */
+export const MOVING_SETTINGS_KEY = 'cfg:moving'
+const KEY = MOVING_SETTINGS_KEY
 
-export async function getMovingSettings(): Promise<MovingSettings> {
-  const raw = await redis.get(KEY)
+/**
+ * Merge a stored config over the defaults. Pure, so the merge semantics can be
+ * tested without a store: absent key → defaults, unparseable → defaults, partial
+ * → only the fields actually saved override.
+ */
+export function parseMovingSettings(raw: string | null): MovingSettings {
   if (!raw) return DEFAULT_MOVING
   try {
     const parsed = JSON.parse(raw) as Partial<MovingSettings>
@@ -64,10 +71,80 @@ export async function getMovingSettings(): Promise<MovingSettings> {
   } catch { return DEFAULT_MOVING }
 }
 
+/**
+ * Read this tenant's rate card.
+ *
+ * A read FAILURE is not the same as an unconfigured tenant and must not be
+ * flattened into one. "No config saved" legitimately means the documented
+ * defaults; "the store did not answer" means we do not know this tenant's rates,
+ * and quoting a move on someone else's numbers is worse than not quoting it. The
+ * error propagates, and buildMovingEstimate turns it into an unpriced job for a
+ * human rather than a confident price built on a guess.
+ */
+export async function getMovingSettings(): Promise<MovingSettings> {
+  return parseMovingSettings(await redis.get(KEY))
+}
+
 export async function saveMovingSettings(patch: Partial<MovingSettings>): Promise<MovingSettings> {
   const next = { ...(await getMovingSettings()), ...patch }
   await redis.set(KEY, JSON.stringify(next))
   return next
+}
+
+/**
+ * Every configurable field, with its allowed bounds. Declared once so the
+ * validator, the tests and any future admin UI cannot drift apart — a field added
+ * to MovingSettings but forgotten here is simply not writable, which is the safe
+ * direction to fail.
+ */
+export const MOVING_SETTING_BOUNDS: Record<keyof MovingSettings, { min: number; max: number; integer: boolean }> = {
+  crewRatePerHourCents: { min: 0, max: 100_000, integer: true },
+  minimumHours: { min: 0, max: 24, integer: false },
+  minimumChargeCents: { min: 0, max: 10_000_000, integer: true },
+  truckFeeCents: { min: 0, max: 1_000_000, integer: true },
+  travelPerMileCents: { min: 0, max: 100_000, integer: true },
+  baseTravelMinutes: { min: 0, max: 600, integer: true },
+  stairsPerFlightCents: { min: 0, max: 1_000_000, integer: true },
+  elevatorCents: { min: 0, max: 1_000_000, integer: true },
+  longCarryCents: { min: 0, max: 1_000_000, integer: true },
+  disassemblyPerItemCents: { min: 0, max: 1_000_000, integer: true },
+  applianceHandlingCents: { min: 0, max: 1_000_000, integer: true },
+  oversizedItemCents: { min: 0, max: 5_000_000, integer: true },
+  fragilePackingCents: { min: 0, max: 1_000_000, integer: true },
+  packingServiceCents: { min: 0, max: 5_000_000, integer: true },
+  marginPct: { min: 0, max: 0.9, integer: false },
+}
+
+export const MOVING_SETTING_KEYS = Object.keys(MOVING_SETTING_BOUNDS) as (keyof MovingSettings)[]
+
+/**
+ * Validate an untrusted settings patch.
+ *
+ * REJECTS rather than clamps. A negative rate silently clamped to 0 would quote
+ * every move at the minimum charge and look like a pricing bug for weeks; a
+ * rejected request tells the admin immediately that the value never took. Fields
+ * not present are left alone — the caller merges over the stored config, which in
+ * turn merges over the defaults, so an unset field keeps its default.
+ */
+export function sanitizeMovingSettingsPatch(body: unknown): { patch: Partial<MovingSettings>; rejected: string[] } {
+  const patch: Partial<MovingSettings> = {}
+  const rejected: string[] = []
+  if (!body || typeof body !== 'object') return { patch, rejected: ['body must be an object'] }
+  const o = body as Record<string, unknown>
+
+  for (const key of MOVING_SETTING_KEYS) {
+    if (o[key] === undefined) continue          // absent ≠ zero: leave it alone
+    const b = MOVING_SETTING_BOUNDS[key]
+    const raw = o[key]
+    const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN
+    if (!Number.isFinite(n)) { rejected.push(`${key}: not a number`); continue }
+    if (n < b.min) { rejected.push(`${key}: ${n} is below the minimum ${b.min}`); continue }
+    if (n > b.max) { rejected.push(`${key}: ${n} is above the maximum ${b.max}`); continue }
+    ;(patch as Record<string, number>)[key] = b.integer ? Math.round(n) : n
+  }
+  // Unknown keys are ignored rather than rejected: a client sending an extra field
+  // should not be able to make a valid settings write fail.
+  return { patch, rejected }
 }
 
 /** Non-visual job facts. A photo cannot supply any of these. */
