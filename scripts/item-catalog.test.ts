@@ -12,6 +12,23 @@ test('aliases match whole tokens rather than fragments inside unrelated words', 
   assert.equal(resolveCatalogItem('orange chair'), null)
 })
 
+test('only a terminal head noun matches, so accessory labels stay unclassified', () => {
+  for (const label of ['tv stand', 'tv cabinet', 'sofa table', 'patio couch cushions', 'range hood', 'desk lamp']) {
+    assert.equal(resolveCatalogItem(label), null, label)
+  }
+  assert.equal(resolveCatalogItem('office desk chair')?.id, 'office_chair')
+  assert.equal(resolveCatalogItem('mini fridge'), null)
+  assert.equal(resolveCatalogItem('beverage fridge'), null)
+  assert.equal(resolveCatalogItem('small stainless mini fridge'), null)
+})
+
+test('singular, regular plural, irregular plural and stored-plural aliases resolve', () => {
+  assert.equal(resolveCatalogItem('bookshelves')?.id, 'bookcase')
+  assert.equal(resolveCatalogItem('shelves')?.id, 'bookcase')
+  assert.equal(resolveCatalogItem('branch pile')?.id, 'yard_waste_bundle')
+  assert.equal(resolveCatalogItem('single board')?.id, 'lumber_bundle')
+})
+
 test('sectional never resolves as a loveseat', () => {
   assert.equal(resolveCatalogItem('large sectional sofa')?.id, 'sectional')
 })
@@ -19,6 +36,11 @@ test('sectional never resolves as a loveseat', () => {
 test('size class changes the controlled range', () => {
   const tv = resolveCatalogItem('television')!
   assert.notDeepEqual(catalogVolume(tv, 'small'), catalogVolume(tv, 'oversized'))
+})
+
+test('a missing requested size has no silent medium fallback', () => {
+  const fridge = resolveCatalogItem('refrigerator')!
+  assert.equal(catalogVolume(fridge, 'small'), null)
 })
 
 test('appliances carry operational handling flags', () => {
@@ -39,11 +61,11 @@ test('catalog disagreement lowers agreement', () => {
 })
 
 test('catalog contains no pricing data', () => {
-  const forbidden = new Set(['price', 'cost', 'fee', 'usd', 'dollar', 'rate'])
+  const forbidden = /(price|cost|fee(?!t)|usd|dollar|rate)/i
   const visit = (value: unknown): void => {
     if (!value || typeof value !== 'object') return
     for (const [key, child] of Object.entries(value)) {
-      assert.equal(forbidden.has(key.toLowerCase()), false)
+      assert.equal(forbidden.test(key), false, `pricing-like catalog key: ${key}`)
       visit(child)
     }
   }

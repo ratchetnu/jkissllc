@@ -1,7 +1,7 @@
-// ─────────────────────────────────────────────────────────────────────────────
-
 import { catalogMatch, type VolumeRange as CatalogVolumeRange } from './item-catalog'
-// Structured junk-photo analysis schema + a dependency-free validator/normalizer.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Structured junk-photo analysis schema + a pure validator/normalizer.
 //
 // The vision model is UNTRUSTED. It returns free-form JSON; this module clamps,
 // defaults, and range-checks every field into a well-formed `JunkPhotoAnalysis`.
@@ -152,16 +152,15 @@ function normalizeItem(v: unknown): DetectedJunkItem | null {
     evidence: strOr(v.evidence, '', 240),
   }
   const match = catalogMatch(detected.label, 'medium', detected.estimatedVolumeCubicYards * 27)
-  if (!match.entry || !match.volume) return { ...detected, confidence: Math.min(detected.confidence, 0.6), catalogAgreement: match.agreement }
+  if (!match.entry || !match.volume) return detected
   return {
     ...detected,
-    estimatedVolumeCubicYards: ((match.volume.minimum + match.volume.maximum) / 2) / 27,
     confidence: Math.min(detected.confidence, match.agreement),
     catalogId: match.entry.id,
     catalogVolumeCubicFeet: match.volume,
     catalogAgreement: match.agreement,
     operationalHandlingFlags: match.entry.junkFlags,
-    bulky: detected.bulky || match.entry.defaultCrew > 1,
+    bulky: detected.bulky || match.entry.bulky === true,
     heavy: detected.heavy || match.entry.weightClass === 'heavy' || match.entry.weightClass === 'very_heavy',
     requiresDisassembly: detected.requiresDisassembly || match.entry.disassemblyLikely === true,
   }
@@ -257,6 +256,9 @@ export function normalizeAnalysis(raw: unknown, ctx: NormalizeCtx): JunkPhotoAna
   if (unusable) reasons.push('Photos were unusable (too dark, blurry, or obstructed).')
   if (confidence.overall < 0.55) reasons.push('Overall confidence is below the instant-quote threshold.')
   if (confidence.volume < 0.5) reasons.push('Volume estimate is uncertain.')
+  if (normalizedItems.some(item => item.catalogAgreement !== undefined && item.catalogAgreement < 0.6)) {
+    reasons.push('One or more item volumes disagree with the operational catalog.')
+  }
   if (detectedConditions.hazardousMaterialPossible || detectedConditions.paintOrChemicalPossible) reasons.push('Possible hazardous materials — needs human confirmation.')
   if (detectedConditions.concreteOrSoilPossible) reasons.push('Possible dense debris (concrete/soil) — weight risk.')
   if (fraction.likely > 1.1) reasons.push('Job may need more than one truckload.')

@@ -43,6 +43,35 @@ test('valid model output normalizes without forcing review', () => {
   assert.ok(a.estimatedTruckLoadFraction.likely > 0)
 })
 
+test('catalog annotations do not rewrite model volume or make every matched item bulky', () => {
+  const a = normalizeAnalysis(goodRaw({ normalizedItems: [
+    { category: 'household_junk', label: 'trash bags', estimatedQuantity: 6, estimatedVolumeCubicYards: 0.5, bulky: false, confidence: 0.9 },
+    { category: 'furniture', label: 'dining chairs', estimatedQuantity: 4, estimatedVolumeCubicYards: 0.3, bulky: false, confidence: 0.9 },
+  ] }), ctx())
+  assert.equal(a.normalizedItems[0].estimatedVolumeCubicYards, 0.5)
+  assert.equal(a.normalizedItems[0].bulky, false)
+  assert.equal(a.normalizedItems[1].estimatedVolumeCubicYards, 0.3)
+  assert.equal(a.normalizedItems[1].bulky, false)
+})
+
+test('matched catalog disagreement preserves volume and forces review', () => {
+  const a = normalizeAnalysis(goodRaw({ normalizedItems: [
+    { category: 'appliance', label: 'refrigerator', estimatedQuantity: 1, estimatedVolumeCubicYards: 0.3, confidence: 0.9 },
+  ] }), ctx())
+  assert.equal(a.normalizedItems[0].estimatedVolumeCubicYards, 0.3)
+  assert.equal(a.normalizedItems[0].catalogAgreement, 0.55)
+  assert.equal(a.reviewRequired, true)
+  assert.ok(a.reviewReasons.some(reason => /operational catalog/i.test(reason)))
+})
+
+test('catalog annotation preserves a self-consistent item sum for the monitor', () => {
+  const a = normalizeAnalysis(goodRaw({
+    normalizedItems: [{ category: 'furniture', label: 'couches', estimatedQuantity: 2, estimatedVolumeCubicYards: 1.2, confidence: 0.9 }],
+    totalEstimatedVolumeCubicYards: { minimum: 2.4, likely: 2.4, maximum: 2.4 },
+  }), ctx())
+  assert.equal(monitorAnalysis(a).concerns.some(concern => concern.code === 'volume_sum_mismatch'), false)
+})
+
 test('confidence values are clamped into 0..1', () => {
   const a = normalizeAnalysis(goodRaw({ confidence: { overall: 5, volume: -2, weight: 0.5, itemClassification: 0.5, accessDifficulty: 0.5 } }), ctx())
   assert.ok(a.confidence.overall <= 1 && a.confidence.overall >= 0)

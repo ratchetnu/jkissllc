@@ -10,6 +10,7 @@ export type OperationalItem = {
   defaultCrew: number
   fragile?: boolean
   appliance?: boolean
+  bulky?: boolean
   disassemblyLikely?: boolean
   movingFlags: string[]
   junkFlags: string[]
@@ -28,15 +29,16 @@ const item = (
     ...(options.oversized ? { oversized: { minimum: options.oversized[0], maximum: options.oversized[1] } } : {}),
   },
   weightClass: options.weightClass ?? 'moderate', defaultCrew: options.defaultCrew ?? 2,
-  fragile: options.fragile, appliance: options.appliance, disassemblyLikely: options.disassemblyLikely,
+  fragile: options.fragile, appliance: options.appliance, bulky: options.bulky,
+  disassemblyLikely: options.disassemblyLikely,
   movingFlags: options.moving ?? [], junkFlags: options.junk ?? [],
 })
 
 /** Operational facts only. Customer/tenant pricing is deliberately impossible to represent here. */
 export const OPERATIONAL_ITEM_CATALOG: OperationalItem[] = [
   item('loveseat', ['two seat sofa'], [45, 65], { large: [55, 75], moving: ['two_person_lift'], junk: ['rigid'] }),
-  item('standard_sofa', ['sofa', 'couch', 'three seat sofa'], [65, 90], { large: [80, 110], moving: ['two_person_lift'], junk: ['rigid'] }),
-  item('sectional', ['sectional sofa', 'l shaped couch'], [100, 160], { large: [130, 210], oversized: [180, 280], disassemblyLikely: true, moving: ['two_person_lift', 'requires_disassembly'], junk: ['rigid'] }),
+  item('standard_sofa', ['sofa', 'couch', 'three seat sofa'], [65, 90], { large: [80, 110], bulky: true, moving: ['two_person_lift'], junk: ['rigid'] }),
+  item('sectional', ['sectional sofa', 'l shaped couch'], [100, 160], { large: [130, 210], oversized: [180, 280], bulky: true, disassemblyLikely: true, moving: ['two_person_lift', 'requires_disassembly'], junk: ['rigid'] }),
   item('recliner', ['reclining chair'], [35, 55], { weightClass: 'heavy', moving: ['two_person_lift'], junk: ['rigid'] }),
   item('twin_mattress', ['single mattress'], [22, 32], { weightClass: 'moderate', moving: ['mattress'], junk: ['mattress'] }),
   item('full_mattress', ['double mattress'], [28, 40], { weightClass: 'moderate', moving: ['mattress'], junk: ['mattress'] }),
@@ -49,8 +51,8 @@ export const OPERATIONAL_ITEM_CATALOG: OperationalItem[] = [
   item('dining_chair', ['kitchen chair'], [7, 12], { small: [5, 8], moving: [], junk: ['rigid'] }),
   item('desk', ['office desk', 'writing desk'], [25, 55], { large: [45, 80], disassemblyLikely: true, moving: ['requires_disassembly'], junk: ['rigid'] }),
   item('office_chair', ['desk chair'], [12, 22], { moving: [], junk: ['rigid'] }),
-  item('bookcase', ['bookshelf', 'shelving unit'], [20, 45], { large: [35, 70], moving: ['two_person_lift'], junk: ['rigid'] }),
-  item('refrigerator', ['fridge'], [45, 75], { large: [60, 95], weightClass: 'very_heavy', defaultCrew: 2, appliance: true, moving: ['two_person_lift', 'appliance'], junk: ['appliance', 'special_disposal_review'] }),
+  item('bookcase', ['bookshelf', 'shelf', 'shelving unit'], [20, 45], { large: [35, 70], moving: ['two_person_lift'], junk: ['rigid'] }),
+  item('refrigerator', ['fridge'], [45, 75], { large: [60, 95], weightClass: 'very_heavy', defaultCrew: 2, appliance: true, bulky: true, moving: ['two_person_lift', 'appliance'], junk: ['appliance', 'special_disposal_review'] }),
   item('washer', ['washing machine'], [22, 32], { weightClass: 'very_heavy', appliance: true, moving: ['two_person_lift', 'appliance'], junk: ['appliance'] }),
   item('dryer', ['clothes dryer'], [22, 32], { weightClass: 'heavy', appliance: true, moving: ['two_person_lift', 'appliance'], junk: ['appliance'] }),
   item('stove', ['range', 'oven range'], [28, 42], { weightClass: 'very_heavy', appliance: true, moving: ['two_person_lift', 'appliance'], junk: ['appliance'] }),
@@ -60,42 +62,54 @@ export const OPERATIONAL_ITEM_CATALOG: OperationalItem[] = [
   item('exercise_bike', ['stationary bike'], [20, 35], { weightClass: 'heavy', moving: ['two_person_lift'], junk: ['heavy'] }),
   item('moving_box', ['cardboard box', 'packing box'], [3, 6], { small: [1.5, 3], large: [5, 8], moving: ['container'], junk: ['compactable'] }),
   item('trash_bag', ['garbage bag', 'bin bag'], [2, 5], { small: [1, 3], weightClass: 'light', moving: [], junk: ['bagged_material', 'compactable'] }),
-  item('yard_waste_bundle', ['brush bundle', 'branches'], [8, 18], { large: [15, 30], weightClass: 'moderate', moving: [], junk: ['loose_debris'] }),
+  item('yard_waste_bundle', ['brush bundle', 'branch pile', 'branches'], [8, 18], { large: [15, 30], weightClass: 'moderate', moving: [], junk: ['loose_debris'] }),
   item('drywall_bag', ['construction debris bag'], [1, 3], { weightClass: 'very_heavy', moving: [], junk: ['heavy', 'construction_debris'] }),
   item('lumber_bundle', ['wood bundle', 'boards'], [6, 16], { large: [12, 28], weightClass: 'heavy', moving: ['awkward_shape'], junk: ['sharp_edges'] }),
 ]
 
 const clean = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 
-const tokenMatches = (token: string, aliasToken: string): boolean =>
-  token === aliasToken || token === `${aliasToken}s` || token === `${aliasToken}es`
+const IRREGULAR_SINGULARS: Record<string, string> = { bookshelves: 'bookshelf', shelves: 'shelf' }
+
+const singular = (token: string): string => {
+  if (IRREGULAR_SINGULARS[token]) return IRREGULAR_SINGULARS[token]
+  if (/(ches|shes|xes|zes|ses)$/.test(token)) return token.slice(0, -2)
+  if (token.endsWith('s') && !token.endsWith('ss')) return token.slice(0, -1)
+  return token
+}
+
+const tokenMatches = (token: string, aliasToken: string): boolean => singular(token) === singular(aliasToken)
 
 const containsAlias = (label: string, alias: string): boolean => {
   const labelTokens = label.split(' ')
   const aliasTokens = alias.split(' ')
   if (aliasTokens.length > labelTokens.length) return false
-  return labelTokens.some((_, start) => aliasTokens.every((aliasToken, offset) =>
+  const start = labelTokens.length - aliasTokens.length
+  return aliasTokens.every((aliasToken, offset) =>
     tokenMatches(labelTokens[start + offset] ?? '', aliasToken),
-  ))
+  )
 }
+
+const UNSUPPORTED_VARIANTS = ['mini fridge', 'beverage fridge']
 
 export function resolveCatalogItem(label: string): OperationalItem | null {
   const needle = clean(label)
-  if (!needle) return null
+  if (!needle || UNSUPPORTED_VARIANTS.some(variant => needle === variant || needle.endsWith(` ${variant}`))) return null
   const matches = OPERATIONAL_ITEM_CATALOG.flatMap(entry => entry.aliases.map(alias => ({ entry, alias: clean(alias) })))
     .filter(match => containsAlias(needle, match.alias))
     .sort((a, b) => b.alias.length - a.alias.length)
   return matches[0]?.entry ?? null
 }
 
-export function catalogVolume(entry: OperationalItem, size: CatalogSize = 'medium'): VolumeRange {
-  return entry.volumeCubicFeet[size] ?? entry.volumeCubicFeet.medium!
+export function catalogVolume(entry: OperationalItem, size: CatalogSize = 'medium'): VolumeRange | null {
+  return entry.volumeCubicFeet[size] ?? null
 }
 
 export function catalogMatch(label: string, size: CatalogSize, modelCubicFeet: number) {
   const entry = resolveCatalogItem(label)
   if (!entry) return { entry: null, volume: null, agreement: 0.45 }
   const volume = catalogVolume(entry, size)
+  if (!volume) return { entry, volume: null, agreement: 0.65 }
   const agreement = modelCubicFeet <= 0 ? 0.7
     : modelCubicFeet >= volume.minimum * 0.6 && modelCubicFeet <= volume.maximum * 1.5 ? 1 : 0.55
   return { entry, volume, agreement }

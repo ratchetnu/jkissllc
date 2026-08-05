@@ -90,11 +90,21 @@ test('[schema] a valid moving read normalizes without forcing review', () => {
   assert.equal(a.normalizedItems[0].catalogId, 'sectional')
   assert.deepEqual(a.normalizedItems[0].catalogVolumeCubicFeet, { minimum: 130, maximum: 210 })
   assert.ok(a.normalizedItems[0].operationalHandlingFlags?.includes('requires_disassembly'))
-  assert.equal(a.normalizedItems[2].catalogId, 'washer')
   assert.equal(a.normalizedItems[2].isAppliance, true)
   assert.equal(a.reviewRequired, false)
   assert.equal(a.boxCount.likely, 14)
   assert.ok(a.estimatedTruckSpaceFraction.likely > 0)
+})
+
+test('[schema] catalog disagreement preserves model volume and forces review', () => {
+  const a = normalizeMovingAnalysis(movingRaw({ normalizedItems: [{
+    category: 'appliance', label: 'refrigerator', quantity: 1, sizeClass: 'large',
+    estimatedVolumeCubicFeet: 10, confidence: 0.9,
+  }] }), ctx())
+  assert.equal(a.normalizedItems[0].estimatedVolumeCubicFeet, 10)
+  assert.equal(a.normalizedItems[0].catalogAgreement, 0.55)
+  assert.equal(a.reviewRequired, true)
+  assert.ok(a.reviewReasons.some(reason => /operational catalog/i.test(reason)))
 })
 
 test('[schema] quantity, crew and labor ranges stay ordered and bounded', () => {

@@ -1,7 +1,7 @@
-// ─────────────────────────────────────────────────────────────────────────────
-
 import { catalogMatch, type CatalogSize, type VolumeRange as CatalogVolumeRange } from './item-catalog'
-// Structured MOVING-photo analysis schema + a dependency-free normalizer.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Structured MOVING-photo analysis schema + a pure normalizer.
 //
 // A relocation inventory, NOT discard material. Every item here is going on a
 // truck and coming back off it at the other end — so the operational questions
@@ -266,10 +266,9 @@ function item(raw: unknown): DetectedMovingItem | null {
 
 function applyCatalog(detected: DetectedMovingItem): DetectedMovingItem {
   const match = catalogMatch(detected.label, detected.sizeClass as CatalogSize, detected.estimatedVolumeCubicFeet)
-  if (!match.entry || !match.volume) return { ...detected, confidence: Math.min(detected.confidence, 0.6), catalogAgreement: match.agreement }
+  if (!match.entry || !match.volume) return detected
   return {
     ...detected,
-    estimatedVolumeCubicFeet: (match.volume.minimum + match.volume.maximum) / 2,
     confidence: Math.min(detected.confidence, match.agreement),
     catalogId: match.entry.id,
     catalogVolumeCubicFeet: match.volume,
@@ -450,6 +449,9 @@ function normalizeCompact(o: Record<string, unknown>, ctx: NormalizeMovingCtx): 
   const unusable = observations.length > 0 && observations.every(p => p.imageQuality === 'unusable')
   if (items.length === 0) reviewReasons.push('No movable items could be identified from the photos.')
   if (unusable) reviewReasons.push('Photos were unusable.')
+  if (items.some(item => item.catalogAgreement !== undefined && item.catalogAgreement < 0.6)) {
+    reviewReasons.push('One or more item volumes disagree with the operational catalog.')
+  }
 
   return {
     analysisId: ctx.analysisId, bookingId: ctx.bookingId,
@@ -484,7 +486,8 @@ function normalizeCompact(o: Record<string, unknown>, ctx: NormalizeMovingCtx): 
     missingInformation: missing,
     additionalQuestions: [],
     warnings: confProblems.slice(0, 6),
-    reviewRequired: o.rev === true || items.length === 0 || unusable,
+    reviewRequired: o.rev === true || items.length === 0 || unusable
+      || items.some(item => item.catalogAgreement !== undefined && item.catalogAgreement < 0.6),
     reviewReasons: Array.from(new Set(reviewReasons)).slice(0, 8),
   }
 }
@@ -577,6 +580,9 @@ export function normalizeMovingAnalysis(raw: unknown, ctx: NormalizeMovingCtx): 
 
   if (noItems) reviewReasons.push('No movable items could be identified from the photos.')
   if (unusable) reviewReasons.push('Photos were unusable.')
+  if (items.some(item => item.catalogAgreement !== undefined && item.catalogAgreement < 0.6)) {
+    reviewReasons.push('One or more item volumes disagree with the operational catalog.')
+  }
 
   return {
     analysisId: ctx.analysisId, bookingId: ctx.bookingId,
@@ -595,7 +601,8 @@ export function normalizeMovingAnalysis(raw: unknown, ctx: NormalizeMovingCtx): 
     missingInformation: strList(o.missingInformation),
     additionalQuestions: strList(o.additionalQuestions, 6),
     warnings,
-    reviewRequired: bool(o.reviewRequired) || noItems || unusable,
+    reviewRequired: bool(o.reviewRequired) || noItems || unusable
+      || items.some(item => item.catalogAgreement !== undefined && item.catalogAgreement < 0.6),
     reviewReasons: Array.from(new Set(reviewReasons)).slice(0, 8),
   }
 }
