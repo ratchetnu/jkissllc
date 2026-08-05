@@ -31,7 +31,14 @@
     "sync:dashboard": "npx --yes tsx@4 tools/product-sync/engine/dashboard.ts",
     "bench:junk": "npx --yes tsx@4 tools/vision-benchmark/bench.ts --job-type=junk_removal",
     "bench:moving": "npx --yes tsx@4 tools/vision-benchmark/bench.ts --job-type=moving",
-    "bench:all": "npx --yes tsx@4 tools/vision-benchmark/bench.ts --job-type=all"
+    "bench:all": "npx --yes tsx@4 tools/vision-benchmark/bench.ts --job-type=all",
+    "dataset:screen": "npx --yes tsx@4 tools/vision-benchmark/curation/cli.ts screen",
+    "dataset:label": "npx --yes tsx@4 tools/vision-benchmark/curation/cli.ts label",
+    "dataset:verify": "npx --yes tsx@4 tools/vision-benchmark/curation/cli.ts verify",
+    "dataset:consensus": "npx --yes tsx@4 tools/vision-benchmark/curation/cli.ts consensus",
+    "dataset:review-queue": "npx --yes tsx@4 tools/vision-benchmark/curation/cli.ts review-queue",
+    "dataset:report": "npx --yes tsx@4 tools/vision-benchmark/curation/cli.ts report",
+    "dataset:auto": "npx --yes tsx@4 tools/vision-benchmark/curation/cli.ts auto"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",
