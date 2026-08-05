@@ -60,7 +60,9 @@ export const OPERATIONAL_ITEM_CATALOG: OperationalItem[] = [
   item('television', ['tv', 'flat screen'], [6, 18], { small: [3, 8], large: [12, 28], oversized: [22, 45], fragile: true, moving: ['fragile'], junk: ['electronics'] }),
   item('treadmill', ['running machine'], [35, 70], { large: [55, 90], weightClass: 'very_heavy', disassemblyLikely: true, moving: ['two_person_lift', 'requires_disassembly'], junk: ['heavy'] }),
   item('exercise_bike', ['stationary bike'], [20, 35], { weightClass: 'heavy', moving: ['two_person_lift'], junk: ['heavy'] }),
-  item('moving_box', ['cardboard box', 'packing box'], [3, 6], { small: [1.5, 3], large: [5, 8], moving: ['container'], junk: ['compactable'] }),
+  // Bare `box` is safe now that matching is head-anchored: `box spring` heads on
+  // `spring`, so it keeps its own entry, and `tool box`/`box truck` head elsewhere.
+  item('moving_box', ['cardboard box', 'packing box', 'box'], [3, 6], { small: [1.5, 3], large: [5, 8], moving: ['container'], junk: ['compactable'] }),
   item('trash_bag', ['garbage bag', 'bin bag'], [2, 5], { small: [1, 3], weightClass: 'light', moving: [], junk: ['bagged_material', 'compactable'] }),
   item('yard_waste_bundle', ['brush bundle', 'branch pile', 'branches'], [8, 18], { large: [15, 30], weightClass: 'moderate', moving: [], junk: ['loose_debris'] }),
   item('drywall_bag', ['construction debris bag'], [1, 3], { weightClass: 'very_heavy', moving: [], junk: ['heavy', 'construction_debris'] }),
@@ -78,28 +80,99 @@ const singular = (token: string): string => {
   return token
 }
 
-const tokenMatches = (token: string, aliasToken: string): boolean => singular(token) === singular(aliasToken)
+/**
+ * Locational/relational prepositions. Everything after the first one is CONTEXT
+ * describing where the item sits, not the item itself.
+ *
+ * The benchmark proved why this matters: "Apple laptop/keyboard on desk" matched
+ * `desk`, and "Stereo/AV receiver or CD player on dresser" matched `dresser`,
+ * because the resolver anchored on the final token and a supporting surface is
+ * always the final token. A location noun then carried real handling facts —
+ * two-person lift, disassembly — onto an object that is not that item at all.
+ */
+const LOCATIONAL_PREPOSITIONS = new Set([
+  'on', 'in', 'under', 'underneath', 'beside', 'behind', 'near', 'against',
+  'atop', 'inside', 'above', 'below', 'by', 'alongside',
+])
+/**
+ * Multi-word prepositions, rewritten to a single-word equivalent that is already
+ * in the set above. Applied AFTER clean(), so punctuation ("next-to") is already
+ * normalised to spaces and the rewrite cannot be undone by later normalisation.
+ */
+const PREPOSITION_PHRASES: Array<[RegExp, string]> = [
+  [/\bnext to\b/g, ' beside '], [/\bon top of\b/g, ' on '], [/\bin front of\b/g, ' near '],
+]
+
+/**
+ * Descriptors modify a noun without ever BEING the noun. Deliberately a closed
+ * vocabulary: an open one would let unrelated terms collapse into each other,
+ * which is the failure mode this matcher exists to avoid.
+ */
+const DESCRIPTORS = new Set([
+  // size / proportion
+  'small', 'medium', 'large', 'oversized', 'tall', 'short', 'big', 'huge', 'compact',
+  'standard', 'xl', 'mini', 'wide', 'narrow', 'low', 'high', 'deep',
+  // bed sizing
+  'twin', 'single', 'full', 'double', 'queen', 'king',
+  // measurement units left behind after punctuation is normalised ("6-drawer" → "6 drawer")
+  'drawer', 'seat', 'seater', 'inch', 'inches', 'ft', 'foot', 'feet', 'cm', 'piece', 'pc',
+  'door', 'tier', 'shelf', 'panel', 'burner',
+])
+/** Grammatical glue that is never a head noun. */
+const STOPWORDS = new Set(['of', 'the', 'a', 'an', 'and', 'or', 'with', 'w', 'plus'])
+
+const isDescriptor = (token: string): boolean =>
+  DESCRIPTORS.has(token) || DESCRIPTORS.has(singular(token)) || /^\d+$/.test(token)
+
+/**
+ * The subject of a label: the tokens before any locational preposition.
+ * "boxes on shelf" → ["box"]; "mattress against wall" → ["mattress"].
+ */
+const subjectTokens = (label: string): string[] => {
+  let text = clean(label)
+  for (const [re, to] of PREPOSITION_PHRASES) text = text.replace(re, to)
+  const tokens = text.split(' ').filter(Boolean)
+  const cut = tokens.findIndex(t => LOCATIONAL_PREPOSITIONS.has(t))
+  return (cut === -1 ? tokens : tokens.slice(0, cut)).map(singular)
+}
+
+/**
+ * The head noun: the last token that is neither a descriptor nor glue. This is
+ * what makes word order stop mattering — "sofa large" and "large sofa" share the
+ * head `sofa` — while still refusing "tv stand", whose head is `stand`.
+ */
+const headNoun = (tokens: string[]): string | null => {
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    const t = tokens[i]
+    if (!isDescriptor(t) && !STOPWORDS.has(t)) return t
+  }
+  return null
+}
+
+/**
+ * An alias claims a label when they share a head noun AND every alias token is
+ * present in the label's subject. Order-free by design, head-anchored for safety.
+ */
+const aliasClaims = (subject: string[], aliasTokens: string[]): boolean => {
+  const aHead = headNoun(aliasTokens)
+  const sHead = headNoun(subject)
+  if (!aHead || !sHead || aHead !== sHead) return false
+  const pool = new Set(subject)
+  return aliasTokens.every(t => STOPWORDS.has(t) || pool.has(t))
+}
 
 /**
  * The set of labels an alias can match, reduced to one comparable string.
  *
- * Two aliases with this same key are interchangeable to the matcher even when
- * they are different strings — `couch` and `couches` both claim every "couches"
- * label. Governance MUST compare aliases by this key rather than by raw text,
- * or a new alias can silently take ownership of an existing one: the resolver
- * ranks by alias length, so the longer spelling wins the tie.
+ * Two aliases with this key are interchangeable to the matcher even when they
+ * are different strings — `couch`/`couches`, and now `queen mattress`/`mattress
+ * queen`, since matching is order-free. Governance MUST compare by this key, or
+ * an alias that merely looks new can silently take ownership of an existing one.
  */
-export const aliasMatchKey = (alias: string): string =>
-  clean(alias).split(' ').map(singular).join(' ')
-
-const containsAlias = (label: string, alias: string): boolean => {
-  const labelTokens = label.split(' ')
-  const aliasTokens = alias.split(' ')
-  if (aliasTokens.length > labelTokens.length) return false
-  const start = labelTokens.length - aliasTokens.length
-  return aliasTokens.every((aliasToken, offset) =>
-    tokenMatches(labelTokens[start + offset] ?? '', aliasToken),
-  )
+export const aliasMatchKey = (alias: string): string => {
+  const tokens = clean(alias).split(' ').filter(Boolean).map(singular)
+  const head = headNoun(tokens) ?? ''
+  return `${head}|${[...tokens].sort().join(' ')}`
 }
 
 const APPLIANCE_MODIFIERS = new Set([
@@ -111,14 +184,40 @@ const hasUnsupportedApplianceModifier = (label: string): boolean => {
   return tokens.some(token => APPLIANCE_MODIFIERS.has(token))
 }
 
+/** Best single entry for one already-tokenised subject phrase, or null. */
+function bestEntry(subject: string[], needle: string): OperationalItem | null {
+  const matches = OPERATIONAL_ITEM_CATALOG
+    .flatMap(entry => entry.aliases.map(alias => ({ entry, tokens: clean(alias).split(' ').filter(Boolean).map(singular) })))
+    .filter(match => aliasClaims(subject, match.tokens))
+    .filter(match => !(match.entry.appliance && hasUnsupportedApplianceModifier(needle)))
+    .sort((a, b) => b.tokens.length - a.tokens.length || b.tokens.join(' ').length - a.tokens.join(' ').length)
+  return matches[0]?.entry ?? null
+}
+
 export function resolveCatalogItem(label: string): OperationalItem | null {
   const needle = clean(label)
   if (!needle) return null
-  const matches = OPERATIONAL_ITEM_CATALOG.flatMap(entry => entry.aliases.map(alias => ({ entry, alias: clean(alias) })))
-    .filter(match => containsAlias(needle, match.alias))
-    .filter(match => !(match.entry.appliance && hasUnsupportedApplianceModifier(needle)))
-    .sort((a, b) => b.alias.length - a.alias.length)
-  return matches[0]?.entry ?? null
+  const subject = subjectTokens(label)
+  if (subject.length === 0) return null
+
+  // "desk or dresser" names two different governed items. Guessing one attaches
+  // that one's handling facts — disassembly vs two-person-lift — to an object we
+  // cannot identify. An ambiguous phrase is safer unmatched than half-right.
+  if (subject.includes('or')) {
+    const alternatives = subject.reduce<string[][]>((acc, t) => {
+      if (t === 'or') acc.push([])
+      else acc[acc.length - 1].push(t)
+      return acc
+    }, [[]]).filter(seg => seg.length > 0)
+    const resolved = new Set(
+      alternatives.map(seg => bestEntry(seg, needle)?.id).filter((id): id is string => !!id),
+    )
+    if (resolved.size > 1) return null
+  }
+  // Ranking happens in bestEntry(): the most specific alias wins — more matched
+  // tokens first, then the longer spelling. A location noun can no longer outrank
+  // the subject at all, because aliasClaims() never lets it become a candidate.
+  return bestEntry(subject, needle)
 }
 
 export function catalogVolume(entry: OperationalItem, size: CatalogSize = 'medium'): VolumeRange | null {
