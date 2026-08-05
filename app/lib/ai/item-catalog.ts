@@ -80,6 +80,18 @@ const singular = (token: string): string => {
 
 const tokenMatches = (token: string, aliasToken: string): boolean => singular(token) === singular(aliasToken)
 
+/**
+ * The set of labels an alias can match, reduced to one comparable string.
+ *
+ * Two aliases with this same key are interchangeable to the matcher even when
+ * they are different strings — `couch` and `couches` both claim every "couches"
+ * label. Governance MUST compare aliases by this key rather than by raw text,
+ * or a new alias can silently take ownership of an existing one: the resolver
+ * ranks by alias length, so the longer spelling wins the tie.
+ */
+export const aliasMatchKey = (alias: string): string =>
+  clean(alias).split(' ').map(singular).join(' ')
+
 const containsAlias = (label: string, alias: string): boolean => {
   const labelTokens = label.split(' ')
   const aliasTokens = alias.split(' ')
