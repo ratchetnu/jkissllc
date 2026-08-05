@@ -50,6 +50,13 @@ export type AiCallRecord = {
   requestChars: number
   responseValid: boolean
   // ── Phase 3: observability + quality + A/B ──
+  /** Provider stop reason ('stop' | 'length' | …). 'length' = the token cap cut
+   *  the response off; for a structured response that means truncated JSON. */
+  finishReason?: string
+  /** True when the response stopped at the configured cap. */
+  outputTruncated?: boolean
+  /** The cap in force for this call, so truncation is interpretable later. */
+  maxOutputTokens?: number
   attempts?: number        // model-call attempts (1 = no retry)
   retried?: boolean
   promptVariant?: string   // A/B arm label ('control' | 'variant') when a test is live

@@ -64,7 +64,7 @@ export function aiModel(): string { return MODEL }
 
 export type AiUsage = { inputTokens: number; outputTokens: number; totalTokens: number }
 export type AiGenResult =
-  | { ok: true; text: string; usage: AiUsage; model: string; providerCostUsd?: number }
+  | { ok: true; text: string; usage: AiUsage; model: string; providerCostUsd?: number; finishReason?: string }
   | { ok: false; error: string; retryable?: boolean; errorKind?: AiErrorKind }
 
 // Best-effort extraction of a provider-reported cost from the AI SDK result's
@@ -119,7 +119,12 @@ export async function generateAI(opts: {
     const outputTokens = u.outputTokens ?? u.completionTokens ?? 0
     const totalTokens = u.totalTokens ?? inputTokens + outputTokens
     const providerCostUsd = readProviderCost((res as { providerMetadata?: unknown }).providerMetadata)
-    return { ok: true, text: res.text.trim(), usage: { inputTokens, outputTokens, totalTokens }, model, providerCostUsd }
+    // finishReason distinguishes a model that CHOSE to stop from one the token cap
+    // cut off mid-JSON. Without it, a truncated structured response is
+    // indistinguishable from a model that simply saw nothing.
+    const finishReason = typeof (res as { finishReason?: unknown }).finishReason === 'string'
+      ? (res as { finishReason: string }).finishReason : undefined
+    return { ok: true, text: res.text.trim(), usage: { inputTokens, outputTokens, totalTokens }, model, providerCostUsd, finishReason }
   } catch (e) {
     // A bounded-timeout abort is recorded as a TRANSIENT failure so the caller's retry
     // policy re-attempts it; credit/auth/validation errors stay non-retryable.

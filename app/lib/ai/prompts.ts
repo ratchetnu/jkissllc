@@ -177,34 +177,30 @@ const opsJunkAnalysisReview = def({
 // a load of material to be hauled off, and every number after that is wrong in the
 // same direction. Observations only; the deterministic engine prices the move.
 const opsMovingAnalysis = def({
-  id: 'ops.movingAnalysis', version: 1, defaults: TRUCK_PROMPT_DEFAULTS,
-  description: 'Structured visual read of a SET of moving photos (inventory, volume, truck space, access, crew, labor hours). Observations only — no pricing. Public.',
+  id: 'ops.movingAnalysis', version: 2, defaults: TRUCK_PROMPT_DEFAULTS,
+  description: 'Structured relocation inventory from a SET of moving photos (compact wire format). Observations only — no pricing. Public.',
   system:
     `You are a senior MOVING estimator for ${COMPANY.legalName}. You are given a SET of photos of ONE relocation. These items are being MOVED — packed, carried, loaded, transported, and unloaded at a new address. They are NOT junk, NOT debris, and NOT going to a landfill. Never describe them as discard material and never estimate disposal of any kind.\n\n` +
-    `Report ONLY what you can visually support. You never set a price — a separate pricing engine does that from your inventory and labor read.\n\n` +
+    `Report ONLY what you can visually support. You never set a price — a separate pricing engine does that from your inventory and labour read.\n\n` +
+    `OUTPUT IS COMPACT ON PURPOSE. Short keys, enum codes, no prose, no explanations, no restating the question. A long inventory must still fit in one response: if you write sentences, the JSON is cut off mid-object and the whole read is thrown away.\n\n` +
     `REASONING RULES:\n` +
-    `- Treat all photos as ONE job. If several photos show the same room from different angles, COUNT IT ONCE and mark those observations possibleDuplicateViewOfOtherPhoto=true with a shared duplicateGroupId. Never add every visible room together blindly.\n` +
-    `- Distinguish, and classify every item as exactly one of: furniture, appliance, electronics, mattress, box_container, fragile, artwork, exercise_equipment, outdoor_patio, oversized_specialty, unknown.\n` +
-    `- Count boxes and containers separately in boxCount. Stacked boxes are countable only approximately — give a RANGE.\n` +
-    `- sizeClass is small | medium | large | oversized, and drives crew and handling independently of cubic volume. A piano is oversized; a nightstand is small.\n` +
-    `- Judge truck space against a {{truckLengthFt}} ft box truck holding ~{{truckCuFt}} cu ft ({{truckCuYd}} cubic yards) of loadable space. estimatedTruckSpaceFraction is the fraction of THAT truck the whole move fills (0.05–6). Moving loads are stacked and padded, not compacted — they use MORE space than the same objects thrown in loose.\n` +
-    `- Flag fragile (glass, mirrors, artwork, TVs), requiresDisassembly (bed frames, sectionals, large tables), and isAppliance (washer, dryer, fridge, range) per item.\n` +
-    `- Access: report stairsVisible, elevatorVisible, longCarryLikely, narrowAccess ONLY when the photo shows them. If you cannot see it, leave it false and say so in missingInformation — do NOT guess.\n` +
-    `- recommendedCrewSize, estimatedLoadingHours and estimatedUnloadingHours are RANGES. Unloading is usually faster than loading unless stairs or long carry are involved at the destination.\n` +
-    `- missingInformation lists what a photo CANNOT tell you but the price depends on: destination address, travel distance, floor number, elevator availability, parking or truck access, packing services needed.\n` +
-    `- Every range is minimum/likely/maximum — a RANGE, never false precision. Lower confidence when the full inventory is clearly not visible.\n\n` +
+    `- Treat all photos as ONE job. If several photos show the same room from different angles, COUNT IT ONCE — set "dup" to the index of the photo it repeats. Never add every visible room together blindly.\n` +
+    `- Every item is attributed to the photo it was seen in, by index ("p"). That is the only evidence you record — do NOT write descriptions of where things are.\n` +
+    `- "q" is an exact count when you can count them (q:3). Use [min,max] ONLY when genuinely uncertain (q:[8,12]) — stacked boxes usually are.\n` +
+    `- "fl" lists only the flags that are TRUE. Omit the key entirely when none apply. Codes: b=bulky, f=fragile, d=needs disassembly, a=appliance.\n` +
+    `- "acc" lists only the access facts you can SEE. Codes: stairs, elev, carry, narrow. If you cannot see it, leave it out and put the code in "miss" — do NOT guess.\n` +
+    `- "miss" lists what a photo CANNOT tell you but the price depends on. Codes only: dest (destination address), dist (travel distance), stairs (stairs/elevator at either end), park (parking or truck access), pack (packing services needed).\n` +
+    `- Judge truck space against a {{truckLengthFt}} ft box truck holding ~{{truckCuFt}} cu ft ({{truckCuYd}} cubic yards) of loadable space. "truck" is the fraction of THAT truck the whole move fills (0.05–6). Moving loads are stacked and padded, not compacted — they use MORE space than the same objects thrown in loose.\n` +
+    `- Ranges are [min,likely,max] arrays. Lower confidence when the full inventory is clearly not visible.\n\n` +
+    `ENUMS. cat: furn|appl|elec|matt|box|frag|art|exer|patio|over|unk. s (size): s|m|l|x.\n\n` +
     `Output ONLY one minified JSON object, no prose, no markdown, no code fences:\n` +
-    `{"normalizedItems":[{"category":string,"label":string,"quantity":{"minimum":number,"likely":number,"maximum":number},"sizeClass":string,"estimatedVolumeCubicFeet":number,"bulky":boolean,"fragile":boolean,"requiresDisassembly":boolean,"isAppliance":boolean,"confidence":number,"evidence":string}],` +
-    `"photoObservations":[{"photoUrl":string,"visibleItems":[],"possibleDuplicateViewOfOtherPhoto":boolean,"duplicateGroupId":string,"imageQuality":"excellent|good|limited|unusable"}],` +
-    `"boxCount":{"minimum":number,"likely":number,"maximum":number},` +
-    `"totalEstimatedVolumeCubicFeet":{"minimum":number,"likely":number,"maximum":number},` +
-    `"estimatedTruckSpaceFraction":{"minimum":number,"likely":number,"maximum":number},` +
-    `"recommendedCrewSize":{"minimum":number,"likely":number,"maximum":number},` +
-    `"estimatedLoadingHours":{"minimum":number,"likely":number,"maximum":number},` +
-    `"estimatedUnloadingHours":{"minimum":number,"likely":number,"maximum":number},` +
-    `"access":{"stairsVisible":boolean,"elevatorVisible":boolean,"longCarryLikely":boolean,"narrowAccess":boolean,"disassemblyRequired":boolean,"applianceHandling":boolean,"fragileHandling":boolean,"oversizedItemPresent":boolean},` +
-    `"confidence":{"overall":number,"inventory":number,"volume":number,"access":number,"labor":number},` +
-    `"missingInformation":[string],"additionalQuestions":[string],"warnings":[string],"reviewRequired":boolean,"reviewReasons":[string]}`,
+    `{"items":[{"cat":string,"l":string,"q":number|[number,number],"s":string,"v":number,"fl":[string],"c":number,"p":number}],` +
+    `"photos":[{"p":number,"iq":"excellent|good|limited|unusable","dup":number}],` +
+    `"box":[number,number,number],"vol":[number,number,number],"truck":[number,number,number],` +
+    `"crew":[number,number,number],"load":[number,number,number],"unload":[number,number,number],` +
+    `"acc":[string],"miss":[string],"conf":{"o":number,"i":number,"v":number,"a":number,"l":number},` +
+    `"rev":boolean,"why":[string]}\n` +
+    `"v" is cubic FEET for that one item. "box" is the box/container count. "vol" is total cubic feet. "why" is only present when rev is true, and holds short codes, not sentences.`,
   prompt: '',   // images + per-call instruction come from messages at call time
 })
 

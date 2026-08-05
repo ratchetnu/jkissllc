@@ -95,9 +95,13 @@ export const FIXTURES: FeatureFixture[] = [
     // present, and the explicit "NOT junk" instruction with it.
     taskId: 'ops.movingAnalysis',
     renderVars: {},
-    renderMustInclude: ['estimatedTruckSpaceFraction', 'recommendedCrewSize', 'NOT junk'],
+    // Tokens track the COMPACT contract (v2). The verbose one cost ~74 output
+    // tokens per item and truncated a three-bedroom inventory at the cap; these
+    // assertions fail loudly if the prompt ever drifts back to it, or drops the
+    // "NOT junk" framing.
+    renderMustInclude: ['"truck":', '"crew":', 'COMPACT ON PURPOSE', 'NOT junk'],
     cases: [
-      { name: 'plausible relocation inventory', response: '{"normalizedItems":[{"category":"furniture","label":"sectional sofa","quantity":{"minimum":1,"likely":1,"maximum":1},"sizeClass":"large"}],"boxCount":{"minimum":10,"likely":14,"maximum":18},"estimatedTruckSpaceFraction":{"minimum":0.15,"likely":0.2,"maximum":0.3},"recommendedCrewSize":{"minimum":2,"likely":2,"maximum":3},"confidence":{"overall":0.8}}', minScore: 60 },
+      { name: 'plausible relocation inventory', response: '{"items":[{"cat":"furn","l":"sectional sofa","q":1,"s":"l","v":90,"fl":["b","d"],"c":0.9,"p":0}],"box":[10,14,18],"truck":[0.15,0.2,0.3],"crew":[2,2,3],"conf":{"o":0.8,"i":0.8,"v":0.75,"a":0.6,"l":0.7}}', minScore: 60 },
     ],
   },
   {
