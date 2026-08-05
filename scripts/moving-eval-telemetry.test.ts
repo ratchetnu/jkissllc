@@ -101,8 +101,8 @@ test('a successful moving analysis records the full benchmark record', () => {
     catalogId: 'washer',
     quantity: 1,
     modelVolumeCubicFeet: 30,
-    catalogVolumeCubicFeet: { minimum: 20, maximum: 30 },
-    catalogAgreement: 1,
+    catalogVolumeCubicFeet: null,
+    catalogAgreement: null,
   })
   assert.equal(r.access.stairsVisible, true)
   assert.deepEqual(r.confidence, { overall: 0.85, inventory: 0.8, volume: 0.8, access: 0.7, labor: 0.75 })

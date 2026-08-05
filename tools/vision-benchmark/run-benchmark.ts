@@ -78,7 +78,7 @@ export type BenchResult = {
   providerRetried: boolean | null
   providerLatencyMs: number | null
   /** Per-item catalog calibration data; contains no photos, evidence, or customer identifiers. */
-  catalogItems: CatalogEvaluationItem[]
+  catalogItems?: CatalogEvaluationItem[]
 }
 
 /** Build the job list: explicit groups first, then every ungrouped approved image. */

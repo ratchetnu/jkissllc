@@ -38,7 +38,7 @@ export type CatalogEvaluationItem = {
   itemIndex: number
   catalogId: string | null
   quantity: number
-  modelVolumeCubicFeet: number
+  modelVolumeCubicFeet: number | null
   catalogVolumeCubicFeet: { minimum: number; maximum: number } | null
   catalogAgreement: number | null
 }
@@ -193,7 +193,7 @@ export function buildMovingEvaluationRecord(input: {
       itemIndex,
       catalogId: i.catalogId ?? null,
       quantity: i.quantity.likely,
-      modelVolumeCubicFeet: i.estimatedVolumeCubicFeet,
+      modelVolumeCubicFeet: i.estimatedVolumeCubicFeet > 0 ? i.estimatedVolumeCubicFeet : null,
       catalogVolumeCubicFeet: i.catalogVolumeCubicFeet ?? null,
       catalogAgreement: i.catalogAgreement ?? null,
     })),
@@ -279,7 +279,9 @@ export function buildEvaluationRecord(input: {
       itemIndex,
       catalogId: i.catalogId ?? null,
       quantity: i.estimatedQuantity,
-      modelVolumeCubicFeet: i.estimatedVolumeCubicYards * 27,
+      modelVolumeCubicFeet: i.modelVolumeReported === false
+        ? null
+        : Math.round(i.estimatedVolumeCubicYards * 27 * 1000) / 1000,
       catalogVolumeCubicFeet: i.catalogVolumeCubicFeet ?? null,
       catalogAgreement: i.catalogAgreement ?? null,
     })),

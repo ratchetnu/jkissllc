@@ -100,6 +100,24 @@ test('catalog calibration records per-item volume and agreement without evidence
   }
 })
 
+test('catalog calibration preserves an omitted junk volume as null, not a disagreement sample', () => {
+  const missingVolume = normalizeAnalysis({
+    normalizedItems: [{
+      category: 'furniture', label: 'couch', estimatedQuantity: 1,
+      heavy: false, requiresDisassembly: false, confidence: 0.88,
+    }],
+    photoObservations: [{ photoUrl: ctx.photoUrls[0], imageQuality: 'good' }],
+    confidence: { overall: 0.88 }, reviewRequired: false, reviewReasons: [],
+    warnings: [], additionalQuestions: [],
+  }, ctx)
+  const rec = build({ analysis: missingVolume })
+  assert.equal(missingVolume.normalizedItems[0].estimatedVolumeCubicYards, 0.5,
+    'the existing quote normalizer fallback remains unchanged')
+  assert.equal(rec.catalogItems[0].catalogId, 'standard_sofa')
+  assert.equal(rec.catalogItems[0].modelVolumeCubicFeet, null,
+    'telemetry must not present the normalizer fallback as a model observation')
+})
+
 test('all five confidence sub-scores are captured, not just overall', () => {
   const c = build().confidence
   for (const k of ['overall', 'volume', 'weight', 'itemClassification', 'accessDifficulty'] as const) {
