@@ -76,3 +76,67 @@ test('catalog contains no pricing data', () => {
   }
   visit(OPERATIONAL_ITEM_CATALOG)
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Matcher grammar — regressions proven by the 2026-08-05 Preview field-semantics
+// pilot. The pilot found the resolver anchoring on a label's FINAL token, which
+// made a supporting surface ("… on desk") outrank the actual subject, and made
+// normal noun+descriptor order ("sofa large") miss entirely.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('a locational preposition marks context, so the surface never wins', () => {
+  // Exact labels the pilot mis-resolved, verbatim.
+  assert.equal(resolveCatalogItem('Apple laptop/keyboard on desk'), null)
+  assert.equal(resolveCatalogItem('Stereo/AV receiver or CD player on dresser'), null)
+  assert.equal(resolveCatalogItem('books/stacked items on dresser'), null)
+  // The whole preposition set, including multi-word forms.
+  for (const label of [
+    'crate under desk', 'bags beside sofa', 'plant behind sofa',
+    'artwork near dresser', 'mattress against wall', 'items inside cabinet',
+    'lamp next to couch', 'vase on top of dresser', 'rug in front of sofa',
+  ]) assert.equal(resolveCatalogItem(label), null, label)
+})
+
+test('the subject is still classified when it is itself a catalog item', () => {
+  assert.equal(resolveCatalogItem('television on stand')?.id, 'television')
+  assert.equal(resolveCatalogItem('boxes on shelf')?.id, 'moving_box')
+  assert.equal(resolveCatalogItem('industrial pipe desk on casters')?.id, 'desk')
+  // Contents are the inventory; the container is context, per the same rule.
+  assert.equal(resolveCatalogItem('boxes in cabinet')?.id, 'moving_box')
+})
+
+test('descriptors resolve in either order', () => {
+  const pairs: Array<[string, string, string]> = [
+    ['large sofa', 'sofa large', 'standard_sofa'],
+    ['3-seat sofa', 'sofa 3-seat', 'standard_sofa'],
+    ['queen mattress', 'mattress queen', 'queen_mattress'],
+    ['tall 6-drawer dresser', 'dresser tall 6-drawer', 'dresser'],
+    ['small nightstand', 'nightstand small', 'nightstand'],
+    ['medium boxes', 'boxes medium', 'moving_box'],
+    ['55-inch television', 'television 55-inch', 'television'],
+  ]
+  for (const [a, b, id] of pairs) {
+    assert.equal(resolveCatalogItem(a)?.id, id, a)
+    assert.equal(resolveCatalogItem(b)?.id, id, b)
+  }
+})
+
+test('head-noun anchoring still refuses accessories and supporting furniture', () => {
+  for (const label of [
+    'tv stand', 'tv cabinet', 'sofa table', 'desk lamp', 'range hood',
+    'patio couch cushions', 'wall shelf', 'orange chair',
+  ]) assert.equal(resolveCatalogItem(label), null, label)
+})
+
+test('a phrase naming two different governed items stays unmatched', () => {
+  assert.equal(resolveCatalogItem('desk or dresser'), null)
+  // …but a slash-joined description of ONE item still resolves.
+  assert.equal(resolveCatalogItem('bookcase/shelving unit')?.id, 'bookcase')
+})
+
+test('punctuation, casing and plurals normalise without fuzzy drift', () => {
+  assert.equal(resolveCatalogItem('  SOFA,  Large ')?.id, 'standard_sofa')
+  assert.equal(resolveCatalogItem('Dressers')?.id, 'dresser')
+  assert.equal(resolveCatalogItem('box spring')?.id, 'box_spring')   // not moving_box
+  assert.equal(resolveCatalogItem('unrecognisable custom sculpture'), null)
+})

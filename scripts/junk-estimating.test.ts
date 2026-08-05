@@ -221,3 +221,21 @@ test('critic disagreeing on size widens the range and lowers confidence', () => 
   assert.ok(r.estimatedTruckLoadFraction.maximum >= 0.9)
   assert.ok(r.confidence.overall <= 0.6)
 })
+
+test('a location noun contributes no catalog identity, flags, volume or agreement', () => {
+  // The pilot's exact false positive: the item is a stereo, "dresser" is furniture
+  // it sits on. Matching the surface attached heavy/bulky facts to a receiver.
+  const a = normalizeAnalysis(goodRaw({ normalizedItems: [
+    { category: 'electronics', label: 'Stereo/AV receiver or CD player on dresser',
+      estimatedQuantity: 1, estimatedVolumeCubicYards: 0.2, bulky: false, heavy: false, confidence: 0.9 },
+  ] }), ctx())
+  const item = a.normalizedItems[0]
+  assert.equal(item.catalogId, undefined)
+  assert.equal(item.catalogAgreement, undefined)
+  assert.equal(item.catalogVolumeCubicFeet, undefined)
+  assert.equal(item.operationalHandlingFlags, undefined)
+  assert.equal(item.bulky, false, 'no bulky flag from a surface it merely rests on')
+  assert.equal(item.heavy, false, 'no heavy flag from a surface it merely rests on')
+  assert.equal(item.requiresDisassembly, false)
+  assert.equal(item.estimatedVolumeCubicYards, 0.2, 'model volume retained as bounded fallback')
+})
