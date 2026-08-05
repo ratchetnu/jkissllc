@@ -35,7 +35,7 @@ const verified = (over: Partial<ManifestEntry> = {}): ManifestEntry => entry({
   expectedVolumeRangeCubicYards: { min: 2, max: 3 },
   expectedTruckSpaceRangePercent: { min: 5, max: 10 },
   expectedCrewRange: { min: 2, max: 2 }, expectedLaborHoursRange: { min: 1, max: 2 },
-  lighting: 'daylight', clutter: 'light', imageQuality: 'good', containsPeople: false,
+  lighting: 'normal', clutter: 'medium', imageQuality: 'high', containsPeople: false,
   labelConfidence: 'high', difficulty: 'easy', flagsReviewed: true,
   notes: 'nothing hidden behind it', verifiedAt: '2026-08-04T00:00:00.000Z',
   ...over,

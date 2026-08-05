@@ -27,7 +27,7 @@ function entry(over: Partial<ManifestEntry> & { id: string; jobType: JobType }):
     expectedVolumeRangeCubicYards: { min: 2, max: 6 },
     expectedTruckSpaceRangePercent: { min: 10, max: 25 },
     expectedHandlingFlags: [],
-    lighting: 'daylight', clutter: 'moderate', imageQuality: 'good', containsPeople: false,
+    lighting: 'normal', clutter: 'medium', imageQuality: 'high', containsPeople: false,
     reviewStatus: 'approved', notes: 'clear enough',
     labelStatus: 'verified',
     expectedCrewRange: { min: 2, max: 3 },
