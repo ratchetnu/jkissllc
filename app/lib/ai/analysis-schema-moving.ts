@@ -1,5 +1,7 @@
+import { catalogMatch, type CatalogSize, type VolumeRange as CatalogVolumeRange } from './item-catalog'
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Structured MOVING-photo analysis schema + a dependency-free normalizer.
+// Structured MOVING-photo analysis schema + a pure normalizer.
 //
 // A relocation inventory, NOT discard material. Every item here is going on a
 // truck and coming back off it at the other end — so the operational questions
@@ -51,6 +53,10 @@ export type DetectedMovingItem = {
   /** Index of the photo the item was seen in — the compact contract's only evidence. */
   photoIndex?: number
   sourcePhotoIds?: string[]
+  catalogId?: string
+  catalogVolumeCubicFeet?: CatalogVolumeRange
+  catalogAgreement?: number
+  operationalHandlingFlags?: string[]
   evidence: string
 }
 
@@ -242,7 +248,7 @@ function item(raw: unknown): DetectedMovingItem | null {
   const label = str(o.label, 80).trim()
   if (!label) return null
   const sizeClass = oneOf(o.sizeClass, ITEM_SIZE_CLASSES, 'medium')
-  return {
+  return applyCatalog({
     category: oneOf(o.category, MOVING_ITEM_CATEGORIES, 'unknown'),
     label,
     quantity: range(o.quantity ?? o.estimatedQuantity, 0, 500, { minimum: 1, likely: 1, maximum: 1 }),
@@ -255,6 +261,24 @@ function item(raw: unknown): DetectedMovingItem | null {
     confidence: clamp(num(o.confidence, 0.5), 0, 1),
     sourcePhotoIds: strList(o.sourcePhotoIds, 8),
     evidence: str(o.evidence, 240),
+  })
+}
+
+function applyCatalog(detected: DetectedMovingItem): DetectedMovingItem {
+  const match = catalogMatch(detected.label, detected.sizeClass as CatalogSize, detected.estimatedVolumeCubicFeet)
+  if (!match.entry) return detected
+  return {
+    ...detected,
+    catalogId: match.entry.id,
+    ...(match.volume ? {
+      confidence: Math.min(detected.confidence, match.agreement),
+      catalogVolumeCubicFeet: match.volume,
+      catalogAgreement: match.agreement,
+    } : {}),
+    operationalHandlingFlags: match.entry.movingFlags,
+    fragile: detected.fragile || match.entry.fragile === true,
+    isAppliance: detected.isAppliance || match.entry.appliance === true,
+    requiresDisassembly: detected.requiresDisassembly || match.entry.disassemblyLikely === true,
   }
 }
 
@@ -351,7 +375,7 @@ function compactItem(raw: unknown): DetectedMovingItem | null {
   const photoIndexes = (Array.isArray(o.p) ? o.p : [o.p])
     .map(value => num(value, NaN)).filter(Number.isFinite).map(value => Math.max(0, Math.round(value)))
   const p = photoIndexes[0]
-  return {
+  return applyCatalog({
     category: cat,
     label,
     quantity: tuple(o.q, 0, 500, { minimum: 1, likely: 1, maximum: 1 }),
@@ -365,7 +389,7 @@ function compactItem(raw: unknown): DetectedMovingItem | null {
     photoIndex: p,
     sourcePhotoIds: photoIndexes.map(index => `p${index}`),
     evidence: '',
-  }
+  })
 }
 
 /** True when the payload speaks the compact contract rather than the legacy one. */

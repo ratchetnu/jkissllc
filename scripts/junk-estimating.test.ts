@@ -36,8 +36,39 @@ const goodRaw = (over: Record<string, unknown> = {}) => ({
 test('valid model output normalizes without forcing review', () => {
   const a = normalizeAnalysis(goodRaw(), ctx())
   assert.equal(a.normalizedItems.length, 2)
+  assert.equal(a.normalizedItems[0].catalogId, 'standard_sofa')
+  assert.deepEqual(a.normalizedItems[0].catalogVolumeCubicFeet, { minimum: 65, maximum: 90 })
+  assert.ok(a.normalizedItems[0].operationalHandlingFlags?.includes('rigid'))
   assert.equal(a.reviewRequired, false)
   assert.ok(a.estimatedTruckLoadFraction.likely > 0)
+})
+
+test('catalog annotations do not rewrite model volume or make every matched item bulky', () => {
+  const a = normalizeAnalysis(goodRaw({ normalizedItems: [
+    { category: 'household_junk', label: 'trash bags', estimatedQuantity: 6, estimatedVolumeCubicYards: 0.5, bulky: false, confidence: 0.9 },
+    { category: 'furniture', label: 'dining chairs', estimatedQuantity: 4, estimatedVolumeCubicYards: 0.3, bulky: false, confidence: 0.9 },
+  ] }), ctx())
+  assert.equal(a.normalizedItems[0].estimatedVolumeCubicYards, 0.5)
+  assert.equal(a.normalizedItems[0].bulky, false)
+  assert.equal(a.normalizedItems[1].estimatedVolumeCubicYards, 0.3)
+  assert.equal(a.normalizedItems[1].bulky, false)
+})
+
+test('matched catalog disagreement preserves volume without an uncalibrated global review gate', () => {
+  const a = normalizeAnalysis(goodRaw({ normalizedItems: [
+    { category: 'appliance', label: 'refrigerator', estimatedQuantity: 1, estimatedVolumeCubicYards: 0.3, confidence: 0.9 },
+  ] }), ctx())
+  assert.equal(a.normalizedItems[0].estimatedVolumeCubicYards, 0.3)
+  assert.equal(a.normalizedItems[0].catalogAgreement, 0.55)
+  assert.equal(a.reviewRequired, false)
+})
+
+test('catalog annotation preserves a self-consistent item sum for the monitor', () => {
+  const a = normalizeAnalysis(goodRaw({
+    normalizedItems: [{ category: 'furniture', label: 'couches', estimatedQuantity: 2, estimatedVolumeCubicYards: 1.2, confidence: 0.9 }],
+    totalEstimatedVolumeCubicYards: { minimum: 2.4, likely: 2.4, maximum: 2.4 },
+  }), ctx())
+  assert.equal(monitorAnalysis(a).concerns.some(concern => concern.code === 'volume_sum_mismatch'), false)
 })
 
 test('confidence values are clamped into 0..1', () => {

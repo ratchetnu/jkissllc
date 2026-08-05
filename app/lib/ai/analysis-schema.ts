@@ -1,5 +1,7 @@
+import { catalogMatch, type VolumeRange as CatalogVolumeRange } from './item-catalog'
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Structured junk-photo analysis schema + a dependency-free validator/normalizer.
+// Structured junk-photo analysis schema + a pure validator/normalizer.
 //
 // The vision model is UNTRUSTED. It returns free-form JSON; this module clamps,
 // defaults, and range-checks every field into a well-formed `JunkPhotoAnalysis`.
@@ -42,6 +44,10 @@ export type DetectedJunkItem = {
   likelyDisposalType: DisposalType
   confidence: number            // 0..1
   sourcePhotoIds?: string[]
+  catalogId?: string
+  catalogVolumeCubicFeet?: CatalogVolumeRange
+  catalogAgreement?: number
+  operationalHandlingFlags?: string[]
   evidence: string
 }
 
@@ -131,7 +137,7 @@ function normalizeItem(v: unknown): DetectedJunkItem | null {
   const label = strOr(v.label, '', 120).trim()
   const category = asCategory(v.category)
   if (!label && category === 'unknown') return null
-  return {
+  const detected: DetectedJunkItem = {
     category,
     label: label || category.replace(/_/g, ' '),
     estimatedQuantity: clamp(Math.round(nonNeg(v.estimatedQuantity, 1)), 1, 999),
@@ -144,6 +150,19 @@ function normalizeItem(v: unknown): DetectedJunkItem | null {
     confidence: clamp01(v.confidence),
     sourcePhotoIds: strArr(v.sourcePhotoIds, 8, 20),
     evidence: strOr(v.evidence, '', 240),
+  }
+  const match = catalogMatch(detected.label, 'medium', detected.estimatedVolumeCubicYards * 27)
+  if (!match.entry || !match.volume) return detected
+  return {
+    ...detected,
+    confidence: Math.min(detected.confidence, match.agreement),
+    catalogId: match.entry.id,
+    catalogVolumeCubicFeet: match.volume,
+    catalogAgreement: match.agreement,
+    operationalHandlingFlags: match.entry.junkFlags,
+    bulky: detected.bulky || match.entry.bulky === true,
+    heavy: detected.heavy || match.entry.weightClass === 'heavy' || match.entry.weightClass === 'very_heavy',
+    requiresDisassembly: detected.requiresDisassembly || match.entry.disassemblyLikely === true,
   }
 }
 
