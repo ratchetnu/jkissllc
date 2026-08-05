@@ -58,7 +58,13 @@ const range = (v: unknown, path: string, problems: string[]): Range => {
 export function extractJson(raw: string): Record<string, unknown> {
   const start = raw.indexOf('{')
   const end = raw.lastIndexOf('}')
-  if (start < 0 || end <= start) throw new SchemaError(['no JSON object in response'])
+  if (start < 0 || end <= start) {
+    // Include a bounded prefix: a bare "no JSON" is unactionable, and the raw
+    // text is the only thing that says whether the model refused, returned
+    // prose, or was truncated.
+    const prefix = raw.slice(0, 160).replace(/\s+/g, ' ').trim()
+    throw new SchemaError([`no JSON object in response (raw: "${prefix || '<empty>'}", len=${raw.length})`])
+  }
   try {
     const parsed = JSON.parse(raw.slice(start, end + 1))
     if (!isObj(parsed)) throw new SchemaError(['top level is not an object'])
@@ -164,6 +170,20 @@ export function parseVerifier(raw: string): VerifierResult {
 // ── prompts (versioned) ─────────────────────────────────────────────────────
 
 const NO_PRICING = 'Never estimate, mention or imply a customer price, quote or dollar amount.'
+
+/**
+ * The business rule BOTH the labeler and the verifier must share.
+ *
+ * The 13-image diagnostic proved the labeler's arithmetic was exact on 13/13
+ * while the verifier raised truck_space_inconsistent on 10/13 — because only
+ * the labeler prompt carried the constant. A shared rule is not duplication;
+ * it is the thing that makes the two roles comparable.
+ */
+const TRUCK_RULE =
+  'BUSINESS RULE — truck capacity: the J KISS box truck holds approximately 1,000 cubic feet of ' +
+  'usable cargo space. Truck-space percentage = estimatedVolumeCubicFeet / 1000 * 100. ' +
+  'So 100 cu ft = 10%, 500 cu ft = 50%, 900 cu ft = 90%. ' +
+  'A volume and a percentage that satisfy this relationship are CONSISTENT — never report them as inconsistent.'
 const EVIDENCE_RULE =
   'Describe only what is VISIBLE. Never infer objects behind or outside the frame. ' +
   'Where evidence is weak use a wider range rather than a confident point value, ' +
@@ -182,9 +202,17 @@ export const PROMPTS = {
 
   'curation.labeler.v1':
     'You produce structured ground truth for a junk-removal and moving benchmark. ' +
-    `${EVIDENCE_RULE} ${NO_PRICING} ` +
-    'Volumes are CUBIC FEET. truckSpacePercent is a percentage of a 1,000 cu ft box truck ' +
-    'and must be consistent with your volume. Reply with JSON only: ' +
+    `${EVIDENCE_RULE} ${NO_PRICING} ${TRUCK_RULE} ` +
+    // Anchoring guard: the diagnostic found ONE volume range ({80,120}) returned
+    // for five visually different scenes. Estimating from dimensions forces the
+    // number to come from the image rather than from the category name.
+    'Volumes are CUBIC FEET and must be DERIVED, never chosen from a familiar range. For each ' +
+    'estimate: identify the visible items, estimate how many, estimate each one\'s approximate ' +
+    'length x width x height in feet, and sum them. Record the dimensional reasoning in ' +
+    'evidence.visibleEvidence. If you cannot judge dimensions, WIDEN the range to express that ' +
+    'uncertainty and say so in evidence.missingInformation — never fall back to a typical value ' +
+    'for the category. Two different scenes should not produce identical ranges. ' +
+    'Infer the category yourself from the image; you are not given one. Reply with JSON only: ' +
     '{"lane":"junk_removal|moving","category":string,"visibleItems":string[],' +
     '"quantityRange":{"min":number,"max":number},"volumeCubicFeet":{"min":number,"max":number},' +
     '"truckSpacePercent":{"min":number,"max":number},"handlingFlags":string[],' +
@@ -199,15 +227,18 @@ export const PROMPTS = {
   'curation.verifier.v1':
     'You independently check a proposed structured label against the image. ' +
     'You did NOT write the label and you have no access to the labeller\'s reasoning. ' +
-    'Judge the image yourself first, then compare. Report disagreement with CODES ONLY, ' +
-    `never prose. ${NO_PRICING} Reply with JSON only: ` +
+    `Judge the image yourself first, then compare. ${TRUCK_RULE} ` +
+    'Raise truck_space_inconsistent ONLY when the percentage does not follow from the stated ' +
+    'volume by that rule — never merely because you would have estimated a different volume. ' +
+    'If you disagree about the volume itself, use volume_implausible. ' +
+    `Report disagreement with CODES ONLY, never prose. ${NO_PRICING} Reply with JSON only: ` +
     '{"verdict":"approve|reject|revise|uncertain","disagreements":string[],"confidence":0..1}. ' +
     `Valid codes: ${CODES.join(', ')}.`,
 
   'curation.adjudicator.v1':
     'Two independent reviewers disagree about a proposed label for this image. ' +
     'You see the image and both structured positions, but neither reviewer\'s reasoning. ' +
-    `Decide which position the image supports, or that neither does. ${NO_PRICING} ` +
+    `${TRUCK_RULE} Decide which position the image supports, or that neither does. ${NO_PRICING} ` +
     'Reply with JSON only: {"verdict":"approve|reject|revise|uncertain","disagreements":string[],"confidence":0..1}',
 } as const
 

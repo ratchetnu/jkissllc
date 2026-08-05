@@ -138,6 +138,22 @@ export function validateProposal(p: LabelProposal): string[] {
   return problems
 }
 
+/**
+ * Does the proposed truck-space percentage follow from the proposed volume?
+ *
+ * volume / TRUCK_CUBIC_FEET * 100, with a tolerance for honest rounding. The
+ * diagnostic measured 13/13 labeler conversions exact while the verifier called
+ * 10/13 inconsistent, so this is checked in code rather than believed from a
+ * model — a prompt can be ignored, arithmetic cannot.
+ */
+export function truckSpaceConsistent(p: LabelProposal, tolerancePct = 3): boolean {
+  const vol = (p.volumeCubicFeet.min + p.volumeCubicFeet.max) / 2
+  const pct = (p.truckSpacePercent.min + p.truckSpacePercent.max) / 2
+  if (!(vol > 0) || !(pct > 0)) return false
+  if (p.truckSpacePercent.max >= 100) return true   // saturated: multi-load, cannot be expressed
+  return Math.abs((vol / TRUCK_CUBIC_FEET) * 100 - pct) <= tolerancePct
+}
+
 // ── Consensus gate ──────────────────────────────────────────────────────────
 
 export const THRESHOLDS = {
@@ -183,7 +199,14 @@ export type ConsensusDecision = {
 export function decide(input: ConsensusInput): ConsensusDecision {
   const { preScreen: pre, classifier, label, verifier } = input
   const problems = validateProposal(label)
-  const critical = verifier.disagreements.filter(d => CRITICAL_CODES.includes(d))
+  // A verifier that raises truck_space_inconsistent against arithmetic we can
+  // check ourselves is simply wrong. Drop that one code rather than the whole
+  // verdict: its other disagreements may still be sound.
+  const arithmeticOk = truckSpaceConsistent(label)
+  const disagreements = arithmeticOk
+    ? verifier.disagreements.filter(d => d !== 'truck_space_inconsistent')
+    : verifier.disagreements
+  const critical = disagreements.filter(d => CRITICAL_CODES.includes(d))
   const consensus = Math.min(classifier.confidence, verifier.confidence)
 
   const out = (state: CurationState, reason: string, tier: DatasetTier = 'candidate'): ConsensusDecision =>
@@ -192,10 +215,10 @@ export function decide(input: ConsensusInput): ConsensusDecision {
   if (pre.state) return out(pre.state, pre.reasons.join('; '))
 
   // Privacy and licence are never traded against confidence.
-  if (classifier.privacyRisk || verifier.disagreements.includes('privacy_risk')) {
+  if (classifier.privacyRisk || disagreements.includes('privacy_risk')) {
     return out('privacy_blocked', 'privacy risk raised by a model — a human decides, never automation')
   }
-  if (classifier.licenseRisk || verifier.disagreements.includes('license_risk')) {
+  if (classifier.licenseRisk || disagreements.includes('license_risk')) {
     return out('license_blocked', 'licence risk raised by a model')
   }
 
@@ -206,7 +229,7 @@ export function decide(input: ConsensusInput): ConsensusDecision {
   if (classifier.lane === 'neither') return out('auto_rejected', 'classified as neither lane')
   if (classifier.lane === 'ambiguous') return out('needs_human_review', 'lane is ambiguous')
 
-  if (verifier.disagreements.includes('insufficient_context')
+  if (disagreements.includes('insufficient_context')
       && classifier.confidence < THRESHOLDS.autoVerifyConfidence) {
     return out('insufficient_evidence', 'both roles report the image cannot support operational labelling')
   }

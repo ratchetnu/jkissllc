@@ -8,7 +8,8 @@ import {
   callRole, classifyFailure, runCandidate, memoryCache, memoryCheckpoint,
   CallFailure, type VisionCaller, type VisionRequest,
 } from '../tools/vision-benchmark/curation/runtime'
-import { parseClassifier, parseLabel, parseVerifier, SchemaError } from '../tools/vision-benchmark/curation/contract'
+import { parseClassifier, parseLabel, parseVerifier, SchemaError, PROMPTS } from '../tools/vision-benchmark/curation/contract'
+import { decide, truckSpaceConsistent, type LabelProposal } from '../tools/vision-benchmark/curation/consensus'
 import { DEFAULT_ROLES, PRODUCTION_ESTIMATOR } from '../tools/vision-benchmark/curation/roles'
 import type { ManifestEntry } from '../tools/vision-benchmark/schema'
 
@@ -52,6 +53,14 @@ function scripted(replies: Partial<Record<string, string>>, opts: { throwOn?: st
   }
   return { caller, calls }
 }
+
+const proposal = (over: Partial<LabelProposal> = {}): LabelProposal => ({
+  lane: 'junk_removal', category: 'curbside_pile', visibleItems: ['sofa'],
+  quantityRange: { min: 1, max: 2 }, volumeCubicFeet: { min: 90, max: 150 },
+  truckSpacePercent: { min: 9, max: 15 }, handlingFlags: [], hazardousIndicators: [],
+  crewRange: { min: 2, max: 2 }, laborHoursRange: { min: 1, max: 2 },
+  difficulty: 'normal', ambiguityNotes: '', fieldConfidence: { volume: 0.9 }, ...over,
+})
 
 const ctx = (caller: VisionCaller, cache = memoryCache()) => ({ caller, cache })
 const opts = { imageRoot: '/tmp', now: '2026-08-05T00:00:00Z' }
@@ -227,4 +236,89 @@ test('provenance records the decision and never carries model reasoning', async 
   assert.equal(p.tier, 'silver')
   assert.ok(p.roles.length >= 2)
   assert.equal(JSON.stringify(p).includes('reasoning'), false)
+})
+
+// ── RC2 calibration fixes (13-image diagnostic, 2026-08-05) ─────────────────
+// The diagnostic measured the labeler's volume→truck-space arithmetic exact on
+// 13/13 while the verifier called it inconsistent on 10/13, because only the
+// labeler prompt carried the 1,000 cu ft constant.
+
+test('the truck rule is stated to the verifier and the adjudicator, not just the labeler', () => {
+  for (const v of ['curation.labeler.v1', 'curation.verifier.v1', 'curation.adjudicator.v1'] as const) {
+    assert.match(PROMPTS[v], /1,000 cubic feet/, `${v} must carry the truck constant`)
+  }
+  assert.match(PROMPTS['curation.verifier.v1'], /never merely because you would have estimated a different volume/)
+})
+
+test('truck-space arithmetic is verified in code, across the documented examples', () => {
+  const at = (cuft: number, pct: number) => proposal({
+    volumeCubicFeet: { min: cuft, max: cuft }, truckSpacePercent: { min: pct, max: pct },
+  })
+  for (const [cuft, pct] of [[100, 10], [500, 50], [900, 90]] as const) {
+    assert.equal(truckSpaceConsistent(at(cuft, pct)), true, `${cuft} cu ft = ${pct}%`)
+  }
+  assert.equal(truckSpaceConsistent(at(100, 45)), false, 'a genuine mismatch must still fail')
+  assert.equal(truckSpaceConsistent(at(80, 9)), true, 'small rounding stays within tolerance')
+  // Saturated ranges cannot express a multi-load job, so they are not "inconsistent".
+  assert.equal(truckSpaceConsistent(proposal({
+    volumeCubicFeet: { min: 7000, max: 8000 }, truckSpacePercent: { min: 100, max: 100 },
+  })), true)
+})
+
+test('a false truck_space_inconsistent no longer blocks auto-verification', () => {
+  // 90-110 cu ft ⇒ ~10%: exact. The verifier raises the code anyway, as it did
+  // on 10 of 13 real images.
+  const label = proposal({
+    volumeCubicFeet: { min: 90, max: 110 }, truckSpacePercent: { min: 9, max: 11 },
+  })
+  const d = decide({
+    preScreen: { state: null, reasons: [] },
+    classifier: { operational: true, lane: 'junk_removal', category: 'curbside_pile', privacyRisk: false, licenseRisk: false, confidence: 0.95 },
+    label,
+    verifier: { verdict: 'approve', disagreements: ['truck_space_inconsistent'], confidence: 0.95 },
+  })
+  assert.equal(d.state, 'auto_verified')
+  assert.equal(d.tier, 'silver')
+  assert.equal(d.criticalDisagreements.includes('truck_space_inconsistent'), false)
+})
+
+test('a REAL truck-space mismatch is still caught', () => {
+  const d = decide({
+    preScreen: { state: null, reasons: [] },
+    classifier: { operational: true, lane: 'junk_removal', category: 'c', privacyRisk: false, licenseRisk: false, confidence: 0.95 },
+    // 100 cu ft claimed as 45% — arithmetic genuinely wrong.
+    label: proposal({ volumeCubicFeet: { min: 100, max: 100 }, truckSpacePercent: { min: 45, max: 45 } }),
+    verifier: { verdict: 'approve', disagreements: ['truck_space_inconsistent'], confidence: 0.95 },
+  })
+  assert.equal(d.state, 'needs_human_review')
+  assert.ok(d.criticalDisagreements.includes('truck_space_inconsistent'))
+})
+
+test('suppressing the false code does not swallow the verifier other disagreements', () => {
+  const d = decide({
+    preScreen: { state: null, reasons: [] },
+    classifier: { operational: true, lane: 'junk_removal', category: 'c', privacyRisk: false, licenseRisk: false, confidence: 0.95 },
+    label: proposal({ volumeCubicFeet: { min: 90, max: 110 }, truckSpacePercent: { min: 9, max: 11 } }),
+    verifier: { verdict: 'approve', disagreements: ['truck_space_inconsistent', 'volume_implausible'], confidence: 0.95 },
+  })
+  assert.equal(d.state, 'needs_human_review')
+  assert.ok(d.criticalDisagreements.includes('volume_implausible'))
+})
+
+test('no category hint reaches the labeler — it must infer from the image', async () => {
+  const s = scripted({ classifier: OK_CLASSIFIER, labeler: OK_LABEL, verifier: OK_VERIFIER })
+  await runCandidate(entry({ category: 'eviction_cleanout' }), ctx(s.caller), opts, new Map())
+  const labelCall = s.calls.find(c => c.promptVersion === 'curation.labeler.v1')!
+  assert.equal(labelCall.user.includes('eviction_cleanout'), false, 'the manifest category must not leak')
+  assert.equal(labelCall.user.includes('category'), false)
+  assert.match(labelCall.user, /^lane: /)
+  assert.match(labelCall.system, /Infer the category yourself/)
+})
+
+test('the labeler contract demands derived volume, not a category anchor', () => {
+  const p = PROMPTS['curation.labeler.v1']
+  assert.match(p, /length x width x height/)
+  assert.match(p, /WIDEN the range/)
+  assert.match(p, /never fall back to a typical value/)
+  assert.match(p, /should not produce identical ranges/)
 })
