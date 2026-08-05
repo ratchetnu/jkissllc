@@ -14,6 +14,10 @@ import {
 import {
   tierOf, tierReport, assertClaimSupported, estimateCost, cacheKey, isRetryable,
 } from '../tools/vision-benchmark/curation/tiers'
+import {
+  DEFAULT_ROLES, PREFERRED_ROLES, PRODUCTION_ESTIMATOR, checkIndependence,
+  assertIndependent, modelForRole,
+} from '../tools/vision-benchmark/curation/roles'
 import type { ManifestEntry } from '../tools/vision-benchmark/schema'
 
 const PROD = 'anthropic/claude-sonnet-4-6'
@@ -251,4 +255,34 @@ test('provenance is append-only and never edits an earlier revision', () => {
   assert.deepEqual(h2.map(r => r.revision), [1, 2])
   assert.equal(h2[0].state, 'auto_verified', 'revision 1 is unchanged')
   assert.equal(h1.length, 1, 'the input array was not mutated')
+})
+
+// ── Confirmed role assignment (probe: openai/gpt-4o healthy, 2026-08-05) ─────
+
+test('the shipped role assignment is independent of the production estimator', () => {
+  const { ok, errors } = checkIndependence()
+  assert.equal(ok, true, errors.join('; '))
+  for (const r of DEFAULT_ROLES) {
+    assert.notEqual(r.model, PRODUCTION_ESTIMATOR, `${r.role} must not be the production estimator`)
+  }
+  assert.notEqual(modelForRole('labeler'), modelForRole('verifier'))
+})
+
+test('same-family labeler/verifier is a warning, not a silent pass', () => {
+  const { ok, warnings } = checkIndependence()
+  assert.equal(ok, true)
+  assert.ok(warnings.some(w => /same model family/.test(w)),
+    'gpt-4o + gpt-4o-mini share a family and must surface a correlated-bias warning')
+  // The preferred assignment moves the verifier to another family and clears it.
+  assert.equal(checkIndependence(PREFERRED_ROLES).warnings.length, 0)
+})
+
+test('independence failure aborts before any candidate is processed', () => {
+  const poisoned = DEFAULT_ROLES.map(r => r.role === 'verifier' ? { ...r, model: PRODUCTION_ESTIMATOR } : r)
+  assert.throws(() => assertIndependent(poisoned), /refusing to run/)
+  assert.doesNotThrow(() => assertIndependent())
+})
+
+test('there is no fallback to the production estimator for a missing role', () => {
+  assert.throws(() => modelForRole('labeler', []), /no production-estimator fallback/)
 })
