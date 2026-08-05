@@ -39,7 +39,23 @@ export type AnalyzeMovingPhotosResult = {
   model?: string
   latencyMs?: number
   outcome: string
+  /** Provider stop reason; 'length' means the cap cut the JSON off. */
+  finishReason?: string
+  outputTokens?: number
+  maxOutputTokens?: number
+  outputTruncated?: boolean
+  parseSucceeded?: boolean
+  itemCount?: number
 }
+
+/**
+ * Measured, not guessed. The verbose contract cost ~74 output tokens per item, so a
+ * three-bedroom inventory ran past 1600 mid-object and the whole read was discarded.
+ * The compact contract costs ~19 per item; 2400 leaves room for roughly a hundred
+ * items plus the job-level block. Raise it only against evidence of a real case
+ * truncating, never pre-emptively — a bigger cap buys latency and cost, not accuracy.
+ */
+export const MOVING_MAX_OUTPUT_TOKENS = 2400
 
 export async function analyzeMovingPhotos(input: AnalyzeMovingPhotosInput): Promise<AnalyzeMovingPhotosResult> {
   const prep = await timeStage('image_preprocess', async () => {
@@ -76,7 +92,7 @@ export async function analyzeMovingPhotos(input: AnalyzeMovingPhotosInput): Prom
     feature: 'ops.movingAnalysis',
     vars: await truckVars(),
     messages: prep.messages,
-    maxOutputTokens: 1600,
+    maxOutputTokens: MOVING_MAX_OUTPUT_TOKENS,
     temperature: 0.2,
     requestChars: photos.join(',').length,
     kind: 'primary',
@@ -94,16 +110,42 @@ export async function analyzeMovingPhotos(input: AnalyzeMovingPhotosInput): Prom
 
   const modelName = res.model || ''
   const analysis = normalizeMovingAnalysis(res.text, { ...ctx, modelName, modelProvider: providerOf(modelName) })
+  const itemCount = analysis.normalizedItems.length
+  const parseSucceeded = itemCount > 0
+
+  // TRUNCATION IS ITS OWN FAILURE, not an empty read. They look identical from the
+  // outside — zero items either way — but they mean opposite things: an empty read
+  // says the model saw nothing worth listing, truncation says it saw too much to
+  // fit and we threw the answer away. Reported as the same 'empty_read' outcome,
+  // the fix (a bigger cap or a smaller contract) is invisible, and the benchmark
+  // records a model failure that was really a configuration one. This cost three of
+  // four paid moving calls before the cap was visible in the telemetry.
+  const truncated = res.outputTruncated === true
+  const outcome = parseSucceeded ? 'ok' : truncated ? 'output_truncated' : 'empty_read'
+
+  if (!parseSucceeded && truncated) {
+    analysis.reviewRequired = true
+    analysis.reviewReasons = Array.from(new Set([
+      ...analysis.reviewReasons.filter(r => !/No movable items/i.test(r)),
+      'The photo analysis was cut short before it finished — a team member will review your photos.',
+    ]))
+  }
 
   return {
     analysis,
     // A parsed-but-empty read is NOT a success: it would otherwise present as a
-    // free move rather than as a failed analysis.
-    ok: analysis.normalizedItems.length > 0,
+    // free move rather than as a failed analysis. Truncation is not a success either.
+    ok: parseSucceeded,
     callId: res.callId,
     model: modelName,
     latencyMs: res.latencyMs,
-    outcome: analysis.normalizedItems.length > 0 ? 'ok' : 'empty_read',
+    outcome,
+    finishReason: res.finishReason,
+    outputTokens: res.usage?.outputTokens,
+    maxOutputTokens: res.maxOutputTokens ?? MOVING_MAX_OUTPUT_TOKENS,
+    outputTruncated: truncated,
+    parseSucceeded,
+    itemCount,
   }
 }
 

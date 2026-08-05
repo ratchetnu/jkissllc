@@ -55,9 +55,16 @@ export type StoredMovingEstimate = {
 export type MovingEstimateResult = {
   stored: StoredMovingEstimate
   analyzedOk: boolean
+  /** 'ok' | 'output_truncated' | 'empty_read' | a provider outcome. */
   outcome: string
   model?: string
   callId?: string
+  /** Structured-output diagnostics, for telemetry and the benchmark report. */
+  finishReason?: string
+  outputTokens?: number
+  maxOutputTokens?: number
+  outputTruncated?: boolean
+  parseSucceeded?: boolean
 }
 
 /** A decision carrying the vision read but no price, for when pricing cannot run. */
@@ -132,7 +139,13 @@ export async function buildMovingEstimate(input: MovingEstimateInput): Promise<M
     missingInformation: decision.missingInformation,
   }
 
-  return { stored, analyzedOk: analyzed.ok, outcome: analyzed.outcome, model: analyzed.model, callId: analyzed.callId }
+  return {
+    stored, analyzedOk: analyzed.ok, outcome: analyzed.outcome,
+    model: analyzed.model, callId: analyzed.callId,
+    finishReason: analyzed.finishReason, outputTokens: analyzed.outputTokens,
+    maxOutputTokens: analyzed.maxOutputTokens, outputTruncated: analyzed.outputTruncated,
+    parseSucceeded: analyzed.parseSucceeded,
+  }
 }
 
 /**
