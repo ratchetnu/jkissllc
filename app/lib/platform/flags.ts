@@ -109,6 +109,21 @@ export type FeatureFlag =
   // default (no second vision call / image re-download), spending a full vision pass
   // only when the instant-quote read is borderline. OFF = today's vision critic on
   // every instant quote.
+  // Preview-only AI provider diagnostic (/api/diagnostics/ai-provider). Answers
+  // "is the provider failing, and whose problem is it?" in one secret-free request
+  // instead of inferring it backwards from a whole failed benchmark. Returns
+  // booleans and sanitized error classes only — never a key, token or signed URL.
+  // The route ALSO refuses when VERCEL_ENV=production, so this flag can never
+  // expose it there even if it were set by mistake. OFF everywhere by default.
+  | 'AI_PROVIDER_DIAGNOSTIC_ENABLED'
+  // Evaluation telemetry — records the ESTIMATE-side facts a benchmark needs and
+  // the customer-safe response deliberately omits (truck-load FRACTION, all five
+  // confidence sub-scores, monitor concerns, critic verdict), joined to the AI
+  // audit log by call id for token usage and cost. Writes one KV record per
+  // analysis; changes no response, no quote and no decision. The recorder also
+  // refuses to run when VERCEL_ENV=production, so this is Preview-only even if
+  // the flag were set there by mistake. OFF everywhere by default.
+  | 'AI_EVAL_TELEMETRY_ENABLED'
   | 'OPERION_CRITIC_JSON'
   // Moving lane: route moving-family services to the dedicated moving schema,
   // prompt and labor/crew/travel pricing engine. OFF = the vision pass still runs
@@ -212,6 +227,8 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   // never written or read and the booking path is byte-identical to today.
   BOOKING_ASSIGNMENT_ENABLED: false,
   // AI latency Phase 2 — all OFF by default (byte-identical to today).
+  AI_PROVIDER_DIAGNOSTIC_ENABLED: false,
+  AI_EVAL_TELEMETRY_ENABLED: false,
   OPERION_CRITIC_JSON: false,
   OPERION_MOVING_LANE: false,
   OPERION_EVENT_ENQUEUE: false,

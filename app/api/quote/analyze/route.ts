@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { after as afterResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { rateLimit } from '../../../lib/rate-limit'
 import { isBlockedBot } from '../../../lib/botcheck'
@@ -7,6 +8,7 @@ import { saveDraftEstimate, customerEstimateView } from '../../../lib/ai/estimat
 import { selectFollowUpQuestions } from '../../../lib/ai/followup-questions'
 import { recordFunnelEvent } from '../../../lib/analytics-events'
 import { filterPhotoUrls } from '../../../lib/photo-url'
+import { buildEvaluationRecord, buildMovingEvaluationRecord, recordEvaluation } from '../../../lib/ai/eval-telemetry'
 import { SERVICE_TYPES, serviceFamily, type ServiceType } from '../../../lib/bookings'
 import { buildMovingEstimate, customerMovingEstimateView, type StoredMovingEstimate } from '../../../lib/ai/moving-estimate'
 import type { MovingJobFacts } from '../../../lib/pricing/moving-quote'
@@ -85,9 +87,11 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   // OFF it is analysed and returned unpriced for a human; with it ON it is priced
   // on labor, crew, travel and access. Neither state invents a landfill trip.
   if (serviceFamily(serviceType) === 'moving') {
-    const { stored, analyzedOk } = await buildMovingEstimate({
+    const movingStartedAt = Date.now()
+    const { stored, analyzedOk, outcome } = await buildMovingEstimate({
       analysisId, bookingId: 'draft', photoUrls: photos, serviceType, facts: readMovingFacts(body),
     })
+    const movingTotalMs = Date.now() - movingStartedAt
     await recordFunnelEvent(analyzedOk ? 'ai_analysis_completed' : 'ai_analysis_failed', nowIso)
     await recordFunnelEvent(
       stored.decision === 'instant_quote' ? 'instant_quote_displayed'
@@ -95,6 +99,23 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
           : 'manual_review_required',
       nowIso,
     )
+    // Evaluation telemetry for the moving lane — the same three gates as junk
+    // (never Production, flag OFF by default, valid analysis id) and the same
+    // `after` scheduling, so the KV writes land outside the request the benchmark
+    // is timing. Registered BEFORE the response is returned; executed after it.
+    //
+    // The record is built from `stored`, which is the UNMODIFIED estimate: what is
+    // measured is what the lane actually produced, not the flag-withheld
+    // projection the customer sees. Fail-soft — telemetry can never reach the quote.
+    afterResponse(async () => {
+      try {
+        await recordEvaluation(buildMovingEvaluationRecord({
+          stored, serviceType, imageCount: photos.length,
+          analyzedOk, outcome, totalLatencyMs: movingTotalMs, at: nowIso,
+        }))
+      } catch (e) { console.error('[quote/analyze] moving eval telemetry', e) }
+    })
+
     // Flag OFF ⇒ the read is real but the price is withheld: a human quotes the
     // move. This is what shipped before the lane existed, minus the junk price.
     const view = customerMovingEstimateView(
@@ -117,6 +138,23 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
 
   // Persist the draft estimate so /api/quote can attach it on submit.
   try { await saveDraftEstimate(stored) } catch (e) { console.error('[quote/analyze] save draft', e) }
+
+  // Evaluation telemetry (Preview only, flag OFF by default). Records the
+  // estimate-side facts the customer-safe response omits, so a benchmark can
+  // measure volume, truck utilisation, confidence inputs and critic behaviour.
+  //
+  // Runs AFTER the response via `after`, not inline. Awaiting its KV writes here
+  // would add them to the request the benchmark is timing — telemetry that
+  // inflates the very latency it exists to measure. Fail-soft: a telemetry error
+  // can never reach the customer's quote.
+  afterResponse(async () => {
+    try {
+      await recordEvaluation(buildEvaluationRecord({
+        stored, serviceType, debris, imageCount: photos.length,
+        analyzedOk, outcome: stored.status, at: nowIso,
+      }))
+    } catch (e) { console.error('[quote/analyze] eval telemetry', e) }
+  })
 
   // Governed follow-up question selection (server-side; the client only renders).
   const estate = serviceType === 'estate-cleanout' || serviceType === 'garage-cleanout' || serviceType === 'eviction'
