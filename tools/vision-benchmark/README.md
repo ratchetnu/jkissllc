@@ -157,10 +157,14 @@ The fix is **evaluation telemetry**: `app/lib/ai/eval-telemetry.ts` records the 
 
 | Source | Carries |
 |---|---|
-| Evaluation record | truck-load **fraction** (real %), volume, all five confidence sub-scores, monitor concerns, critic verdict, decision, quote |
+| Evaluation record | truck-load **fraction** (real %), volume, all five confidence sub-scores, per-item catalog agreement, monitor concerns, critic verdict, decision, quote |
 | AI audit log (joined by `callId`) | input/output tokens, estimated + actual cost, attempts, retries, provider latency |
 
 Token usage and cost are **not copied** into the evaluation record — `recordAiCall` is already their single source of truth, and a second copy could drift from the first. The reader joins them.
+
+Catalog calibration is deliberately narrower than the model's item output. Each item contributes only its index, catalog id, quantity, model volume in cubic feet, catalog range and agreement score. It does **not** duplicate labels, evidence, photo identifiers or URLs, booking identifiers, or pricing inside `catalogItems`. The surrounding evaluation and benchmark records already contain the existing detected-item labels, so this is a field-level minimization boundary rather than a claim that the whole artifact is label-free. A missing model volume is recorded as `null`, never as the junk normalizer's fallback. This is enough to collect match coverage and disagreement inputs before anyone considers a quote-wide review gate, without adding another copy of customer data.
+
+`catalogItems` is capped at the same 40 normalized items as `detectedItems`; future rates must use `catalogItems.length`, not the untruncated job `itemCount`, as their denominator. Older saved run files predate this field, so readers must treat an absent `catalogItems` as “telemetry not collected,” not as a zero-item analysis. Reporting and threshold selection are deliberately deferred until Preview runs have accumulated this capture data.
 
 **Three gates, all required:** the route and the recorder both 404 / no-op when `VERCEL_ENV=production` regardless of flags; `AI_EVAL_TELEMETRY_ENABLED` is OFF everywhere by default; Preview deployment protection fronts the host. The customer response, the quote and the decision are byte-identical whether the flag is on or off.
 

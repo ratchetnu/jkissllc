@@ -37,6 +37,8 @@ export type DetectedJunkItem = {
   label: string
   estimatedQuantity: number
   estimatedVolumeCubicYards: number
+  /** Internal provenance: false when the normalizer supplied its 0.5 yd³ fallback. */
+  modelVolumeReported?: boolean
   estimatedWeightPounds: Range
   bulky: boolean
   heavy: boolean
@@ -136,12 +138,20 @@ function normalizeItem(v: unknown): DetectedJunkItem | null {
   if (!isObj(v)) return null
   const label = strOr(v.label, '', 120).trim()
   const category = asCategory(v.category)
+  const rawModelVolume = v.estimatedVolumeCubicYards
+  const parsedModelVolume = typeof rawModelVolume === 'number'
+    ? rawModelVolume
+    : typeof rawModelVolume === 'string' && rawModelVolume.trim() !== ''
+      ? Number(rawModelVolume)
+      : Number.NaN
+  const modelVolumeReported = Number.isFinite(parsedModelVolume)
   if (!label && category === 'unknown') return null
   const detected: DetectedJunkItem = {
     category,
     label: label || category.replace(/_/g, ' '),
     estimatedQuantity: clamp(Math.round(nonNeg(v.estimatedQuantity, 1)), 1, 999),
     estimatedVolumeCubicYards: clamp(nonNeg(v.estimatedVolumeCubicYards, 0.5), 0, 200),
+    modelVolumeReported,
     estimatedWeightPounds: asRange(v.estimatedWeightPounds, 40, 0),
     bulky: boolOr(v.bulky),
     heavy: boolOr(v.heavy),

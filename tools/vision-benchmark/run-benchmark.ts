@@ -25,6 +25,7 @@ import { readdirSync } from 'node:fs'
 import { datasetRoot, paths, loadManifest, loadGroups } from './dataset'
 import { hasGroundTruth, type ManifestEntry, type JobType, type Split } from './schema'
 import { createPacer, parseRetryAfter, fallbackBackoffMs, ANALYZE_LIMIT } from './pacing'
+import type { CatalogEvaluationItem } from '../../app/lib/ai/eval-telemetry'
 
 const UPLOAD_GAP_MS = 400
 const MAX_429_RETRIES = 4
@@ -76,6 +77,8 @@ export type BenchResult = {
   providerAttempts: number | null
   providerRetried: boolean | null
   providerLatencyMs: number | null
+  /** Per-item catalog calibration data; contains no photos, evidence, or customer identifiers. */
+  catalogItems?: CatalogEvaluationItem[]
 }
 
 /** Build the job list: explicit groups first, then every ungrouped approved image. */
@@ -175,6 +178,7 @@ async function fetchEvaluation(target: string, headers: Record<string, string>, 
       providerAttempts: typeof p?.attempts === 'number' ? p.attempts : null,
       providerRetried: typeof p?.retried === 'boolean' ? p.retried : null,
       providerLatencyMs: typeof p?.latencyMs === 'number' ? p.latencyMs : null,
+      catalogItems: Array.isArray(e.catalogItems) ? e.catalogItems as CatalogEvaluationItem[] : [],
     }
   } catch { return null }
 }
@@ -184,6 +188,7 @@ const EMPTY_EVAL = {
   criticInvoked: null, criticRecommend: null, monitorForceReview: null,
   inputTokens: null, outputTokens: null, estCostUsd: null,
   providerAttempts: null, providerRetried: null, providerLatencyMs: null,
+  catalogItems: [] as CatalogEvaluationItem[],
 }
 
 /** Job ids already completed in a prior run — so a resumed run never re-spends. */

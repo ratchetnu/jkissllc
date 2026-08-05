@@ -84,6 +84,57 @@ test('truck utilisation is a real percentage, not a ceil()d load count', () => {
   assert.equal(rec.estimatedVolumeCubicYards, 4, 'and 4 cubic yards, not 44')
 })
 
+test('catalog calibration records per-item volume and agreement without evidence or photos', () => {
+  const item = build().catalogItems[0]
+  assert.deepEqual(item, {
+    itemIndex: 0,
+    catalogId: 'standard_sofa',
+    quantity: 1,
+    modelVolumeCubicFeet: 108,
+    catalogVolumeCubicFeet: { minimum: 65, maximum: 90 },
+    catalogAgreement: 1,
+  })
+  const serialized = JSON.stringify(item).toLowerCase()
+  for (const forbidden of ['label', 'evidence', 'photo', 'url', 'booking']) {
+    assert.ok(!serialized.includes(forbidden), `${forbidden} must not enter catalog telemetry`)
+  }
+})
+
+test('catalog calibration preserves an omitted junk volume as null, not a disagreement sample', () => {
+  const missingVolume = normalizeAnalysis({
+    normalizedItems: [{
+      category: 'furniture', label: 'couch', estimatedQuantity: 1,
+      heavy: false, requiresDisassembly: false, confidence: 0.88,
+    }],
+    photoObservations: [{ photoUrl: ctx.photoUrls[0], imageQuality: 'good' }],
+    confidence: { overall: 0.88 }, reviewRequired: false, reviewReasons: [],
+    warnings: [], additionalQuestions: [],
+  }, ctx)
+  const rec = build({ analysis: missingVolume })
+  assert.equal(missingVolume.normalizedItems[0].estimatedVolumeCubicYards, 0.5,
+    'the existing quote normalizer fallback remains unchanged')
+  assert.equal(rec.catalogItems[0].catalogId, 'standard_sofa')
+  assert.equal(rec.catalogItems[0].modelVolumeCubicFeet, null,
+    'telemetry must not present the normalizer fallback as a model observation')
+})
+
+test('numeric-string junk volume is attributed consistently with normalizer coercion', () => {
+  const numericString = normalizeAnalysis({
+    normalizedItems: [{
+      category: 'furniture', label: 'couch', estimatedQuantity: 1,
+      estimatedVolumeCubicYards: '2.5', heavy: false,
+      requiresDisassembly: false, confidence: 0.88,
+    }],
+    photoObservations: [{ photoUrl: ctx.photoUrls[0], imageQuality: 'good' }],
+    confidence: { overall: 0.88 }, reviewRequired: false, reviewReasons: [],
+    warnings: [], additionalQuestions: [],
+  }, ctx)
+  const rec = build({ analysis: numericString })
+  assert.equal(numericString.normalizedItems[0].modelVolumeReported, true)
+  assert.equal(rec.catalogItems[0].modelVolumeCubicFeet, 67.5)
+  assert.equal(rec.catalogItems[0].catalogAgreement, 1)
+})
+
 test('all five confidence sub-scores are captured, not just overall', () => {
   const c = build().confidence
   for (const k of ['overall', 'volume', 'weight', 'itemClassification', 'accessDifficulty'] as const) {
