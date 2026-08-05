@@ -88,6 +88,19 @@ export const FIXTURES: FeatureFixture[] = [
     ],
   },
   {
+    // Moving lane. Same observations-only contract as ops.junkAnalysis (a nested
+    // shape validated at runtime by normalizeMovingAnalysis), so no flat schema
+    // here. The required tokens are chosen to fail loudly if this prompt ever
+    // drifts back toward the junk framing: the moving output contract must be
+    // present, and the explicit "NOT junk" instruction with it.
+    taskId: 'ops.movingAnalysis',
+    renderVars: {},
+    renderMustInclude: ['estimatedTruckSpaceFraction', 'recommendedCrewSize', 'NOT junk'],
+    cases: [
+      { name: 'plausible relocation inventory', response: '{"normalizedItems":[{"category":"furniture","label":"sectional sofa","quantity":{"minimum":1,"likely":1,"maximum":1},"sizeClass":"large"}],"boxCount":{"minimum":10,"likely":14,"maximum":18},"estimatedTruckSpaceFraction":{"minimum":0.15,"likely":0.2,"maximum":0.3},"recommendedCrewSize":{"minimum":2,"likely":2,"maximum":3},"confidence":{"overall":0.8}}', minScore: 60 },
+    ],
+  },
+  {
     taskId: 'ops.junkAnalysisReview',
     renderVars: {},
     renderMustInclude: ['quality reviewer', 'adjustedTruckLoadFraction'],
