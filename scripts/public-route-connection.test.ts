@@ -29,6 +29,8 @@ import { createServer, type Server } from 'node:http'
 
 import { NextRequest } from 'next/server'
 import { saveRoute, getRouteByToken, getRouteByConfirmToken, type RouteRecord, type Assignee } from '../app/lib/routes'
+import { saveBooking, type Booking } from '../app/lib/bookings'
+import { punchBookingClock } from '../app/lib/booking-assignment'
 import { runWithTenant } from '../app/lib/platform/tenancy/context'
 import { bindToken } from '../app/lib/platform/tenancy/token-binding'
 import { GET, POST } from '../app/api/route/[token]/route'
@@ -43,6 +45,8 @@ import { buildPunchOverlapReport } from '../app/lib/timeclock/punch-overlap-scan
 // answer must be that nothing at all was persisted.
 let failRouteWrites = 0
 let failCorrectionReads = 0
+let forceIncompleteRouteScan = 0
+let forceIncompleteBookingScan = 0
 let proxy: Server | null = null
 const PROXY_PORT = PORT + 1
 const EMULATOR_URL = `http://127.0.0.1:${PORT}`
@@ -63,6 +67,22 @@ before(async () => {
       // the failure under test is a failed save and not a failed lock.
       const isRouteWrite = /^\["SET","rt:[a-f0-9]{16,}"/i.test(body)
       const isCorrectionRead = /tcorr:punch:/.test(body)
+      const isRouteIndexCount = /^\["ZCARD","rt:index"\]$/i.test(body)
+      const isBookingIndexCount = /^\["ZCARD","bk:index"\]$/i.test(body)
+      if (forceIncompleteRouteScan > 0 && isRouteIndexCount) {
+        forceIncompleteRouteScan--
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ result: 20_001 }))
+        return
+      }
+      // The booking half of the same guard. The route scan runs first, so this
+      // only ever fires once the route lane has already reported complete.
+      if (forceIncompleteBookingScan > 0 && isBookingIndexCount) {
+        forceIncompleteBookingScan--
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ result: 20_001 }))
+        return
+      }
       if ((failRouteWrites > 0 && isRouteWrite) || (failCorrectionReads > 0 && isCorrectionRead)) {
         if (isRouteWrite) failRouteWrites--; else failCorrectionReads--
         res.writeHead(200, { 'content-type': 'application/json' })
@@ -88,6 +108,9 @@ after(() => { kv?.kill('SIGKILL'); proxy?.close() })
 beforeEach(async () => {
   failRouteWrites = 0
   failCorrectionReads = 0
+  forceIncompleteRouteScan = 0
+  forceIncompleteBookingScan = 0
+  delete process.env.SINGLE_OPEN_PUNCH_ENABLED
   process.env.KV_REST_API_URL = EMULATOR_URL
   await fetch(`${EMULATOR_URL}/__admin/flush`, { method: 'POST' }).catch(() => {})
 })
@@ -96,6 +119,9 @@ beforeEach(async () => {
 const ROUTE_TOK = 'aaaa0000bbbb1111'
 const CREW_TOK = 'cccc2222dddd3333'
 const OTHER_TOK = 'eeee4444ffff5555'
+const ROUTE2_TOK = '1111aaaa2222bbbb'
+const CREW2_TOK = '3333cccc4444dddd'
+const BOOKING_TOK = '5555eeee6666ffff'
 const TENANT = 'jkiss'
 
 const assignee = (over: Partial<Assignee> = {}): Assignee => ({
@@ -127,6 +153,26 @@ const seed = async (r: RouteRecord = mkRoute()) => {
   return r
 }
 const stored = (token: string) => runWithTenant({ tenantId: TENANT }, () => getRouteByToken(token))
+
+const secondRoute = (over: Partial<RouteRecord> = {}): RouteRecord => mkRoute({
+  token: ROUTE2_TOK,
+  routeNumber: 'JK-R-9002',
+  assignees: [assignee({ token: CREW2_TOK })],
+  ...over,
+})
+
+const booking = (over: Partial<Booking> = {}): Booking => ({
+  token: BOOKING_TOK,
+  bookingNumber: 'JK-B-9001',
+  customerName: 'Customer',
+  status: 'confirmed',
+  selectedDate: '2030-01-01',
+  createdAt: 1,
+  updatedAt: 1,
+  events: [],
+  assignees: [{ name: 'Sam Contractor', token: '7777aaaa8888bbbb', staffId: 's1', confirmedAt: 1 }],
+  ...over,
+} as Booking)
 
 // ── Authorization: the token IS the credential ───────────────────────────────
 
@@ -224,6 +270,158 @@ test('RETRY-SAFE: each punch is guarded by its own stamp; the FIRST time persist
   const replayOut = await post(CREW_TOK, { action: 'clock_out', locationDenied: true })
   assert.equal((await replayOut.json()).already, true)
   assert.equal((await stored(ROUTE_TOK))!.assignees![0].clockOutAt, outAt)
+})
+
+// ── Sprint 3.1 phases B/C: one engine, one race-safe policy ─────────────────
+
+test('PHASE B: the public route delegates punch mutation to shared applyPunch', () => {
+  const src = readFileSync(new URL('../app/api/route/[token]/route.ts', import.meta.url), 'utf8')
+  const branch = src.slice(src.indexOf('// Timeclock —'), src.indexOf('// Idempotent —'))
+  assert.match(branch, /applyPunch\(assignee, clockAction, gps, Date\.now\(\)\)/)
+  assert.doesNotMatch(branch, /assignee\.clock(?:In|Out)(?:At|Lat|Lng|Accuracy|LocationDenied)\s*=/,
+    'the public adapter must not grow a second punch engine again')
+})
+
+test('PHASE C: default OFF preserves the public link behaviour and performs no enforcement', async () => {
+  await seed(mkRoute({ assignees: [assignee({ confirmedAt: 1 })] }))
+  await seed(secondRoute({ assignees: [assignee({ token: CREW2_TOK, confirmedAt: 1 })] }))
+
+  assert.equal((await post(CREW_TOK, { action: 'clock_in', locationDenied: true })).status, 200)
+  assert.equal((await post(CREW2_TOK, { action: 'clock_in', locationDenied: true })).status, 200)
+  assert.ok((await stored(ROUTE_TOK))!.assignees![0].clockInAt)
+  assert.ok((await stored(ROUTE2_TOK))!.assignees![0].clockInAt)
+})
+
+test('PHASE C: concurrent same-date public clock-ins converge on exactly one open punch', async () => {
+  process.env.SINGLE_OPEN_PUNCH_ENABLED = 'true'
+  await seed(mkRoute({ assignees: [assignee({ confirmedAt: 1 })] }))
+  await seed(secondRoute({ assignees: [assignee({ token: CREW2_TOK, confirmedAt: 1 })] }))
+
+  const responses = await Promise.all([
+    post(CREW_TOK, { action: 'clock_in', locationDenied: true }),
+    post(CREW2_TOK, { action: 'clock_in', locationDenied: true }),
+  ])
+  assert.deepEqual(responses.map(r => r.status).sort(), [200, 409])
+
+  const open = [
+    (await stored(ROUTE_TOK))!.assignees![0],
+    (await stored(ROUTE2_TOK))!.assignees![0],
+  ].filter(a => a.clockInAt && !a.clockOutAt)
+  assert.equal(open.length, 1, 'the staff lock closes the two-job check/write race')
+})
+
+test('PHASE C: scope matches the existing portal rule — a different service date is allowed', async () => {
+  process.env.SINGLE_OPEN_PUNCH_ENABLED = 'true'
+  await seed(mkRoute({ assignees: [assignee({ confirmedAt: 1 })] }))
+  await seed(secondRoute({
+    routeDate: '2030-01-02',
+    assignees: [assignee({ token: CREW2_TOK, confirmedAt: 1 })],
+  }))
+
+  assert.equal((await post(CREW_TOK, { action: 'clock_in', locationDenied: true })).status, 200)
+  assert.equal((await post(CREW2_TOK, { action: 'clock_in', locationDenied: true })).status, 200)
+})
+
+test('PHASE C: booking and route lanes block each other on the same service date', async () => {
+  process.env.SINGLE_OPEN_PUNCH_ENABLED = 'true'
+  process.env.BOOKING_ASSIGNMENT_ENABLED = 'true'
+  try {
+    await seed(mkRoute({ assignees: [assignee({ confirmedAt: 1, clockInAt: 100 })] }))
+    await runWithTenant({ tenantId: TENANT }, () => saveBooking(booking()))
+
+    const blocked = await runWithTenant({ tenantId: TENANT }, () =>
+      punchBookingClock(BOOKING_TOK, 's1', 'clock_in', { locationDenied: true }))
+    assert.deepEqual(blocked, { ok: false, error: 'other_open_punch' })
+
+    await post(CREW_TOK, { action: 'clock_out', locationDenied: true })
+    const allowed = await runWithTenant({ tenantId: TENANT }, () =>
+      punchBookingClock(BOOKING_TOK, 's1', 'clock_in', { locationDenied: true }))
+    assert.equal(allowed.ok, true)
+
+    delete process.env.BOOKING_ASSIGNMENT_ENABLED
+    await seed(secondRoute({ assignees: [assignee({ token: CREW2_TOK, confirmedAt: 1 })] }))
+    const routeBlocked = await post(CREW2_TOK, { action: 'clock_in', locationDenied: true })
+    assert.equal(routeBlocked.status, 409,
+      'historical booking punches remain authoritative even after booking assignment is switched off')
+  } finally {
+    delete process.env.BOOKING_ASSIGNMENT_ENABLED
+  }
+})
+
+test('PHASE C: correction-adjusted state is authoritative', async () => {
+  process.env.SINGLE_OPEN_PUNCH_ENABLED = 'true'
+  await seed(mkRoute({ assignees: [assignee({ confirmedAt: 1, clockInAt: 100 })] }))
+  await seed(secondRoute({ assignees: [assignee({ token: CREW2_TOK, confirmedAt: 1 })] }))
+
+  await runWithTenant({ tenantId: TENANT }, async () => {
+    const value = validateCorrection(
+      { correctedClockIn: 100, correctedClockOut: 200, correctionReason: 'closed by dispatch' },
+      { effectiveClockIn: 100, effectiveClockOut: null },
+    )
+    assert.equal(value.ok, true)
+    await appendCorrection({
+      punchId: punchId('route', ROUTE_TOK, 's1'), staffId: 's1', workType: 'route', jobToken: ROUTE_TOK,
+      original: { clockInAt: 100, clockOutAt: null },
+      value: (value as { ok: true; value: never }).value,
+      actor: { userId: 'u_admin', role: 'admin' },
+    } as never)
+  })
+
+  const res = await post(CREW2_TOK, { action: 'clock_in', locationDenied: true })
+  assert.equal(res.status, 200, 'a correction-closed punch must not remain falsely blocking')
+})
+
+test('PHASE C: incomplete correction evidence fails closed without writing', async () => {
+  process.env.SINGLE_OPEN_PUNCH_ENABLED = 'true'
+  await seed(mkRoute({ assignees: [assignee({ confirmedAt: 1, clockInAt: 100 })] }))
+  await seed(secondRoute({ assignees: [assignee({ token: CREW2_TOK, confirmedAt: 1 })] }))
+  process.env.KV_REST_API_URL = `http://127.0.0.1:${PROXY_PORT}`
+  failCorrectionReads = 1
+
+  const res = await post(CREW2_TOK, { action: 'clock_in', locationDenied: true })
+  assert.equal(res.status, 503)
+  assert.equal((await stored(ROUTE2_TOK))!.assignees![0].clockInAt, undefined)
+})
+
+test('PHASE C: an incomplete route scan fails closed without writing', async () => {
+  process.env.SINGLE_OPEN_PUNCH_ENABLED = 'true'
+  await seed(mkRoute({ assignees: [assignee({ confirmedAt: 1 })] }))
+  process.env.KV_REST_API_URL = `http://127.0.0.1:${PROXY_PORT}`
+  forceIncompleteRouteScan = 1
+
+  const res = await post(CREW_TOK, { action: 'clock_in', locationDenied: true })
+  assert.equal(res.status, 503)
+  assert.match((await res.json()).error, /verify your other punches/i)
+  assert.equal((await stored(ROUTE_TOK))!.assignees![0].clockInAt, undefined)
+})
+
+// The booking lane needs its own case: the route scan can report complete while
+// the booking scan cannot, and that is the branch MOST likely to fire in the
+// field, because `bk:index` is scored by updatedAt and any concurrent booking
+// write reorders it mid-scan. Missing booking evidence must fail closed too.
+test('PHASE C: an incomplete booking scan fails closed without writing', async () => {
+  process.env.SINGLE_OPEN_PUNCH_ENABLED = 'true'
+  await seed(mkRoute({ assignees: [assignee({ confirmedAt: 1 })] }))
+  process.env.KV_REST_API_URL = `http://127.0.0.1:${PROXY_PORT}`
+  forceIncompleteBookingScan = 1
+
+  const res = await post(CREW_TOK, { action: 'clock_in', locationDenied: true })
+  assert.equal(res.status, 503)
+  assert.match((await res.json()).error, /verify your other punches/i)
+  assert.equal((await stored(ROUTE_TOK))!.assignees![0].clockInAt, undefined)
+})
+
+test('PHASE C: flag OFF retains the pre-Phase-C route adapter contract', () => {
+  const publicRoute = readFileSync(new URL('../app/api/route/[token]/route.ts', import.meta.url), 'utf8')
+  assert.match(publicRoute,
+    /isEnabled\('SINGLE_OPEN_PUNCH_ENABLED'\)\s*&&\s*route\.routeDate !== first\.route\.routeDate/)
+
+  const portalRoute = readFileSync(new URL('../app/api/portal/clock/route.ts', import.meta.url), 'utf8')
+  assert.match(portalRoute,
+    /isEnabled\('SINGLE_OPEN_PUNCH_ENABLED'\)\s*&&\s*route\.routeDate !== target\.routeDate/)
+  assert.match(portalRoute,
+    /: NextResponse\.json\(\{ error: 'Could not clock — please try again\.' \}, \{ status: 500 \}\)/,
+    'the legacy flag-off failure status and copy remain present')
 })
 
 test('RETRY-SAFE: completion is status-idempotent, so a replay cannot restamp it', async () => {

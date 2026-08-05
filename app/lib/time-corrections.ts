@@ -16,6 +16,7 @@
 // index (zset by createdAt), tenant scoping via the redis chokepoint, and writes
 // serialized by the shared kv-lock primitive.
 import { redis } from './redis'
+import { readPunchLocation, syncPunchIndex } from './timeclock/open-punch-index'
 import type { Role } from './rbac'
 
 export type WorkType = 'route' | 'booking'
@@ -352,6 +353,28 @@ export async function appendCorrection(input: {
     // Append-only: the prior record is KEPT, only its status flag moves.
     await persist({ ...prior, status: 'superseded', supersededAt: input.now })
   }
+
+  // A correction IS a change of effective open-punch state — it can close a shift
+  // the raw record shows open, or reopen one the raw record shows closed — so the
+  // open-punch index has to move with it. The record just appended is the active
+  // one by construction (latest wins in `effectivePunch`), so its corrected times
+  // ARE the new effective state and no re-read is needed.
+  //
+  // With no serviceDate supplied we fall back to wherever the punch is already
+  // filed, so a correction can never silently relocate a punch into the undated
+  // bucket — where it would block every other clock-in for that crew member. With
+  // neither available the entry is left for reconciliation rather than guessed at.
+  const bucket = input.serviceDate?.trim() || (await readPunchLocation(input.punchId).catch(() => null))
+  if (bucket) {
+    await syncPunchIndex({
+      punchId: input.punchId,
+      staffId: input.staffId,
+      serviceDate: bucket,
+      open: correction.correctedClockIn != null && correction.correctedClockOut == null,
+      clockInAt: correction.correctedClockIn,
+    })
+  }
+
   return { ok: true, correction }
 }
 

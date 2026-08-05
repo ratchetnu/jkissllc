@@ -8,6 +8,7 @@ import {
   ROUTE_STATUS_LABEL, type RouteStatus,
 } from '../../../../lib/routes'
 import { addCrew, removeCrew, sendAssignmentText } from '../../../../lib/route-notify'
+import { clearPunchFromIndex } from '../../../../lib/timeclock/punch-index-sync'
 import { withRouteLock, RouteBusyError } from '../../../../lib/route-mutex'
 import { listStaff } from '../../../../lib/staff'
 import {
@@ -36,6 +37,7 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
   const route = await getRouteByToken(id)
   if (!route) return NextResponse.json({ error: 'Route not found.' }, { status: 404 })
   let smsWarning: string | undefined
+  let unassignedStaffId: string | undefined
 
   if (action === 'assign') {
     // Add a crew member (no text). Their pay is snapshotted from `pay` if given,
@@ -124,7 +126,14 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
   } else if (action === 'unassign') {
     // Remove one crew member (by staffId) or the lead if none specified.
     const sid = S(body.staffId, 80) || route.assignees?.[0]?.staffId
-    if (sid) removeCrew(route, sid)
+    if (sid) {
+      removeCrew(route, sid)
+      // Unassigning deletes the punch along with the assignee. Without this the
+      // index would keep a phantom open punch for a crew member who is no longer
+      // on the route — one that blocks their next clock-in and that no clock-out
+      // can ever clear, because the record it referred to is gone.
+      unassignedStaffId = sid
+    }
   } else if (action === 'send' || action === 'resend') {
     // Texting the assignment is the owner's dispatch action. Crew acceptance is
     // never blocked, but owners must finish their equipment decision before
@@ -228,6 +237,9 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
   }
 
   await saveRoute(route)
+  if (unassignedStaffId) {
+    await clearPunchFromIndex('route', route.token, unassignedStaffId)
+  }
   return NextResponse.json({ ok: true, route, smsWarning })
     })
   } catch (e) {
