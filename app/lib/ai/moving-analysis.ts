@@ -18,6 +18,7 @@ import { truckVars } from './truck-vars'
 import { isAllowedPhotoUrl } from '../photo-url'
 import { resolveAiPhotoUrls } from './photo-optimize'
 import { imageOptimizationEnabled } from './image-optimize-config'
+import { reconcilePhotoSet } from './photo-reconciliation'
 import { timeStage, markStageFailure } from '../observability/pipeline-trace'
 import {
   normalizeMovingAnalysis, reviewFallbackMovingAnalysis,
@@ -60,7 +61,8 @@ export const MOVING_MAX_OUTPUT_TOKENS = 2400
 export async function analyzeMovingPhotos(input: AnalyzeMovingPhotosInput): Promise<AnalyzeMovingPhotosResult> {
   const prep = await timeStage('image_preprocess', async () => {
     const allowed = input.photoUrls.filter(isAllowedPhotoUrl).slice(0, 8)
-    const { urls: photos } = await resolveAiPhotoUrls(allowed, { enabled: imageOptimizationEnabled() })
+    const reconciled = await reconcilePhotoSet(allowed)
+    const { urls: photos } = await resolveAiPhotoUrls(reconciled.active.map(p => p.url), { enabled: imageOptimizationEnabled() })
     if (photos.length === 0) return { photos, messages: [] as ModelMessage[] }
     const content: Array<{ type: 'text'; text: string } | { type: 'image'; image: string }> = [
       {
@@ -72,7 +74,10 @@ export async function analyzeMovingPhotos(input: AnalyzeMovingPhotosInput): Prom
           ` Photos are ordered; some may show the same room from different angles — do not double-count.` +
           ` Return ONLY the JSON object described in your instructions.`,
       },
-      ...photos.map((url) => ({ type: 'image' as const, image: url })),
+      ...photos.flatMap((url, i) => [
+        { type: 'text' as const, text: `Photo p${i}${reconciled.active[i].nearDuplicateOf ? '; possible alternate view of an earlier photo' : ''}.` },
+        { type: 'image' as const, image: url },
+      ]),
     ]
     return { photos, messages: [{ role: 'user', content }] as ModelMessage[] }
   })
