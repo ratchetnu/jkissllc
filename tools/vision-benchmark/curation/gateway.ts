@@ -49,7 +49,10 @@ export function gatewayCaller(opts: GatewayOptions = {}): VisionCaller {
       system: req.system,
       messages: [{
         role: 'user',
-        content: [{ type: 'text', text: req.user }, imagePart(req.imagePath)],
+        content: [
+          { type: 'text', text: req.user },
+          req.imageDataUrl ? { type: 'image', image: req.imageDataUrl } : imagePart(req.imagePath),
+        ],
       }] as never,
       maxOutputTokens: opts.maxOutputTokens ?? 900,
       temperature: 0,

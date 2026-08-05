@@ -30,6 +30,8 @@ export type VisionRequest = {
   system: string
   user: string
   imagePath: string
+  /** Pre-resolved image, used when the caller has no filesystem (a Preview route). */
+  imageDataUrl?: string
 }
 export type VisionResponse = {
   text: string
@@ -164,6 +166,8 @@ export type CandidateOutcome = {
 
 export type PipelineOptions = {
   roles?: RoleAssignment[]
+  /** Supplied when running server-side, where the dataset is not on disk. */
+  imageDataUrl?: string
   imageRoot: string
   now: string
   catalogVersion?: number
@@ -211,7 +215,10 @@ export async function runCandidate(
   const call = async (role: 'classifier' | 'labeler' | 'verifier' | 'adjudicator', user: string) => {
     const model = modelForRole(role, roles)
     const promptVersion = roles.find(r => r.role === role)!.promptVersion as keyof typeof PROMPTS
-    const r = await callRole(ctx, { model, promptVersion, system: PROMPTS[promptVersion], user, imagePath }, sha)
+    const r = await callRole(ctx, {
+      model, promptVersion, system: PROMPTS[promptVersion], user, imagePath,
+      ...(opts.imageDataUrl ? { imageDataUrl: opts.imageDataUrl } : {}),
+    }, sha)
     usd += r.usd; latencyMs += r.latencyMs; if (r.cached) cachedCalls++
     return r.text
   }
