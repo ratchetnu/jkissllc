@@ -54,14 +54,13 @@ test('catalog annotations do not rewrite model volume or make every matched item
   assert.equal(a.normalizedItems[1].bulky, false)
 })
 
-test('matched catalog disagreement preserves volume and forces review', () => {
+test('matched catalog disagreement preserves volume without an uncalibrated global review gate', () => {
   const a = normalizeAnalysis(goodRaw({ normalizedItems: [
     { category: 'appliance', label: 'refrigerator', estimatedQuantity: 1, estimatedVolumeCubicYards: 0.3, confidence: 0.9 },
   ] }), ctx())
   assert.equal(a.normalizedItems[0].estimatedVolumeCubicYards, 0.3)
   assert.equal(a.normalizedItems[0].catalogAgreement, 0.55)
-  assert.equal(a.reviewRequired, true)
-  assert.ok(a.reviewReasons.some(reason => /operational catalog/i.test(reason)))
+  assert.equal(a.reviewRequired, false)
 })
 
 test('catalog annotation preserves a self-consistent item sum for the monitor', () => {

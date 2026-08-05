@@ -17,14 +17,17 @@ test('only a terminal head noun matches, so accessory labels stay unclassified',
     assert.equal(resolveCatalogItem(label), null, label)
   }
   assert.equal(resolveCatalogItem('office desk chair')?.id, 'office_chair')
-  assert.equal(resolveCatalogItem('mini fridge'), null)
-  assert.equal(resolveCatalogItem('beverage fridge'), null)
-  assert.equal(resolveCatalogItem('small stainless mini fridge'), null)
+  for (const label of [
+    'mini fridge', 'beverage fridge', 'small stainless mini fridge', 'compact fridge',
+    'wine fridge', 'bar fridge', 'dorm fridge', 'mini refrigerator', 'under counter fridge',
+    'portable washer', 'apartment washer',
+  ]) assert.equal(resolveCatalogItem(label), null, label)
 })
 
 test('singular, regular plural, irregular plural and stored-plural aliases resolve', () => {
   assert.equal(resolveCatalogItem('bookshelves')?.id, 'bookcase')
-  assert.equal(resolveCatalogItem('shelves')?.id, 'bookcase')
+  assert.equal(resolveCatalogItem('shelves'), null)
+  assert.equal(resolveCatalogItem('wall shelf'), null)
   assert.equal(resolveCatalogItem('branch pile')?.id, 'yard_waste_bundle')
   assert.equal(resolveCatalogItem('single board')?.id, 'lumber_bundle')
 })
@@ -57,7 +60,9 @@ test('unknown items fall back with lower agreement', () => {
 })
 
 test('catalog disagreement lowers agreement', () => {
-  assert.ok(catalogMatch('loveseat', 'medium', 500).agreement < catalogMatch('loveseat', 'medium', 55).agreement)
+  const disagreement = catalogMatch('loveseat', 'medium', 500).agreement
+  const agreement = catalogMatch('loveseat', 'medium', 55).agreement
+  assert.ok(disagreement !== null && agreement !== null && disagreement < agreement)
 })
 
 test('catalog contains no pricing data', () => {

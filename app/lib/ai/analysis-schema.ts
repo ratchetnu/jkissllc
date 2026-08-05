@@ -256,9 +256,6 @@ export function normalizeAnalysis(raw: unknown, ctx: NormalizeCtx): JunkPhotoAna
   if (unusable) reasons.push('Photos were unusable (too dark, blurry, or obstructed).')
   if (confidence.overall < 0.55) reasons.push('Overall confidence is below the instant-quote threshold.')
   if (confidence.volume < 0.5) reasons.push('Volume estimate is uncertain.')
-  if (normalizedItems.some(item => item.catalogAgreement !== undefined && item.catalogAgreement < 0.6)) {
-    reasons.push('One or more item volumes disagree with the operational catalog.')
-  }
   if (detectedConditions.hazardousMaterialPossible || detectedConditions.paintOrChemicalPossible) reasons.push('Possible hazardous materials — needs human confirmation.')
   if (detectedConditions.concreteOrSoilPossible) reasons.push('Possible dense debris (concrete/soil) — weight risk.')
   if (fraction.likely > 1.1) reasons.push('Job may need more than one truckload.')

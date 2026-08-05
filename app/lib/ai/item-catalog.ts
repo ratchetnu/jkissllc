@@ -51,7 +51,7 @@ export const OPERATIONAL_ITEM_CATALOG: OperationalItem[] = [
   item('dining_chair', ['kitchen chair'], [7, 12], { small: [5, 8], moving: [], junk: ['rigid'] }),
   item('desk', ['office desk', 'writing desk'], [25, 55], { large: [45, 80], disassemblyLikely: true, moving: ['requires_disassembly'], junk: ['rigid'] }),
   item('office_chair', ['desk chair'], [12, 22], { moving: [], junk: ['rigid'] }),
-  item('bookcase', ['bookshelf', 'shelf', 'shelving unit'], [20, 45], { large: [35, 70], moving: ['two_person_lift'], junk: ['rigid'] }),
+  item('bookcase', ['bookshelf', 'shelving unit'], [20, 45], { large: [35, 70], moving: ['two_person_lift'], junk: ['rigid'] }),
   item('refrigerator', ['fridge'], [45, 75], { large: [60, 95], weightClass: 'very_heavy', defaultCrew: 2, appliance: true, bulky: true, moving: ['two_person_lift', 'appliance'], junk: ['appliance', 'special_disposal_review'] }),
   item('washer', ['washing machine'], [22, 32], { weightClass: 'very_heavy', appliance: true, moving: ['two_person_lift', 'appliance'], junk: ['appliance'] }),
   item('dryer', ['clothes dryer'], [22, 32], { weightClass: 'heavy', appliance: true, moving: ['two_person_lift', 'appliance'], junk: ['appliance'] }),
@@ -69,7 +69,7 @@ export const OPERATIONAL_ITEM_CATALOG: OperationalItem[] = [
 
 const clean = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 
-const IRREGULAR_SINGULARS: Record<string, string> = { bookshelves: 'bookshelf', shelves: 'shelf' }
+const IRREGULAR_SINGULARS: Record<string, string> = { bookshelves: 'bookshelf', houses: 'house' }
 
 const singular = (token: string): string => {
   if (IRREGULAR_SINGULARS[token]) return IRREGULAR_SINGULARS[token]
@@ -90,13 +90,21 @@ const containsAlias = (label: string, alias: string): boolean => {
   )
 }
 
-const UNSUPPORTED_VARIANTS = ['mini fridge', 'beverage fridge']
+const APPLIANCE_MODIFIERS = new Set([
+  'apartment', 'bar', 'beverage', 'compact', 'dorm', 'mini', 'portable', 'undercounter', 'wine',
+])
+
+const hasUnsupportedApplianceModifier = (label: string): boolean => {
+  const tokens = label.replace('under counter', 'undercounter').split(' ')
+  return tokens.some(token => APPLIANCE_MODIFIERS.has(token))
+}
 
 export function resolveCatalogItem(label: string): OperationalItem | null {
   const needle = clean(label)
-  if (!needle || UNSUPPORTED_VARIANTS.some(variant => needle === variant || needle.endsWith(` ${variant}`))) return null
+  if (!needle) return null
   const matches = OPERATIONAL_ITEM_CATALOG.flatMap(entry => entry.aliases.map(alias => ({ entry, alias: clean(alias) })))
     .filter(match => containsAlias(needle, match.alias))
+    .filter(match => !(match.entry.appliance && hasUnsupportedApplianceModifier(needle)))
     .sort((a, b) => b.alias.length - a.alias.length)
   return matches[0]?.entry ?? null
 }
@@ -109,7 +117,7 @@ export function catalogMatch(label: string, size: CatalogSize, modelCubicFeet: n
   const entry = resolveCatalogItem(label)
   if (!entry) return { entry: null, volume: null, agreement: 0.45 }
   const volume = catalogVolume(entry, size)
-  if (!volume) return { entry, volume: null, agreement: 0.65 }
+  if (!volume) return { entry, volume: null, agreement: null }
   const agreement = modelCubicFeet <= 0 ? 0.7
     : modelCubicFeet >= volume.minimum * 0.6 && modelCubicFeet <= volume.maximum * 1.5 ? 1 : 0.55
   return { entry, volume, agreement }
