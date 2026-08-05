@@ -26,7 +26,7 @@ export type DisposalSettings = {
 
   // ── Per-trip disposal (the core of the model) ──────────────────────────────
   minDisposalFeePerTripCents: number  // $75 default — charged EVERY landfill trip
-  truckCapacityCuFt: number           // 1,200 (24 ft box truck) — reference only
+  truckCapacityCuFt: number           // 1,000 (24 ft box truck, loadable) — reference only
 
   // ── Itemized job costs (all admin-tunable) ─────────────────────────────────
   laborMinCents: number               // floor for on-site loading labor
@@ -69,7 +69,7 @@ export const DEFAULT_DISPOSAL: DisposalSettings = {
   marginPct: 0.42,
 
   minDisposalFeePerTripCents: 7500,   // $75 minimum per landfill trip
-  truckCapacityCuFt: 1200,
+  truckCapacityCuFt: 1000,
 
   laborMinCents: 6000,
   laborFullLoadCents: 24000,
