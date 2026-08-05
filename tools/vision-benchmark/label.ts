@@ -32,6 +32,7 @@ import { Script } from 'node:vm'
 import { readFileSync, existsSync, appendFileSync, mkdirSync } from 'node:fs'
 import { join, extname } from 'node:path'
 import { datasetRoot, paths, loadManifest, saveManifest } from './dataset'
+import { CALIBRATION_TARGET } from './label-queues'
 import {
   validateLabel, DISPOSAL_FLAGS, ACCESS_CONCERNS, TRUCK_CUBIC_YARDS,
   type ManifestEntry,
@@ -111,6 +112,8 @@ button.act{flex:1;border:0;border-radius:7px;padding:9px;font-weight:700;cursor:
 .b-ver{background:#1d4ed8}.b-draft{background:#6b5518}.b-un{background:#33333b;color:#9b9ba4}
 .b-app{background:#1f6f43}.b-rej{background:#7a2230}.b-pend{background:#33333b;color:#9b9ba4}
 .warn{background:#3a2f10;border:1px solid #6b5518;color:#f0d68a;padding:6px 8px;border-radius:6px;font-size:11px;margin-bottom:8px}
+.lane{background:#1c1c22;border:1px solid #33333c;border-radius:5px;padding:2px 8px}
+.lane-done{border-color:#2e7d32;color:#8bd18e}
 .err{background:#3a1010;border:1px solid #7a2230;color:#ffb4b4;padding:6px 8px;border-radius:6px;font-size:11px;margin-bottom:8px;white-space:pre-line}
 .buckets{display:flex;flex-direction:column;gap:4px}
 .buckets button{background:#1b1b21;border:1px solid #33333b;color:#e7e7ea;border-radius:7px;padding:7px 10px;cursor:pointer;font-size:12px;text-align:left}
@@ -134,6 +137,11 @@ kbd{background:#1b1b21;border:1px solid #33333b;border-radius:4px;padding:0 4px;
     <span>draft <b id="c-draft">0</b></span>
     <span>approved <b id="c-app">0</b></span>
     <span>rejected <b id="c-rej">0</b></span>
+    <!-- Per-lane progress against the calibration target. Never a combined
+         total: one number spanning both lanes reads as progress while one lane
+         sits at zero, which is exactly how the junk lane stayed at 3. -->
+    <span class="lane" id="p-junk">Junk: —</span>
+    <span class="lane" id="p-move">Moving: —</span>
   </div>
   <div style="margin-left:auto"><label style="display:inline;margin:0"><input type="checkbox" id="onlyApproved" checked style="width:auto"> approved only</label></div>
 </header>
@@ -156,6 +164,8 @@ const HANDLING = ${j(HANDLING_FLAGS)};
 const REF = ${j(VOLUME_REFERENCE)};
 const BUCKETS = ${j(LOAD_BUCKETS)};
 const TRUCK_CU_YD = ${TRUCK_CUBIC_YARDS};
+const DEV_TARGET = ${CALIBRATION_TARGET.development};
+const HOLD_TARGET = ${CALIBRATION_TARGET.holdout};
 let list = [], i = 0, dirty = false;
 
 function rebuild(){
@@ -172,6 +182,14 @@ function counts(){
   document.getElementById('c-draft').textContent = ALL.filter(e=>e.labelStatus==='draft').length;
   document.getElementById('c-app').textContent = ALL.filter(e=>e.reviewStatus==='approved').length;
   document.getElementById('c-rej').textContent = ALL.filter(e=>e.reviewStatus==='rejected').length;
+  for (const [lane, el, label] of [['junk_removal','p-junk','Junk'],['moving','p-move','Moving']]){
+    const v = ALL.filter(e=>e.jobType===lane && e.labelStatus==='verified');
+    const dev = v.filter(e=>e.split==='development').length;
+    const hold = v.filter(e=>e.split==='holdout').length;
+    const node = document.getElementById(el);
+    node.textContent = label+': '+dev+'/'+DEV_TARGET+' development, '+hold+'/'+HOLD_TARGET+' holdout';
+    node.className = 'lane' + ((dev>=DEV_TARGET && hold>=HOLD_TARGET) ? ' lane-done' : '');
+  }
 }
 function go(d){
   if (dirty && !confirm('Unsaved changes on this image. Move anyway?')) return;

@@ -195,3 +195,57 @@ function main(): void {
 }
 
 if (require.main === module) main()
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALIBRATION gate — a second, higher bar that sits alongside the pilot gates.
+//
+// The pilot gates above are deliberately small and their comments explain why;
+// they are not to be raised. This gate answers a different question: is there
+// enough labelled data to make an accuracy or threshold claim at all? The pilot
+// can pass while this fails, and that is the normal state today.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const CALIBRATION_GATES = {
+  minDevelopmentVerified: 25,
+  minHoldoutVerified: 5,
+  minCategories: 5,
+  minDifficulties: 2,
+}
+
+export type CalibrationAssessment = {
+  jobType: JobType
+  gates: ReadinessGate[]
+  ready: boolean
+  developmentVerified: number
+  holdoutVerified: number
+}
+
+export function assessCalibration(entries: ManifestEntry[], jobType: JobType): CalibrationAssessment {
+  const verified = entries.filter(e => e.jobType === jobType && e.labelStatus === 'verified')
+  const dev = verified.filter(e => e.split === 'development').length
+  const hold = verified.filter(e => e.split === 'holdout').length
+  const cats = new Set(verified.map(e => e.category))
+  const diffs = new Set(verified.map(e => e.difficulty).filter(Boolean))
+  const g = CALIBRATION_GATES
+  const gates: ReadinessGate[] = [
+    { name: 'development labels', pass: dev >= g.minDevelopmentVerified, detail: `${dev} / ${g.minDevelopmentVerified}` },
+    { name: 'frozen holdout labels', pass: hold >= g.minHoldoutVerified, detail: `${hold} / ${g.minHoldoutVerified}` },
+    { name: 'categories', pass: cats.size >= g.minCategories, detail: `${cats.size} / ${g.minCategories}` },
+    { name: 'difficulty bands', pass: diffs.size >= g.minDifficulties, detail: `${diffs.size} / ${g.minDifficulties}` },
+  ]
+  return { jobType, gates, ready: gates.every(x => x.pass), developmentVerified: dev, holdoutVerified: hold }
+}
+
+/**
+ * Multi-photo calibration is a SEPARATE gate and is not implied by the counts
+ * above. Duplicate reconciliation has never been exercised against real data —
+ * the 2026-08-05 pilot ran 12 single-image jobs — and a stock manifest cannot
+ * truthfully supply groups. This stays false until real grouped jobs exist.
+ */
+export function multiPhotoReady(groupCount: number, jobType: JobType): ReadinessGate {
+  return {
+    name: `multi-photo groups (${jobType})`,
+    pass: groupCount >= 5,
+    detail: `${groupCount} / 5 real grouped jobs — stock images must NOT be grouped to satisfy this`,
+  }
+}
