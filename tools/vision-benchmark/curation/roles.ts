@@ -4,8 +4,8 @@
 // PROBE RESULT — 2026-08-05, Preview only, via Vercel AI Gateway:
 //   openai/gpt-4o        reachable, image input accepted, structured output
 //                        valid, text probe 1320ms, image probe 1833ms, healthy.
-//   google/gemini-2.5-flash   NOT PROBED — the first healthy independent family
-//                        was confirmed, so a second paid probe was unnecessary.
+//   google/gemini-2.5-flash   reachable, image input accepted, structured output
+//                        valid, text 1532ms, image 2089ms, healthy.
 //
 // The production estimator (anthropic/claude-sonnet-4-6) is the system under
 // test. It appears here only so `assertIndependent()` has something to refuse.
@@ -26,32 +26,27 @@ export const PROMPT_VERSIONS = {
 /**
  * Assignment as confirmed by the probe.
  *
- * Verifier note: gpt-4o-mini is the same FAMILY as the labeler, which
- * `independenceViolations()` reports as a WARN rather than an error. It is
- * accepted here only because it is a different model, a different prompt, a
- * different call and a different context, and because the alternative — reusing
- * the production estimator — is strictly worse. If google/gemini-2.5-flash is
- * later confirmed healthy, move the verifier there and the warning disappears.
+ * Verifier note: the verifier is a DIFFERENT FAMILY from the labeler (Google vs
+ * OpenAI), which is the strongest independence available here. Two models from
+ * one family share training lineage and tend to be wrong in the same direction —
+ * agreement between them would look like verification while measuring very
+ * little. Do not move the verifier back into the labeler's family.
  */
 export const DEFAULT_ROLES: RoleAssignment[] = [
   { role: 'classifier', model: 'openai/gpt-4o-mini', promptVersion: PROMPT_VERSIONS.classifier },
   { role: 'labeler', model: 'openai/gpt-4o', promptVersion: PROMPT_VERSIONS.labeler },
-  { role: 'verifier', model: 'openai/gpt-4o-mini', promptVersion: PROMPT_VERSIONS.verifier },
+  { role: 'verifier', model: 'google/gemini-2.5-flash', promptVersion: PROMPT_VERSIONS.verifier },
   // Adjudicator runs ONLY on disagreement. A stronger model is justified there
   // precisely because it is rare; running it unconditionally would triple cost.
   { role: 'adjudicator', model: 'openai/gpt-4.1-mini', promptVersion: PROMPT_VERSIONS.adjudicator },
 ]
 
 /**
- * Preferred assignment once a second independent family is confirmed. Kept as
- * data so the upgrade is a one-line switch rather than an edit under pressure.
+ * Retained as the explicit record that DEFAULT_ROLES already is the preferred,
+ * cross-family assignment. Kept separate so a future change that weakens
+ * independence has to disagree with something rather than merely edit it.
  */
-export const PREFERRED_ROLES: RoleAssignment[] = [
-  { role: 'classifier', model: 'openai/gpt-4o-mini', promptVersion: PROMPT_VERSIONS.classifier },
-  { role: 'labeler', model: 'openai/gpt-4o', promptVersion: PROMPT_VERSIONS.labeler },
-  { role: 'verifier', model: 'google/gemini-2.5-flash', promptVersion: PROMPT_VERSIONS.verifier },
-  { role: 'adjudicator', model: 'openai/gpt-4.1-mini', promptVersion: PROMPT_VERSIONS.adjudicator },
-]
+export const PREFERRED_ROLES: RoleAssignment[] = DEFAULT_ROLES
 
 export type IndependenceCheck = { ok: boolean; errors: string[]; warnings: string[] }
 

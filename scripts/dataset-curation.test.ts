@@ -268,13 +268,21 @@ test('the shipped role assignment is independent of the production estimator', (
   assert.notEqual(modelForRole('labeler'), modelForRole('verifier'))
 })
 
-test('same-family labeler/verifier is a warning, not a silent pass', () => {
+test('the shipped assignment crosses model families, so no correlated-bias warning', () => {
+  // Probe 2026-08-05 confirmed google/gemini-2.5-flash healthy, so the verifier
+  // moved off the labeler's family. Both families are represented.
   const { ok, warnings } = checkIndependence()
   assert.equal(ok, true)
-  assert.ok(warnings.some(w => /same model family/.test(w)),
-    'gpt-4o + gpt-4o-mini share a family and must surface a correlated-bias warning')
-  // The preferred assignment moves the verifier to another family and clears it.
-  assert.equal(checkIndependence(PREFERRED_ROLES).warnings.length, 0)
+  assert.deepEqual(warnings, [], 'a cross-family assignment must not warn')
+  assert.notEqual(modelForRole('labeler').split('/')[0], modelForRole('verifier').split('/')[0])
+  assert.deepEqual(PREFERRED_ROLES, DEFAULT_ROLES, 'the shipped roles ARE the preferred roles')
+
+  // The warning itself must still fire when a same-family pair is proposed.
+  const sameFamily = checkIndependence([
+    { role: 'labeler', model: 'openai/gpt-4o', promptVersion: 'v1' },
+    { role: 'verifier', model: 'openai/gpt-4o-mini', promptVersion: 'v1' },
+  ])
+  assert.ok(sameFamily.warnings.some(w => /same model family/.test(w)))
 })
 
 test('independence failure aborts before any candidate is processed', () => {
