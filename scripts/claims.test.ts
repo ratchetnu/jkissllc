@@ -8,8 +8,8 @@ import {
   rollupClaimStatus, snapshotFromRoute, snapshotFromBusiness,
   remainingCents, recoveredCents, creditedCents, claimRemainingCents, claimRecoveredCents,
   claimWaivedCents, assignedCents, unassignedCents,
-  type ClaimRecord, type ClaimAssignment,
-} from '../app/lib/claims'
+  type ClaimRecord, type ClaimAssignment,} from '../app/lib/claims'
+import { centralToday } from '../app/lib/dates'
 import { accrueClaim, seedSpendFromLedger } from '../app/lib/claim-accrual'
 import { deductionLinesFor, sumDeductions, applyDeductions } from '../app/lib/claim-payroll'
 import { computeClaimsReport, crewClaimSummary, businessClaimSummary, isOpen } from '../app/lib/claims-report'
@@ -437,16 +437,54 @@ test('cash payments and waivers never appear on a pay statement', () => {
   assert.equal(deductionLinesFor([c], MON, addDaysStr(MON, 6)).size, 0, 'neither touches payroll')
 })
 
+// adjustBalance() stamps its ledger entry with centralToday(), so any window
+// anchored on a FIXED past date eventually stops covering the reversal. That is
+// exactly what happened: MON+30 expired on 2026-08-05 and this test began failing
+// on 2026-08-06 with length 1, which reads like a payroll defect and is not one.
+// The window now runs from MON to today, so it covers the posted deduction AND
+// the reversal no matter when the suite runs.
+const STATEMENT_END = () => centralToday()
+
 test('a reversal shows on the statement as money handed back', () => {
   const c = withCrew(claim(), 'dollar', [{ id: 'd', value: 50000 }])
   startDeduction(c, 'd', { weeklyCents: 5000, startDate: MON })
   postScheduledDeduction(c, 'd', MON, 5000)
   adjustBalance(c, 'd', 5000, 'debit', 'deducted in error')
 
-  const lines = deductionLinesFor([c], MON, addDaysStr(MON, 30)).get('d')!
-  assert.equal(lines.length, 2)
+  const lines = deductionLinesFor([c], MON, STATEMENT_END()).get('d')!
+  assert.equal(lines.length, 2, 'the deduction and the reversal are both on the statement')
   assert.equal(sumDeductions(lines), 0, 'the deduction and its reversal cancel out')
   assert.equal(lines.some(l => l.amountCents < 0), true, 'the reversal is visible, not hidden')
+
+  // Sign direction is the whole point: a debit hands money BACK, so it must be
+  // negative, and the original scheduled deduction must stay positive.
+  const scheduled = lines.find(l => l.kind === 'scheduled')!
+  const reversal = lines.find(l => l.kind === 'adjustment')!
+  assert.equal(scheduled.amountCents, 5000, 'the original deduction reduces pay')
+  assert.equal(reversal.amountCents, -5000, 'the reversal adds it back')
+  assert.match(reversal.reason, /deducted in error/, 'the statement names why')
+})
+
+test('a PARTIAL reversal returns only what was handed back', () => {
+  const c = withCrew(claim(), 'dollar', [{ id: 'd', value: 50000 }])
+  startDeduction(c, 'd', { weeklyCents: 5000, startDate: MON })
+  postScheduledDeduction(c, 'd', MON, 5000)
+  adjustBalance(c, 'd', 2000, 'debit', 'over-deducted by $20')
+
+  const lines = deductionLinesFor([c], MON, STATEMENT_END()).get('d')!
+  assert.equal(lines.length, 2)
+  assert.equal(sumDeductions(lines), 3000, 'net withholding is the deduction less the refund')
+  assert.equal(lines.find(l => l.kind === 'adjustment')!.amountCents, -2000)
+})
+
+test('a reversal is written to the claim audit history', () => {
+  const c = withCrew(claim(), 'dollar', [{ id: 'd', value: 50000 }])
+  startDeduction(c, 'd', { weeklyCents: 5000, startDate: MON })
+  postScheduledDeduction(c, 'd', MON, 5000)
+  const before = c.audit?.length ?? 0
+  adjustBalance(c, 'd', 5000, 'debit', 'deducted in error')
+  assert.ok((c.audit?.length ?? 0) > before, 'the reversal is auditable, not silent')
+  assert.match(JSON.stringify(c.audit ?? []), /deducted in error/)
 })
 
 test('deductions never push a pay statement negative', () => {
