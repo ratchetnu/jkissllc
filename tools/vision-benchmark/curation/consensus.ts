@@ -129,8 +129,13 @@ export function validateProposal(p: LabelProposal): string[] {
         problems.push(`itemBreakdown[${n}] cubicFeet ${i.cubicFeet} does not match ${i.quantity}x${i.lengthFt}x${i.widthFt}x${i.heightFt} = ${own.toFixed(1)}`)
       }
     }
+    // Compare against the CLAMPED sum. One truckload is the ceiling on any
+    // single estimate, so a breakdown measuring more than that is expected to
+    // arrive capped — flagging it as unsupported would turn the cap itself into
+    // a validation failure, which is what happened on the container photo.
+    const capped = Math.min(TRUCK_CUBIC_FEET, derived)
     const lo = p.volumeCubicFeet.min, hi = p.volumeCubicFeet.max
-    if (derived > 0 && (derived < lo * 0.6 || derived > hi * 1.6)) {
+    if (capped > 0 && (capped < lo * 0.6 || capped > hi * 1.6)) {
       problems.push(`volumeCubicFeet ${lo}-${hi} is not supported by the itemBreakdown (dimensions sum to ${derived.toFixed(1)} cu ft)`)
     }
   } else if (p.volumeCubicFeet.max > 0) {

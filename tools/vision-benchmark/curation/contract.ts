@@ -58,18 +58,27 @@ export function derivedCubicFeet(items: ItemMeasurement[]): number {
 export function volumeBandFor(derived: number, volumeConfidence: number): { min: number; max: number } {
   const c = Number.isFinite(volumeConfidence) ? Math.min(1, Math.max(0, volumeConfidence)) : 0.5
   const spread = 0.15 + (1 - c) * 0.5          // 0.15 at c=1 … 0.65 at c=0
-  return { min: round1(derived * (1 - spread)), max: round1(derived * (1 + spread)) }
+  // 1,000 cu ft is the maximum meaningful value: it is one full truck, and this
+  // pipeline has no multi-load concept. A larger reading is an over-estimate, so
+  // it is clamped rather than carried — a 7,000 cu ft figure from a single photo
+  // would otherwise travel downstream as if it were measured.
+  const clamp = (n: number) => Math.min(TRUCK_CAPACITY_CUBIC_FEET, round1(n))
+  const min = clamp(derived * (1 - spread))
+  const max = clamp(derived * (1 + spread))
+  return { min: Math.min(min, max), max }
 }
+
+/** One full truck. The ceiling on any single estimate. */
+export const TRUCK_CAPACITY_CUBIC_FEET = 1000
 
 const round1 = (n: number): number => Math.round(n * 10) / 10
 
 /** Truck-space follows from volume by the business rule; nobody estimates it. */
 export function truckBandFor(band: { min: number; max: number }): { min: number; max: number } {
-  // Both ends are capped. Capping only `max` inverted the range on a genuine
-  // multi-load job — 7,000 cu ft gave min 560, max 100 — which then failed
-  // deterministic validation as "min > max". That read as a model error when it
-  // was arithmetic here. A load larger than one truck saturates at 100/100; the
-  // real magnitude is still carried by volumeCubicFeet, which is not capped.
+  // Both ends are capped. Capping only `max` inverted the range — 7,000 cu ft
+  // gave min 560, max 100 — which deterministic validation then reported as
+  // "min > max". Volume is now clamped at one truckload upstream, so this is
+  // belt and braces rather than the primary guard.
   const min = Math.min(100, round1(band.min / 10))
   const max = Math.min(100, round1(band.max / 10))
   return { min: Math.min(min, max), max }
@@ -286,7 +295,9 @@ const TRUCK_RULE =
   'BUSINESS RULE — truck capacity: the J KISS box truck holds approximately 1,000 cubic feet of ' +
   'usable cargo space. Truck-space percentage = estimatedVolumeCubicFeet / 1000 * 100. ' +
   'So 100 cu ft = 10%, 500 cu ft = 50%, 900 cu ft = 90%. ' +
-  'A volume and a percentage that satisfy this relationship are CONSISTENT — never report them as inconsistent.'
+  'A volume and a percentage that satisfy this relationship are CONSISTENT — never report them as inconsistent. ' +
+  'One full truck (1,000 cu ft) is the MAXIMUM for a single estimate: a photograph never shows more ' +
+  'than one truckload of work, so a larger figure means the scene has been over-read.'
 const EVIDENCE_RULE =
   'Describe only what is VISIBLE. Never infer objects behind or outside the frame. ' +
   'Where evidence is weak use a wider range rather than a confident point value, ' +

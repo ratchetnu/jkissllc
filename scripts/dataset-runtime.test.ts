@@ -8,7 +8,7 @@ import {
   callRole, classifyFailure, runCandidate, memoryCache, memoryCheckpoint,
   CallFailure, type VisionCaller, type VisionRequest,
 } from '../tools/vision-benchmark/curation/runtime'
-import { parseClassifier, parseLabel, parseVerifier, SchemaError, PROMPTS, ALLOWED_CATEGORIES, SCHEMA_VERSION, truckBandFor, type LabelResponse } from '../tools/vision-benchmark/curation/contract'
+import { parseClassifier, parseLabel, parseVerifier, SchemaError, PROMPTS, ALLOWED_CATEGORIES, SCHEMA_VERSION, truckBandFor, TRUCK_CAPACITY_CUBIC_FEET, type LabelResponse } from '../tools/vision-benchmark/curation/contract'
 import { decide, truckSpaceConsistent, validateProposal, type LabelProposal } from '../tools/vision-benchmark/curation/consensus'
 import { DEFAULT_ROLES, PRODUCTION_ESTIMATOR } from '../tools/vision-benchmark/curation/roles'
 import type { ManifestEntry } from '../tools/vision-benchmark/schema'
@@ -608,8 +608,8 @@ test('a verifier privacy_risk still blocks, even on an otherwise clean moving la
 
 // ── truck-band capping and moving vocabulary ────────────────────────────────
 
-test('a multi-load volume saturates the truck band instead of inverting it', () => {
-  // The observed failure: 7,000 cu ft gave min 560 / max 100 → "min > max".
+test('an over-capacity volume clamps to one truckload and never inverts', () => {
+  // 1,000 cu ft is the maximum: a photograph never shows more than one truckload.
   const big = truckBandFor({ min: 5600, max: 8000 })
   assert.equal(big.min <= big.max, true, 'the range must never invert')
   assert.deepEqual(big, { min: 100, max: 100 })
@@ -633,4 +633,33 @@ test('a saturated truck band passes deterministic validation', () => {
 test('bathroom_furniture is a valid moving category', () => {
   assert.ok(ALLOWED_CATEGORIES.moving.includes('bathroom_furniture'))
   assert.equal(ALLOWED_CATEGORIES.junk_removal.includes('bathroom_furniture'), false, 'moving lane only')
+})
+
+test('a volume over one truckload is clamped, not carried downstream', () => {
+  // Two shipping containers: the labeler measured ~6,800 cu ft. That cannot be
+  // one job, so the estimate is capped rather than travelling as if measured.
+  const l = parseLabel(itemFirst([{ item: 'container', quantity: 2, lengthFt: 20, widthFt: 8, heightFt: 21.25 }]))
+  assert.equal(l.volumeCubicFeet.max, TRUCK_CAPACITY_CUBIC_FEET)
+  assert.equal(l.volumeCubicFeet.min, TRUCK_CAPACITY_CUBIC_FEET)
+  assert.deepEqual(l.truckSpacePercent, { min: 100, max: 100 })
+  assert.deepEqual(validateProposal(l), [], 'a clamped estimate is still internally valid')
+})
+
+test('a normal load is untouched by the cap', () => {
+  const l = parseLabel(itemFirst([{ item: 'sofa', quantity: 1, lengthFt: 7, widthFt: 3, heightFt: 3 }]))
+  assert.ok(l.volumeCubicFeet.max < TRUCK_CAPACITY_CUBIC_FEET)
+  assert.deepEqual(l.volumeCubicFeet, { min: 53.6, max: 72.4 })
+})
+
+test('a load straddling the cap keeps ordering and stops at one truckload', () => {
+  const l = parseLabel(itemFirst([{ item: 'pallet', quantity: 6, lengthFt: 4, widthFt: 4, heightFt: 6 }])) // 576
+  assert.ok(l.volumeCubicFeet.min < l.volumeCubicFeet.max)
+  assert.ok(l.volumeCubicFeet.max <= TRUCK_CAPACITY_CUBIC_FEET)
+  assert.ok(l.truckSpacePercent.max <= 100)
+})
+
+test('the shared truck rule states the one-truckload maximum to every role', () => {
+  for (const v of ['curation.labeler.v1', 'curation.labeler.moving.v1', 'curation.verifier.v1'] as const) {
+    assert.match(PROMPTS[v], /MAXIMUM for a single estimate/, v)
+  }
 })
