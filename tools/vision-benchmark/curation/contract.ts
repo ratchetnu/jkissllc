@@ -15,7 +15,7 @@ import { JUNK_CATEGORIES, MOVING_CATEGORIES } from '../queries'
 import type { DisagreementCode } from './types'
 import type { ClassifierResult, LabelProposal, VerifierResult } from './consensus'
 
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 /**
  * The ONLY categories a labeler may emit, taken from the manifest itself so the
@@ -43,6 +43,29 @@ export type ItemMeasurement = {
 /** Sum of quantity x l x w x h across the breakdown. */
 export function derivedCubicFeet(items: ItemMeasurement[]): number {
   return items.reduce((s, i) => s + i.quantity * i.lengthFt * i.widthFt * i.heightFt, 0)
+}
+
+/**
+ * The uncertainty band around a derived total.
+ *
+ * v2 required a breakdown but still let the model state the total, so it chose a
+ * familiar total and back-fitted dimensions that summed to it — internally
+ * consistent, and therefore invisible to a consistency check. From v3 the model
+ * CANNOT state a total: it reports measured items, and the band comes from its
+ * own volume confidence. Low confidence widens the range instead of licensing a
+ * default value.
+ */
+export function volumeBandFor(derived: number, volumeConfidence: number): { min: number; max: number } {
+  const c = Number.isFinite(volumeConfidence) ? Math.min(1, Math.max(0, volumeConfidence)) : 0.5
+  const spread = 0.15 + (1 - c) * 0.5          // 0.15 at c=1 … 0.65 at c=0
+  return { min: round1(derived * (1 - spread)), max: round1(derived * (1 + spread)) }
+}
+
+const round1 = (n: number): number => Math.round(n * 10) / 10
+
+/** Truck-space follows from volume by the business rule; nobody estimates it. */
+export function truckBandFor(band: { min: number; max: number }): { min: number; max: number } {
+  return { min: round1(band.min / 10), max: round1(Math.min(100, band.max / 10)) }
 }
 
 export type Range = { min: number; max: number }
@@ -153,8 +176,11 @@ export function parseLabel(raw: string): LabelResponse {
       lengthFt: num(it.lengthFt, `itemBreakdown[${n}].lengthFt`, problems),
       widthFt: num(it.widthFt, `itemBreakdown[${n}].widthFt`, problems),
       heightFt: num(it.heightFt, `itemBreakdown[${n}].heightFt`, problems),
-      cubicFeet: num(it.cubicFeet, `itemBreakdown[${n}].cubicFeet`, problems),
+      // Computed, never read from the response: a model that reports its own
+      // product can report one that suits a total it already had in mind.
+      cubicFeet: 0,
     }
+    m.cubicFeet = round1(m.quantity * m.lengthFt * m.widthFt * m.heightFt)
     if (!m.item) problems.push(`itemBreakdown[${n}].item is missing`)
     for (const k of ['quantity', 'lengthFt', 'widthFt', 'heightFt'] as const) {
       if (m[k] <= 0) problems.push(`itemBreakdown[${n}].${k} must be > 0`)
@@ -167,13 +193,19 @@ export function parseLabel(raw: string): LabelResponse {
   const conf = isObj(o.fieldConfidence) ? o.fieldConfidence : null
   if (!conf) problems.push('fieldConfidence missing')
 
+  // v3: a model-supplied total is REFUSED, not ignored. Accepting it silently
+  // would leave the back-fitting path open while pretending it was closed.
+  for (const banned of ['volumeCubicFeet', 'truckSpacePercent'] as const) {
+    if (banned in o) problems.push(`${banned} must not be supplied — it is derived from itemBreakdown`)
+  }
+
   const label: LabelResponse = {
     lane: lane as LabelResponse['lane'],
     category: String(o.category ?? ''),
     visibleItems: strArr(o.visibleItems, 'visibleItems', problems),
     quantityRange: range(o.quantityRange, 'quantityRange', problems),
-    volumeCubicFeet: range(o.volumeCubicFeet, 'volumeCubicFeet', problems),
-    truckSpacePercent: range(o.truckSpacePercent, 'truckSpacePercent', problems),
+    volumeCubicFeet: { min: 0, max: 0 },      // replaced below, once items parse
+    truckSpacePercent: { min: 0, max: 0 },
     handlingFlags: strArr(o.handlingFlags, 'handlingFlags', problems),
     hazardousIndicators: strArr(o.hazardousIndicators, 'hazardousIndicators', problems),
     crewRange: range(o.crewRange, 'crewRange', problems),
@@ -190,6 +222,12 @@ export function parseLabel(raw: string): LabelResponse {
     },
     itemBreakdown,
   }
+
+  // Totals are DERIVED. This is the whole point of v3: there is no number for
+  // the model to anchor on, because it never gets to name one.
+  const derived = derivedCubicFeet(itemBreakdown)
+  label.volumeCubicFeet = volumeBandFor(derived, label.fieldConfidence?.volume ?? 0.5)
+  label.truckSpacePercent = truckBandFor(label.volumeCubicFeet)
   // A model that reasons in prose has ignored the contract.
   if ('reasoning' in o || 'explanation' in o || 'chainOfThought' in o) {
     problems.push('response contains freeform reasoning — the contract forbids it')
@@ -271,18 +309,19 @@ export const PROMPTS = {
     'uncertainty and say so in evidence.missingInformation — never fall back to a typical value ' +
     'for the category. Two different scenes should not produce identical ranges. ' +
     'Infer the category yourself from the image. You MUST choose one value from the allowed list ' +
-    'supplied in the user message — never invent a category. Every volume MUST be derived from an ' +
-    'itemBreakdown: for each distinct item give item, quantity, lengthFt, widthFt, heightFt and ' +
-    'cubicFeet (= quantity x length x width x height). volumeCubicFeet must bracket the sum. ' +
+    'supplied in the user message — never invent a category. ' +
+    'Work ITEM FIRST. For every distinct visible object report item, quantity, lengthFt, widthFt ' +
+    'and heightFt as you judge them FROM THE IMAGE. Do NOT report a total volume or a truck ' +
+    'percentage: the system computes those from your measurements, and any total you supply will ' +
+    'be REJECTED. Express uncertainty through fieldConfidence.volume — a low value widens the ' +
+    'derived range — not by adjusting your dimensions toward a familiar number. ' +
     'Reply with JSON only: ' +
     '{"lane":"junk_removal|moving","category":string,"visibleItems":string[],' +
-    '"quantityRange":{"min":number,"max":number},"volumeCubicFeet":{"min":number,"max":number},' +
-    '"truckSpacePercent":{"min":number,"max":number},"handlingFlags":string[],' +
+    '"quantityRange":{"min":number,"max":number},"handlingFlags":string[],' +
     '"hazardousIndicators":string[],"crewRange":{"min":number,"max":number},' +
     '"laborHoursRange":{"min":number,"max":number},"difficulty":string,"ambiguityNotes":string,' +
     '"fieldConfidence":{[field:string]:0..1},' +
-    '"itemBreakdown":[{"item":string,"quantity":number,"lengthFt":number,"widthFt":number,' +
-    '"heightFt":number,"cubicFeet":number}],' +
+    '"itemBreakdown":[{"item":string,"quantity":number,"lengthFt":number,"widthFt":number,"heightFt":number}],' +
     '"evidence":{"visibleEvidence":string[],"missingInformation":string[],"ambiguityFlags":string[]}}',
 
   // The verifier receives the image and the PROPOSED LABEL ONLY. It never sees

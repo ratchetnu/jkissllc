@@ -19,12 +19,11 @@ const OK_CLASSIFIER = JSON.stringify({
 })
 const OK_LABEL = JSON.stringify({
   lane: 'junk_removal', category: 'couch_sectional', visibleItems: ['sofa'],
-  quantityRange: { min: 1, max: 2 }, volumeCubicFeet: { min: 90, max: 150 },
-  truckSpacePercent: { min: 9, max: 15 }, handlingFlags: [], hazardousIndicators: [],
+  quantityRange: { min: 1, max: 2 }, handlingFlags: [], hazardousIndicators: [],
   crewRange: { min: 2, max: 2 }, laborHoursRange: { min: 1, max: 2 },
   difficulty: 'normal', ambiguityNotes: '', fieldConfidence: { volume: 0.9 },
   evidence: { visibleEvidence: ['sofa at kerb'], missingInformation: [], ambiguityFlags: [] },
-  itemBreakdown: [{ item: 'sofa', quantity: 2, lengthFt: 6, widthFt: 3, heightFt: 3, cubicFeet: 108 }],
+  itemBreakdown: [{ item: 'sofa', quantity: 2, lengthFt: 6, widthFt: 3, heightFt: 3 }],
 })
 const OK_VERIFIER = JSON.stringify({ verdict: 'approve', disagreements: [], confidence: 0.95 })
 
@@ -237,7 +236,7 @@ test('provenance records the decision and never carries model reasoning', async 
   assert.equal(p.humanReviewed, false)
   // v2 = controlled category enum + structural itemBreakdown derivation.
   assert.equal(p.schemaVersion, SCHEMA_VERSION)
-  assert.equal(SCHEMA_VERSION, 2)
+  assert.equal(SCHEMA_VERSION, 3)
   assert.equal(p.tier, 'silver')
   assert.ok(p.roles.length >= 2)
   assert.equal(JSON.stringify(p).includes('reasoning'), false)
@@ -341,12 +340,11 @@ test('the labeler contract demands derived volume, not a category anchor', () =>
 
 const measured = (over: Partial<LabelResponse> = {}): string => JSON.stringify({
   lane: 'junk_removal', category: 'couch_sectional', visibleItems: ['sofa'],
-  quantityRange: { min: 1, max: 1 }, volumeCubicFeet: { min: 60, max: 90 },
-  truckSpacePercent: { min: 6, max: 9 }, handlingFlags: [], hazardousIndicators: [],
+  quantityRange: { min: 1, max: 1 }, handlingFlags: [], hazardousIndicators: [],
   crewRange: { min: 2, max: 2 }, laborHoursRange: { min: 1, max: 2 },
   difficulty: 'normal', ambiguityNotes: '', fieldConfidence: { volume: 0.8 },
   evidence: { visibleEvidence: ['sofa 7x3x3'], missingInformation: [], ambiguityFlags: [] },
-  itemBreakdown: [{ item: 'sofa', quantity: 1, lengthFt: 7, widthFt: 3, heightFt: 3, cubicFeet: 63 }],
+  itemBreakdown: [{ item: 'sofa', quantity: 1, lengthFt: 7, widthFt: 3, heightFt: 3 }],
   ...over,
 })
 
@@ -421,4 +419,88 @@ test('the labeler is handed the allowed vocabulary, never the manifest category'
   assert.match(call.user, /allowed categories \(choose exactly one\)/)
   assert.ok(call.user.includes('couch_sectional'), 'the enum must be supplied')
   assert.ok(call.user.includes('eviction_cleanout'), '…as the FULL enum, not a filtered hint')
+})
+
+// ── Schema v3: item-first estimation, totals derived ────────────────────────
+// v2 required a breakdown but still let the model state the total, so it chose a
+// familiar total and back-fitted dimensions that summed to it — internally
+// consistent, therefore invisible to a consistency check. Measured: {80,120}
+// returned for four visually different scenes. v3 removes the total from the
+// model's vocabulary entirely.
+
+const itemFirst = (items: Array<Partial<{item:string;quantity:number;lengthFt:number;widthFt:number;heightFt:number}>>, over: Record<string, unknown> = {}) =>
+  JSON.stringify({
+    lane: 'junk_removal', category: 'couch_sectional', visibleItems: items.map(i => i.item),
+    quantityRange: { min: 1, max: 1 }, handlingFlags: [], hazardousIndicators: [],
+    crewRange: { min: 2, max: 2 }, laborHoursRange: { min: 1, max: 2 },
+    difficulty: 'normal', ambiguityNotes: '', fieldConfidence: { volume: 1 },
+    evidence: { visibleEvidence: [], missingInformation: [], ambiguityFlags: [] },
+    itemBreakdown: items, ...over,
+  })
+
+test('a model-supplied total volume is REFUSED, not quietly ignored', () => {
+  const withTotal = itemFirst([{ item: 'sofa', quantity: 1, lengthFt: 7, widthFt: 3, heightFt: 3 }],
+    { volumeCubicFeet: { min: 80, max: 120 } })
+  assert.throws(() => parseLabel(withTotal), /volumeCubicFeet must not be supplied/)
+  const withTruck = itemFirst([{ item: 'sofa', quantity: 1, lengthFt: 7, widthFt: 3, heightFt: 3 }],
+    { truckSpacePercent: { min: 8, max: 12 } })
+  assert.throws(() => parseLabel(withTruck), /truckSpacePercent must not be supplied/)
+})
+
+test('cubic feet and the scene total are computed from dimensions, not read', () => {
+  const l = parseLabel(itemFirst([
+    { item: 'sofa', quantity: 1, lengthFt: 7, widthFt: 3, heightFt: 3 },   // 63
+    { item: 'box', quantity: 4, lengthFt: 2, widthFt: 2, heightFt: 2 },    // 32
+  ]))
+  assert.equal(l.itemBreakdown[0].cubicFeet, 63)
+  assert.equal(l.itemBreakdown[1].cubicFeet, 32)
+  // confidence 1 ⇒ ±15% around 95
+  assert.deepEqual(l.volumeCubicFeet, { min: 80.8, max: 109.2 })
+  assert.deepEqual(l.truckSpacePercent, { min: 8.1, max: 10.9 })
+  assert.deepEqual(validateProposal(l), [], 'a derived label is self-consistent by construction')
+})
+
+test('identical totals cannot appear across different scenes unless the items justify it', () => {
+  const small = parseLabel(itemFirst([{ item: 'chair', quantity: 2, lengthFt: 2, widthFt: 2, heightFt: 3 }]))   // 24
+  const large = parseLabel(itemFirst([{ item: 'sectional', quantity: 1, lengthFt: 9, widthFt: 4, heightFt: 3 }])) // 108
+  assert.notDeepEqual(small.volumeCubicFeet, large.volumeCubicFeet)
+  // …and two scenes whose measurements DO match legitimately produce the same total.
+  const twin = parseLabel(itemFirst([{ item: 'loveseat', quantity: 2, lengthFt: 2, widthFt: 2, heightFt: 3 }]))
+  assert.deepEqual(twin.volumeCubicFeet, small.volumeCubicFeet)
+})
+
+test('the same item at different quantities cannot share a total', () => {
+  const one = parseLabel(itemFirst([{ item: 'sofa', quantity: 1, lengthFt: 7, widthFt: 3, heightFt: 3 }]))
+  const three = parseLabel(itemFirst([{ item: 'sofa', quantity: 3, lengthFt: 7, widthFt: 3, heightFt: 3 }]))
+  assert.equal(three.volumeCubicFeet.min > one.volumeCubicFeet.max, true)
+})
+
+test('low volume confidence widens the derived range instead of moving it', () => {
+  const sure = parseLabel(itemFirst([{ item: 'sofa', quantity: 1, lengthFt: 7, widthFt: 3, heightFt: 3 }]))
+  const unsure = parseLabel(itemFirst([{ item: 'sofa', quantity: 1, lengthFt: 7, widthFt: 3, heightFt: 3 }],
+    { fieldConfidence: { volume: 0.2 } }))
+  const mid = (r: {min:number;max:number}) => (r.min + r.max) / 2
+  assert.ok(Math.abs(mid(sure.volumeCubicFeet) - mid(unsure.volumeCubicFeet)) < 0.5, 'the centre is the measurement and must not move')
+  assert.ok(unsure.volumeCubicFeet.max - unsure.volumeCubicFeet.min
+    > sure.volumeCubicFeet.max - sure.volumeCubicFeet.min, 'uncertainty widens the band')
+})
+
+test('a missing item breakdown cannot reach Silver', () => {
+  const noItems = JSON.parse(itemFirst([{ item: 'sofa', quantity: 1, lengthFt: 7, widthFt: 3, heightFt: 3 }]))
+  delete noItems.itemBreakdown
+  assert.throws(() => parseLabel(JSON.stringify(noItems)), /itemBreakdown is required/)
+  // …and at the gate, for a proposal that arrived without one another way.
+  const d = decide({
+    preScreen: { state: null, reasons: [] },
+    classifier: { operational: true, lane: 'junk_removal', category: 'couch_sectional', privacyRisk: false, licenseRisk: false, confidence: 0.99 },
+    label: proposal({ itemBreakdown: undefined }),
+    verifier: { verdict: 'approve', disagreements: [], confidence: 0.99 },
+  })
+  assert.notEqual(d.state, 'auto_verified')
+  assert.notEqual(d.tier, 'silver')
+})
+
+test('zero or negative dimensions are refused', () => {
+  assert.throws(() => parseLabel(itemFirst([{ item: 'x', quantity: 1, lengthFt: 0, widthFt: 3, heightFt: 3 }])), /lengthFt must be > 0/)
+  assert.throws(() => parseLabel(itemFirst([{ item: 'x', quantity: 0, lengthFt: 2, widthFt: 3, heightFt: 3 }])), /quantity must be > 0/)
 })
