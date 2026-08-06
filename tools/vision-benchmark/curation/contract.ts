@@ -286,15 +286,53 @@ const EVIDENCE_RULE =
   'and record what you could not determine in evidence.missingInformation.'
 
 export const PROMPTS = {
+  /**
+   * Operational screening, framed as the commercial task it is.
+   *
+   * The v3 moving probe returned no usable lane on 9 of 10 residential
+   * interiors, and the reruns showed the refusals happen HERE — the classifier
+   * is the first call, so nothing downstream ever ran. Two causes, both fixed
+   * below:
+   *
+   *   • framing. A generic "screen this photograph" aimed at somebody's bedroom
+   *     reads as scrutiny of a private space. A moving company looking at the
+   *     same picture is reading a quote request the customer sent them. A photo
+   *     of a private home interior is the NORMAL input for this lane, not an
+   *     edge case to be refused.
+   *   • schema echo. The old reply template spelled the enum inline as
+   *     "junk_removal|moving|neither|ambiguous", and one candidate returned that
+   *     literal string as its answer. The allowed values are now listed in prose
+   *     and the template shows a concrete example instead.
+   *
+   * PRIVACY IS UNCHANGED and is asked as a SEPARATE question. Operational
+   * classification and privacy detection are now two independent judgements, so
+   * declining to classify can no longer be a substitute for flagging a concern:
+   * the model reports what the scene is AND, separately, whether anything
+   * identifying is visible. The consensus gate still routes any privacy signal
+   * to privacy_blocked ahead of confidence.
+   */
   'curation.classifier.v1':
-    'You screen candidate photographs for a junk-removal and moving benchmark dataset. ' +
-    'Decide whether this image shows a REAL, operationally useful job scene. ' +
-    'Reject stock product photography, showrooms, repair teardowns, recycling facilities, ' +
-    'scrapyards, third-party dumpsters, demolition-only scenes, renderings and unrelated street scenes. ' +
-    'Flag privacyRisk if identifiable people, readable documents, addresses or licence plates are visible. ' +
-    `${NO_PRICING} Reply with JSON only: ` +
-    '{"operational":boolean,"lane":"junk_removal|moving|neither|ambiguous","category":string|null,' +
-    '"privacyRisk":boolean,"licenseRisk":boolean,"confidence":0..1}',
+    'You screen photographs for a junk-removal and moving company. Customers send these ' +
+    'photographs themselves so the company can estimate the work. Photographs of private ' +
+    'home interiors — bedrooms, living rooms, kitchens, closets, garages, storage units, ' +
+    'basements — are the NORMAL and EXPECTED input for the moving lane. Classifying them is ' +
+    'a routine commercial task, not an intrusion. ' +
+    'Answer two INDEPENDENT questions. ' +
+    'FIRST, operational: does this show real work for a crew? Set operational true and choose ' +
+    'the lane. Use "moving" for rooms, furniture, appliances, boxes, containers, closets, ' +
+    'garages and household goods that would be relocated. Use "junk_removal" for kerbside ' +
+    'piles, cleanouts and discarded material. Use "neither" ONLY for a scene with no ' +
+    'loadable contents at all — a rendering, a product shot on a blank background, a ' +
+    'showroom, a scrapyard, a recycling facility or an unrelated street view. Use ' +
+    '"ambiguous" only when you genuinely cannot tell which of the two lanes applies. ' +
+    'SECOND, and separately, privacy: set privacyRisk true if identifiable people, readable ' +
+    'documents, a visible street address or a licence plate appear. Privacy risk does NOT ' +
+    'make a scene non-operational — report both facts honestly and a person will review it. ' +
+    `${NO_PRICING} ` +
+    'Reply with JSON only, using one of the exact string values junk_removal, moving, ' +
+    'neither or ambiguous for lane. Example of a valid reply: ' +
+    '{"operational":true,"lane":"moving","category":"bedroom_furniture",' +
+    '"privacyRisk":false,"licenseRisk":false,"confidence":0.9}',
 
   // The junk lane: kerbside piles, cleanouts, discarded material.
   'curation.labeler.v1':

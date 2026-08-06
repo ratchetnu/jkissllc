@@ -565,8 +565,16 @@ test('the moving prompt narrows what the labeler LOOKS AT, not what the pipeline
   assert.match(p, /professional moving estimator/)
   assert.match(p, /Do NOT describe people, documents, screens, photographs or personal effects/)
   assert.match(p, /another system handles that separately/)
-  // The classifier still carries the whole privacy duty.
-  assert.match(PROMPTS['curation.classifier.v1'], /identifiable people, readable documents, addresses or licence plates/)
+  // The classifier still carries the whole privacy duty — now asked as an
+  // INDEPENDENT question, so refusing to classify cannot stand in for flagging.
+  const cls = PROMPTS['curation.classifier.v1']
+  assert.match(cls, /identifiable people, readable documents, a visible street address or a licence plate/)
+  assert.match(cls, /Privacy risk does NOT\s+make a scene non-operational/)
+  assert.match(cls, /two INDEPENDENT questions/)
+  // …and residential interiors are explicitly normal input, not an edge case.
+  assert.match(cls, /NORMAL and EXPECTED input for the moving lane/)
+  // The schema-echo artifact: the enum must not appear as a pipe-joined literal.
+  assert.equal(cls.includes('junk_removal|moving|neither|ambiguous'), false)
 })
 
 test('a privacy signal still blocks a moving image, and a human decides', async () => {
