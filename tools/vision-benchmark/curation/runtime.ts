@@ -216,9 +216,12 @@ export async function runCandidate(
     })
   }
 
-  const call = async (role: 'classifier' | 'labeler' | 'verifier' | 'adjudicator', user: string) => {
+  const call = async (
+    role: 'classifier' | 'labeler' | 'verifier' | 'adjudicator', user: string,
+    promptOverride?: keyof typeof PROMPTS,
+  ) => {
     const model = modelForRole(role, roles)
-    const promptVersion = roles.find(r => r.role === role)!.promptVersion as keyof typeof PROMPTS
+    const promptVersion = promptOverride ?? (roles.find(r => r.role === role)!.promptVersion as keyof typeof PROMPTS)
     const r = await callRole(ctx, {
       model, promptVersion, system: PROMPTS[promptVersion], user, imagePath,
       ...(opts.imageDataUrl ? { imageDataUrl: opts.imageDataUrl } : {}),
@@ -238,8 +241,12 @@ export async function runCandidate(
     // Lane and the allowed vocabulary only — never the manifest's own category,
     // which the labeler simply echoed back on 13/13 images.
     const allowed = ALLOWED_CATEGORIES[classifier.lane as 'junk_removal' | 'moving'] ?? []
+    // The moving lane gets its own framing: a generic "analyse this photograph"
+    // aimed at a bedroom triggered a content refusal on 8 of 10 v3 candidates.
+    const labelerPrompt = classifier.lane === 'moving' ? 'curation.labeler.moving.v1' : 'curation.labeler.v1'
     const label = parseLabel(await call('labeler',
-      `lane: ${classifier.lane}\nallowed categories (choose exactly one): ${allowed.join(', ')}`))
+      `lane: ${classifier.lane}\nallowed categories (choose exactly one): ${allowed.join(', ')}`,
+      labelerPrompt))
 
     // 4) verifier — image + proposed label ONLY, never the labeler's reasoning.
     //    `evidence` is stripped for the same reason.
