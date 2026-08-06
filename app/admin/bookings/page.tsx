@@ -1615,12 +1615,23 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
           take it over via Send to Manual Review (which unblocks the workflow so the owner
           can price + send by hand). Backend actions already exist; this surfaces them on
           the page the owner actually uses. */}
-      {tabKey === 'estimate' && isOwner && serviceFamily(b.serviceType) === 'junk' && (
+      {/* Renders for junk exactly as before. It ALSO renders for any booking that
+          already carries AI state, which is how a moving booking becomes visible once
+          AI_PHOTO_ESTIMATE_MOVING enqueues one. Deriving from state rather than
+          re-reading the flag keeps this a client component and means a moving booking
+          with the flag OFF never has aiJob/aiEstimate, so nothing changes for it. */}
+      {tabKey === 'estimate' && isOwner
+        && (serviceFamily(b.serviceType) === 'junk' || !!b.aiJob || !!b.aiEstimate) && (
         <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
           <p className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: 'var(--muted)' }}>🤖 AI Analysis</p>
           <KV k="Status" v={b.aiJob ? `${b.aiJob.status.replace(/_/g, ' ')}${b.aiJob.attempts ? ` · attempt ${b.aiJob.attempts}` : ''}` : (b.aiEstimate ? 'completed' : 'not started')} />
           <div className="flex flex-wrap gap-2" style={{ marginTop: 10 }}>
-            {(!b.aiJob || b.aiJob.status === 'not_started' || b.aiJob.status === 'failed') && (b.invoicePhotos?.length ?? 0) > 0 && (
+            {/* 'queued' is included deliberately. It assumes the cron will pick the job
+                up shortly — true in Production, false in Preview where Vercel never runs
+                crons, which left a queued moving job with no way to advance. In
+                Production this is a harmless owner override for a job that has stalled. */}
+            {(!b.aiJob || b.aiJob.status === 'not_started' || b.aiJob.status === 'failed'
+              || b.aiJob.status === 'queued') && (b.invoicePhotos?.length ?? 0) > 0 && (
               <button type="button" onClick={() => run(b.aiJob?.status === 'failed' ? 'retry-ai' : 'run-ai')} disabled={busy === 'run-ai' || busy === 'retry-ai'}
                 style={{ fontSize: 12.5, fontWeight: 700, padding: '7px 13px', borderRadius: 8, border: '1px solid var(--red)', color: '#fff', background: 'var(--red)', cursor: 'pointer' }}>
                 {busy === 'run-ai' || busy === 'retry-ai' ? 'Running…' : b.aiJob?.status === 'failed' ? 'Retry AI Analysis' : 'Run AI Analysis'}
