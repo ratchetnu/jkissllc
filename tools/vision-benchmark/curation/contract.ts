@@ -11,10 +11,78 @@
 // nobody produced.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { JUNK_CATEGORIES, MOVING_CATEGORIES } from '../queries'
 import type { DisagreementCode } from './types'
 import type { ClassifierResult, LabelProposal, VerifierResult } from './consensus'
 
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 3
+
+/**
+ * The ONLY categories a labeler may emit, taken from the manifest itself so the
+ * two can never drift. Removing the category hint (RC2 fix 4) freed the model to
+ * invent ten different free-text categories across thirteen images — `mixed_junk`,
+ * `garage_clutter`, `mixed household items` — which made the labels
+ * uncategorisable for any coverage metric. Inference is still the model's job;
+ * the vocabulary is not.
+ */
+export const ALLOWED_CATEGORIES: Record<'junk_removal' | 'moving', string[]> = {
+  junk_removal: JUNK_CATEGORIES.map(c => c.category),
+  moving: MOVING_CATEGORIES.map(c => c.category),
+}
+
+/** One measured item. Volume is DERIVED from these, never asserted alongside them. */
+export type ItemMeasurement = {
+  item: string
+  quantity: number
+  lengthFt: number
+  widthFt: number
+  heightFt: number
+  cubicFeet: number
+}
+
+/** Sum of quantity x l x w x h across the breakdown. */
+export function derivedCubicFeet(items: ItemMeasurement[]): number {
+  return items.reduce((s, i) => s + i.quantity * i.lengthFt * i.widthFt * i.heightFt, 0)
+}
+
+/**
+ * The uncertainty band around a derived total.
+ *
+ * v2 required a breakdown but still let the model state the total, so it chose a
+ * familiar total and back-fitted dimensions that summed to it — internally
+ * consistent, and therefore invisible to a consistency check. From v3 the model
+ * CANNOT state a total: it reports measured items, and the band comes from its
+ * own volume confidence. Low confidence widens the range instead of licensing a
+ * default value.
+ */
+export function volumeBandFor(derived: number, volumeConfidence: number): { min: number; max: number } {
+  const c = Number.isFinite(volumeConfidence) ? Math.min(1, Math.max(0, volumeConfidence)) : 0.5
+  const spread = 0.15 + (1 - c) * 0.5          // 0.15 at c=1 … 0.65 at c=0
+  // 1,000 cu ft is the maximum meaningful value: it is one full truck, and this
+  // pipeline has no multi-load concept. A larger reading is an over-estimate, so
+  // it is clamped rather than carried — a 7,000 cu ft figure from a single photo
+  // would otherwise travel downstream as if it were measured.
+  const clamp = (n: number) => Math.min(TRUCK_CAPACITY_CUBIC_FEET, round1(n))
+  const min = clamp(derived * (1 - spread))
+  const max = clamp(derived * (1 + spread))
+  return { min: Math.min(min, max), max }
+}
+
+/** One full truck. The ceiling on any single estimate. */
+export const TRUCK_CAPACITY_CUBIC_FEET = 1000
+
+const round1 = (n: number): number => Math.round(n * 10) / 10
+
+/** Truck-space follows from volume by the business rule; nobody estimates it. */
+export function truckBandFor(band: { min: number; max: number }): { min: number; max: number } {
+  // Both ends are capped. Capping only `max` inverted the range — 7,000 cu ft
+  // gave min 560, max 100 — which deterministic validation then reported as
+  // "min > max". Volume is now clamped at one truckload upstream, so this is
+  // belt and braces rather than the primary guard.
+  const min = Math.min(100, round1(band.min / 10))
+  const max = Math.min(100, round1(band.max / 10))
+  return { min: Math.min(min, max), max }
+}
 
 export type Range = { min: number; max: number }
 
@@ -25,7 +93,7 @@ export type Evidence = {
   ambiguityFlags: string[]
 }
 
-export type LabelResponse = LabelProposal & { evidence: Evidence }
+export type LabelResponse = LabelProposal & { evidence: Evidence; itemBreakdown: ItemMeasurement[] }
 
 // ── strict parsing ──────────────────────────────────────────────────────────
 
@@ -58,7 +126,13 @@ const range = (v: unknown, path: string, problems: string[]): Range => {
 export function extractJson(raw: string): Record<string, unknown> {
   const start = raw.indexOf('{')
   const end = raw.lastIndexOf('}')
-  if (start < 0 || end <= start) throw new SchemaError(['no JSON object in response'])
+  if (start < 0 || end <= start) {
+    // Include a bounded prefix: a bare "no JSON" is unactionable, and the raw
+    // text is the only thing that says whether the model refused, returned
+    // prose, or was truncated.
+    const prefix = raw.slice(0, 160).replace(/\s+/g, ' ').trim()
+    throw new SchemaError([`no JSON object in response (raw: "${prefix || '<empty>'}", len=${raw.length})`])
+  }
   try {
     const parsed = JSON.parse(raw.slice(start, end + 1))
     if (!isObj(parsed)) throw new SchemaError(['top level is not an object'])
@@ -98,19 +172,56 @@ export function parseLabel(raw: string): LabelResponse {
   const lane = String(o.lane ?? '')
   if (lane !== 'junk_removal' && lane !== 'moving') problems.push(`lane "${lane}" must be junk_removal or moving`)
   if (typeof o.category !== 'string' || !o.category) problems.push('category missing')
+  else if (lane === 'junk_removal' || lane === 'moving') {
+    const allowed = ALLOWED_CATEGORIES[lane]
+    if (!allowed.includes(o.category)) {
+      problems.push(`category "${o.category}" is not in the ${lane} manifest enum`)
+    }
+  }
+
+  // Structural derivation. Prompting alone did not stop volume anchoring — one
+  // range was returned for five different scenes — so the breakdown is REQUIRED
+  // and the volume must follow from it arithmetically.
+  const rawItems = Array.isArray(o.itemBreakdown) ? o.itemBreakdown : null
+  if (!rawItems || rawItems.length === 0) problems.push('itemBreakdown is required and must be non-empty')
+  const itemBreakdown: ItemMeasurement[] = (rawItems ?? []).map((raw, n) => {
+    const it = isObj(raw) ? raw : {}
+    const m: ItemMeasurement = {
+      item: typeof it.item === 'string' ? it.item : '',
+      quantity: num(it.quantity, `itemBreakdown[${n}].quantity`, problems),
+      lengthFt: num(it.lengthFt, `itemBreakdown[${n}].lengthFt`, problems),
+      widthFt: num(it.widthFt, `itemBreakdown[${n}].widthFt`, problems),
+      heightFt: num(it.heightFt, `itemBreakdown[${n}].heightFt`, problems),
+      // Computed, never read from the response: a model that reports its own
+      // product can report one that suits a total it already had in mind.
+      cubicFeet: 0,
+    }
+    m.cubicFeet = round1(m.quantity * m.lengthFt * m.widthFt * m.heightFt)
+    if (!m.item) problems.push(`itemBreakdown[${n}].item is missing`)
+    for (const k of ['quantity', 'lengthFt', 'widthFt', 'heightFt'] as const) {
+      if (m[k] <= 0) problems.push(`itemBreakdown[${n}].${k} must be > 0`)
+    }
+    return m
+  })
   if (typeof o.difficulty !== 'string') problems.push('difficulty missing')
   const ev = isObj(o.evidence) ? o.evidence : null
   if (!ev) problems.push('evidence block missing')
   const conf = isObj(o.fieldConfidence) ? o.fieldConfidence : null
   if (!conf) problems.push('fieldConfidence missing')
 
+  // v3: a model-supplied total is REFUSED, not ignored. Accepting it silently
+  // would leave the back-fitting path open while pretending it was closed.
+  for (const banned of ['volumeCubicFeet', 'truckSpacePercent'] as const) {
+    if (banned in o) problems.push(`${banned} must not be supplied — it is derived from itemBreakdown`)
+  }
+
   const label: LabelResponse = {
     lane: lane as LabelResponse['lane'],
     category: String(o.category ?? ''),
     visibleItems: strArr(o.visibleItems, 'visibleItems', problems),
     quantityRange: range(o.quantityRange, 'quantityRange', problems),
-    volumeCubicFeet: range(o.volumeCubicFeet, 'volumeCubicFeet', problems),
-    truckSpacePercent: range(o.truckSpacePercent, 'truckSpacePercent', problems),
+    volumeCubicFeet: { min: 0, max: 0 },      // replaced below, once items parse
+    truckSpacePercent: { min: 0, max: 0 },
     handlingFlags: strArr(o.handlingFlags, 'handlingFlags', problems),
     hazardousIndicators: strArr(o.hazardousIndicators, 'hazardousIndicators', problems),
     crewRange: range(o.crewRange, 'crewRange', problems),
@@ -125,7 +236,14 @@ export function parseLabel(raw: string): LabelResponse {
       missingInformation: strArr(ev?.missingInformation, 'evidence.missingInformation', problems),
       ambiguityFlags: strArr(ev?.ambiguityFlags, 'evidence.ambiguityFlags', problems),
     },
+    itemBreakdown,
   }
+
+  // Totals are DERIVED. This is the whole point of v3: there is no number for
+  // the model to anchor on, because it never gets to name one.
+  const derived = derivedCubicFeet(itemBreakdown)
+  label.volumeCubicFeet = volumeBandFor(derived, label.fieldConfidence?.volume ?? 0.5)
+  label.truckSpacePercent = truckBandFor(label.volumeCubicFeet)
   // A model that reasons in prose has ignored the contract.
   if ('reasoning' in o || 'explanation' in o || 'chainOfThought' in o) {
     problems.push('response contains freeform reasoning — the contract forbids it')
@@ -164,33 +282,141 @@ export function parseVerifier(raw: string): VerifierResult {
 // ── prompts (versioned) ─────────────────────────────────────────────────────
 
 const NO_PRICING = 'Never estimate, mention or imply a customer price, quote or dollar amount.'
+
+/**
+ * The business rule BOTH the labeler and the verifier must share.
+ *
+ * The 13-image diagnostic proved the labeler's arithmetic was exact on 13/13
+ * while the verifier raised truck_space_inconsistent on 10/13 — because only
+ * the labeler prompt carried the constant. A shared rule is not duplication;
+ * it is the thing that makes the two roles comparable.
+ */
+const TRUCK_RULE =
+  'BUSINESS RULE — truck capacity: the J KISS box truck holds approximately 1,000 cubic feet of ' +
+  'usable cargo space. Truck-space percentage = estimatedVolumeCubicFeet / 1000 * 100. ' +
+  'So 100 cu ft = 10%, 500 cu ft = 50%, 900 cu ft = 90%. ' +
+  'A volume and a percentage that satisfy this relationship are CONSISTENT — never report them as inconsistent. ' +
+  'One full truck (1,000 cu ft) is the MAXIMUM for a single estimate: a photograph never shows more ' +
+  'than one truckload of work, so a larger figure means the scene has been over-read.'
 const EVIDENCE_RULE =
   'Describe only what is VISIBLE. Never infer objects behind or outside the frame. ' +
   'Where evidence is weak use a wider range rather than a confident point value, ' +
   'and record what you could not determine in evidence.missingInformation.'
 
 export const PROMPTS = {
+  /**
+   * Operational screening, framed as the commercial task it is.
+   *
+   * The v3 moving probe returned no usable lane on 9 of 10 residential
+   * interiors, and the reruns showed the refusals happen HERE — the classifier
+   * is the first call, so nothing downstream ever ran. Two causes, both fixed
+   * below:
+   *
+   *   • framing. A generic "screen this photograph" aimed at somebody's bedroom
+   *     reads as scrutiny of a private space. A moving company looking at the
+   *     same picture is reading a quote request the customer sent them. A photo
+   *     of a private home interior is the NORMAL input for this lane, not an
+   *     edge case to be refused.
+   *   • schema echo. The old reply template spelled the enum inline as
+   *     "junk_removal|moving|neither|ambiguous", and one candidate returned that
+   *     literal string as its answer. The allowed values are now listed in prose
+   *     and the template shows a concrete example instead.
+   *
+   * PRIVACY IS UNCHANGED and is asked as a SEPARATE question. Operational
+   * classification and privacy detection are now two independent judgements, so
+   * declining to classify can no longer be a substitute for flagging a concern:
+   * the model reports what the scene is AND, separately, whether anything
+   * identifying is visible. The consensus gate still routes any privacy signal
+   * to privacy_blocked ahead of confidence.
+   */
   'curation.classifier.v1':
-    'You screen candidate photographs for a junk-removal and moving benchmark dataset. ' +
-    'Decide whether this image shows a REAL, operationally useful job scene. ' +
-    'Reject stock product photography, showrooms, repair teardowns, recycling facilities, ' +
-    'scrapyards, third-party dumpsters, demolition-only scenes, renderings and unrelated street scenes. ' +
-    'Flag privacyRisk if identifiable people, readable documents, addresses or licence plates are visible. ' +
-    `${NO_PRICING} Reply with JSON only: ` +
-    '{"operational":boolean,"lane":"junk_removal|moving|neither|ambiguous","category":string|null,' +
-    '"privacyRisk":boolean,"licenseRisk":boolean,"confidence":0..1}',
+    'You screen photographs for a junk-removal and moving company. Customers send these ' +
+    'photographs themselves so the company can estimate the work. Photographs of private ' +
+    'home interiors — bedrooms, living rooms, kitchens, closets, garages, storage units, ' +
+    'basements — are the NORMAL and EXPECTED input for the moving lane. Classifying them is ' +
+    'a routine commercial task, not an intrusion. ' +
+    'Answer two INDEPENDENT questions. ' +
+    'FIRST, operational: does this show real work for a crew? Set operational true and choose ' +
+    'the lane. Use "moving" for rooms, furniture, appliances, boxes, containers, closets, ' +
+    'garages and household goods that would be relocated. Use "junk_removal" for kerbside ' +
+    'piles, cleanouts and discarded material. Use "neither" ONLY for a scene with no ' +
+    'loadable contents at all — a rendering, a product shot on a blank background, a ' +
+    'showroom, a scrapyard, a recycling facility or an unrelated street view. Use ' +
+    '"ambiguous" only when you genuinely cannot tell which of the two lanes applies. ' +
+    'SECOND, and separately, privacy: set privacyRisk true if identifiable people, readable ' +
+    'documents, a visible street address or a licence plate appear. Privacy risk does NOT ' +
+    'make a scene non-operational — report both facts honestly and a person will review it. ' +
+    `${NO_PRICING} ` +
+    'Reply with JSON only, using one of the exact string values junk_removal, moving, ' +
+    'neither or ambiguous for lane. Example of a valid reply: ' +
+    '{"operational":true,"lane":"moving","category":"bedroom_furniture",' +
+    '"privacyRisk":false,"licenseRisk":false,"confidence":0.9}',
 
+  // The junk lane: kerbside piles, cleanouts, discarded material.
   'curation.labeler.v1':
-    'You produce structured ground truth for a junk-removal and moving benchmark. ' +
-    `${EVIDENCE_RULE} ${NO_PRICING} ` +
-    'Volumes are CUBIC FEET. truckSpacePercent is a percentage of a 1,000 cu ft box truck ' +
-    'and must be consistent with your volume. Reply with JSON only: ' +
+    'You produce structured ground truth for a junk-removal benchmark. ' +
+    `${EVIDENCE_RULE} ${NO_PRICING} ${TRUCK_RULE} ` +
+    // Anchoring guard: the diagnostic found ONE volume range ({80,120}) returned
+    // for five visually different scenes. Estimating from dimensions forces the
+    // number to come from the image rather than from the category name.
+    'Volumes are CUBIC FEET and must be DERIVED, never chosen from a familiar range. For each ' +
+    'estimate: identify the visible items, estimate how many, estimate each one\'s approximate ' +
+    'length x width x height in feet, and sum them. Record the dimensional reasoning in ' +
+    'evidence.visibleEvidence. If you cannot judge dimensions, WIDEN the range to express that ' +
+    'uncertainty and say so in evidence.missingInformation — never fall back to a typical value ' +
+    'for the category. Two different scenes should not produce identical ranges. ' +
+    'Infer the category yourself from the image. You MUST choose one value from the allowed list ' +
+    'supplied in the user message — never invent a category. ' +
+    'Work ITEM FIRST. For every distinct visible object report item, quantity, lengthFt, widthFt ' +
+    'and heightFt as you judge them FROM THE IMAGE. Do NOT report a total volume or a truck ' +
+    'percentage: the system computes those from your measurements, and any total you supply will ' +
+    'be REJECTED. Express uncertainty through fieldConfidence.volume — a low value widens the ' +
+    'derived range — not by adjusting your dimensions toward a familiar number. ' +
+    'Reply with JSON only: ' +
     '{"lane":"junk_removal|moving","category":string,"visibleItems":string[],' +
-    '"quantityRange":{"min":number,"max":number},"volumeCubicFeet":{"min":number,"max":number},' +
-    '"truckSpacePercent":{"min":number,"max":number},"handlingFlags":string[],' +
+    '"quantityRange":{"min":number,"max":number},"handlingFlags":string[],' +
     '"hazardousIndicators":string[],"crewRange":{"min":number,"max":number},' +
     '"laborHoursRange":{"min":number,"max":number},"difficulty":string,"ambiguityNotes":string,' +
     '"fieldConfidence":{[field:string]:0..1},' +
+    '"itemBreakdown":[{"item":string,"quantity":number,"lengthFt":number,"widthFt":number,"heightFt":number}],' +
+    '"evidence":{"visibleEvidence":string[],"missingInformation":string[],"ambiguityFlags":string[]}}',
+
+  /**
+   * MOVING lane, framed as the ordinary commercial task it is.
+   *
+   * The v3 moving probe hit a content refusal on 8 of 10 images — "I'm sorry, I
+   * can't assist with that." — because a generic "analyse this photograph"
+   * instruction, pointed at a photo of somebody's bedroom, reads as scrutiny of
+   * a private space. A moving estimator looking at the same picture is doing a
+   * mundane job: counting furniture that has to go on a truck.
+   *
+   * Two changes, neither of which weakens privacy:
+   *   • the purpose is stated up front — a relocation inventory for a quote;
+   *   • the labeler is told NOT to describe people, documents or personal
+   *     effects. Privacy remains the classifier's job, and the consensus gate
+   *     still routes any privacy signal to a human. Removing that duty from the
+   *     labeler narrows what it is asked to look at rather than what the
+   *     pipeline detects.
+   */
+  'curation.labeler.moving.v1':
+    'You are a professional moving estimator preparing a relocation inventory. ' +
+    'The customer has sent this photograph of a room so the crew knows what furniture ' +
+    'and boxed goods must be loaded onto a truck. This is a routine commercial estimate. ' +
+    'List ONLY the furniture, appliances, boxes and containers that would be moved. ' +
+    'Do NOT describe people, documents, screens, photographs or personal effects — ' +
+    'ignore them entirely; another system handles that separately. ' +
+    `${EVIDENCE_RULE} ${NO_PRICING} ${TRUCK_RULE} ` +
+    'Infer the category from the image, choosing one value from the allowed list in the ' +
+    'user message. Work ITEM FIRST: for every piece of furniture or container report item, ' +
+    'quantity, lengthFt, widthFt and heightFt as judged FROM THE IMAGE. Do NOT report a total ' +
+    'volume or truck percentage — the system computes those, and any total you supply will be ' +
+    'REJECTED. Express uncertainty through fieldConfidence.volume. Reply with JSON only: ' +
+    '{"lane":"moving","category":string,"visibleItems":string[],' +
+    '"quantityRange":{"min":number,"max":number},"handlingFlags":string[],' +
+    '"hazardousIndicators":string[],"crewRange":{"min":number,"max":number},' +
+    '"laborHoursRange":{"min":number,"max":number},"difficulty":string,"ambiguityNotes":string,' +
+    '"fieldConfidence":{[field:string]:0..1},' +
+    '"itemBreakdown":[{"item":string,"quantity":number,"lengthFt":number,"widthFt":number,"heightFt":number}],' +
     '"evidence":{"visibleEvidence":string[],"missingInformation":string[],"ambiguityFlags":string[]}}',
 
   // The verifier receives the image and the PROPOSED LABEL ONLY. It never sees
@@ -199,15 +425,18 @@ export const PROMPTS = {
   'curation.verifier.v1':
     'You independently check a proposed structured label against the image. ' +
     'You did NOT write the label and you have no access to the labeller\'s reasoning. ' +
-    'Judge the image yourself first, then compare. Report disagreement with CODES ONLY, ' +
-    `never prose. ${NO_PRICING} Reply with JSON only: ` +
+    `Judge the image yourself first, then compare. ${TRUCK_RULE} ` +
+    'Raise truck_space_inconsistent ONLY when the percentage does not follow from the stated ' +
+    'volume by that rule — never merely because you would have estimated a different volume. ' +
+    'If you disagree about the volume itself, use volume_implausible. ' +
+    `Report disagreement with CODES ONLY, never prose. ${NO_PRICING} Reply with JSON only: ` +
     '{"verdict":"approve|reject|revise|uncertain","disagreements":string[],"confidence":0..1}. ' +
     `Valid codes: ${CODES.join(', ')}.`,
 
   'curation.adjudicator.v1':
     'Two independent reviewers disagree about a proposed label for this image. ' +
     'You see the image and both structured positions, but neither reviewer\'s reasoning. ' +
-    `Decide which position the image supports, or that neither does. ${NO_PRICING} ` +
+    `${TRUCK_RULE} Decide which position the image supports, or that neither does. ${NO_PRICING} ` +
     'Reply with JSON only: {"verdict":"approve|reject|revise|uncertain","disagreements":string[],"confidence":0..1}',
 } as const
 

@@ -79,6 +79,9 @@ export const MOVING_CATEGORIES: CategorySpec[] = [
   { category: 'elevator_access', jobType: 'moving', base: ['building elevator interior', 'service lift building'] },
   { category: 'narrow_hallway', jobType: 'moving', base: ['narrow corridor apartment', 'hallway interior building'] },
   { category: 'long_carry', jobType: 'moving', base: ['long driveway house', 'apartment walkway exterior'] },
+  // Added after the moving probe: the classifier correctly identified a bathroom
+  // scene and the vocabulary had no value for it, so a right answer was rejected.
+  { category: 'bathroom_furniture', jobType: 'moving', base: ['bathroom vanity removal', 'bathroom cabinet move', 'bathroom furniture relocation'] },
   { category: 'loading_dock', jobType: 'moving', base: ['loading dock truck', 'warehouse loading bay'] },
   { category: 'packed_truck', jobType: 'moving', base: ['moving truck loaded furniture', 'removal van packed'] },
   { category: 'partial_truck', jobType: 'moving', base: ['moving truck partially loaded', 'van interior boxes'] },
