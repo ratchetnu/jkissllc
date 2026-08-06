@@ -296,8 +296,9 @@ export const PROMPTS = {
     '{"operational":boolean,"lane":"junk_removal|moving|neither|ambiguous","category":string|null,' +
     '"privacyRisk":boolean,"licenseRisk":boolean,"confidence":0..1}',
 
+  // The junk lane: kerbside piles, cleanouts, discarded material.
   'curation.labeler.v1':
-    'You produce structured ground truth for a junk-removal and moving benchmark. ' +
+    'You produce structured ground truth for a junk-removal benchmark. ' +
     `${EVIDENCE_RULE} ${NO_PRICING} ${TRUCK_RULE} ` +
     // Anchoring guard: the diagnostic found ONE volume range ({80,120}) returned
     // for five visually different scenes. Estimating from dimensions forces the
@@ -317,6 +318,44 @@ export const PROMPTS = {
     'derived range — not by adjusting your dimensions toward a familiar number. ' +
     'Reply with JSON only: ' +
     '{"lane":"junk_removal|moving","category":string,"visibleItems":string[],' +
+    '"quantityRange":{"min":number,"max":number},"handlingFlags":string[],' +
+    '"hazardousIndicators":string[],"crewRange":{"min":number,"max":number},' +
+    '"laborHoursRange":{"min":number,"max":number},"difficulty":string,"ambiguityNotes":string,' +
+    '"fieldConfidence":{[field:string]:0..1},' +
+    '"itemBreakdown":[{"item":string,"quantity":number,"lengthFt":number,"widthFt":number,"heightFt":number}],' +
+    '"evidence":{"visibleEvidence":string[],"missingInformation":string[],"ambiguityFlags":string[]}}',
+
+  /**
+   * MOVING lane, framed as the ordinary commercial task it is.
+   *
+   * The v3 moving probe hit a content refusal on 8 of 10 images — "I'm sorry, I
+   * can't assist with that." — because a generic "analyse this photograph"
+   * instruction, pointed at a photo of somebody's bedroom, reads as scrutiny of
+   * a private space. A moving estimator looking at the same picture is doing a
+   * mundane job: counting furniture that has to go on a truck.
+   *
+   * Two changes, neither of which weakens privacy:
+   *   • the purpose is stated up front — a relocation inventory for a quote;
+   *   • the labeler is told NOT to describe people, documents or personal
+   *     effects. Privacy remains the classifier's job, and the consensus gate
+   *     still routes any privacy signal to a human. Removing that duty from the
+   *     labeler narrows what it is asked to look at rather than what the
+   *     pipeline detects.
+   */
+  'curation.labeler.moving.v1':
+    'You are a professional moving estimator preparing a relocation inventory. ' +
+    'The customer has sent this photograph of a room so the crew knows what furniture ' +
+    'and boxed goods must be loaded onto a truck. This is a routine commercial estimate. ' +
+    'List ONLY the furniture, appliances, boxes and containers that would be moved. ' +
+    'Do NOT describe people, documents, screens, photographs or personal effects — ' +
+    'ignore them entirely; another system handles that separately. ' +
+    `${EVIDENCE_RULE} ${NO_PRICING} ${TRUCK_RULE} ` +
+    'Infer the category from the image, choosing one value from the allowed list in the ' +
+    'user message. Work ITEM FIRST: for every piece of furniture or container report item, ' +
+    'quantity, lengthFt, widthFt and heightFt as judged FROM THE IMAGE. Do NOT report a total ' +
+    'volume or truck percentage — the system computes those, and any total you supply will be ' +
+    'REJECTED. Express uncertainty through fieldConfidence.volume. Reply with JSON only: ' +
+    '{"lane":"moving","category":string,"visibleItems":string[],' +
     '"quantityRange":{"min":number,"max":number},"handlingFlags":string[],' +
     '"hazardousIndicators":string[],"crewRange":{"min":number,"max":number},' +
     '"laborHoursRange":{"min":number,"max":number},"difficulty":string,"ambiguityNotes":string,' +

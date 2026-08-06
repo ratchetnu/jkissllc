@@ -504,3 +504,96 @@ test('zero or negative dimensions are refused', () => {
   assert.throws(() => parseLabel(itemFirst([{ item: 'x', quantity: 1, lengthFt: 0, widthFt: 3, heightFt: 3 }])), /lengthFt must be > 0/)
   assert.throws(() => parseLabel(itemFirst([{ item: 'x', quantity: 0, lengthFt: 2, widthFt: 3, heightFt: 3 }])), /quantity must be > 0/)
 })
+
+// ── Moving-photo ingestion (v3 probe: 8/10 content refusals) ────────────────
+// A generic "analyse this photograph", pointed at somebody's bedroom, read as
+// scrutiny of a private space. A moving estimator looking at the same picture is
+// counting furniture for a truck. The framing changes; the privacy path does not.
+
+const movingLabel = (over: Record<string, unknown> = {}) => JSON.stringify({
+  lane: 'moving', category: ALLOWED_CATEGORIES.moving[0], visibleItems: ['bed', 'dresser'],
+  quantityRange: { min: 2, max: 4 }, handlingFlags: [], hazardousIndicators: [],
+  crewRange: { min: 2, max: 3 }, laborHoursRange: { min: 2, max: 4 },
+  difficulty: 'normal', ambiguityNotes: '', fieldConfidence: { volume: 0.8 },
+  evidence: { visibleEvidence: ['queen bed', '6-drawer dresser'], missingInformation: [], ambiguityFlags: [] },
+  itemBreakdown: [
+    { item: 'queen bed', quantity: 1, lengthFt: 6.5, widthFt: 5, heightFt: 2 },
+    { item: 'dresser', quantity: 1, lengthFt: 5, widthFt: 2, heightFt: 3.5 },
+  ],
+  ...over,
+})
+
+const MOVING_CLASSIFIER = JSON.stringify({
+  operational: true, lane: 'moving', category: 'bedroom_furniture',
+  privacyRisk: false, licenseRisk: false, confidence: 0.92,
+})
+
+test('a normal bedroom furniture image is labelled through the moving prompt', async () => {
+  const s = scripted({ classifier: MOVING_CLASSIFIER, labeler: movingLabel(), verifier: OK_VERIFIER })
+  const out = await runCandidate(entry({ jobType: 'moving' }), ctx(s.caller), opts, new Map())
+  const labelCall = s.calls.find(c => c.promptVersion === 'curation.labeler.moving.v1')
+  assert.ok(labelCall, 'the moving lane must use the moving labeler prompt')
+  assert.equal(out.decision.state, 'auto_verified')
+  assert.equal(out.decision.tier, 'silver')
+  assert.equal(out.label?.itemBreakdown.length, 2)
+})
+
+test('a living room furniture image runs the same path', async () => {
+  const living = movingLabel({
+    category: ALLOWED_CATEGORIES.moving.includes('living_room_furniture') ? 'living_room_furniture' : ALLOWED_CATEGORIES.moving[0],
+    itemBreakdown: [
+      { item: 'sofa', quantity: 1, lengthFt: 7, widthFt: 3, heightFt: 3 },
+      { item: 'coffee table', quantity: 1, lengthFt: 4, widthFt: 2, heightFt: 1.5 },
+      { item: 'armchair', quantity: 2, lengthFt: 3, widthFt: 3, heightFt: 3 },
+    ],
+  })
+  const s = scripted({ classifier: MOVING_CLASSIFIER, labeler: living, verifier: OK_VERIFIER })
+  const out = await runCandidate(entry({ jobType: 'moving' }), ctx(s.caller), opts, new Map())
+  assert.equal(out.decision.state, 'auto_verified')
+  assert.equal(out.label?.itemBreakdown.length, 3)
+})
+
+test('the junk lane keeps its own prompt — the framing is lane-specific', async () => {
+  const s = scripted({ classifier: OK_CLASSIFIER, labeler: OK_LABEL, verifier: OK_VERIFIER })
+  await runCandidate(entry(), ctx(s.caller), opts, new Map())
+  assert.ok(s.calls.some(c => c.promptVersion === 'curation.labeler.v1'))
+  assert.equal(s.calls.some(c => c.promptVersion === 'curation.labeler.moving.v1'), false)
+})
+
+test('the moving prompt narrows what the labeler LOOKS AT, not what the pipeline detects', () => {
+  const p = PROMPTS['curation.labeler.moving.v1']
+  assert.match(p, /professional moving estimator/)
+  assert.match(p, /Do NOT describe people, documents, screens, photographs or personal effects/)
+  assert.match(p, /another system handles that separately/)
+  // The classifier still carries the whole privacy duty.
+  assert.match(PROMPTS['curation.classifier.v1'], /identifiable people, readable documents, addresses or licence plates/)
+})
+
+test('a privacy signal still blocks a moving image, and a human decides', async () => {
+  const privacyClassifier = JSON.stringify({
+    operational: true, lane: 'moving', category: 'bedroom_furniture',
+    privacyRisk: true, licenseRisk: false, confidence: 0.95,
+  })
+  const s = scripted({ classifier: privacyClassifier, labeler: movingLabel(), verifier: OK_VERIFIER })
+  const out = await runCandidate(entry({ jobType: 'moving' }), ctx(s.caller), opts, new Map())
+  assert.equal(out.decision.state, 'privacy_blocked')
+  assert.notEqual(out.decision.tier, 'silver')
+  assert.match(out.decision.reason, /a human decides, never automation/)
+})
+
+test('a manifest privacy mark blocks a moving image before any paid call', async () => {
+  const s = scripted({ classifier: MOVING_CLASSIFIER, labeler: movingLabel(), verifier: OK_VERIFIER })
+  const out = await runCandidate(entry({ jobType: 'moving', containsPeople: true }), ctx(s.caller), opts, new Map())
+  assert.equal(out.decision.state, 'privacy_blocked')
+  assert.equal(s.calls.length, 0, 'privacy is decided before spending')
+})
+
+test('a verifier privacy_risk still blocks, even on an otherwise clean moving label', async () => {
+  const s = scripted({
+    classifier: MOVING_CLASSIFIER, labeler: movingLabel(),
+    verifier: JSON.stringify({ verdict: 'approve', disagreements: ['privacy_risk'], confidence: 0.99 }),
+    adjudicator: JSON.stringify({ verdict: 'approve', disagreements: ['privacy_risk'], confidence: 0.99 }),
+  })
+  const out = await runCandidate(entry({ jobType: 'moving' }), ctx(s.caller), opts, new Map())
+  assert.equal(out.decision.state, 'privacy_blocked')
+})
