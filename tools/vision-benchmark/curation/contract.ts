@@ -11,10 +11,39 @@
 // nobody produced.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { JUNK_CATEGORIES, MOVING_CATEGORIES } from '../queries'
 import type { DisagreementCode } from './types'
 import type { ClassifierResult, LabelProposal, VerifierResult } from './consensus'
 
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
+
+/**
+ * The ONLY categories a labeler may emit, taken from the manifest itself so the
+ * two can never drift. Removing the category hint (RC2 fix 4) freed the model to
+ * invent ten different free-text categories across thirteen images — `mixed_junk`,
+ * `garage_clutter`, `mixed household items` — which made the labels
+ * uncategorisable for any coverage metric. Inference is still the model's job;
+ * the vocabulary is not.
+ */
+export const ALLOWED_CATEGORIES: Record<'junk_removal' | 'moving', string[]> = {
+  junk_removal: JUNK_CATEGORIES.map(c => c.category),
+  moving: MOVING_CATEGORIES.map(c => c.category),
+}
+
+/** One measured item. Volume is DERIVED from these, never asserted alongside them. */
+export type ItemMeasurement = {
+  item: string
+  quantity: number
+  lengthFt: number
+  widthFt: number
+  heightFt: number
+  cubicFeet: number
+}
+
+/** Sum of quantity x l x w x h across the breakdown. */
+export function derivedCubicFeet(items: ItemMeasurement[]): number {
+  return items.reduce((s, i) => s + i.quantity * i.lengthFt * i.widthFt * i.heightFt, 0)
+}
 
 export type Range = { min: number; max: number }
 
@@ -25,7 +54,7 @@ export type Evidence = {
   ambiguityFlags: string[]
 }
 
-export type LabelResponse = LabelProposal & { evidence: Evidence }
+export type LabelResponse = LabelProposal & { evidence: Evidence; itemBreakdown: ItemMeasurement[] }
 
 // ── strict parsing ──────────────────────────────────────────────────────────
 
@@ -104,6 +133,34 @@ export function parseLabel(raw: string): LabelResponse {
   const lane = String(o.lane ?? '')
   if (lane !== 'junk_removal' && lane !== 'moving') problems.push(`lane "${lane}" must be junk_removal or moving`)
   if (typeof o.category !== 'string' || !o.category) problems.push('category missing')
+  else if (lane === 'junk_removal' || lane === 'moving') {
+    const allowed = ALLOWED_CATEGORIES[lane]
+    if (!allowed.includes(o.category)) {
+      problems.push(`category "${o.category}" is not in the ${lane} manifest enum`)
+    }
+  }
+
+  // Structural derivation. Prompting alone did not stop volume anchoring — one
+  // range was returned for five different scenes — so the breakdown is REQUIRED
+  // and the volume must follow from it arithmetically.
+  const rawItems = Array.isArray(o.itemBreakdown) ? o.itemBreakdown : null
+  if (!rawItems || rawItems.length === 0) problems.push('itemBreakdown is required and must be non-empty')
+  const itemBreakdown: ItemMeasurement[] = (rawItems ?? []).map((raw, n) => {
+    const it = isObj(raw) ? raw : {}
+    const m: ItemMeasurement = {
+      item: typeof it.item === 'string' ? it.item : '',
+      quantity: num(it.quantity, `itemBreakdown[${n}].quantity`, problems),
+      lengthFt: num(it.lengthFt, `itemBreakdown[${n}].lengthFt`, problems),
+      widthFt: num(it.widthFt, `itemBreakdown[${n}].widthFt`, problems),
+      heightFt: num(it.heightFt, `itemBreakdown[${n}].heightFt`, problems),
+      cubicFeet: num(it.cubicFeet, `itemBreakdown[${n}].cubicFeet`, problems),
+    }
+    if (!m.item) problems.push(`itemBreakdown[${n}].item is missing`)
+    for (const k of ['quantity', 'lengthFt', 'widthFt', 'heightFt'] as const) {
+      if (m[k] <= 0) problems.push(`itemBreakdown[${n}].${k} must be > 0`)
+    }
+    return m
+  })
   if (typeof o.difficulty !== 'string') problems.push('difficulty missing')
   const ev = isObj(o.evidence) ? o.evidence : null
   if (!ev) problems.push('evidence block missing')
@@ -131,6 +188,7 @@ export function parseLabel(raw: string): LabelResponse {
       missingInformation: strArr(ev?.missingInformation, 'evidence.missingInformation', problems),
       ambiguityFlags: strArr(ev?.ambiguityFlags, 'evidence.ambiguityFlags', problems),
     },
+    itemBreakdown,
   }
   // A model that reasons in prose has ignored the contract.
   if ('reasoning' in o || 'explanation' in o || 'chainOfThought' in o) {
@@ -212,13 +270,19 @@ export const PROMPTS = {
     'evidence.visibleEvidence. If you cannot judge dimensions, WIDEN the range to express that ' +
     'uncertainty and say so in evidence.missingInformation — never fall back to a typical value ' +
     'for the category. Two different scenes should not produce identical ranges. ' +
-    'Infer the category yourself from the image; you are not given one. Reply with JSON only: ' +
+    'Infer the category yourself from the image. You MUST choose one value from the allowed list ' +
+    'supplied in the user message — never invent a category. Every volume MUST be derived from an ' +
+    'itemBreakdown: for each distinct item give item, quantity, lengthFt, widthFt, heightFt and ' +
+    'cubicFeet (= quantity x length x width x height). volumeCubicFeet must bracket the sum. ' +
+    'Reply with JSON only: ' +
     '{"lane":"junk_removal|moving","category":string,"visibleItems":string[],' +
     '"quantityRange":{"min":number,"max":number},"volumeCubicFeet":{"min":number,"max":number},' +
     '"truckSpacePercent":{"min":number,"max":number},"handlingFlags":string[],' +
     '"hazardousIndicators":string[],"crewRange":{"min":number,"max":number},' +
     '"laborHoursRange":{"min":number,"max":number},"difficulty":string,"ambiguityNotes":string,' +
     '"fieldConfidence":{[field:string]:0..1},' +
+    '"itemBreakdown":[{"item":string,"quantity":number,"lengthFt":number,"widthFt":number,' +
+    '"heightFt":number,"cubicFeet":number}],' +
     '"evidence":{"visibleEvidence":string[],"missingInformation":string[],"ambiguityFlags":string[]}}',
 
   // The verifier receives the image and the PROPOSED LABEL ONLY. It never sees
