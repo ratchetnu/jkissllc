@@ -237,3 +237,71 @@ export function precisionReport(rows: Comparison[], sample: AuditSample, minPerB
 export function auditClearsPromotion(report: PrecisionReport): boolean {
   return report.blockers.length === 0 && report.falseApprovals === 0
 }
+
+// ── audit readiness ─────────────────────────────────────────────────────────
+
+export type BucketReadiness = {
+  bucket: 'auto_verified_junk' | 'auto_verified_moving' | 'auto_rejected'
+  have: number
+  need: number
+  /** Observed rate of this outcome per candidate processed, or null if unobserved. */
+  observedRate: number | null
+  /** Candidates to process to expect the shortfall, or null when the rate is 0/unknown. */
+  projectedCandidates: number | null
+}
+
+export type AuditReadiness = {
+  processed: number
+  buckets: BucketReadiness[]
+  ready: boolean
+  /** Concrete next steps, in priority order. */
+  recommendations: string[]
+  /** Rates observed at 0 cannot be extrapolated — say so rather than divide by zero. */
+  unobservable: string[]
+}
+
+/**
+ * What still has to happen before the blind audit can run at all.
+ *
+ * Projections are deliberately naive — outcome count divided by candidates
+ * processed — and are labelled as such. The honest failure mode here is a rate
+ * of zero: v3 produced no auto-rejected case in thirteen, which does not mean
+ * "run 13 more", it means the rate is unmeasured and no projection is possible.
+ */
+export function auditReadiness(
+  processed: AuditCandidate[], perLane = AUDIT_TARGET.autoVerifiedPerLane,
+): AuditReadiness {
+  const n = processed.length
+  const laneIs = (c: AuditCandidate, lane: string) => (c.lane ?? c.label?.lane ?? c.classifier?.lane) === lane
+  const counts = {
+    auto_verified_junk: processed.filter(c => c.state === 'auto_verified' && laneIs(c, 'junk_removal')).length,
+    auto_verified_moving: processed.filter(c => c.state === 'auto_verified' && laneIs(c, 'moving')).length,
+    auto_rejected: processed.filter(c => c.state === 'auto_rejected').length,
+  }
+  const need = {
+    auto_verified_junk: perLane, auto_verified_moving: perLane, auto_rejected: AUDIT_TARGET.autoRejected,
+  }
+
+  const unobservable: string[] = []
+  const buckets: BucketReadiness[] = (Object.keys(counts) as Array<keyof typeof counts>).map(bucket => {
+    const have = counts[bucket]
+    const shortfall = Math.max(0, need[bucket] - have)
+    const rate = n > 0 ? have / n : null
+    let projected: number | null = null
+    if (shortfall === 0) projected = 0
+    else if (rate && rate > 0) projected = Math.ceil(shortfall / rate)
+    else unobservable.push(`${bucket}: 0 observed in ${n} — the rate is unmeasured, so no projection is possible`)
+    return { bucket, have, need: need[bucket], observedRate: rate, projectedCandidates: projected }
+  })
+
+  const recommendations: string[] = []
+  for (const b of buckets) {
+    if (b.have >= b.need) continue
+    if (b.projectedCandidates !== null) {
+      recommendations.push(`${b.bucket}: process ~${b.projectedCandidates} more candidates (observed ${(b.observedRate! * 100).toFixed(0)}%)`)
+    } else {
+      recommendations.push(`${b.bucket}: rate unmeasured — process a probe batch before projecting`)
+    }
+  }
+  return { processed: n, buckets, ready: buckets.every(b => b.have >= b.need), recommendations, unobservable }
+}

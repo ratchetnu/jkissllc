@@ -4,7 +4,7 @@ import test from 'node:test'
 
 import {
   buildAuditSample, blindPacket, packetLeaks, compare, precisionReport,
-  auditClearsPromotion, AUDIT_TARGET,
+  auditClearsPromotion, auditReadiness, AUDIT_TARGET,
   type AuditCandidate, type HumanAudit,
 } from '../tools/vision-benchmark/curation/audit'
 
@@ -180,4 +180,50 @@ test('disagreement causes are attributed, not just counted', () => {
   assert.equal(r.disagreementCauses.volume_disagreement, 1)
   assert.equal(r.disagreementCauses.category_disagreement, 1)
   assert.equal(r.disagreementCauses.quantity_disagreement, 1)
+})
+
+// ── readiness ───────────────────────────────────────────────────────────────
+
+test('readiness counts each bucket separately and never pools lanes', () => {
+  const r = auditReadiness([
+    cand({ file: 'j1' }), cand({ file: 'j2' }),
+    cand({ file: 'm1', label: label({ lane: 'moving' }) }),
+    cand({ file: 'r1', state: 'auto_rejected', label: null }),
+  ])
+  const b = Object.fromEntries(r.buckets.map(x => [x.bucket, x]))
+  assert.equal(b.auto_verified_junk.have, 2)
+  assert.equal(b.auto_verified_moving.have, 1)
+  assert.equal(b.auto_rejected.have, 1)
+  assert.equal(r.ready, false)
+})
+
+test('a zero observed rate is reported as unmeasured, not extrapolated', () => {
+  // The real v3 position: no auto-rejected case in thirteen.
+  const r = auditReadiness(Array.from({ length: 13 }, (_, i) => cand({ file: `f${i}`, state: 'needs_human_review' })))
+  const rejected = r.buckets.find(b => b.bucket === 'auto_rejected')!
+  assert.equal(rejected.observedRate, 0)
+  assert.equal(rejected.projectedCandidates, null, 'dividing by a zero rate would invent a number')
+  assert.ok(r.unobservable.some(u => /rate is unmeasured/.test(u)))
+  assert.ok(r.recommendations.some(x => /probe batch before projecting/.test(x)))
+})
+
+test('a projection follows from the observed rate', () => {
+  // 1 auto-verified junk in 10 ⇒ 10% ⇒ ~20 more for the remaining 2.
+  const rows = [cand({ file: 'a' }), ...Array.from({ length: 9 }, (_, i) => cand({ file: `n${i}`, state: 'needs_human_review' }))]
+  const b = auditReadiness(rows).buckets.find(x => x.bucket === 'auto_verified_junk')!
+  assert.equal(b.have, 1)
+  assert.equal(b.observedRate, 0.1)
+  assert.equal(b.projectedCandidates, 20)
+})
+
+test('readiness is true only when every bucket is filled', () => {
+  const rows = [
+    ...['a', 'b', 'c'].map(f => cand({ file: f })),
+    ...['m1', 'm2', 'm3'].map(f => cand({ file: f, label: label({ lane: 'moving' }) })),
+    ...['r1', 'r2', 'r3'].map(f => cand({ file: f, state: 'auto_rejected', label: null })),
+  ]
+  const r = auditReadiness(rows)
+  assert.equal(r.ready, true)
+  assert.deepEqual(r.recommendations, [])
+  assert.equal(auditReadiness(rows.slice(0, 8)).ready, false)
 })
