@@ -4,6 +4,7 @@ import {
 } from './bookings'
 import { buildPhotoEstimate } from './ai/photo-estimate'
 import { currentTenantId } from './platform/tenancy/context'
+import { isEnabled } from './platform/flags'
 import {
   breakerEnabled, breakerAllows, inProbeWindow, recordOutcome, isOutageClass,
   loadBreaker, saveBreaker,
@@ -73,8 +74,27 @@ export function photoVersion(b: Pick<Booking, 'invoicePhotos'>): number {
 }
 
 /** Only the junk/cleanout family is photo-estimated; moving/delivery are priced by hand. */
+/**
+ * Which bookings may create a photo-analysis job.
+ *
+ * Junk has run this path in Production for a long time and is unchanged.
+ *
+ * Moving is gated behind AI_PHOTO_ESTIMATE_MOVING, default OFF everywhere. The
+ * pipeline itself is proven — a completed moving job (JK-B-1001) was replayed
+ * through it and returned the correct lane, all five itemised objects, labour
+ * hours bracketing the actual ~5h, and a correct refusal to price without the
+ * destination address. What is NOT proven is the moving lane at volume: recent
+ * probes still saw content refusals on residential interiors, so this stays off
+ * until a Preview run says otherwise. The flag is the kill switch.
+ *
+ * A moving booking with the flag off behaves exactly as it does today: no job,
+ * no spend, no change.
+ */
 export function supportsPhotoAi(b: Pick<Booking, 'serviceType'>): boolean {
-  return serviceFamily(b.serviceType) === 'junk'
+  const family = serviceFamily(b.serviceType)
+  if (family === 'junk') return true
+  if (family === 'moving') return isEnabled('AI_PHOTO_ESTIMATE_MOVING')
+  return false
 }
 
 /** A genuine, usable AI estimate is already attached (not a failed shell). */

@@ -116,6 +116,7 @@ export type FeatureFlag =
   // The route ALSO refuses when VERCEL_ENV=production, so this flag can never
   // expose it there even if it were set by mistake. OFF everywhere by default.
   | 'AI_PROVIDER_DIAGNOSTIC_ENABLED'
+  | 'AI_PHOTO_ESTIMATE_MOVING'
   // Evaluation telemetry — records the ESTIMATE-side facts a benchmark needs and
   // the customer-safe response deliberately omits (truck-load FRACTION, all five
   // confidence sub-scores, monitor concerns, critic verdict), joined to the AI
@@ -228,6 +229,7 @@ export const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
   BOOKING_ASSIGNMENT_ENABLED: false,
   // AI latency Phase 2 — all OFF by default (byte-identical to today).
   AI_PROVIDER_DIAGNOSTIC_ENABLED: false,
+  AI_PHOTO_ESTIMATE_MOVING: false,
   AI_EVAL_TELEMETRY_ENABLED: false,
   OPERION_CRITIC_JSON: false,
   OPERION_MOVING_LANE: false,
