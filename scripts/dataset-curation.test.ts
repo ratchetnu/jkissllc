@@ -40,7 +40,11 @@ const proposal = (over: Partial<LabelProposal> = {}): LabelProposal => ({
   quantityRange: { min: 3, max: 6 }, volumeCubicFeet: { min: 90, max: 150 },
   truckSpacePercent: { min: 9, max: 15 }, handlingFlags: ['two_person_lift'],
   hazardousIndicators: [], crewRange: { min: 2, max: 2 }, laborHoursRange: { min: 1, max: 2 },
-  difficulty: 'normal', ambiguityNotes: '', fieldConfidence: { volume: 0.8 }, ...over,
+  difficulty: 'normal', ambiguityNotes: '', fieldConfidence: { volume: 0.8 },
+  // Schema v2: volume must be derivable from measured items. 2 x 5x3x4 = 120,
+  // which sits inside the 90-150 range above.
+  itemBreakdown: [{ item: 'sofa', quantity: 2, lengthFt: 5, widthFt: 3, heightFt: 4, cubicFeet: 120 }],
+  ...over,
 })
 
 const input = (over: Partial<ConsensusInput> = {}): ConsensusInput => ({

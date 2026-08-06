@@ -8,8 +8,8 @@ import {
   callRole, classifyFailure, runCandidate, memoryCache, memoryCheckpoint,
   CallFailure, type VisionCaller, type VisionRequest,
 } from '../tools/vision-benchmark/curation/runtime'
-import { parseClassifier, parseLabel, parseVerifier, SchemaError, PROMPTS } from '../tools/vision-benchmark/curation/contract'
-import { decide, truckSpaceConsistent, type LabelProposal } from '../tools/vision-benchmark/curation/consensus'
+import { parseClassifier, parseLabel, parseVerifier, SchemaError, PROMPTS, ALLOWED_CATEGORIES, SCHEMA_VERSION, type LabelResponse } from '../tools/vision-benchmark/curation/contract'
+import { decide, truckSpaceConsistent, validateProposal, type LabelProposal } from '../tools/vision-benchmark/curation/consensus'
 import { DEFAULT_ROLES, PRODUCTION_ESTIMATOR } from '../tools/vision-benchmark/curation/roles'
 import type { ManifestEntry } from '../tools/vision-benchmark/schema'
 
@@ -18,12 +18,13 @@ const OK_CLASSIFIER = JSON.stringify({
   privacyRisk: false, licenseRisk: false, confidence: 0.95,
 })
 const OK_LABEL = JSON.stringify({
-  lane: 'junk_removal', category: 'curbside_pile', visibleItems: ['sofa'],
+  lane: 'junk_removal', category: 'couch_sectional', visibleItems: ['sofa'],
   quantityRange: { min: 1, max: 2 }, volumeCubicFeet: { min: 90, max: 150 },
   truckSpacePercent: { min: 9, max: 15 }, handlingFlags: [], hazardousIndicators: [],
   crewRange: { min: 2, max: 2 }, laborHoursRange: { min: 1, max: 2 },
   difficulty: 'normal', ambiguityNotes: '', fieldConfidence: { volume: 0.9 },
   evidence: { visibleEvidence: ['sofa at kerb'], missingInformation: [], ambiguityFlags: [] },
+  itemBreakdown: [{ item: 'sofa', quantity: 2, lengthFt: 6, widthFt: 3, heightFt: 3, cubicFeet: 108 }],
 })
 const OK_VERIFIER = JSON.stringify({ verdict: 'approve', disagreements: [], confidence: 0.95 })
 
@@ -55,11 +56,13 @@ function scripted(replies: Partial<Record<string, string>>, opts: { throwOn?: st
 }
 
 const proposal = (over: Partial<LabelProposal> = {}): LabelProposal => ({
-  lane: 'junk_removal', category: 'curbside_pile', visibleItems: ['sofa'],
+  lane: 'junk_removal', category: 'couch_sectional', visibleItems: ['sofa'],
   quantityRange: { min: 1, max: 2 }, volumeCubicFeet: { min: 90, max: 150 },
   truckSpacePercent: { min: 9, max: 15 }, handlingFlags: [], hazardousIndicators: [],
   crewRange: { min: 2, max: 2 }, laborHoursRange: { min: 1, max: 2 },
-  difficulty: 'normal', ambiguityNotes: '', fieldConfidence: { volume: 0.9 }, ...over,
+  difficulty: 'normal', ambiguityNotes: '', fieldConfidence: { volume: 0.9 },
+  itemBreakdown: [{ item: 'sofa', quantity: 2, lengthFt: 7, widthFt: 3, heightFt: 3, cubicFeet: 126 }],
+  ...over,
 })
 
 const ctx = (caller: VisionCaller, cache = memoryCache()) => ({ caller, cache })
@@ -232,7 +235,9 @@ test('provenance records the decision and never carries model reasoning', async 
   const p = out.provenance[0]
   assert.equal(p.revision, 1)
   assert.equal(p.humanReviewed, false)
-  assert.equal(p.schemaVersion, 1)
+  // v2 = controlled category enum + structural itemBreakdown derivation.
+  assert.equal(p.schemaVersion, SCHEMA_VERSION)
+  assert.equal(SCHEMA_VERSION, 2)
   assert.equal(p.tier, 'silver')
   assert.ok(p.roles.length >= 2)
   assert.equal(JSON.stringify(p).includes('reasoning'), false)
@@ -306,11 +311,17 @@ test('suppressing the false code does not swallow the verifier other disagreemen
 })
 
 test('no category hint reaches the labeler — it must infer from the image', async () => {
+  // Schema v2 supplies the ALLOWED VOCABULARY (which necessarily contains the
+  // word "category"); what must never appear is this entry's own category.
   const s = scripted({ classifier: OK_CLASSIFIER, labeler: OK_LABEL, verifier: OK_VERIFIER })
   await runCandidate(entry({ category: 'eviction_cleanout' }), ctx(s.caller), opts, new Map())
   const labelCall = s.calls.find(c => c.promptVersion === 'curation.labeler.v1')!
-  assert.equal(labelCall.user.includes('eviction_cleanout'), false, 'the manifest category must not leak')
-  assert.equal(labelCall.user.includes('category'), false)
+  // The enum necessarily contains every manifest category, including this
+  // entry's own, so "absence" is the wrong property. What matters is that none
+  // is SINGLED OUT: the whole vocabulary is offered and nothing points at one.
+  assert.equal(/category hint|likely category|expected category/i.test(labelCall.user), false)
+  assert.equal(ALLOWED_CATEGORIES.junk_removal.every(c => labelCall.user.includes(c)), true,
+    'the full vocabulary must be supplied, so no single category is privileged')
   assert.match(labelCall.user, /^lane: /)
   assert.match(labelCall.system, /Infer the category yourself/)
 })
@@ -321,4 +332,93 @@ test('the labeler contract demands derived volume, not a category anchor', () =>
   assert.match(p, /WIDEN the range/)
   assert.match(p, /never fall back to a typical value/)
   assert.match(p, /should not produce identical ranges/)
+})
+
+// ── Schema v2: controlled categories + structural volume derivation ──────────
+// The RC2 control run produced ten free-text categories across thirteen images
+// and still returned one volume range for multiple different scenes. Prompting
+// did not fix either, so both are now enforced by the contract.
+
+const measured = (over: Partial<LabelResponse> = {}): string => JSON.stringify({
+  lane: 'junk_removal', category: 'couch_sectional', visibleItems: ['sofa'],
+  quantityRange: { min: 1, max: 1 }, volumeCubicFeet: { min: 60, max: 90 },
+  truckSpacePercent: { min: 6, max: 9 }, handlingFlags: [], hazardousIndicators: [],
+  crewRange: { min: 2, max: 2 }, laborHoursRange: { min: 1, max: 2 },
+  difficulty: 'normal', ambiguityNotes: '', fieldConfidence: { volume: 0.8 },
+  evidence: { visibleEvidence: ['sofa 7x3x3'], missingInformation: [], ambiguityFlags: [] },
+  itemBreakdown: [{ item: 'sofa', quantity: 1, lengthFt: 7, widthFt: 3, heightFt: 3, cubicFeet: 63 }],
+  ...over,
+})
+
+test('a category outside the manifest enum fails validation', () => {
+  for (const bad of ['mixed_junk', 'garage_clutter', 'mixed household items', 'furniture_disposal']) {
+    assert.throws(() => parseLabel(measured({ category: bad } as never)), /not in the junk_removal manifest enum/, bad)
+  }
+  assert.doesNotThrow(() => parseLabel(measured()))
+  assert.ok(ALLOWED_CATEGORIES.junk_removal.includes('couch_sectional'))
+  assert.equal(ALLOWED_CATEGORIES.junk_removal.includes('mixed_junk'), false)
+})
+
+test('a moving category cannot be used on the junk lane', () => {
+  const movingCat = ALLOWED_CATEGORIES.moving[0]
+  assert.throws(() => parseLabel(measured({ category: movingCat } as never)), /not in the junk_removal manifest enum/)
+})
+
+test('volume without an itemBreakdown is refused', () => {
+  const noBreakdown = JSON.parse(measured()); delete noBreakdown.itemBreakdown
+  assert.throws(() => parseLabel(JSON.stringify(noBreakdown)), /itemBreakdown is required/)
+  // …and at the validation layer, for a proposal that reached it another way.
+  assert.ok(validateProposal(proposal({ itemBreakdown: undefined }))
+    .some(p => /without an itemBreakdown/.test(p)))
+})
+
+test('cubic-foot math must match the stated dimensions', () => {
+  const wrong = validateProposal(proposal({
+    volumeCubicFeet: { min: 60, max: 90 },
+    itemBreakdown: [{ item: 'sofa', quantity: 1, lengthFt: 7, widthFt: 3, heightFt: 3, cubicFeet: 200 }],
+  }))
+  assert.ok(wrong.some(p => /does not match 1x7x3x3/.test(p)))
+  const right = validateProposal(proposal({
+    volumeCubicFeet: { min: 60, max: 90 },
+    itemBreakdown: [{ item: 'sofa', quantity: 1, lengthFt: 7, widthFt: 3, heightFt: 3, cubicFeet: 63 }],
+  }))
+  assert.deepEqual(right, [])
+})
+
+test('a repeated anchor unsupported by the item evidence is rejected', () => {
+  // The exact failure from the control run: {80,120} asserted over one small item.
+  const anchored = validateProposal(proposal({
+    volumeCubicFeet: { min: 80, max: 120 },
+    itemBreakdown: [{ item: 'box', quantity: 2, lengthFt: 2, widthFt: 2, heightFt: 2, cubicFeet: 16 }],
+  }))
+  assert.ok(anchored.some(p => /is not supported by the itemBreakdown/.test(p)))
+})
+
+test('the same item type at different quantities must produce different volume', () => {
+  const one = [{ item: 'sofa', quantity: 1, lengthFt: 7, widthFt: 3, heightFt: 3, cubicFeet: 63 }]
+  const three = [{ item: 'sofa', quantity: 3, lengthFt: 7, widthFt: 3, heightFt: 3, cubicFeet: 189 }]
+  assert.deepEqual(validateProposal(proposal({ volumeCubicFeet: { min: 55, max: 75 }, itemBreakdown: one })), [])
+  assert.deepEqual(validateProposal(proposal({ volumeCubicFeet: { min: 170, max: 210 }, itemBreakdown: three })), [])
+  // The one-item volume can no longer be reused for three items.
+  assert.ok(validateProposal(proposal({ volumeCubicFeet: { min: 55, max: 75 }, itemBreakdown: three }))
+    .some(p => /not supported by the itemBreakdown/.test(p)))
+})
+
+test('RC2 truck-space validation still holds under schema v2', () => {
+  assert.equal(truckSpaceConsistent(proposal({
+    volumeCubicFeet: { min: 100, max: 100 }, truckSpacePercent: { min: 10, max: 10 },
+  })), true)
+  assert.equal(truckSpaceConsistent(proposal({
+    volumeCubicFeet: { min: 100, max: 100 }, truckSpacePercent: { min: 45, max: 45 },
+  })), false)
+})
+
+test('the labeler is handed the allowed vocabulary, never the manifest category', async () => {
+  const s = scripted({ classifier: OK_CLASSIFIER, labeler: measured(), verifier: OK_VERIFIER })
+  await runCandidate(entry({ category: 'eviction_cleanout' }), ctx(s.caller), opts, new Map())
+  const call = s.calls.find(c => c.promptVersion === 'curation.labeler.v1')!
+  assert.equal(/category hint|likely category/i.test(call.user), false, 'no category may be privileged')
+  assert.match(call.user, /allowed categories \(choose exactly one\)/)
+  assert.ok(call.user.includes('couch_sectional'), 'the enum must be supplied')
+  assert.ok(call.user.includes('eviction_cleanout'), '…as the FULL enum, not a filtered hint')
 })

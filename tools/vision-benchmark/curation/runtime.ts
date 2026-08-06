@@ -17,7 +17,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname, join } from 'node:path'
 
 import { assertIndependent, DEFAULT_ROLES, modelForRole } from './roles'
-import { PROMPTS, SCHEMA_VERSION, SchemaError, parseClassifier, parseLabel, parseVerifier, type LabelResponse } from './contract'
+import { ALLOWED_CATEGORIES, PROMPTS, SCHEMA_VERSION, SchemaError, parseClassifier, parseLabel, parseVerifier, type LabelResponse } from './contract'
 import { decide, preScreen, type ConsensusDecision, type VerifierResult, type ClassifierResult } from './consensus'
 import { cacheKey, isRetryable } from './tiers'
 import { appendRevision, type LabelProvenance, type RoleAssignment } from './types'
@@ -235,7 +235,11 @@ export async function runCandidate(
     // 3) labeler — never receives production estimator output
     // Lane only. A category hint made the labeler echo it back on 13/13 images
     // in the diagnostic; the category must come from the image.
-    const label = parseLabel(await call('labeler', `lane: ${classifier.lane}`))
+    // Lane and the allowed vocabulary only — never the manifest's own category,
+    // which the labeler simply echoed back on 13/13 images.
+    const allowed = ALLOWED_CATEGORIES[classifier.lane as 'junk_removal' | 'moving'] ?? []
+    const label = parseLabel(await call('labeler',
+      `lane: ${classifier.lane}\nallowed categories (choose exactly one): ${allowed.join(', ')}`))
 
     // 4) verifier — image + proposed label ONLY, never the labeler's reasoning.
     //    `evidence` is stripped for the same reason.

@@ -60,6 +60,11 @@ export type ClassifierResult = {
   confidence: number
 }
 
+/** One measured item. Mirrors contract.ItemMeasurement without importing it. */
+export type ItemMeasurementLike = {
+  item: string; quantity: number; lengthFt: number; widthFt: number; heightFt: number; cubicFeet: number
+}
+
 export type LabelProposal = {
   lane: 'junk_removal' | 'moving'
   category: string
@@ -74,6 +79,8 @@ export type LabelProposal = {
   difficulty: string
   ambiguityNotes: string
   fieldConfidence: Record<string, number>
+  /** Present from schema v2 on. Volume must follow from these. */
+  itemBreakdown?: ItemMeasurementLike[]
 }
 
 export type VerifierResult = {
@@ -109,6 +116,26 @@ export function validateProposal(p: LabelProposal): string[] {
     if (!(v >= 0 && v <= 1)) problems.push(`confidence ${k} outside 0..1`)
   }
   if (p.visibleItems?.length === 0) problems.push('no visible items recorded')
+
+  // Volume must be DERIVED, not asserted. Prompting the model to estimate from
+  // dimensions did not stop anchoring, so the arithmetic is checked here: a
+  // reported range that does not bracket the sum of quantity x l x w x h is a
+  // number that came from somewhere other than the image.
+  if (p.itemBreakdown && p.itemBreakdown.length > 0) {
+    const derived = p.itemBreakdown.reduce((s2, i) => s2 + i.quantity * i.lengthFt * i.widthFt * i.heightFt, 0)
+    for (const [n, i] of p.itemBreakdown.entries()) {
+      const own = i.quantity * i.lengthFt * i.widthFt * i.heightFt
+      if (own > 0 && Math.abs(own - i.cubicFeet) / own > 0.15) {
+        problems.push(`itemBreakdown[${n}] cubicFeet ${i.cubicFeet} does not match ${i.quantity}x${i.lengthFt}x${i.widthFt}x${i.heightFt} = ${own.toFixed(1)}`)
+      }
+    }
+    const lo = p.volumeCubicFeet.min, hi = p.volumeCubicFeet.max
+    if (derived > 0 && (derived < lo * 0.6 || derived > hi * 1.6)) {
+      problems.push(`volumeCubicFeet ${lo}-${hi} is not supported by the itemBreakdown (dimensions sum to ${derived.toFixed(1)} cu ft)`)
+    }
+  } else if (p.volumeCubicFeet.max > 0) {
+    problems.push('volume reported without an itemBreakdown to derive it from')
+  }
 
   // Volume and truck space must describe the same load. This is the check that
   // catches a cubic-yard figure entered into a cubic-foot field: a 27× error
