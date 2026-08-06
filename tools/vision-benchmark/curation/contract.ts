@@ -65,7 +65,14 @@ const round1 = (n: number): number => Math.round(n * 10) / 10
 
 /** Truck-space follows from volume by the business rule; nobody estimates it. */
 export function truckBandFor(band: { min: number; max: number }): { min: number; max: number } {
-  return { min: round1(band.min / 10), max: round1(Math.min(100, band.max / 10)) }
+  // Both ends are capped. Capping only `max` inverted the range on a genuine
+  // multi-load job — 7,000 cu ft gave min 560, max 100 — which then failed
+  // deterministic validation as "min > max". That read as a model error when it
+  // was arithmetic here. A load larger than one truck saturates at 100/100; the
+  // real magnitude is still carried by volumeCubicFeet, which is not capped.
+  const min = Math.min(100, round1(band.min / 10))
+  const max = Math.min(100, round1(band.max / 10))
+  return { min: Math.min(min, max), max }
 }
 
 export type Range = { min: number; max: number }

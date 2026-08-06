@@ -8,7 +8,7 @@ import {
   callRole, classifyFailure, runCandidate, memoryCache, memoryCheckpoint,
   CallFailure, type VisionCaller, type VisionRequest,
 } from '../tools/vision-benchmark/curation/runtime'
-import { parseClassifier, parseLabel, parseVerifier, SchemaError, PROMPTS, ALLOWED_CATEGORIES, SCHEMA_VERSION, type LabelResponse } from '../tools/vision-benchmark/curation/contract'
+import { parseClassifier, parseLabel, parseVerifier, SchemaError, PROMPTS, ALLOWED_CATEGORIES, SCHEMA_VERSION, truckBandFor, type LabelResponse } from '../tools/vision-benchmark/curation/contract'
 import { decide, truckSpaceConsistent, validateProposal, type LabelProposal } from '../tools/vision-benchmark/curation/consensus'
 import { DEFAULT_ROLES, PRODUCTION_ESTIMATOR } from '../tools/vision-benchmark/curation/roles'
 import type { ManifestEntry } from '../tools/vision-benchmark/schema'
@@ -604,4 +604,33 @@ test('a verifier privacy_risk still blocks, even on an otherwise clean moving la
   })
   const out = await runCandidate(entry({ jobType: 'moving' }), ctx(s.caller), opts, new Map())
   assert.equal(out.decision.state, 'privacy_blocked')
+})
+
+// ── truck-band capping and moving vocabulary ────────────────────────────────
+
+test('a multi-load volume saturates the truck band instead of inverting it', () => {
+  // The observed failure: 7,000 cu ft gave min 560 / max 100 → "min > max".
+  const big = truckBandFor({ min: 5600, max: 8000 })
+  assert.equal(big.min <= big.max, true, 'the range must never invert')
+  assert.deepEqual(big, { min: 100, max: 100 })
+  // A normal load is unaffected.
+  assert.deepEqual(truckBandFor({ min: 80, max: 120 }), { min: 8, max: 12 })
+  // Straddling the cap keeps ordering.
+  const straddle = truckBandFor({ min: 900, max: 1400 })
+  assert.equal(straddle.min <= straddle.max, true)
+})
+
+test('a saturated truck band passes deterministic validation', () => {
+  const p = proposal({
+    volumeCubicFeet: { min: 5600, max: 8000 },
+    truckSpacePercent: truckBandFor({ min: 5600, max: 8000 }),
+    itemBreakdown: [{ item: 'container', quantity: 2, lengthFt: 20, widthFt: 8, heightFt: 21.25, cubicFeet: 6800 }],
+  })
+  assert.equal(validateProposal(p).some(x => /min > max/.test(x)), false)
+  assert.equal(truckSpaceConsistent(p), true, 'saturation is not an inconsistency')
+})
+
+test('bathroom_furniture is a valid moving category', () => {
+  assert.ok(ALLOWED_CATEGORIES.moving.includes('bathroom_furniture'))
+  assert.equal(ALLOWED_CATEGORIES.junk_removal.includes('bathroom_furniture'), false, 'moving lane only')
 })
