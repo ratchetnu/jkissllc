@@ -7,25 +7,29 @@ import { ArrowRight, Check } from 'lucide-react';
 type Status = 'idle' | 'sending' | 'done' | 'error';
 
 const INDUSTRIES = [
-  'Junk Removal',
+  'Trucking & Delivery',
+  'Freight / Carrier',
   'Moving',
-  'Delivery & Freight',
-  'Estate Cleanouts',
   'Property Turnovers',
   'Field Services',
+  'Junk Removal',
+  'Estate Cleanouts',
   'Other',
 ];
 
 const TEAM_SIZES = ['Just me', '2–5', '6–15', '16–50', '50+'];
 
 const MODULES = [
-  'Booking & customer intake',
-  'AI-assisted photo analysis',
   'Routes & dispatch',
-  'Crew & contractor portal',
-  'Contractor pay & statements',
+  'Crew & employee records',
+  'Time & attendance',
+  'Equipment & fleet maintenance',
+  'Crew pay & statements',
+  'Invoicing & payments',
   'Claims & cost recovery',
   'Messaging & notifications',
+  'Booking & customer intake',
+  'AI-assisted photo analysis',
   'Analytics & owner visibility',
 ];
 
