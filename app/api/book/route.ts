@@ -18,6 +18,8 @@ import { getPaymentProvider } from '../../lib/payments'
 import { validateProofImage, sealAndStoreProof } from '../../lib/payment-proof'
 import { notifyOwnerZelleReview } from '../../lib/booking-notify'
 import { tenantIdForOutboundMetadata } from '../../lib/platform/tenancy/tenant-resolve'
+import { currentTenantId } from '../../lib/platform/tenancy/context'
+import { enqueueAiJob } from '../../lib/book-now-ai'
 
 export const runtime = 'nodejs'
 
@@ -128,6 +130,33 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     updatedAt: now,
   }
   pushBookingEvent(booking, { actor: 'customer', action: 'booking.created', result: methodId, meta: { method: methodId } })
+
+  // ── Durable photo AI (parity with persistQuoteRequest) ────────────────────
+  // /api/book is a TERMINAL intake, not a draft: it is the sibling of "Request My
+  // Quote" on the same wizard step, and nothing downstream ever enqueues for it —
+  // record-payment, the Stripe webhook and the cron all leave it alone, because
+  // runDueAiJobs selects on `isDue`, which requires an aiJob to ALREADY exist.
+  // Without this call every photo-bearing eligible booking reserved through this
+  // route stranded with an empty AI panel forever.
+  //
+  // Eligibility is NOT re-litigated here: enqueueAiJob gates itself on needsAiJob,
+  // so the one predicate (junk always, moving behind AI_PHOTO_ESTIMATE_MOVING,
+  // "other" never) governs both intake paths. It is idempotent per booking token +
+  // photo set, so no photos, an ineligible family, or a retry all correctly produce
+  // nothing. It only mutates booking.aiJob — both save paths below persist it.
+  //
+  // Fail-soft: a queue failure must never cost the customer their reservation, so
+  // it is recorded on the audit trail (where the owner's "Re-run analysis" control
+  // reads from) rather than thrown.
+  try {
+    enqueueAiJob(booking, { tenantId: currentTenantId(), initiatedBy: 'system' })
+  } catch (e) {
+    console.error('[book] enqueue ai job', e)
+    pushBookingEvent(booking, {
+      actor: 'system', action: 'ai.failed', result: 'enqueue_failed',
+      meta: { photoVersion: booking.invoicePhotos?.length ?? 0, recoverable: true },
+    })
+  }
 
   // ── Zelle: seal the proof, record a pending payment, alert the owner ───────
   if (provider.requiresProof && proofBuf) {
