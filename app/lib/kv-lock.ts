@@ -26,6 +26,11 @@ import { redis } from './redis'
 const RELEASE_IF_OWNED = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
 // Compare-and-extend: a heartbeat can only ever prolong its own lock.
 const RENEW_IF_OWNED = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end"
+// Compare-and-set: advance a value only from the exact state we observed. The
+// state-machine counterpart to compare-and-delete — used by the booking
+// idempotency claim to move claimed → committed, and to take over a claim that is
+// provably uncommitted, without ever being able to disturb a different state.
+const SET_IF_EQUALS = "if redis.call('get', KEYS[1]) == ARGV[1] then redis.call('set', KEYS[1], ARGV[2], 'PX', ARGV[3]); return 1 else return 0 end"
 
 const DEFAULT_TTL_MS = 20_000
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -40,6 +45,21 @@ const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 export async function releaseIfOwned(key: string, token: string): Promise<boolean> {
   try {
     const res = await redis.eval(RELEASE_IF_OWNED, [key], [token])
+    return res === 1 || res === '1'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Compare-and-set `key` from `expected` to `next` with a fresh TTL, atomically.
+ * Returns false — never throws — when the stored value is anything other than
+ * `expected`, including when it has expired. The safe way to advance a small state
+ * machine that several requests may reach at once: exactly one transition wins.
+ */
+export async function compareAndSet(key: string, expected: string, next: string, ttlMs: number): Promise<boolean> {
+  try {
+    const res = await redis.eval(SET_IF_EQUALS, [key], [expected, next, String(ttlMs)])
     return res === 1 || res === '1'
   } catch {
     return false
