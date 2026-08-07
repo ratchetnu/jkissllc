@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../lib/platform/tenancy/with-tenant-route'
 import { COMPANY } from '../../lib/company'
-import { redis } from '../../lib/redis'
 import {
   generateToken, nextBookingNumber, nextInvoiceNumber, saveBooking, sanitizePhotos,
   getBookingByToken, recompute, pushBookingEvent,
@@ -20,11 +19,12 @@ import { notifyOwnerZelleReview } from '../../lib/booking-notify'
 import { tenantIdForOutboundMetadata } from '../../lib/platform/tenancy/tenant-resolve'
 import { currentTenantId } from '../../lib/platform/tenancy/context'
 import { enqueueAiJob } from '../../lib/book-now-ai'
+import { finalizedBookingToken, reserveIdempotencyKey, finalizeIdempotencyKey } from '../../lib/booking-idempotency'
+import type { KvLock } from '../../lib/kv-lock'
 
 export const runtime = 'nodejs'
 
 const s = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) || undefined : undefined)
-const IDEM_TTL_MS = 24 * 60 * 60_000
 
 // POST /api/book — instant online booking: reserve an open date + pay a deposit by
 // Stripe (redirect) or Zelle (upload a verifiable screenshot). Idempotent: a retry
@@ -39,16 +39,26 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   const base = siteUrl()
 
   // ── Idempotency (request Part 1) — one booking per client key ──────────────
+  // FINAL first, then the lease: a retry arriving after the owner finished gets the
+  // original booking rather than a 409. The lease is renewable, so it cannot expire
+  // out from under a request that is still legitimately working — see
+  // lib/booking-idempotency.ts for the race this closes.
   const idemKey = s(body.idempotencyKey, 100)
+  let reservation: KvLock | null = null
   if (idemKey) {
-    const existing = await redis.get(`bk:idem:${idemKey}`)
-    if (existing && existing !== 'PENDING') {
-      const prior = await getBookingByToken(existing)
+    const finalized = await finalizedBookingToken(idemKey)
+    if (finalized) {
+      const prior = await getBookingByToken(finalized)
       if (prior) return NextResponse.json({ ok: true, token: prior.token, bookingUrl: `${base}/booking/${prior.token}`, duplicate: true })
     }
-    const claimed = await redis.setNxPx(`bk:idem:${idemKey}`, 'PENDING', 30_000)
-    if (!claimed) return NextResponse.json({ error: 'This booking is already being processed — please wait a moment.' }, { status: 409 })
+    reservation = await reserveIdempotencyKey(idemKey, 'book')
+    if (!reservation) return NextResponse.json({ error: 'This booking is already being processed — please wait a moment.' }, { status: 409 })
   }
+  // Everything below runs under that reservation. The `finally` releases it on EVERY
+  // exit — success, validation failure, or throw — so a failed attempt never strands
+  // the key and the customer's corrected resubmission is not told "already
+  // processing". Release is compare-and-delete: it can only ever free OUR lease.
+  try {
 
   const name = s(body.name, 200)
   const email = s(body.email, 200)
@@ -179,7 +189,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     recompute(booking)   // → pending_zelle_verification
     pushBookingEvent(booking, { actor: 'customer', action: 'zelle.uploaded', meta: { paymentId: payment.id, amountCents: depositCents } })
     await saveBooking(booking)
-    if (idemKey) { await redis.set(`bk:idem:${idemKey}`, booking.token); await redis.pexpire(`bk:idem:${idemKey}`, IDEM_TTL_MS) }
+    if (idemKey) await finalizeIdempotencyKey(idemKey, booking.token)
     await emailOpsBookingCreated(booking).catch(() => {})
     await notifyOwnerZelleReview(booking, payment).catch(e => console.error('[book] owner zelle notify', e))
     return NextResponse.json({ ok: true, token: booking.token, bookingUrl: `${base}/booking/${booking.token}?zelle=pending` })
@@ -187,7 +197,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
 
   // ── Stripe: persist the booking, then hand off to hosted checkout ──────────
   await saveBooking(booking)
-  if (idemKey) { await redis.set(`bk:idem:${idemKey}`, booking.token); await redis.pexpire(`bk:idem:${idemKey}`, IDEM_TTL_MS) }
+  if (idemKey) await finalizeIdempotencyKey(idemKey, booking.token)
   await emailOpsBookingCreated(booking).catch(() => {})
 
   if (stripeConfigured()) {
@@ -220,4 +230,11 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     }
   }
   return NextResponse.json({ ok: true, token: booking.token, bookingUrl: `${base}/booking/${booking.token}` })
+
+  } finally {
+    // Always, on every path. Once the booking is finalized the mapping above is what
+    // answers retries, so dropping the lease here is what lets the NEXT legitimate
+    // request through instead of making it wait out a lease.
+    await reservation?.release()
+  }
 })

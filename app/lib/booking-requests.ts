@@ -10,6 +10,8 @@ import { notifyOwnerNewSubmission } from './booking-notify'
 import { enqueueAiJob } from './book-now-ai'
 import { currentTenantId } from './platform/tenancy/context'
 import { samePhotoSet } from './ai/photo-set'
+import { finalizedBookingToken, reserveIdempotencyKey, finalizeIdempotencyKey } from './booking-idempotency'
+import type { KvLock } from './kv-lock'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public "Book Now" quote requests → persisted OpsPilot bookings.
@@ -58,7 +60,6 @@ export type QuoteRequestInput = {
   addOnLabels?: string[]
 }
 
-const REQ_IDEM_TTL_MS = 24 * 60 * 60_000
 
 export function draftMatchesSubmittedPhotos(
   draft: Pick<NonNullable<Booking['aiEstimate']>, 'inputPhotoUrls'>,
@@ -112,24 +113,31 @@ export async function persistQuoteRequest(input: QuoteRequestInput): Promise<Boo
   const idem = input.idempotencyKey?.trim()
 
   // ── Idempotency: one booking per client key (mirrors /api/book) ──────────
+  // Same renewable reservation as the route — this path shares the `bk:idem:`
+  // namespace and had the identical PENDING-TTL race, and it is at least as slow
+  // (draft-estimate attach, lead projection, ledgered owner notify). See
+  // lib/booking-idempotency.ts.
+  let reservation: KvLock | null = null
   if (idem) {
-    const existing = await redis.get(`bk:idem:${idem}`)
-    if (existing && existing !== 'PENDING') {
-      const raw = await redis.get(`bk:${existing}`)
+    const finalized = await finalizedBookingToken(idem)
+    if (finalized) {
+      const raw = await redis.get(`bk:${finalized}`)
       if (raw) { try { return JSON.parse(raw) as Booking } catch { /* fall through */ } }
     }
-    const claimed = await redis.setNxPx(`bk:idem:${idem}`, 'PENDING', 30_000)
-    if (!claimed) {
+    reservation = await reserveIdempotencyKey(idem, 'quote')
+    if (!reservation) {
       // Someone else is mid-create with this key. Give the winner a beat, then
       // return their booking if it landed; otherwise signal "in progress".
-      const after = await redis.get(`bk:idem:${idem}`)
-      if (after && after !== 'PENDING') {
+      const after = await finalizedBookingToken(idem)
+      if (after) {
         const raw = await redis.get(`bk:${after}`)
         if (raw) { try { return JSON.parse(raw) as Booking } catch { /* ignore */ } }
       }
       return null
     }
   }
+
+  try {
 
   const serviceType: ServiceType = SERVICE_TYPES.includes(input.serviceType) ? input.serviceType : 'other'
   const preferred = isoDate(input.preferredDate)
@@ -217,13 +225,10 @@ export async function persistQuoteRequest(input: QuoteRequestInput): Promise<Boo
 
   await saveBooking(booking)
 
-  // Convert the PENDING idempotency claim into the real token mapping IMMEDIATELY
-  // after the booking is persisted — BEFORE the slow lead/notify work below — so a
-  // retry can never outlive the 30s PENDING TTL and create a duplicate booking.
-  if (idem) {
-    await redis.set(`bk:idem:${idem}`, booking.token)
-    await redis.pexpire(`bk:idem:${idem}`, REQ_IDEM_TTL_MS)
-  }
+  // Record the real token mapping IMMEDIATELY after the booking is persisted — BEFORE
+  // the slow lead/notify work below — so every later retry short-circuits to this
+  // booking rather than depending on the reservation still being held.
+  if (idem) await finalizeIdempotencyKey(idem, booking.token)
 
   // Governed intake: upsert Customer, project Lead, publish LeadCreated/QuoteRequested
   // (+ QuoteGenerated). Flag-gated + fail-soft — a no-op today, never blocks the save.
@@ -235,4 +240,10 @@ export async function persistQuoteRequest(input: QuoteRequestInput): Promise<Boo
   try { await notifyOwnerNewSubmission(booking) } catch (e) { console.error('[booking-requests] owner notify', e) }
 
   return booking
+
+  } finally {
+    // Every path, including a throw before the booking is saved — a failed attempt
+    // must not strand the key against the customer's own resubmission.
+    await reservation?.release()
+  }
 }
