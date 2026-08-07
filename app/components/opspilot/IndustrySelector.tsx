@@ -22,12 +22,12 @@ type Industry = {
 
 const INDUSTRIES: Industry[] = [
   {
-    id: 'junk',
-    label: 'Junk Removal',
-    Icon: Trash2,
-    headline: 'From a photo to a paid, disposed load.',
-    body: 'Customers book with photos, get an instant range from your own disposal pricing, and the crew that hauls it clocks in on the route. Truck-fill and disposal trips are already in the math.',
-    uses: ['Photo-assisted estimates', 'Disposal-trip pricing', 'Route assignment', 'Client invoicing'],
+    id: 'delivery',
+    label: 'Trucking & Delivery',
+    Icon: PackageCheck,
+    headline: 'Standing routes that build themselves.',
+    body: 'Recurring contracts generate their routes on schedule, so nobody rebuilds Monday every Monday. Confirmations, GPS-verified clock-in, timesheets, and per-route profitability come standard — this is the workflow Operion was born in.',
+    uses: ['Recurring route templates', 'Time & attendance', 'Per-route profitability', 'Fleet maintenance'],
   },
   {
     id: 'moving',
@@ -36,22 +36,6 @@ const INDUSTRIES: Industry[] = [
     headline: 'Every move, crewed and confirmed.',
     body: 'Book the job, assign a driver and helpers, and let each of them confirm from their phone. The address, arrival window, and pay ride along with the route — and the customer gets texted before you roll.',
     uses: ['Crew assignment', 'Contractor confirmations', 'Arrival-window texts', 'Pay statements'],
-  },
-  {
-    id: 'delivery',
-    label: 'Delivery & Freight',
-    Icon: PackageCheck,
-    headline: 'Standing routes that build themselves.',
-    body: 'Recurring contracts generate their routes on schedule, so nobody rebuilds Monday every Monday. Confirmations, clock-in, and per-route profitability come standard — this is the workflow Operion was born in.',
-    uses: ['Recurring route templates', 'Per-route profitability', 'Equipment matching', 'Audit trail'],
-  },
-  {
-    id: 'estate',
-    label: 'Estate Cleanouts',
-    Icon: Home,
-    headline: 'Big, sensitive jobs — kept on the record.',
-    body: 'Scope a whole-property cleanout with photos and notes, price it against your minimums, and keep every status change and message threaded to the job. Nothing lives in someone’s texts.',
-    uses: ['Guided intake + photos', 'Owner-approved quotes', 'Threaded messaging', 'Claims tracking'],
   },
   {
     id: 'turnover',
@@ -66,8 +50,24 @@ const INDUSTRIES: Industry[] = [
     label: 'Field Services',
     Icon: Wrench,
     headline: 'The office travels with the crew.',
-    body: 'Any operation that sends people to addresses can run on the same core: intake, dispatch, confirmations, messaging, and pay. Configure the modules you need around how your business actually works.',
+    body: 'Any operation that sends people to addresses can run on the same core: dispatch, confirmations, hours, messaging, and pay. Configure the modules you need around how your business actually works.',
     uses: ['Scheduling & dispatch', 'Crew portal', 'Notifications', 'Analytics'],
+  },
+  {
+    id: 'junk',
+    label: 'Junk Removal',
+    Icon: Trash2,
+    headline: 'From a photo to a paid, disposed load.',
+    body: 'The on-demand side of the same system. Customers book with photos, get a range from your own disposal pricing, and the crew that hauls it clocks in on the route — then it rejoins the dispatch, time, and pay spine like any other job.',
+    uses: ['Photo-assisted estimates', 'Disposal-trip pricing', 'Route assignment', 'Client invoicing'],
+  },
+  {
+    id: 'estate',
+    label: 'Estate Cleanouts',
+    Icon: Home,
+    headline: 'Big, sensitive jobs — kept on the record.',
+    body: 'Scope a whole-property cleanout with photos and notes, price it against your minimums, and keep every status change and message threaded to the job. Nothing lives in someone’s texts.',
+    uses: ['Guided intake + photos', 'Owner-reviewed pricing', 'Threaded messaging', 'Claims tracking'],
   },
 ];
 

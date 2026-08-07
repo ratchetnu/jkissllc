@@ -36,7 +36,7 @@ const STEPS: Step[] = [
     Icon: Inbox,
     eyebrow: 'Booking & intake',
     title: 'The job arrives organized, not as a text.',
-    body: 'A customer books online — service, address, load size, preferred date, and up to twenty photos. It lands as a structured request with a booking number, before anyone picks up the phone.',
+    body: 'A customer books online — service, address, load size, preferred date, and up to eight photos. It lands as a structured request with a booking number, before anyone picks up the phone. Contract work skips this step entirely: the standing contract generates the job itself.',
     screenTitle: 'New request',
     badge: 'quote_received',
     lines: [
@@ -67,8 +67,8 @@ const STEPS: Step[] = [
     tab: 'Quote goes out',
     Icon: FileText,
     eyebrow: 'Quote workflow',
-    title: 'An owner-approved range, sent in a tap.',
-    body: 'The estimate is built from your own pricing rules — per-trip disposal, labor, margin — never below your set minimum. You approve it, and the customer can lock the window with a deposit online.',
+    title: 'A range built from your rules, not the model’s opinion.',
+    body: 'The estimate is built from your own pricing rules — per-trip disposal, labor, margin — never below your set minimum. A confident read is quoted on the spot; anything borderline waits for you to price it. Either way the customer can lock the window with a deposit online.',
     screenTitle: 'Quote',
     badge: 'sent',
     lines: [
@@ -100,14 +100,14 @@ const STEPS: Step[] = [
     Icon: CheckCircle2,
     eyebrow: 'Field operations',
     title: 'Clock in, do the work, mark it complete.',
-    body: 'Crew clock in and out from the field. Status moves to completed, the customer gets a text automatically, and every transition is written to an audit trail — no one has to remember to send anything.',
+    body: 'Crew clock in and out from the field, and the clock-in is checked against the job’s own coordinates. Status moves to completed, the customer gets a text automatically, and every transition is written to an audit trail — no one has to remember to send anything.',
     screenTitle: 'On site',
     badge: 'completed',
     lines: [
-      { k: 'Clock-in', v: '8:04 AM' },
+      { k: 'Clock-in', v: '8:04 AM · verified on site', accent: true },
       { k: 'Clock-out', v: '9:41 AM' },
-      { k: 'Customer', v: 'Auto-notified', accent: true },
-      { k: 'Audit', v: '7 events logged' },
+      { k: 'Timesheet', v: '1h 37m' },
+      { k: 'Customer', v: 'Auto-notified' },
     ],
   },
   {
@@ -116,7 +116,7 @@ const STEPS: Step[] = [
     Icon: Banknote,
     eyebrow: 'Invoicing & pay',
     title: 'One completed job. Two clean records.',
-    body: 'The completed route becomes a client invoice — stamped so it can never be billed twice — and flows into each contractor’s pay statement, with any claim deductions already accounted for.',
+    body: 'The completed job becomes a client invoice — stamped so it can never be billed twice — and the crew’s hours and route pay flow into each pay statement, with any claim deductions already accounted for.',
     screenTitle: 'Close-out',
     badge: 'paid',
     lines: [

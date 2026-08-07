@@ -4,7 +4,7 @@ import Image from 'next/image';
 import {
   ArrowRight, MessagesSquare, ImageOff, PhoneMissed, Notebook,
   Wrench as WrenchIcon, EyeOff, Boxes, ShieldCheck, ScanSearch, Route as RouteIcon,
-  Users, Wallet, Bell, BarChart3, Smartphone, Layers, Lock, CircleUserRound,
+  Users, Wallet, Bell, BarChart3, Smartphone, Layers, Lock, CircleUserRound, Clock, TrendingDown,
 } from 'lucide-react';
 import { COMPANY } from '../lib/company';
 import Reveal from '../components/Reveal';
@@ -21,28 +21,29 @@ import { OPERION_FAQ } from '../lib/operion-faq';
 const CANONICAL = 'https://www.jkissllc.com/operion';
 
 export const metadata: Metadata = {
-  title: 'Operion — Operations Software for Contractors & Service Businesses',
+  title: 'Operion — Operations Software for Trucking, Delivery & Crew-Based Businesses',
   description:
-    'Operion connects bookings, crews, routes, customer communication, contractor pay, equipment, and operational insights in one configurable platform. Built and run inside J KISS LLC — now opening to more operators.',
+    'Operion runs a crew-based operation end to end: dispatch and recurring routes, crew and employee records, time and attendance, equipment and fleet, invoicing, payouts, claims, and owner analytics — in one platform. Built and run inside J KISS LLC.',
   keywords: [
-    'contractor operations software', 'service business management software', 'junk removal software',
-    'moving company operations software', 'crew scheduling software', 'contractor pay management',
-    'route management software', 'customer booking software', 'field operations platform',
+    'trucking operations software', 'dispatch software for small fleets', 'crew scheduling software',
+    'field crew time tracking', 'contractor pay management', 'route management software',
+    'fleet maintenance tracking', 'delivery operations platform', 'service business management software',
+    'junk removal software',
   ],
   alternates: { canonical: CANONICAL },
   openGraph: {
     type: 'website',
     title: 'Operion — The operating system for work in motion',
     description:
-      'Bookings, crews, routes, pay, customers, equipment, communication, and business intelligence — connected in one workspace. Built from real operations inside J KISS LLC.',
+      'Dispatch, crews, time and attendance, equipment, invoicing, payouts, and owner analytics — connected in one workspace. Built from real trucking and delivery operations inside J KISS LLC.',
     url: CANONICAL,
     siteName: 'Operion',
-    images: [{ url: '/operion-og.png', width: 982, height: 784, alt: 'Operion — operating system for service businesses' }],
+    images: [{ url: '/operion-og.png', width: 982, height: 784, alt: 'Operion — operating system for crew-based operations' }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Operion — The operating system for work in motion',
-    description: 'Bookings, crews, routes, pay, and business intelligence — connected in one workspace.',
+    description: 'Dispatch, crews, time, equipment, invoicing, and payouts — connected in one workspace.',
     images: ['/operion-og.png'],
   },
 };
@@ -57,7 +58,7 @@ const jsonLd = {
       applicationCategory: 'BusinessApplication',
       operatingSystem: 'Web',
       description:
-        'Operations platform for service businesses: online booking and intake, AI-assisted photo analysis, route assignment and crew confirmations, contractor pay statements, claims, messaging, equipment, and analytics.',
+        'Operations platform for crew-based businesses: dispatch and recurring routes, crew and employee records, time and attendance with GPS-verified clock-ins, equipment and fleet maintenance, invoicing and payments, payout statements, claims, messaging, and owner analytics. Online booking with AI-assisted photo estimating is one of its intake paths.',
       url: CANONICAL,
       creator: { '@type': 'Organization', name: COMPANY.legalName, url: COMPANY.siteUrl },
       offers: { '@type': 'Offer', availability: 'https://schema.org/PreOrder', price: '0', priceCurrency: 'USD' },
@@ -131,9 +132,9 @@ const ROLES = [
   },
   {
     Icon: Smartphone,
-    role: 'Crew / Contractor',
-    body: 'A private portal scoped to one person: their work, their schedule, their pay. They never see anyone else’s.',
-    points: ['Assigned routes & confirmations', 'Availability & time-off', 'Messages & reminders', 'Pay statements & YTD earnings'],
+    role: 'Crew / Employee',
+    body: 'A private portal scoped to one person: their work, their hours, their pay. They never see anyone else’s.',
+    points: ['Assigned routes & confirmations', 'Clock in/out, availability & time-off', 'Documents & reminders', 'Pay statements & YTD earnings'],
   },
 ];
 
@@ -167,8 +168,8 @@ export default function OperionPage() {
               </Reveal>
               <Reveal delay={200}>
                 <p className="lede" style={{ marginTop: 20, maxWidth: '50ch' }}>
-                  Bookings, crews, routes, pay, customers, equipment, and communication — connected in one
-                  workspace, so the whole operation moves together.
+                  Dispatch, crews and employees, time and attendance, equipment, invoicing, and payouts —
+                  connected in one workspace, so the whole operation moves together.
                 </p>
               </Reveal>
               <Reveal delay={280}>
@@ -197,7 +198,7 @@ export default function OperionPage() {
                     <span className="ops-badge">live</span>
                   </div>
                   <div style={{ marginTop: 14, display: 'grid', gap: 10, gridTemplateColumns: '1fr 1fr' }}>
-                    {[['Routes', '7'], ['Confirmed', '6'], ['Revenue', '$3,240'], ['Needs review', '1']].map(([k, v]) => (
+                    {[['Routes', '7'], ['Confirmed', '6'], ['Clocked in', '5'], ['Needs review', '1']].map(([k, v]) => (
                       <div key={k} style={{ padding: '12px 14px', borderRadius: 12, background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.07)' }}>
                         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--ops-steel-dim)' }}>{k}</div>
                         <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '1.5rem', color: '#fff', marginTop: 4 }}>{v}</div>
@@ -211,7 +212,7 @@ export default function OperionPage() {
                     <span style={{ color: '#fff', fontWeight: 600, fontSize: 12.5 }}>Your route · Tue</span>
                     <span style={{ width: 8, height: 8, borderRadius: 99, background: '#34d399' }} />
                   </div>
-                  <p style={{ color: 'var(--muted)', fontSize: 11.5, marginTop: 8, lineHeight: 1.5 }}>Report 7:30 AM · yard<br />Garage cleanout · JK-B-1042</p>
+                  <p style={{ color: 'var(--muted)', fontSize: 11.5, marginTop: 8, lineHeight: 1.5 }}>Report 7:30 AM · yard<br />Box-truck delivery · JK-R-1184</p>
                   <div style={{ marginTop: 12, padding: '9px 12px', borderRadius: 10, background: 'var(--ops-steel)', color: '#0b0b0c', fontWeight: 700, fontSize: 12.5, textAlign: 'center' }}>Confirmed ✓</div>
                 </div>
               </div>
@@ -233,11 +234,13 @@ export default function OperionPage() {
           </Reveal>
 
           <div style={{ marginTop: 44, display: 'grid', gap: 14, gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
-            <PainCard Icon={MessagesSquare} title="Requests arrive everywhere" body="Calls, texts, DMs, and form emails — with no single place they all become organized work." />
-            <PainCard Icon={ImageOff} title="Photos get lost in threads" body="The pictures you need to price a job are buried three group chats deep." />
+            <PainCard Icon={MessagesSquare} title="Work arrives everywhere" body="Calls, texts, standing contracts, and form emails — with no single place they all become organized routes." />
             <PainCard Icon={PhoneMissed} title="Crews don’t confirm" body="You find out at 7 AM that the helper isn’t coming — with no time to reassign." />
+            <PainCard Icon={Clock} title="Hours come from memory" body="Nobody knows who was actually on site, or for how long, until someone asks for pay." />
             <PainCard Icon={Notebook} title="Pay math lives in a notebook" body="Route counts, deductions, and payouts get tallied by hand, and mistakes cost trust." />
-            <PainCard Icon={WrenchIcon} title="Equipment goes untracked" body="Who has which truck and gear today? Nobody’s quite sure." />
+            <PainCard Icon={WrenchIcon} title="Equipment goes untracked" body="Who has which truck today, and when it was last serviced? Nobody’s quite sure." />
+            <PainCard Icon={ImageOff} title="Photos get lost in threads" body="The pictures you need to price a job are buried three group chats deep." />
+            <PainCard Icon={TrendingDown} title="You re-run losing work" body="Nothing tells you what a route actually earned, so the bad contract renews itself." />
             <PainCard Icon={EyeOff} title="Owners can’t see the whole business" body="The full picture only exists in your head — and only for as long as you can hold it." />
           </div>
 
@@ -257,13 +260,13 @@ export default function OperionPage() {
             Everything your operation needs. Working as one.
           </Reveal>
           <Reveal as="p" delay={130} className="lede" style={{ marginTop: 16, maxWidth: '58ch' }}>
-            Not a grid of disconnected apps — a single pipeline where a customer request flows into a quote,
-            a route, a crew, an invoice, and a payout without ever being re-entered.
+            Not a grid of disconnected apps — a single pipeline where work flows into a route, a crew, a
+            timesheet, an invoice, and a payout without ever being re-entered.
           </Reveal>
 
           <Reveal delay={180}>
             <div style={{ marginTop: 40, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
-              {['Acquire', 'Book & intake', 'AI photo analysis', 'Schedule & route', 'Crew', 'Communicate', 'Pay', 'Invoice', 'Insights'].map((stage, i, arr) => (
+              {['Intake', 'Price & quote', 'Schedule & route', 'Crew & confirm', 'Time & attendance', 'Communicate', 'Invoice', 'Pay', 'Insights'].map((stage, i, arr) => (
                 <span key={stage} style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
                   <span className="ops-badge" style={{ fontSize: 11.5 }}>{stage}</span>
                   {i < arr.length - 1 && <ArrowRight size={13} style={{ color: 'var(--ops-steel-dim)' }} aria-hidden />}
@@ -274,6 +277,12 @@ export default function OperionPage() {
 
           <div style={{ marginTop: 48 }}>
             <Reveal><span className="eyebrow">What it does · {CAPABILITIES.length} capabilities, live today</span></Reveal>
+            <Reveal delay={60}>
+              <p style={{ marginTop: 12, fontSize: 13.5, color: 'rgba(255,255,255,.45)', maxWidth: '62ch', lineHeight: 1.6 }}>
+                Every card below is software {COMPANY.legalName} dispatches with — not a roadmap. Photo-based
+                instant quoting is one intake path among these, not the product.
+              </p>
+            </Reveal>
             <div style={{ marginTop: 24 }}>
               <CapabilityGrid tone="dark" />
             </div>
@@ -292,6 +301,13 @@ export default function OperionPage() {
             From the first request to the final payout — step through the pipeline and watch the data carry
             itself from one stage to the next.
           </Reveal>
+          <Reveal as="p" delay={150}>
+            <span style={{ display: 'block', marginTop: 14, fontSize: 13.5, color: 'rgba(255,255,255,.45)', maxWidth: '62ch', lineHeight: 1.6 }}>
+              This is the on-demand lane, where a customer starts the job. Contract and recurring work enters
+              at step four instead — the route builds itself from the standing contract — and every stage after
+              that is identical.
+            </span>
+          </Reveal>
           <Reveal delay={160}>
             <div style={{ marginTop: 40 }}>
               <ProductTour />
@@ -307,17 +323,17 @@ export default function OperionPage() {
             Icon={ScanSearch}
             eyebrow="AI-assisted analysis"
             title="AI where it helps. Control where it matters."
-            body="Customers upload job photos, and AI helps your team read the load — visible items and how much truck it will fill. But the AI only ever observes. A deterministic pricing engine does the math against your own rules, and anything uncertain is flagged for a person to review."
+            body="For the work that gets quoted from photos — hauls, cleanouts, moves — customers upload job photos and AI helps your team read the load: visible items and how much truck it will fill. But the AI only ever observes. A deterministic pricing engine does the math against your own rules, and anything uncertain is flagged for a person to review."
             points={[
               'Analyzes uploaded job photos for visible items and volume',
               'Deterministic engine sets the estimate — never the AI',
               'Low-confidence reads route to manual review, not a bad quote',
-              'Every estimate is owner-reviewed before it reaches a customer',
+              'Never touches dispatch, time, or pay — those stay deterministic',
             ]}
           />
           <Reveal delay={120}>
             <p style={{ marginTop: 28, fontSize: 12.5, color: 'rgba(255,255,255,.4)', fontFamily: 'var(--font-mono)', maxWidth: '60ch' }}>
-              Designed for consistency, not to replace judgment. Estimates are ranges, reviewed and approved by your team.
+              Designed for consistency, not to replace judgment. Estimates are ranges built from your own rules — and a low-confidence read is handed to a person instead of quoted.
             </p>
           </Reveal>
         </div>
@@ -336,6 +352,7 @@ export default function OperionPage() {
               'Named crew assignment with per-person pay snapshotted at assign',
               'Confirm, decline, and clock in/out from the field',
               'Recurring contracts that build next week’s routes automatically',
+              'Contract routes and one-off customer jobs on a single schedule',
               'Equipment matched to the routes that need it',
             ]}
           />
@@ -376,24 +393,49 @@ export default function OperionPage() {
         </div>
       </section>
 
+      {/* ─────────────────── WORKFORCE, TIME & COMPLIANCE ─────────────────── */}
+      <section className="py-24 px-6" style={{ borderBottom: '1px solid var(--line)' }}>
+        <div className="max-w-6xl mx-auto">
+          <FeatureRow
+            Icon={Clock}
+            eyebrow="Workforce & time"
+            title="The people side of a trucking operation, not just the trucks."
+            body="Drivers, helpers, contractors, and employees live in one roster — with pay rates and rate history, documents, availability, and a reliability record built from how they actually show up. Crew clock in and out from the field, and the clock-in is checked against the job’s own coordinates."
+            points={[
+              'Driver, helper, contractor, and employee records in one roster',
+              'Clock in/out from the field, with timesheets by person and period',
+              'A correction never erases the original punch — both stay on the record',
+              'Weekly availability and time-off requests feed scheduling',
+              'Documents, uniform checks, and W-9 status tracked per person',
+            ]}
+          />
+          <Reveal delay={120}>
+            <p style={{ marginTop: 28, fontSize: 12.5, color: 'rgba(255,255,255,.4)', fontFamily: 'var(--font-mono)', maxWidth: '64ch' }}>
+              GPS is operational evidence, not a pay input or a verdict — a job with no stored coordinates reads as unverified, never as a failure.
+            </p>
+          </Reveal>
+        </div>
+      </section>
+
       {/* ─────────────────── PAY (cautious wording) ─────────────────── */}
       <section className="py-24 px-6" style={{ borderBottom: '1px solid var(--line)' }}>
         <div className="max-w-6xl mx-auto">
           <FeatureRow
             Icon={Wallet}
-            eyebrow="Contractor pay"
+            eyebrow="Crew pay"
             title="Completed work becomes a clean pay statement."
-            body="Payouts are computed from completed routes, adjusted for any claim deductions, and issued as an immutable pay statement each period — with year-to-date earnings a contractor can see for themselves. Operion is continuing to expand pay-period oversight and crew self-service."
+            body="Payouts are computed from completed routes, adjusted for any claim deductions, and issued as an immutable pay statement each period — with year-to-date earnings a crew member can see for themselves. Year-end readiness is tracked alongside it: who crosses the 1099 reporting threshold, whose W-9 is on file, and what’s still missing."
             points={[
               'Payouts computed from completed routes, not tallied by hand',
               'Claim deductions applied automatically, capped at what was earned',
               'Immutable pay statements with a stable statement number',
               'Crew see their own earnings and can submit a pay-correction request',
+              '1099 threshold and W-9 status assessed per person',
             ]}
           />
           <Reveal delay={120}>
             <p style={{ marginTop: 28, fontSize: 12.5, color: 'rgba(255,255,255,.4)', fontFamily: 'var(--font-mono)', maxWidth: '64ch' }}>
-              Operion produces 1099 contractor payout statements and earnings summaries — it is not a tax-withholding payroll service.
+              Operion produces 1099 contractor payout statements, earnings summaries, and year-end readiness checks — it does not withhold taxes, run W-2 payroll, or file forms for you.
             </p>
           </Reveal>
         </div>
@@ -424,15 +466,15 @@ export default function OperionPage() {
           <div className="tour-split">
             <Reveal>
               <span className="ops-icon" style={{ width: 44, height: 44 }}><Boxes size={20} strokeWidth={1.6} /></span>
-              <h3 className="display-2" style={{ color: '#fff', marginTop: 16, maxWidth: '16ch' }}>Equipment, claims & accountability.</h3>
+              <h3 className="display-2" style={{ color: '#fff', marginTop: 16, maxWidth: '16ch' }}>Fleet, claims & accountability.</h3>
               <p className="lede" style={{ marginTop: 14, maxWidth: '50ch' }}>
-                Track trucks and gear by ownership. When a claim is opened, it’s logged against the route, the
-                crew, and the client — with evidence, status, and a full history. If a crew member is
-                responsible, recovery schedules fairly against their pay, capped at what they earned, and
-                never silently forgiven.
+                Track trucks and gear by ownership, with service and inspection intervals per vehicle —
+                anything out of service is benched and can’t be dispatched. When a claim is opened, it’s
+                logged against the route, the crew, and the client. If a crew member is responsible, recovery
+                schedules fairly against their pay, capped at what they earned, and never silently forgiven.
               </p>
               <div style={{ marginTop: 18, display: 'grid', gap: 8 }}>
-                {['Equipment inventory, company- or contractor-owned', 'Claims with evidence, status, and audit history', 'Fair, capped crew cost recovery — on the record', 'One-tap deep links into ClaimGuard’s dispute tools'].map(p => (
+                {['Equipment inventory, company- or contractor-owned', 'Maintenance and inspection intervals per vehicle', 'Out-of-service equipment refused on dispatch', 'Claims with evidence, status, and audit history', 'Fair, capped crew cost recovery — on the record'].map(p => (
                   <div key={p} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                     <span style={{ width: 5, height: 5, borderRadius: 99, background: 'var(--ops-steel)', flexShrink: 0, marginTop: 7 }} />
                     <span style={{ color: 'var(--text)', fontSize: 14, lineHeight: 1.5 }}>{p}</span>
@@ -448,7 +490,7 @@ export default function OperionPage() {
                 crew and route performance, and the handful of things that actually need a decision today.
               </p>
               <div style={{ marginTop: 18, display: 'grid', gap: 8 }}>
-                {['Booking pipeline and revenue by service', 'Crew and route performance trends', 'First-party traffic — top paths and referrers', 'Attention-required items surfaced first'].map(p => (
+                {['Booking pipeline and revenue by service', 'Crew and route performance trends', 'Revenue and claims-recovery reports, exportable as CSV', 'First-party traffic — top paths and referrers', 'Attention-required items surfaced first'].map(p => (
                   <div key={p} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                     <span style={{ width: 5, height: 5, borderRadius: 99, background: 'var(--ops-steel)', flexShrink: 0, marginTop: 7 }} />
                     <span style={{ color: 'var(--text)', fontSize: 14, lineHeight: 1.5 }}>{p}</span>
@@ -491,7 +533,7 @@ export default function OperionPage() {
                 the page never scrolls sideways and touch targets stay honest.
               </p>
               <div style={{ marginTop: 18, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {['Route details', 'Schedule', 'Messages', 'Confirmations', 'Pay', 'Alerts'].map(t => (
+                {['Route details', 'Confirmations', 'Clock in/out', 'Availability', 'Time off', 'Documents', 'Messages', 'Pay'].map(t => (
                   <span key={t} className="ops-badge">{t}</span>
                 ))}
               </div>
@@ -529,12 +571,13 @@ export default function OperionPage() {
               <span className="ops-icon" style={{ width: 44, height: 44 }}><Layers size={20} strokeWidth={1.6} /></span>
               <h3 className="display-2" style={{ color: '#fff', marginTop: 16, maxWidth: '16ch' }}>A platform that keeps improving.</h3>
               <p className="lede" style={{ marginTop: 14, maxWidth: '50ch' }}>
-                Operion is centrally managed software, not a box you install and outgrow. Improvements ship over
-                time, and capabilities can be configured per business — so your workflow is respected while the
-                platform gets better underneath you.
+                Operion is centrally managed software, not a box you install and outgrow. Improvements ship
+                over time, and your operation is set up around how it actually runs — your pricing rules, pay
+                rates, contract terms, and recurring routes — so your workflow is respected while the platform
+                gets better underneath you.
               </p>
               <div style={{ marginTop: 18, display: 'grid', gap: 8 }}>
-                {['Managed, continuously improved platform', 'Capabilities configurable per business', 'Your operational workflow stays intact', 'Releases validated before they reach you'].map(p => (
+                {['Managed, continuously improved platform', 'Your pricing, pay rates, and contracts, configured to your business', 'Your operational workflow stays intact', 'Releases validated before they reach you'].map(p => (
                   <div key={p} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                     <span style={{ width: 5, height: 5, borderRadius: 99, background: 'var(--ops-steel)', flexShrink: 0, marginTop: 7 }} />
                     <span style={{ color: 'var(--text)', fontSize: 14, lineHeight: 1.5 }}>{p}</span>
@@ -573,15 +616,17 @@ export default function OperionPage() {
           <Reveal delay={130}>
             <div style={{ marginTop: 20, display: 'grid', gap: 18, maxWidth: '62ch' }}>
               <p style={{ color: 'var(--muted)', fontSize: 16, lineHeight: 1.75 }}>
-                {COMPANY.legalName} runs box-truck delivery, junk removal, and cleanouts across Dallas–Fort
-                Worth. We lived the actual problems — bookings scattered across texts, crews that didn’t
-                confirm, photos lost in threads, pay tallied by hand, equipment nobody could account for.
+                {COMPANY.legalName} is a Dallas–Fort Worth carrier: box trucks, contract delivery routes, and
+                crews on the road every day — with junk removal and cleanouts as the on-demand side of the
+                business. We lived the actual problems. Routes rebuilt by hand every week, crews that didn’t
+                confirm, hours tallied from memory, pay math in a notebook, equipment nobody could account for.
               </p>
               <p style={{ color: 'var(--muted)', fontSize: 16, lineHeight: 1.75 }}>
                 Nothing off the shelf fit how a small carrier really runs, so we built the system we needed —
-                one job flowing cleanly from request to payout. Every capability on this page is software we
-                dispatch with every morning. Today a second Dallas–Fort Worth business runs on the same
-                platform, and Operion is opening up to more.
+                dispatch, crew, time, equipment, and money in one place, one job flowing cleanly from
+                assignment to payout. Every capability on this page is software we dispatch with every
+                morning. Today a second Dallas–Fort Worth business runs on Operion too, and it is opening up
+                to more.
               </p>
             </div>
           </Reveal>
@@ -589,7 +634,7 @@ export default function OperionPage() {
             <div style={{ marginTop: 30, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               <span className="ops-badge">Built In-House</span>
               <span className="ops-badge">Running in Production</span>
-              <span className="ops-badge">Two businesses, one platform</span>
+              <span className="ops-badge">Two businesses running on it</span>
             </div>
           </Reveal>
         </div>
@@ -618,7 +663,7 @@ export default function OperionPage() {
                 Your operation has outgrown disconnected tools.
               </h2>
               <p className="lede" style={{ marginTop: 16, maxWidth: '56ch' }}>
-                Bring bookings, teams, work, and business decisions into one connected system. Tell us how your
+                Bring dispatch, crews, hours, equipment, and money into one connected system. Tell us how your
                 operation runs and we’ll show you Operion.
               </p>
               <div style={{ marginTop: 32 }}>
