@@ -12,12 +12,13 @@ import type { AutonomyLevel } from '../ai-workers/autonomy'
 /** Stable capability identifiers — the vocabulary the platform reasons about. */
 export const CAPABILITY_IDS = [
   'identity', 'organizations', 'memberships', 'roles', 'permissions',
-  'customers', 'leads', 'quotes', 'pricing', 'bookings', 'jobs', 'routes',
-  'scheduling', 'workforce', 'availability', 'time-off', 'time-tracking',
-  'gps-verification', 'compliance-photos', 'equipment', 'fleet', 'messaging',
-  'notifications', 'documents', 'invoicing', 'payments', 'contractor-compensation',
-  'expenses', 'reporting', 'analytics', 'automations', 'ai-intelligence',
-  'approvals', 'audit-logs', 'customer-portal', 'crew-portal', 'management-workspace',
+  'customers', 'businesses', 'leads', 'quotes', 'pricing', 'bookings', 'jobs', 'routes',
+  'scheduling', 'workforce', 'crew-reliability', 'hiring', 'availability', 'time-off',
+  'time-tracking', 'gps-verification', 'compliance-photos', 'equipment', 'fleet',
+  'messaging', 'notifications', 'documents', 'invoicing', 'payments',
+  'contractor-compensation', 'claims', 'expenses', 'reporting', 'analytics',
+  'automations', 'ai-intelligence', 'approvals', 'audit-logs', 'customer-portal',
+  'crew-portal', 'management-workspace',
 ] as const
 
 export type CapabilityId = (typeof CAPABILITY_IDS)[number]

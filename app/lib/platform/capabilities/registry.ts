@@ -4,6 +4,43 @@
 // docs/opspilot-os/03-capability-matrix.md as verified against the repo. This is
 // configuration — importing it changes no runtime behavior (guarded further by the
 // CAPABILITY_REGISTRY_ENABLED flag at the query layer).
+//
+// ── What `status` means ──────────────────────────────────────────────────────
+//
+//   full        Production-capable and usable today: implementation, API, UI,
+//               permissions and tests all exist and are deployed. Only `full`
+//               capabilities may be described as available in public copy
+//               (see the marketing rule in lib/opspilot.ts).
+//   partial     Implemented but limited — a lane, a surface, or a lifecycle stage
+//               is missing. Public copy must be worded so it cannot be read as
+//               claiming the missing part.
+//   planned     Not production-ready. Never marketable. Usually paired with
+//               enabledForJkiss: false and/or a requiredFlag.
+//   backend-only  Logic exists with no user-facing surface yet.
+//   duplicated  Two implementations of one concept, pending consolidation.
+//
+// `enabledForJkiss` answers a DIFFERENT question from `status`: whether tenant #0
+// currently uses it. A capability can be `full` and disabled, or enabled and
+// `partial`. Don't read one as the other.
+//
+// ── ABSENCE IS NOT EVIDENCE OF ABSENCE ───────────────────────────────────────
+//
+// A capability missing from this file means only that nobody entered it. It does
+// NOT mean the product lacks it. That failure mode was real: the 2026-08-07 audit
+// (OPERION_SYSTEM_STATUS.md) found four shipped, production-deployed, publicly
+// marketed capabilities absent here — claims, businesses, crew-reliability and
+// hiring — including a nine-module claims domain with its own admin surface and
+// five test files.
+//
+// This matters because the marketing rule in lib/opspilot.ts says to cross-check
+// this registry before publishing a capability. That check silently passes for
+// anything the registry does not contain, so an omission quietly disables the
+// guardrail rather than tripping it.
+//
+// So: when adding a capability here, record WHERE it lives (modules, API, UI) in
+// a comment, as the entries below do. And when auditing, verify against the
+// running system — routes, APIs, tests, permissions — never against this list
+// alone. This registry is a claim about the system, not the system.
 
 import type { Capability, CapabilityId } from './types'
 
@@ -38,6 +75,11 @@ const LIST: Capability[] = [
 
   // ── CRM ──
   cap({ id: 'customers', displayName: 'Customers', description: 'First-class customer records.', domain: 'CRM', status: 'planned', kind: 'core', dependencies: ['identity'], enabledForJkiss: false }),
+  // NOT the same thing as `customers` (which is planned): `businesses` is the B2B
+  // CLIENT ACCOUNT — contract rates, rate history, billing terms, contract start/end.
+  // It has shipped since before this registry existed and was simply never entered.
+  // lib/businesses.ts · /api/admin/businesses · /admin/operations/businesses + business/[key].
+  cap({ id: 'businesses', displayName: 'Client Accounts', description: 'B2B client records: contract rates, rate history, billing terms, contract dates.', domain: 'CRM', status: 'full', kind: 'core', requiredPermissions: ['businesses:manage'] }),
   cap({ id: 'leads', displayName: 'Leads', description: 'Lead intake and pipeline.', domain: 'CRM', status: 'partial', kind: 'core', dependencies: ['identity', 'bookings'] }),
 
   // ── Sales & pricing ──
@@ -66,6 +108,15 @@ const LIST: Capability[] = [
   // ClockStrip badge. GPS is operational evidence, not proof of misconduct or a payroll input.
   cap({ id: 'gps-verification', displayName: 'GPS Verification', description: 'On-site geofence verification of clock events.', domain: 'Compliance', status: 'full', kind: 'optional', dependencies: ['time-tracking', 'routes'], requiredPermissions: ['routes:view'], supportedRoles: ['admin', 'manager', 'crew'] }),
   cap({ id: 'compliance-photos', displayName: 'Compliance Photos', description: 'Uniform + completion evidence.', domain: 'Compliance', status: 'full', kind: 'optional', dependencies: ['workforce'], supportedRoles: ['admin', 'manager', 'crew'] }),
+  // Deterministic score built from confirm / decline / no-show / completion history —
+  // an internal DISPATCH SIGNAL, never shown to the crew member it describes, which is
+  // why supportedRoles omits 'crew' even though workforce includes it.
+  // lib/crew-score.ts (pure: buildCrewScore) · surfaced on /admin/operations/employees.
+  cap({ id: 'crew-reliability', displayName: 'Crew Reliability', description: 'Internal dispatch score from confirm/decline/no-show/completion history.', domain: 'Workforce', status: 'full', kind: 'optional', dependencies: ['workforce', 'routes'], requiredPermissions: ['crew:view'] }),
+  // Careers portal → scored application → gated on required documents → approved hire
+  // becomes a crew member. lib/applicants.ts + ats-scoring.ts + ats-config.ts ·
+  // /careers (public) + /api/careers · admin review under applicants:review/:decide.
+  cap({ id: 'hiring', displayName: 'Hiring & Onboarding', description: 'Careers portal, applicant scoring, document-gated onboarding into the crew roster.', domain: 'Workforce', status: 'full', kind: 'optional', dependencies: ['workforce', 'documents'], requiredPermissions: ['applicants:review', 'applicants:decide'] }),
 
   // ── Equipment / fleet ──
   cap({ id: 'equipment', displayName: 'Equipment', description: 'Equipment inventory.', domain: 'Equipment', status: 'full', kind: 'optional', requiredPermissions: ['equipment:manage'] }),
@@ -92,6 +143,13 @@ const LIST: Capability[] = [
   cap({ id: 'invoicing', displayName: 'Invoicing', description: 'Booking + route invoices.', domain: 'Invoicing', status: 'full', kind: 'core', dependencies: ['bookings', 'routes', 'payments'], requiredPermissions: ['invoices:manage'], aiActions: [{ id: 'invoice.draft', level: 3 }] }),
   cap({ id: 'payments', displayName: 'Payments', description: 'Stripe + Zelle + manual.', domain: 'Payments', status: 'full', kind: 'core' }),
   cap({ id: 'contractor-compensation', displayName: 'Contractor Compensation', description: 'Pay resolution + statements.', domain: 'Compensation', status: 'full', kind: 'core', requiredPermissions: ['pay:generate'] }),
+  // Damage claims against the route / crew / client, with evidence, status history, and
+  // crew cost recovery that schedules capped deductions into pay. Nine modules
+  // (lib/claims.ts + claim-{accrual,assist,documents,mutex,notify,payroll,types}.ts,
+  // claims-report.ts) · /api/admin/claims · /admin/operations/claims + claims/[id].
+  // The ClaimGuard playbook (claim-assist.ts) is DETERMINISTIC — no aiActions.
+  // The financial report is read via reports:view; claims:manage governs mutation.
+  cap({ id: 'claims', displayName: 'Claims', description: 'Damage claims, evidence, status history, and capped crew cost recovery into pay.', domain: 'Claims', status: 'full', kind: 'core', dependencies: ['routes', 'businesses', 'contractor-compensation', 'documents'], requiredPermissions: ['claims:create', 'claims:manage'] }),
   cap({ id: 'expenses', displayName: 'Expenses', description: 'Expense ledger.', domain: 'Compensation', status: 'planned', kind: 'core', enabledForJkiss: false }),
   // Wave G: dedicated /admin/operations/reports surface over the two live engines
   // (revenue + claims) with CSV export, plus the authz reconciliation — the claims
