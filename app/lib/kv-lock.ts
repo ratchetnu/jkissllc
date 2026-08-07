@@ -30,6 +30,22 @@ const RENEW_IF_OWNED = "if redis.call('get', KEYS[1]) == ARGV[1] then return red
 const DEFAULT_TTL_MS = 20_000
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
+/**
+ * Compare-and-delete `key`, but only while it still holds `token`. The same
+ * primitive `release()` uses, exposed for callers that own a value directly rather
+ * than through a KvLock handle (the booking idempotency claim). Never throws — a
+ * failed release leaves the value to expire, which is always safer than an
+ * unconditional DEL that could remove someone else's.
+ */
+export async function releaseIfOwned(key: string, token: string): Promise<boolean> {
+  try {
+    const res = await redis.eval(RELEASE_IF_OWNED, [key], [token])
+    return res === 1 || res === '1'
+  } catch {
+    return false
+  }
+}
+
 /** Raised by `assertHeld()` when this caller no longer owns the lock. */
 export class LockLostError extends Error {
   constructor(key: string) { super(`LOCK_LOST:${key}`); this.name = 'LockLostError' }
@@ -115,12 +131,8 @@ export async function acquireLock(key: string, opts: AcquireOpts = {}): Promise<
     },
     async release() {
       if (beat) { clearInterval(beat); beat = null }
-      try {
-        const res = await redis.eval(RELEASE_IF_OWNED, [key], [token])
-        return res === 1 || res === '1'
-      } catch {
-        return false   // the lease self-expires; never fall back to an unconditional DEL
-      }
+      // Never falls back to an unconditional DEL; the lease self-expires instead.
+      return releaseIfOwned(key, token)
     },
   }
 }

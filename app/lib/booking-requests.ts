@@ -10,7 +10,7 @@ import { notifyOwnerNewSubmission } from './booking-notify'
 import { enqueueAiJob } from './book-now-ai'
 import { currentTenantId } from './platform/tenancy/context'
 import { samePhotoSet } from './ai/photo-set'
-import { finalizedBookingToken, reserveIdempotencyKey, finalizeIdempotencyKey } from './booking-idempotency'
+import { finalizedBookingToken, reserveIdempotencyKey, commitIdempotently } from './booking-idempotency'
 import type { KvLock } from './kv-lock'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -223,12 +223,20 @@ export async function persistQuoteRequest(input: QuoteRequestInput): Promise<Boo
     enqueueAiJob(booking, { tenantId, initiatedBy: 'system' })
   } catch (e) { console.error('[booking-requests] enqueue ai job', e) }
 
-  await saveBooking(booking)
-
-  // Record the real token mapping IMMEDIATELY after the booking is persisted — BEFORE
-  // the slow lead/notify work below — so every later retry short-circuits to this
-  // booking rather than depending on the reservation still being held.
-  if (idem) await finalizeIdempotencyKey(idem, booking.token)
+  // Atomic finalization: claim the key, then persist. Identical protocol to
+  // /api/book — the store admits exactly one winner per key, so a lapsed lease can
+  // never licence a second write (issue #178).
+  const commit = await commitIdempotently(idem, booking.token, () => saveBooking(booking))
+  if (!commit.ok) {
+    // Another request owns this key. Return THEIR booking if it has landed; a null
+    // return means "in progress", which is this function's existing contention
+    // contract and what the caller already handles.
+    if (commit.winnerToken) {
+      const raw = await redis.get(`bk:${commit.winnerToken}`)
+      if (raw) { try { return JSON.parse(raw) as Booking } catch { /* fall through */ } }
+    }
+    return null
+  }
 
   // Governed intake: upsert Customer, project Lead, publish LeadCreated/QuoteRequested
   // (+ QuoteGenerated). Flag-gated + fail-soft — a no-op today, never blocks the save.
