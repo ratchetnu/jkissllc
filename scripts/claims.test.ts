@@ -8,15 +8,41 @@ import {
   rollupClaimStatus, snapshotFromRoute, snapshotFromBusiness,
   remainingCents, recoveredCents, creditedCents, claimRemainingCents, claimRecoveredCents,
   claimWaivedCents, assignedCents, unassignedCents,
-  type ClaimRecord, type ClaimAssignment,} from '../app/lib/claims'
-import { centralToday } from '../app/lib/dates'
+  type ClaimRecord, type ClaimAssignment,
+} from '../app/lib/claims'
 import { accrueClaim, seedSpendFromLedger } from '../app/lib/claim-accrual'
 import { deductionLinesFor, sumDeductions, applyDeductions } from '../app/lib/claim-payroll'
 import { computeClaimsReport, crewClaimSummary, businessClaimSummary, isOpen } from '../app/lib/claims-report'
 import { toPublicRouteFor } from '../app/lib/routes'
 import type { RouteRecord, Assignee } from '../app/lib/routes'
 import type { Business } from '../app/lib/businesses'
-import { mondayOf, addDaysStr } from '../app/lib/dates'
+import { mondayOf, addDaysStr, centralToday } from '../app/lib/dates'
+
+// ── The clock ────────────────────────────────────────────────────────────────
+// adjustBalance/waiveBalance/recordPayment stamp their ledger rows with
+// centralToday(). Anchoring a fixture window on a fixed past date while those
+// stamps track the real calendar is what made the reversal test expire on
+// 2026-08-05 (see #174). Widening a window hides that coupling at the sites you
+// remember to widen; pinning the clock removes it everywhere at once, and keeps
+// "today" INSIDE the fixture week so window-based assertions still bite.
+
+/** Midday Central on `day` (YYYY-MM-DD), as epoch ms. */
+function middayCentral(day: string): number {
+  const [y, m, d] = day.split('-').map(Number)
+  return Date.UTC(y, m - 1, d, 17, 0, 0)
+}
+
+/** Run `fn` with the clock pinned to `day`, restoring it even if `fn` throws. */
+function withClock<T>(day: string, fn: () => T): T {
+  const prev = Date.now
+  Date.now = () => middayCentral(day)
+  try { return fn() } finally { Date.now = prev }
+}
+
+const TODAY = '2026-07-08'          // a Wednesday, inside the fixture pay week
+const realNow = Date.now
+Date.now = () => middayCentral(TODAY)
+test.after(() => { Date.now = realNow })
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const claim = (o: Partial<ClaimRecord> = {}): ClaimRecord => ({
@@ -131,11 +157,11 @@ test('a claim opened straight from a business carries no route money', () => {
 })
 
 // ── Deduction scheduling ─────────────────────────────────────────────────────
-const MON = '2026-07-06'   // a Monday
+const MON = mondayOf(centralToday())   // the Monday of the pinned week — 2026-07-06
 
 test('starting a deduction snaps to the Monday of the pay week', () => {
   const c = withCrew(claim(), 'dollar', [{ id: 'd', value: 50000 }])
-  assert.equal(startDeduction(c, 'd', { weeklyCents: 5000, startDate: '2026-07-09' }).ok, true)  // a Thursday
+  assert.equal(startDeduction(c, 'd', { weeklyCents: 5000, startDate: addDaysStr(MON, 3) }).ok, true)  // a Thursday
   assert.equal(find(c, 'd').startDate, MON)
   assert.equal(find(c, 'd').nextDeductionOn, MON)
   assert.equal(c.status, 'deduction_active')
@@ -434,15 +460,29 @@ test('cash payments and waivers never appear on a pay statement', () => {
   const c = withCrew(claim(), 'dollar', [{ id: 'd', value: 50000 }])
   recordPayment(c, 'd', 10000, { date: MON })
   waiveBalance(c, 'd', 'forgiven')
-  assert.equal(deductionLinesFor([c], MON, addDaysStr(MON, 6)).size, 0, 'neither touches payroll')
+
+  // This assertion is only meaningful if both rows are INSIDE the window it
+  // queries — otherwise the calendar excludes them and PAYROLL_KINDS is never
+  // exercised. Before the clock was pinned the waiver stamped centralToday(),
+  // landing weeks past MON+6, and adding 'waiver' to PAYROLL_KINDS would have
+  // kept this test green. Assert the premise so it cannot rot back.
+  const window = addDaysStr(MON, 6)
+  for (const e of find(c, 'd').ledger) {
+    assert.ok(
+      e.periodDate >= MON && e.periodDate <= window,
+      `${e.kind} stamped ${e.periodDate} falls outside [${MON}..${window}] — the window, not the ` +
+      'payroll-kind filter, would be excluding it, and this assertion would pass even if payroll ' +
+      'started paying it out',
+    )
+  }
+
+  assert.equal(deductionLinesFor([c], MON, window).size, 0, 'neither touches payroll')
 })
 
-// adjustBalance() stamps its ledger entry with centralToday(), so any window
-// anchored on a FIXED past date eventually stops covering the reversal. That is
-// exactly what happened: MON+30 expired on 2026-08-05 and this test began failing
-// on 2026-08-06 with length 1, which reads like a payroll defect and is not one.
-// The window now runs from MON to today, so it covers the posted deduction AND
-// the reversal no matter when the suite runs.
+// adjustBalance() stamps its ledger entry with centralToday(). With the clock
+// pinned above, "today" sits inside the fixture pay week, so this window covers
+// the posted deduction AND the reversal — deterministically, and without growing
+// without bound the way an unpinned `centralToday()` end date does.
 const STATEMENT_END = () => centralToday()
 
 test('a reversal shows on the statement as money handed back', () => {
@@ -485,6 +525,44 @@ test('a reversal is written to the claim audit history', () => {
   adjustBalance(c, 'd', 5000, 'debit', 'deducted in error')
   assert.ok((c.audit?.length ?? 0) > before, 'the reversal is auditable, not silent')
   assert.match(JSON.stringify(c.audit ?? []), /deducted in error/)
+})
+
+// Regression for #174 and for the vacuity it left behind. Two distinct failure
+// modes share one root cause — fixture dates fixed while the mutators read the
+// real clock. The reversal window FAILED LOUDLY when the calendar passed it; the
+// waiver assertion PASSED SILENTLY once its row drifted out of range. Replay both
+// from clocks scattered across years, deriving each pay week from its own clock.
+test('claim ledger stamps stay inside their fixture window on any calendar date', () => {
+  assert.equal(centralToday(), TODAY, 'the suite runs on its own pinned clock')
+
+  for (const day of ['2026-01-01', '2026-07-08', '2026-08-06', '2026-12-31', '2027-03-15', '2031-11-24']) {
+    withClock(day, () => {
+      const mon = mondayOf(centralToday())
+
+      // Loud mode: the reversal must reach the statement.
+      const c1 = withCrew(claim(), 'dollar', [{ id: 'd', value: 50000 }])
+      startDeduction(c1, 'd', { weeklyCents: 5000, startDate: mon })
+      postScheduledDeduction(c1, 'd', mon, 5000)
+      assert.equal(adjustBalance(c1, 'd', 5000, 'debit', 'deducted in error').ok, true, day)
+      const lines = deductionLinesFor([c1], mon, centralToday()).get('d')!
+      assert.equal(lines.length, 2, `the reversal fell outside the statement window on ${day}`)
+      assert.equal(sumDeductions(lines), 0, `deduction and reversal did not cancel on ${day}`)
+      assert.equal(lines.find(l => l.kind === 'adjustment')!.amountCents, -5000, day)
+
+      // Silent mode: payments and waivers must be excluded BY KIND, which only
+      // means anything while their rows sit inside the window being queried.
+      const c2 = withCrew(claim(), 'dollar', [{ id: 'd', value: 50000 }])
+      recordPayment(c2, 'd', 10000, { date: mon })
+      waiveBalance(c2, 'd', 'forgiven')
+      const end = addDaysStr(mon, 6)
+      for (const e of find(c2, 'd').ledger) {
+        assert.ok(e.periodDate >= mon && e.periodDate <= end, `${e.kind} escaped the window on ${day}`)
+      }
+      assert.equal(deductionLinesFor([c2], mon, end).size, 0, `payroll paid out a non-payroll kind on ${day}`)
+    })
+  }
+
+  assert.equal(centralToday(), TODAY, 'withClock restores the pinned clock')
 })
 
 test('deductions never push a pay statement negative', () => {
