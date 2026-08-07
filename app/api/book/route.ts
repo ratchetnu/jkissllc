@@ -19,7 +19,7 @@ import { notifyOwnerZelleReview } from '../../lib/booking-notify'
 import { tenantIdForOutboundMetadata } from '../../lib/platform/tenancy/tenant-resolve'
 import { currentTenantId } from '../../lib/platform/tenancy/context'
 import { enqueueAiJob } from '../../lib/book-now-ai'
-import { finalizedBookingToken, reserveIdempotencyKey, finalizeIdempotencyKey } from '../../lib/booking-idempotency'
+import { finalizedBookingToken, reserveIdempotencyKey, commitIdempotently } from '../../lib/booking-idempotency'
 import type { KvLock } from '../../lib/kv-lock'
 
 export const runtime = 'nodejs'
@@ -59,6 +59,15 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   // the key and the customer's corrected resubmission is not told "already
   // processing". Release is compare-and-delete: it can only ever free OUR lease.
   try {
+
+  // Another request won the atomic finalization for this key, so this one must not
+  // persist. Hand the customer the winner's booking if it has landed; otherwise the
+  // winner is still mid-save, and a retry moments later will find it.
+  const concededTo = async (winnerToken: string | null) => {
+    const prior = winnerToken ? await getBookingByToken(winnerToken) : null
+    if (prior) return NextResponse.json({ ok: true, token: prior.token, bookingUrl: `${base}/booking/${prior.token}`, duplicate: true })
+    return NextResponse.json({ error: 'This booking is already being processed — please wait a moment.' }, { status: 409 })
+  }
 
   const name = s(body.name, 200)
   const email = s(body.email, 200)
@@ -188,16 +197,16 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     booking.payments.push(payment)
     recompute(booking)   // → pending_zelle_verification
     pushBookingEvent(booking, { actor: 'customer', action: 'zelle.uploaded', meta: { paymentId: payment.id, amountCents: depositCents } })
-    await saveBooking(booking)
-    if (idemKey) await finalizeIdempotencyKey(idemKey, booking.token)
+    const zelleCommit = await commitIdempotently(idemKey, booking.token, () => saveBooking(booking))
+    if (!zelleCommit.ok) return await concededTo(zelleCommit.winnerToken)
     await emailOpsBookingCreated(booking).catch(() => {})
     await notifyOwnerZelleReview(booking, payment).catch(e => console.error('[book] owner zelle notify', e))
     return NextResponse.json({ ok: true, token: booking.token, bookingUrl: `${base}/booking/${booking.token}?zelle=pending` })
   }
 
   // ── Stripe: persist the booking, then hand off to hosted checkout ──────────
-  await saveBooking(booking)
-  if (idemKey) await finalizeIdempotencyKey(idemKey, booking.token)
+  const commit = await commitIdempotently(idemKey, booking.token, () => saveBooking(booking))
+  if (!commit.ok) return await concededTo(commit.winnerToken)
   await emailOpsBookingCreated(booking).catch(() => {})
 
   if (stripeConfigured()) {

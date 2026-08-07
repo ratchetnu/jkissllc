@@ -35,7 +35,7 @@
 // Both keys live under `bk:`, so the redis chokepoint tenant-scopes them identically
 // (see lib/platform/tenancy/keys.ts — `bk:` is not platform-global).
 import { redis } from './redis'
-import { acquireLock, type KvLock } from './kv-lock'
+import { acquireLock, releaseIfOwned, type KvLock } from './kv-lock'
 
 /** How long the finished mapping answers retries. Unchanged from both call sites. */
 export const IDEM_FINAL_TTL_MS = 24 * 60 * 60_000
@@ -76,11 +76,60 @@ export async function reserveIdempotencyKey(key: string, holder: string): Promis
 }
 
 /**
- * Record the booking this key produced, so every later retry short-circuits to it.
- * Call AFTER the booking is durably saved — the mapping must never outlive its
- * record. Fail-soft: the reservation still guards the request either way.
+ * The outcome of trying to commit a booking under an idempotency key.
+ * `winnerToken` is the booking token of whoever holds the claim instead — null when
+ * they hold it but have not finished persisting yet.
  */
-export async function finalizeIdempotencyKey(key: string, bookingToken: string): Promise<void> {
-  await redis.set(finalKey(key), bookingToken)
-  await redis.pexpire(finalKey(key), IDEM_FINAL_TTL_MS)
+export type CommitOutcome = { ok: true } | { ok: false; winnerToken: string | null }
+
+/**
+ * Persist a booking as THE booking for this key, or refuse.
+ *
+ * ── Why the claim is taken before the write, and why not `assertHeld()` ──────
+ *
+ * Issue #178: the lease alone could not make the write safe. If the heartbeat
+ * cannot reach the store for a full window the lease lapses, another request
+ * legitimately acquires the key, and the original — still running — used to write
+ * anyway. Two bookings.
+ *
+ * The obvious patch is an ownership assertion immediately before `save()`. It was
+ * rejected for two reasons:
+ *
+ *   • It is not a proof. Ownership verified at time T says nothing at time T+ε; the
+ *     lease can still lapse between the assertion and the write. It narrows the
+ *     window, it does not close it.
+ *   • It cannot tell "lease lost" from "store unreachable" — `heldNow()` reports
+ *     false for both. Failing closed on that would reject a perfectly good booking
+ *     whenever a single GET blips, trading a rare duplicate for a common lost sale.
+ *
+ * So the write boundary stops depending on the lease. `SET NX` on the FINAL key is
+ * the commit point: the store itself admits exactly one winner per key, atomically,
+ * with no clock and no interpretation involved. A heartbeat failure now has no
+ * bearing on correctness at all — which is what makes "a heartbeat failure alone
+ * must not duplicate" true by construction rather than by timing.
+ *
+ * The lease from #176 is preserved and still earns its place: it stops two requests
+ * doing the whole booking build concurrently, gives the fast 409, and self-heals
+ * after a crash. It is simply no longer what keeps the write unique.
+ *
+ * Rollback: if `save()` throws, the claim is compare-and-deleted so it cannot
+ * strand the key — and only ever OUR claim, never a successor's.
+ */
+export async function commitIdempotently(
+  key: string | undefined,
+  bookingToken: string,
+  save: () => Promise<void>,
+): Promise<CommitOutcome> {
+  if (!key) { await save(); return { ok: true } }
+
+  const won = await redis.setNxPx(finalKey(key), bookingToken, IDEM_FINAL_TTL_MS)
+  if (!won) return { ok: false, winnerToken: await finalizedBookingToken(key) }
+
+  try {
+    await save()
+  } catch (e) {
+    await releaseIfOwned(finalKey(key), bookingToken)
+    throw e
+  }
+  return { ok: true }
 }
