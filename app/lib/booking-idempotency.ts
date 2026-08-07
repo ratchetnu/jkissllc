@@ -35,7 +35,7 @@
 // Both keys live under `bk:`, so the redis chokepoint tenant-scopes them identically
 // (see lib/platform/tenancy/keys.ts — `bk:` is not platform-global).
 import { redis } from './redis'
-import { acquireLock, releaseIfOwned, type KvLock } from './kv-lock'
+import { acquireLock, releaseIfOwned, compareAndSet, type KvLock } from './kv-lock'
 
 /** How long the finished mapping answers retries. Unchanged from both call sites. */
 export const IDEM_FINAL_TTL_MS = 24 * 60 * 60_000
@@ -51,17 +51,64 @@ export const RESERVATION_TTL_MS = 30_000
 const finalKey = (key: string) => `bk:idem:${key}`
 const leaseKey = (key: string) => `bk:idem:lock:${key}`
 
+// ── The claim state machine ─────────────────────────────────────────────────
+//
+//   (absent) ──SET NX──▶ claimed:{token} ──CAS──▶ committed:{token}
+//                              │
+//                              └──CAS (only while provably uncommitted)──▶ claimed:{other}
+//
+// `committed` is terminal. Nothing ever transitions out of it, so a real booking
+// can never be stolen, re-created, or aged out of existence by a competitor.
+const CLAIMED = 'claimed:'
+const COMMITTED = 'committed:'
+
+type Claim = { state: 'claimed' | 'committed'; bookingToken: string }
+
+/**
+ * Two legacy encodings are tolerated, because both can be live in the store during
+ * a deploy: `'PENDING'` (pre-#176 in-flight sentinel — never a booking token) and a
+ * BARE booking token (#179, which had no states and only ever wrote a committed
+ * result). A bare value is therefore read as committed.
+ */
+function parseClaim(raw: string | null): Claim | null {
+  if (!raw || raw === 'PENDING') return null
+  if (raw.startsWith(COMMITTED)) return { state: 'committed', bookingToken: raw.slice(COMMITTED.length) }
+  if (raw.startsWith(CLAIMED)) return { state: 'claimed', bookingToken: raw.slice(CLAIMED.length) }
+  return { state: 'committed', bookingToken: raw }
+}
+
+/**
+ * Is the booking record itself present? This is the ONLY evidence used to decide
+ * that a claim did or did not commit — never elapsed time. A claim whose booking
+ * exists is committed no matter what its state field says; a claim whose booking is
+ * absent has, by definition, produced nothing to protect.
+ */
+async function bookingPersisted(bookingToken: string): Promise<boolean> {
+  return (await redis.get(`bk:${bookingToken}`)) !== null
+}
+
+/** Fold a `claimed` record whose booking really landed into `committed`. Fail-soft. */
+async function healToCommitted(key: string, bookingToken: string): Promise<void> {
+  await compareAndSet(finalKey(key), CLAIMED + bookingToken, COMMITTED + bookingToken, IDEM_FINAL_TTL_MS)
+}
+
 /**
  * The booking token a completed submission under this key produced, or null.
  *
- * Tolerates the legacy `'PENDING'` sentinel: a key still holding it at deploy time
- * is an in-flight claim from the old scheme, never a booking token. It self-clears
- * within 30s and is treated as "not finalized" until then.
+ * Reports a booking as final in two cases: the claim says `committed`, or the claim
+ * still says `claimed` but the booking record is there — which is what a crash
+ * between "write landed" and "state flipped" looks like. That second case is healed
+ * on the way past, so the repair happens on the ordinary read path.
  */
 export async function finalizedBookingToken(key: string): Promise<string | null> {
-  const v = await redis.get(finalKey(key))
-  if (!v || v === 'PENDING') return null
-  return v
+  const claim = parseClaim(await redis.get(finalKey(key)))
+  if (!claim) return null
+  if (claim.state === 'committed') return claim.bookingToken
+  if (await bookingPersisted(claim.bookingToken)) {
+    await healToCommitted(key, claim.bookingToken)
+    return claim.bookingToken
+  }
+  return null   // claimed, nothing behind it yet
 }
 
 /**
@@ -114,6 +161,21 @@ export type CommitOutcome = { ok: true } | { ok: false; winnerToken: string | nu
  *
  * Rollback: if `save()` throws, the claim is compare-and-deleted so it cannot
  * strand the key — and only ever OUR claim, never a successor's.
+ *
+ * ── Recovering a claim whose rollback ALSO failed ────────────────────────────
+ *
+ * One store outage takes out both the save and the compare-and-delete, leaving a
+ * claim with nothing behind it. Rather than let that answer 409 for the full TTL,
+ * the claim is a two-state record and a retry may take over — but only when the
+ * claim is PROVABLY uncommitted, meaning the booking record does not exist. Time is
+ * never the evidence, and `committed` is terminal, so a real booking is never at
+ * risk.
+ *
+ * PRECONDITION — the caller must hold the per-key reservation lease
+ * (`reserveIdempotencyKey`) whenever `key` is set. Both intake paths do. This is
+ * what makes takeover safe: the lease could only have been acquired after the
+ * previous owner's lapsed, and a lease lapses precisely when the owner cannot reach
+ * the store — the same transport it would need in order to commit.
  */
 export async function commitIdempotently(
   key: string | undefined,
@@ -122,14 +184,46 @@ export async function commitIdempotently(
 ): Promise<CommitOutcome> {
   if (!key) { await save(); return { ok: true } }
 
-  const won = await redis.setNxPx(finalKey(key), bookingToken, IDEM_FINAL_TTL_MS)
-  if (!won) return { ok: false, winnerToken: await finalizedBookingToken(key) }
+  const mine = CLAIMED + bookingToken
+  let won = await redis.setNxPx(finalKey(key), mine, IDEM_FINAL_TTL_MS)
+
+  if (!won) {
+    const claim = parseClaim(await redis.get(finalKey(key)))
+    if (!claim) {
+      // It expired or was rolled back between the SET NX and this read.
+      won = await redis.setNxPx(finalKey(key), mine, IDEM_FINAL_TTL_MS)
+    } else if (claim.state === 'committed') {
+      return { ok: false, winnerToken: claim.bookingToken }          // terminal, untouchable
+    } else if (await bookingPersisted(claim.bookingToken)) {
+      await healToCommitted(key, claim.bookingToken)                 // landed, flip had failed
+      return { ok: false, winnerToken: claim.bookingToken }
+    } else {
+      // Provably uncommitted: a claim with no booking behind it.
+      //
+      // Taking it over is safe HERE and only here, because reaching this line means
+      // we hold the per-key reservation lease (see the precondition above) — which
+      // we could only have acquired after the previous owner's lease lapsed. A lease
+      // lapses when its heartbeat cannot reach the store, and the store is the same
+      // transport the owner would need to persist. So the previous owner cannot
+      // commit; it can only discover, via its own failed commit-CAS, that it lost.
+      //
+      // The takeover is itself a CAS, so if several retries arrive together exactly
+      // one becomes the new claimant and the rest are told "in progress".
+      won = await compareAndSet(finalKey(key), CLAIMED + claim.bookingToken, mine, IDEM_FINAL_TTL_MS)
+    }
+  }
+  if (!won) return { ok: false, winnerToken: null }
 
   try {
     await save()
   } catch (e) {
-    await releaseIfOwned(finalKey(key), bookingToken)
+    await releaseIfOwned(finalKey(key), mine)
     throw e
   }
+
+  // Flip to terminal. Fail-soft on purpose: if this cannot reach the store the
+  // booking is already persisted, and the next reader repairs the state from the
+  // record's existence rather than duplicating it.
+  await compareAndSet(finalKey(key), mine, COMMITTED + bookingToken, IDEM_FINAL_TTL_MS)
   return { ok: true }
 }
