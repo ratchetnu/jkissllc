@@ -2,6 +2,10 @@
 
 **Audit date:** 2026-08-07 · **Commit:** `be45d27` · **Production deployment:** `dpl_AECcanGnrE7AmkjJPsFfwZGoPfFD`
 
+**Updated 2026-08-09:** the registry-integrity finding (R1 / P1) is CLOSED by PR #182, merged
+as `e064c1f`. Capability statuses below are unchanged — the registry was corrected to match
+the system, not the other way round. Everything else stands as audited.
+
 An evidence-based audit of whether the capabilities Operion markets are actually
 production-complete. Nothing was fixed as part of this audit; findings only.
 
@@ -164,25 +168,37 @@ The old copy sold write actions the endpoint does not perform.
 
 ---
 
-## Registry integrity — the most actionable finding
+## Registry integrity — the most actionable finding — **RESOLVED `e064c1f`**
+
+> **Status: closed 2026-08-09 by PR #182.** Kept in full below because the failure mode is
+> worth remembering, not because it is still open.
 
 `app/lib/platform/capabilities/registry.ts` is documented as the internal status of record,
 and `lib/opspilot.ts` instructs editors to cross-check it before changing marketing copy.
-**Three shipped, marketed capabilities are absent from it entirely:**
+**Four shipped, marketed capabilities were absent from it entirely** — three found in the
+original sweep, a fourth (`businesses`) found by the completeness pass:
 
-| capability | implementation | why it matters |
+| capability | implementation | why it mattered |
 |---|---|---|
-| **Claims** | `lib/claims.ts` + 8 modules, `/admin/operations/claims`, 5 test files, live in production, **3 cards on the public site** | A whole revenue-protection domain is invisible to the registry |
+| **Claims** | `lib/claims.ts` + 8 modules, `/admin/operations/claims`, 5 test files, live in production, **3 cards on the public site** | A whole revenue-protection domain was invisible to the registry |
+| **Client Accounts** (`businesses`) | `lib/businesses.ts`, `/api/admin/businesses`, 2 admin surfaces, `businesses:manage`, 25 test files | Hidden by the presence of a *different*, `planned` `customers` entry |
 | **Crew reliability scoring** | `lib/crew-score.ts` → employees page | Marketed, unregistered |
 | **Hiring / careers portal** | `lib/applicants.ts`, `ats-scoring.ts`, `/careers` public | Marketed, unregistered |
 
-The rule "only `status: 'full'` may be marketed" cannot be enforced against capabilities the
-registry does not contain. This is a **governance gap, not a product gap** — all three are
-genuinely production-complete.
+The rule "only `status: 'full'` may be marketed" could not be enforced against capabilities
+the registry did not contain — an omission *disabled* the guardrail rather than tripping it.
+This was a **governance gap, not a product gap**: all four were production-complete.
 
-Secondary: the guidance comment in `lib/opspilot.ts` names only `customers, expenses,
-approvals, organizations` as the excluded partial/planned set. The registry also has
-`leads`, `jobs`, `quotes`, and `automations` as `partial`. The comment is out of sync.
+**What changed:** all four registered as `status: 'full'`, each entry recording where the
+capability actually lives. The registry header now documents the status vocabulary, the fact
+that `enabledForJkiss` answers a different question from `status`, and — the point — that
+absence from the registry is not evidence the product lacks something. Registry now holds
+**41 capabilities, 0 validation errors**; `full` 28→32.
+
+**Still open (secondary):** the guidance comment in `lib/opspilot.ts` names only
+`customers, expenses, approvals, organizations` as the excluded partial/planned set. The
+registry also has `leads`, `jobs`, `quotes`, and `automations` as `partial`. That comment
+remains out of sync — see P2.
 
 ---
 
@@ -190,7 +206,7 @@ approvals, organizations` as the excluded partial/planned set. The registry also
 
 | id | risk | severity | basis |
 |---|---|---|---|
-| **R1** | Registry omissions (above) let future marketing copy overclaim without tripping the documented check | **High** | 3 marketed capabilities unregistered |
+| ~~**R1**~~ | ~~Registry omissions let future marketing copy overclaim without tripping the documented check~~ | ~~High~~ | **CLOSED `e064c1f`** — all four registered; guardrail restored |
 | **R2** | `AI_PHOTO_ESTIMATE_MOVING` unset in both environments — moving photo estimating is marketed generically as "job photos" while only the junk family is analyzed | **Medium** | flag registered `false`, unset in Production and Preview |
 | **R3** | Tagline still reads "AI Operating System for Business" across `OPSPILOT_TAGLINE`, `COMPANY.tagline`, and the hero logo asset — contradicting the repositioning away from AI-first | **Medium** | 3 locations, 2 outside marketing scope |
 | **R4** | Thin test coverage on `crew-score` (1 file) and `route-templates` (2 files) relative to their marketing prominence | **Medium** | recurring-route generation is a headline claim running unattended on cron |
@@ -203,7 +219,7 @@ approvals, organizations` as the excluded partial/planned set. The registry also
 
 | # | action | rationale | owner |
 |---|---|---|---|
-| **P1** | Add `claims`, `crew-reliability`, `hiring` to the capability registry with `status: 'full'` | Restores the governance check that marketing copy depends on. Small, low-risk, unblocks R1 | *unassigned* |
+| ~~**P1**~~ | ~~Add `claims`, `crew-reliability`, `hiring` to the registry~~ | **DONE `e064c1f` (PR #182)** — plus `businesses`, found by the completeness sweep | — |
 | **P2** | Sync the partial/planned list in the `lib/opspilot.ts` header comment with the registry | One-line correctness fix; prevents the next editor trusting a stale list | *unassigned* |
 | **P3** | Decide the tagline question (R3) — either reposition it in all three locations or accept the tension deliberately | Most visible remaining inconsistency; needs a brand decision, not an edit | *owner decision* |
 | **P4** | Add regression coverage for recurring-route materialization and crew scoring | Recurring generation runs unattended daily; a silent failure produces missing routes | *unassigned* |
