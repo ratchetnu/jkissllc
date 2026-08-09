@@ -60,6 +60,11 @@ export type ClassifierResult = {
   confidence: number
 }
 
+/** One measured item. Mirrors contract.ItemMeasurement without importing it. */
+export type ItemMeasurementLike = {
+  item: string; quantity: number; lengthFt: number; widthFt: number; heightFt: number; cubicFeet: number
+}
+
 export type LabelProposal = {
   lane: 'junk_removal' | 'moving'
   category: string
@@ -74,6 +79,8 @@ export type LabelProposal = {
   difficulty: string
   ambiguityNotes: string
   fieldConfidence: Record<string, number>
+  /** Present from schema v2 on. Volume must follow from these. */
+  itemBreakdown?: ItemMeasurementLike[]
 }
 
 export type VerifierResult = {
@@ -110,6 +117,31 @@ export function validateProposal(p: LabelProposal): string[] {
   }
   if (p.visibleItems?.length === 0) problems.push('no visible items recorded')
 
+  // Volume must be DERIVED, not asserted. Prompting the model to estimate from
+  // dimensions did not stop anchoring, so the arithmetic is checked here: a
+  // reported range that does not bracket the sum of quantity x l x w x h is a
+  // number that came from somewhere other than the image.
+  if (p.itemBreakdown && p.itemBreakdown.length > 0) {
+    const derived = p.itemBreakdown.reduce((s2, i) => s2 + i.quantity * i.lengthFt * i.widthFt * i.heightFt, 0)
+    for (const [n, i] of p.itemBreakdown.entries()) {
+      const own = i.quantity * i.lengthFt * i.widthFt * i.heightFt
+      if (own > 0 && Math.abs(own - i.cubicFeet) / own > 0.15) {
+        problems.push(`itemBreakdown[${n}] cubicFeet ${i.cubicFeet} does not match ${i.quantity}x${i.lengthFt}x${i.widthFt}x${i.heightFt} = ${own.toFixed(1)}`)
+      }
+    }
+    // Compare against the CLAMPED sum. One truckload is the ceiling on any
+    // single estimate, so a breakdown measuring more than that is expected to
+    // arrive capped — flagging it as unsupported would turn the cap itself into
+    // a validation failure, which is what happened on the container photo.
+    const capped = Math.min(TRUCK_CUBIC_FEET, derived)
+    const lo = p.volumeCubicFeet.min, hi = p.volumeCubicFeet.max
+    if (capped > 0 && (capped < lo * 0.6 || capped > hi * 1.6)) {
+      problems.push(`volumeCubicFeet ${lo}-${hi} is not supported by the itemBreakdown (dimensions sum to ${derived.toFixed(1)} cu ft)`)
+    }
+  } else if (p.volumeCubicFeet.max > 0) {
+    problems.push('volume reported without an itemBreakdown to derive it from')
+  }
+
   // Volume and truck space must describe the same load. This is the check that
   // catches a cubic-yard figure entered into a cubic-foot field: a 27× error
   // shows up here as a gross ratio rather than passing silently.
@@ -136,6 +168,22 @@ export function validateProposal(p: LabelProposal): string[] {
   }
   if (/\bprice|\bquote|\busd|\$\d/.test(text)) problems.push('proposal contains customer pricing')
   return problems
+}
+
+/**
+ * Does the proposed truck-space percentage follow from the proposed volume?
+ *
+ * volume / TRUCK_CUBIC_FEET * 100, with a tolerance for honest rounding. The
+ * diagnostic measured 13/13 labeler conversions exact while the verifier called
+ * 10/13 inconsistent, so this is checked in code rather than believed from a
+ * model — a prompt can be ignored, arithmetic cannot.
+ */
+export function truckSpaceConsistent(p: LabelProposal, tolerancePct = 3): boolean {
+  const vol = (p.volumeCubicFeet.min + p.volumeCubicFeet.max) / 2
+  const pct = (p.truckSpacePercent.min + p.truckSpacePercent.max) / 2
+  if (!(vol > 0) || !(pct > 0)) return false
+  if (p.truckSpacePercent.max >= 100) return true   // saturated: multi-load, cannot be expressed
+  return Math.abs((vol / TRUCK_CUBIC_FEET) * 100 - pct) <= tolerancePct
 }
 
 // ── Consensus gate ──────────────────────────────────────────────────────────
@@ -183,7 +231,14 @@ export type ConsensusDecision = {
 export function decide(input: ConsensusInput): ConsensusDecision {
   const { preScreen: pre, classifier, label, verifier } = input
   const problems = validateProposal(label)
-  const critical = verifier.disagreements.filter(d => CRITICAL_CODES.includes(d))
+  // A verifier that raises truck_space_inconsistent against arithmetic we can
+  // check ourselves is simply wrong. Drop that one code rather than the whole
+  // verdict: its other disagreements may still be sound.
+  const arithmeticOk = truckSpaceConsistent(label)
+  const disagreements = arithmeticOk
+    ? verifier.disagreements.filter(d => d !== 'truck_space_inconsistent')
+    : verifier.disagreements
+  const critical = disagreements.filter(d => CRITICAL_CODES.includes(d))
   const consensus = Math.min(classifier.confidence, verifier.confidence)
 
   const out = (state: CurationState, reason: string, tier: DatasetTier = 'candidate'): ConsensusDecision =>
@@ -192,10 +247,10 @@ export function decide(input: ConsensusInput): ConsensusDecision {
   if (pre.state) return out(pre.state, pre.reasons.join('; '))
 
   // Privacy and licence are never traded against confidence.
-  if (classifier.privacyRisk || verifier.disagreements.includes('privacy_risk')) {
+  if (classifier.privacyRisk || disagreements.includes('privacy_risk')) {
     return out('privacy_blocked', 'privacy risk raised by a model — a human decides, never automation')
   }
-  if (classifier.licenseRisk || verifier.disagreements.includes('license_risk')) {
+  if (classifier.licenseRisk || disagreements.includes('license_risk')) {
     return out('license_blocked', 'licence risk raised by a model')
   }
 
@@ -206,7 +261,7 @@ export function decide(input: ConsensusInput): ConsensusDecision {
   if (classifier.lane === 'neither') return out('auto_rejected', 'classified as neither lane')
   if (classifier.lane === 'ambiguous') return out('needs_human_review', 'lane is ambiguous')
 
-  if (verifier.disagreements.includes('insufficient_context')
+  if (disagreements.includes('insufficient_context')
       && classifier.confidence < THRESHOLDS.autoVerifyConfidence) {
     return out('insufficient_evidence', 'both roles report the image cannot support operational labelling')
   }

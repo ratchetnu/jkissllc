@@ -17,7 +17,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname, join } from 'node:path'
 
 import { assertIndependent, DEFAULT_ROLES, modelForRole } from './roles'
-import { PROMPTS, SCHEMA_VERSION, SchemaError, parseClassifier, parseLabel, parseVerifier, type LabelResponse } from './contract'
+import { ALLOWED_CATEGORIES, PROMPTS, SCHEMA_VERSION, SchemaError, parseClassifier, parseLabel, parseVerifier, type LabelResponse } from './contract'
 import { decide, preScreen, type ConsensusDecision, type VerifierResult, type ClassifierResult } from './consensus'
 import { cacheKey, isRetryable } from './tiers'
 import { appendRevision, type LabelProvenance, type RoleAssignment } from './types'
@@ -30,6 +30,8 @@ export type VisionRequest = {
   system: string
   user: string
   imagePath: string
+  /** Pre-resolved image, used when the caller has no filesystem (a Preview route). */
+  imageDataUrl?: string
 }
 export type VisionResponse = {
   text: string
@@ -160,10 +162,15 @@ export type CandidateOutcome = {
   latencyMs: number
   cachedCalls: number
   failure?: { kind: FailureKind; message: string }
+  /** Diagnostic only: raw text per role, so a calibration pass can see what the
+   *  model actually said rather than what survived parsing. Never persisted. */
+  rawByRole?: Record<string, string>
 }
 
 export type PipelineOptions = {
   roles?: RoleAssignment[]
+  /** Supplied when running server-side, where the dataset is not on disk. */
+  imageDataUrl?: string
   imageRoot: string
   now: string
   catalogVersion?: number
@@ -180,6 +187,7 @@ export async function runCandidate(
   assertIndependent(roles)
 
   let usd = 0, latencyMs = 0, cachedCalls = 0
+  const rawByRole: Record<string, string> = {}
   const imagePath = join(opts.imageRoot, entry.storedPath)
   const sha = entry.sha256 || entry.id
 
@@ -189,7 +197,7 @@ export async function runCandidate(
     createdAt: opts.now, humanReviewed: false,
   }
   const finish = (decision: ConsensusDecision, extra: Partial<CandidateOutcome> = {}): CandidateOutcome => ({
-    id: entry.id, decision, adjudicated: false, usd, latencyMs, cachedCalls,
+    id: entry.id, decision, adjudicated: false, usd, latencyMs, cachedCalls, rawByRole,
     provenance: appendRevision([], {
       ...provenanceBase, confidence: { consensus: decision.confidence },
       disagreements: decision.criticalDisagreements,
@@ -208,11 +216,18 @@ export async function runCandidate(
     })
   }
 
-  const call = async (role: 'classifier' | 'labeler' | 'verifier' | 'adjudicator', user: string) => {
+  const call = async (
+    role: 'classifier' | 'labeler' | 'verifier' | 'adjudicator', user: string,
+    promptOverride?: keyof typeof PROMPTS,
+  ) => {
     const model = modelForRole(role, roles)
-    const promptVersion = roles.find(r => r.role === role)!.promptVersion as keyof typeof PROMPTS
-    const r = await callRole(ctx, { model, promptVersion, system: PROMPTS[promptVersion], user, imagePath }, sha)
+    const promptVersion = promptOverride ?? (roles.find(r => r.role === role)!.promptVersion as keyof typeof PROMPTS)
+    const r = await callRole(ctx, {
+      model, promptVersion, system: PROMPTS[promptVersion], user, imagePath,
+      ...(opts.imageDataUrl ? { imageDataUrl: opts.imageDataUrl } : {}),
+    }, sha)
     usd += r.usd; latencyMs += r.latencyMs; if (r.cached) cachedCalls++
+    rawByRole[role] = r.text
     return r.text
   }
 
@@ -221,7 +236,17 @@ export async function runCandidate(
     const classifier = parseClassifier(await call('classifier', `category hint: ${entry.category}`))
 
     // 3) labeler — never receives production estimator output
-    const label = parseLabel(await call('labeler', `lane: ${classifier.lane}; category hint: ${entry.category}`))
+    // Lane only. A category hint made the labeler echo it back on 13/13 images
+    // in the diagnostic; the category must come from the image.
+    // Lane and the allowed vocabulary only — never the manifest's own category,
+    // which the labeler simply echoed back on 13/13 images.
+    const allowed = ALLOWED_CATEGORIES[classifier.lane as 'junk_removal' | 'moving'] ?? []
+    // The moving lane gets its own framing: a generic "analyse this photograph"
+    // aimed at a bedroom triggered a content refusal on 8 of 10 v3 candidates.
+    const labelerPrompt = classifier.lane === 'moving' ? 'curation.labeler.moving.v1' : 'curation.labeler.v1'
+    const label = parseLabel(await call('labeler',
+      `lane: ${classifier.lane}\nallowed categories (choose exactly one): ${allowed.join(', ')}`,
+      labelerPrompt))
 
     // 4) verifier — image + proposed label ONLY, never the labeler's reasoning.
     //    `evidence` is stripped for the same reason.
