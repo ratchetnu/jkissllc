@@ -6,6 +6,7 @@ import {
   punchBookingClock, recordBookingCompletion,
   type AssignmentError,
 } from '../../../../lib/booking-assignment'
+import { punchError, type PunchErrorCode } from '../../../../lib/timeclock/punch-errors'
 import { getBookingByToken, effectiveServiceDate, BOOKING_STATUS_LABEL, SERVICE_LABELS, type Booking } from '../../../../lib/bookings'
 import { crewUsesTimeclock } from '../../../../lib/crew-timeclock'
 import { getFinanceSettings } from '../../../../lib/finance'
@@ -31,26 +32,13 @@ export const dynamic = 'force-dynamic'
 
 const notFound = () => NextResponse.json({ error: 'not_found' }, { status: 404 })
 
-const ERRORS: Record<AssignmentError | 'not_confirmed' | 'not_clocked_in' | 'other_open_punch' | 'punch_policy_unavailable' | 'undated_job', { status: number; message: string }> = {
-  disabled:          { status: 404, message: 'Not found.' },
-  not_found:         { status: 404, message: 'Job not found.' },
-  not_assigned:      { status: 404, message: 'Job not found.' },   // never confirm a job exists to someone not on it
-  unknown_staff:     { status: 404, message: 'Job not found.' },
-  inactive_staff:    { status: 403, message: 'Your account is inactive. Contact dispatch.' },
-  unknown_equipment: { status: 400, message: 'That equipment is not on the roster.' },
-  duplicate_staff:   { status: 409, message: 'You are already on this job.' },
-  conflict:          { status: 409, message: 'This job is being updated — please try again.' },
-  invalid:           { status: 400, message: 'That action is not valid.' },
-  not_confirmed:     { status: 409, message: 'Accept the job before you clock in.' },
-  not_clocked_in:    { status: 409, message: 'Clock in before you clock out.' },
-  other_open_punch:  { status: 409, message: 'You’re still clocked into another job on this service date. Clock out there first.' },
-  punch_policy_unavailable: { status: 503, message: 'Could not verify your other punches — please try again.' },
-  // Permanent until dispatch sets a date, so 409 rather than a retryable 503.
-  undated_job:       { status: 409, message: 'This job has no service date yet. Ask dispatch to set one before clocking in.' },
+// The map this file used to own now lives in lib/timeclock/punch-errors so the
+// clock surface shares one exhaustive contract instead of a divergent if/else.
+// Behaviour here is unchanged — the shared map was seeded from this one.
+const fail = (e: PunchErrorCode) => {
+  const { status, message } = punchError(e)
+  return NextResponse.json({ error: e, message }, { status })
 }
-
-const fail = (e: keyof typeof ERRORS) =>
-  NextResponse.json({ error: e, message: ERRORS[e].message }, { status: ERRORS[e].status })
 
 // The crew member's own view of the job. Customer MONEY is never projected — no
 // invoice total, no balance, no payment state — and neither are internal notes.

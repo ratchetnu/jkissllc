@@ -18,6 +18,16 @@ import { centralToday } from '../../../lib/dates'
 import { isEnabled } from '../../../lib/platform/flags'
 import { withSingleOpenPunchPolicy } from '../../../lib/timeclock/punch-policy'
 import { syncAssigneePunchIndex } from '../../../lib/timeclock/punch-index-sync'
+import { punchError, type PunchErrorCode, type PunchErrorResponse } from '../../../lib/timeclock/punch-errors'
+
+// This surface has always answered a CAS `conflict` with a retryable 503, while
+// /api/portal/jobs/[id] answers 409. Both are live and both are defensible, so the
+// divergence is carried deliberately rather than silently normalised by the
+// refactor that made this dispatch exhaustive. Unifying them is a product call.
+const CLOCK_ERROR_OVERRIDES: Partial<Record<PunchErrorCode, PunchErrorResponse>> = {
+  conflict: { status: 503, message: 'The job is being updated — please try again.' },
+  not_confirmed: { status: 409, message: 'Please confirm the job before clocking in.' },
+}
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -90,13 +100,12 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   if (target.type === 'booking') {
     const r = await punchBookingClock(target.routeToken, who.staffId, action, gps)
     if (!r.ok) {
-      if (r.error === 'not_confirmed') return NextResponse.json({ error: 'Please confirm the job before clocking in.' }, { status: 409 })
-      if (r.error === 'not_clocked_in') return NextResponse.json({ error: 'Clock in before you clock out.' }, { status: 409 })
-      if (r.error === 'other_open_punch') return NextResponse.json({ error: 'You’re still clocked into another job on this service date. Clock out there first.' }, { status: 409 })
-      if (r.error === 'punch_policy_unavailable') return NextResponse.json({ error: 'Could not verify your other punches — please try again.' }, { status: 503 })
-      if (r.error === 'undated_job') return NextResponse.json({ error: 'This job has no service date yet. Ask dispatch to set one before clocking in.' }, { status: 409 })
-      if (r.error === 'conflict') return NextResponse.json({ error: 'The job is being updated — please try again.' }, { status: 503 })
-      return NextResponse.json({ error: 'not_found' }, { status: 404 })
+      // Exhaustive by type (lib/timeclock/punch-errors). This used to be an
+      // if/else chain ending in `404 not_found`, which meant a deactivated crew
+      // member was told the job did not exist — and any variant added later would
+      // have inherited that same silent 404 with nothing failing to warn us.
+      const { status, message } = punchError(r.error, CLOCK_ERROR_OVERRIDES)
+      return NextResponse.json({ error: message }, { status })
     }
     return NextResponse.json({ ok: true, already: r.already, denied: r.denied })
   }
