@@ -33,7 +33,8 @@ import { getEquipment } from './equipment'
 import { isEnabled } from './platform/flags'
 import { getStaff } from './staff'
 import { withSingleOpenPunchPolicy } from './timeclock/punch-policy'
-import { syncAssigneePunchIndex } from './timeclock/punch-index-sync'
+import { policyBlockToPunchError } from './timeclock/punch-errors'
+import { syncAssigneePunchIndex, clearPunchFromIndex } from './timeclock/punch-index-sync'
 import {
   type CompletionPhotoPolicy, type JobAssignee,
   applyPaySnapshot, clearJobPay, deriveLegacyCrewNames,
@@ -114,7 +115,7 @@ export async function unassignCrewFromBooking(
 ): Promise<AssignmentResult> {
   if (!enabled()) return { ok: false, error: 'disabled' }
 
-  return persist(token, (b) => {
+  const res = await persist(token, (b) => {
     const before = b.assignees ?? []
     if (!before.some(a => a.staffId === staffId)) return { abort: 'not_assigned' as const }
     // Keep the array even when it empties. It is the marker that this booking is
@@ -127,6 +128,18 @@ export async function unassignCrewFromBooking(
     pushBookingEvent(b, { actor: opts.actor, action: 'assignment.crew_removed', result: staffId, meta: { staffId, name: removed.name } })
     return null
   })
+
+  // Removing the assignee destroys their punch along with it. Without this the
+  // index keeps a PHANTOM open punch for someone no longer on the job — one that
+  // blocks their next clock-in and that no clock-out can ever clear, because the
+  // record a clock-out would close no longer exists.
+  //
+  // The route lane already did this at its caller (api/admin/routes/[id]). Doing
+  // it HERE instead means every future caller of this function inherits it, which
+  // is the same "fix the engine, not the one caller" rule #153 was built on.
+  // No-ops entirely while OPEN_PUNCH_INDEX_ENABLED is off.
+  if (res.ok) await clearPunchFromIndex('booking', token, staffId)
+  return res
 }
 
 // ── Re-price one crew member ─────────────────────────────────────────────────
@@ -393,14 +406,12 @@ export async function punchBookingClock(
     type: 'booking', jobToken: token, staffId, serviceDate,
   }, () => write(serviceDate))
 
+  // Exhaustive (lib/timeclock/punch-errors): `busy` and `coverage_unavailable`
+  // both collapse to the retryable 503, but via a `never`-guarded switch rather
+  // than a trailing ternary — so a fifth, PERMANENT block cannot silently inherit
+  // "try again" and send the crew into a retry loop they can't escape.
   if (!governed.ok) {
-    return {
-      ok: false,
-      error:
-        governed.block === 'other_open_punch' ? 'other_open_punch'
-        : governed.block === 'undated_job' ? 'undated_job'
-        : 'punch_policy_unavailable',
-    }
+    return { ok: false, error: policyBlockToPunchError(governed.block) }
   }
   return governed.value
 }

@@ -14,6 +14,7 @@ import { getStaff, staffUsesTimeclock } from '../../../lib/staff'
 import { effectivePunch, listCorrections, punchId } from '../../../lib/time-corrections'
 import { applyPunch, coord, type ClockAction } from '../../../lib/crew-timeclock'
 import { withSingleOpenPunchPolicy } from '../../../lib/timeclock/punch-policy'
+import { punchError, policyBlockToPunchError } from '../../../lib/timeclock/punch-errors'
 import { syncAssigneePunchIndex } from '../../../lib/timeclock/punch-index-sync'
 import { isEnabled } from '../../../lib/platform/flags'
 
@@ -249,13 +250,12 @@ export const POST = withPublicTokenRoute(async (req: NextRequest, { params }: { 
         serviceDate: first.route.routeDate,
       }, write)
       if (!governed.ok) {
-        outcome = governed.block === 'other_open_punch'
-          ? { response: NextResponse.json({ error: 'You’re still clocked into another job on this service date. Clock out there first.' }, { status: 409 }) }
-          // Permanent until dispatch sets a date. Saying "try again" would invite a
-          // retry loop against a condition the crew member cannot change.
-          : governed.block === 'undated_job'
-            ? { response: NextResponse.json({ error: 'This job has no service date yet. Ask dispatch to set one before clocking in.' }, { status: 409 }) }
-            : { response: NextResponse.json({ error: 'Could not verify your other punches — please try again.' }, { status: 503 }) }
+        // Exhaustive via lib/timeclock/punch-errors — same copy and statuses as
+        // before, but a new policy block now fails to compile instead of silently
+        // becoming the retryable 503. `undated_job` stays a 409 on purpose:
+        // permanent until dispatch acts, so "try again" would invite a retry loop.
+        const { status, message } = punchError(policyBlockToPunchError(governed.block))
+        outcome = { response: NextResponse.json({ error: message }, { status }) }
       } else {
         outcome = governed.value
       }
