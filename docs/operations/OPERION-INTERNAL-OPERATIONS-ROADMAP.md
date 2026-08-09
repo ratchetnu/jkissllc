@@ -255,12 +255,31 @@ with a 44 px Try again.
   D1 has actually happened — currently-open duplicate punches and historical overlapping
   intervals, each reported both globally and restricted to a shared service date, split
   by route/route, route/booking and booking/booking, with per-lane scan completeness.
-  It enforces nothing and changes no punch. Phases B (consolidate the duplicated punch
-  logic) and C (enforce one open punch) remain unstarted and unapproved.
+  It enforces nothing and changes no punch.
   - Note the portal's existing guard is **day-scoped** (`selectClockable` filters on
     `routeDate`), so the same-date figure is what today's rule would have prevented and
     the global figure is what a stricter rule would catch. That asymmetry is a decision
     for Phase C, not an accident to fix silently.
+- **Sprint 3.1 Phase B (consolidation) is built in the current change**: the public
+  contractor route no longer owns a second copy of the clock-in/clock-out mutation.
+  Public links, portal routes and booking jobs all delegate timestamp, idempotency and
+  GPS handling to `applyPunch`; each surface retains only its own authorization, audit,
+  notification and record-lock adapter.
+- **Sprint 3.1 Phase C (one open punch) is built but not activated**:
+  `SINGLE_OPEN_PUNCH_ENABLED` defaults OFF, so merging the implementation does not
+  change a live punch. When enabled, every clock ingress enforces the portal's existing
+  **same-service-date** rule. This deliberately closes the public-link divergence
+  without silently promoting the stricter global count reported by Phase A into a new
+  payroll rule.
+  - The decision uses correction-adjusted punches, matching Timesheets and Phase A;
+    a correction-closed punch does not falsely block, and a correction-open punch does.
+  - A tenant-scoped per-staff lock surrounds the complete scan and write, so simultaneous
+    clock-ins on two different jobs cannot both pass a stale pre-write check.
+  - Route and booking indexes are scanned completely with bounded ceilings and stable
+    membership checks. Missing records, scan churn, correction-read failure or lock
+    loss refuses the clock-in with a retryable response instead of guessing.
+  - Historical booking punches remain part of the decision even if booking assignment
+    is later disabled; switching off a feature does not erase payroll evidence.
   - Surface attribution is **inferred, best-effort**: a punch record carries no marker
     (`Assignee` has `confirmedVia` but no `clockedVia`), so it is read from the audit
     trail, which is capped at 200 entries per route. Punches outlive that evidence, so
@@ -296,14 +315,70 @@ with a 44 px Try again.
     note and `jobCompletedAt`; it does not end a shift or change `BookingStatus`.
     Actual booking closure remains the owner's explicit status transition, where the
     effective-open-punch gate applies.
-- **Two divergences that remain deliberately untouched**, because both alter live
-  contractor write behaviour and need their own owner-approved change:
-  1. The public surface does **not** enforce `hasOtherOpenPunch`. The portal refuses a
-     second concurrent clock-in on a different job; a contractor holding two route links
-     can hold two open punches at once. Payroll-relevant.
-  2. The public API implements `clock_in`/`clock_out` **inline** instead of using the
-     shared, tested `applyPunch` that both the portal and the booking lane use — two
-     copies of one rule.
+- **The targeted open-punch index is BUILT — three of the four activation blockers
+  are closed with measurements.** `OPEN_PUNCH_INDEX_ENABLED` defaults OFF and is
+  separate from `SINGLE_OPEN_PUNCH_ENABLED`, so the index can be built and proven at
+  parity before any enforcement depends on it.
+  - **Shape.** `punchidx:open:{staffId}:{bucket}` (sorted set, score = effective
+    clock-in, member = punchId), `punchidx:loc:{punchId}` (which bucket a punch is
+    filed under, so a rescheduled job can be moved rather than stranded),
+    `punchidx:buckets` (the registry that makes the index enumerable — the Redis
+    chokepoint exposes no KEYS/SCAN, and an index that cannot be enumerated cannot be
+    reconciled), and `punchidx:ready` (the completion marker). All tenant-scoped
+    through the chokepoint.
+  - **Cost — measured, not estimated** (`scripts/open-punch-index-bench.mjs`, counting
+    proxy in front of the store, one clock-in decision):
+
+    | records | scan commands | indexed commands | scan latency | indexed latency |
+    |---|---|---|---|---|
+    | 200 | 212 | 6 | 90.7 ms | 18.2 ms |
+    | 500 | 516 | 6 | 160.7 ms | 18.0 ms |
+    | 1,000 | 1,022 | 6 | 265.0 ms | 17.7 ms |
+    | 2,000 | 2,036 | 6 | 404.5 ms | 18.4 ms |
+
+    The scan is linear in total history; the indexed path is **constant at 6 commands
+    and ~18 ms**. At 2,000 records that is 339x fewer commands for one clock-in.
+  - **`bk:index` reorder instability is gone.** The whole booking index is captured in
+    ONE `ZRANGE`, exactly as `scanAllRoutes` already did, and completeness is judged on
+    count and uniqueness — order-free properties. The previous two-pass ZREVRANGE
+    ordering comparison, which any concurrent booking write could fail, is removed.
+  - **Dateless bookings are defined.** An undated punch is filed under `__undated__`
+    and **blocks every date** — we cannot prove it belongs to another day, so it never
+    disappears from enforcement. Opening a NEW punch on an undated job is refused with
+    a distinct `undated_job` **409** (permanent until dispatch sets a date) rather than
+    a retryable 503 that would invite a retry loop.
+  - **Lock timing follows the critical section.** Indexed: 5 s lease, 25 attempts,
+    20 ms backoff (~0.5 s wait). Scan fallback keeps 10 s / 40 / 50 ms, because
+    applying the indexed timings to a multi-second scan would turn every concurrent
+    clock-in into a spurious `busy`.
+  - **Migration.** `backfillOpenPunchIndex` runs under an atomic lease, pages record
+    reads, re-asserts the lease before writing and again before the marker, removes
+    entries truth no longer holds, and writes the completion marker **last and only on
+    success** — so an interrupted run leaves an index that is never read. Re-running is
+    idempotent; a concurrent second run is refused by the lease.
+  - **Parity and repair.** `reconcileOpenPunchIndex` compares the index against the
+    complete Phase A-equivalent scan and reports `missing` / `extra` / `misfiled`,
+    with opt-in repair that only ever moves the index towards truth. Exposed at
+    `GET/POST /api/admin/operations/punch-index` (`audit:view` to read, `settings:manage`
+    to write); the GET returns a single `atParity` boolean.
+  - **Maintenance covers every transition** that changes effective open-punch state:
+    route clock-in/out (public link and portal), the public-link automatic clock-out on
+    completion, booking clock-in/out, time corrections in both directions (inside
+    `appendCorrection`, which knows the new effective state), and crew unassignment
+    (which deletes the punch outright and would otherwise strand a phantom).
+  - **Evidence.** 20 adversarial tests in `scripts/open-punch-index.test.ts`; the full
+    mutation matrix below is 20/20.
+- **REMAINING activation blocker — representative-scale measurement.** The figures
+  above are from synthetic data at 200–2,000 records. The Production route and booking
+  counts have not been read, so the real per-clock-in cost of the scan fallback, the
+  backfill duration, and the lease headroom are still unknown. Before activation:
+  1. Read the Production route and booking index cardinalities.
+  2. Run the backfill in Preview against a representative copy and record its duration
+     against the 30 s lease.
+  3. `GET /api/admin/operations/punch-index` must report `atParity: true`.
+  4. Only then enable `OPEN_PUNCH_INDEX_ENABLED`, re-verify parity, and submit a
+     SEPARATE proposal for `SINGLE_OPEN_PUNCH_ENABLED`. Construction does not imply
+     activation, and no Production flag change is part of Sprint 3.1 B/C.
 - Verify accept/decline, punches, duplicate taps, and photo recovery at
   320/375/390/430 px on representative iPhone and Android browsers.
 - Run an authenticated Preview mobile flow with forced request interruption and

@@ -25,13 +25,15 @@
 // actions, exactly as they are on the Routes side.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { generateToken, pushBookingEvent, updateBooking, type Booking } from './bookings'
+import { effectiveServiceDate, generateToken, getBookingByToken, pushBookingEvent, updateBooking, type Booking } from './bookings'
 import type { UpdateOutcome } from './booking-concurrency'
 import { applyPunch, type ClockAction, type Gps, type PunchResult } from './crew-timeclock'
 import { fmtCents, resolveCrewPay } from './finance'
 import { getEquipment } from './equipment'
 import { isEnabled } from './platform/flags'
 import { getStaff } from './staff'
+import { withSingleOpenPunchPolicy } from './timeclock/punch-policy'
+import { syncAssigneePunchIndex } from './timeclock/punch-index-sync'
 import {
   type CompletionPhotoPolicy, type JobAssignee,
   applyPaySnapshot, clearJobPay, deriveLegacyCrewNames,
@@ -333,7 +335,7 @@ export async function declineBookingAssignment(
 // guard all behave identically across both lanes.
 export type BookingPunch =
   | { ok: true; booking: Booking; already: boolean; denied: boolean }
-  | { ok: false; error: AssignmentError | 'not_confirmed' | 'not_clocked_in' }
+  | { ok: false; error: AssignmentError | 'not_confirmed' | 'not_clocked_in' | 'other_open_punch' | 'punch_policy_unavailable' | 'undated_job' }
 
 export async function punchBookingClock(
   token: string,
@@ -343,21 +345,64 @@ export async function punchBookingClock(
 ): Promise<BookingPunch> {
   if (!enabled()) return { ok: false, error: 'disabled' }
 
-  let punch: PunchResult | undefined
-  const res = await persist(token, (b) => {
-    const a = (b.assignees ?? []).find(x => x.staffId === staffId)
-    if (!a) return { abort: 'not_assigned' as const }
-    punch = applyPunch(a, action, gps, Date.now())
-    if (punch.ok && !punch.already) {
-      pushBookingEvent(b, { actor: `crew:${staffId}`, action: `assignment.${action}`, result: staffId, meta: { staffId, locationDenied: punch.denied } })
-    }
-    return null
-  })
+  const write = async (expectedServiceDate?: string): Promise<BookingPunch> => {
+    let punch: PunchResult | undefined
+    const res = await persist(token, (b) => {
+      // If dispatch changed the service date after an enabled policy scan, retry
+      // against the new date rather than enforcing the stale date's punch set.
+      if (expectedServiceDate && effectiveServiceDate(b) !== expectedServiceDate) {
+        return { abort: 'conflict' as const }
+      }
+      const a = (b.assignees ?? []).find(x => x.staffId === staffId)
+      if (!a) return { abort: 'not_assigned' as const }
+      punch = applyPunch(a, action, gps, Date.now())
+      if (punch.ok && !punch.already) {
+        pushBookingEvent(b, { actor: `crew:${staffId}`, action: `assignment.${action}`, result: staffId, meta: { staffId, locationDenied: punch.denied } })
+      }
+      return null
+    })
 
-  if (!res.ok) return { ok: false, error: res.error }
-  if (!punch) return { ok: false, error: 'invalid' }
-  if (!punch.ok) return { ok: false, error: punch.code }
-  return { ok: true, booking: res.booking, already: punch.already, denied: punch.denied }
+    if (!res.ok) return { ok: false, error: res.error }
+    if (!punch) return { ok: false, error: 'invalid' }
+    if (!punch.ok) return { ok: false, error: punch.code }
+    // The booking write is durable; file the punch's new effective state. Uses the
+    // service date of the booking as SAVED, not the one read before the lock, so a
+    // concurrent reschedule cannot file the punch under a date that no longer applies.
+    if (punch.changed) {
+      const saved = (res.booking.assignees ?? []).find(x => x.staffId === staffId)
+      if (saved) await syncAssigneePunchIndex('booking', token, effectiveServiceDate(res.booking), saved)
+    }
+    return { ok: true, booking: res.booking, already: punch.already, denied: punch.denied }
+  }
+
+  // OFF is the exact pre-Phase-C path: one CAS mutation, with no preliminary
+  // identity read, staff lock, cross-job scan, or service-date comparison.
+  if (action !== 'clock_in' || !isEnabled('SINGLE_OPEN_PUNCH_ENABLED')) return write()
+
+  // Resolve only enough identity to take the cross-job staff lock. Authorization
+  // is re-checked by the CAS mutation below; a bare booking token never grants a
+  // punch and no response distinguishes "missing" from "not assigned".
+  const first = await getBookingByToken(token)
+  if (!first) return { ok: false, error: 'not_found' }
+  if (!(first.assignees ?? []).some(a => a.staffId === staffId)) {
+    return { ok: false, error: 'not_assigned' }
+  }
+  const serviceDate = effectiveServiceDate(first)
+
+  const governed = await withSingleOpenPunchPolicy(action, {
+    type: 'booking', jobToken: token, staffId, serviceDate,
+  }, () => write(serviceDate))
+
+  if (!governed.ok) {
+    return {
+      ok: false,
+      error:
+        governed.block === 'other_open_punch' ? 'other_open_punch'
+        : governed.block === 'undated_job' ? 'undated_job'
+        : 'punch_policy_unavailable',
+    }
+  }
+  return governed.value
 }
 
 // ── Shared write path ────────────────────────────────────────────────────────

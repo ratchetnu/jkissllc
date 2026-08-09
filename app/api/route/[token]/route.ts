@@ -12,14 +12,14 @@ import { alertOwnerRouteEvent, alertOwnerClockLocationOff } from '../../../lib/r
 import { getFinanceSettings } from '../../../lib/finance'
 import { getStaff, staffUsesTimeclock } from '../../../lib/staff'
 import { effectivePunch, listCorrections, punchId } from '../../../lib/time-corrections'
+import { applyPunch, coord, type ClockAction } from '../../../lib/crew-timeclock'
+import { withSingleOpenPunchPolicy } from '../../../lib/timeclock/punch-policy'
+import { syncAssigneePunchIndex } from '../../../lib/timeclock/punch-index-sync'
+import { isEnabled } from '../../../lib/platform/flags'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 const clientIp = (req: NextRequest) => req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || undefined
 
-// A finite number in [lo, hi], else undefined. Garbage coordinates are dropped
-// rather than stored — a missing pin is honest; a fake one is worse than none.
-const coord = (v: unknown, lo: number, hi: number): number | undefined =>
-  typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : undefined
 const fmtCoord = (lat?: number, lng?: number) =>
   lat != null && lng != null ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : 'location not shared'
 
@@ -82,7 +82,7 @@ export const POST = withPublicTokenRoute(async (req: NextRequest, { params }: { 
 
   let outcome: PostOutcome
   try {
-    outcome = await withRouteLock(first.route.token, async (): Promise<PostOutcome> => {
+    const write = () => withRouteLock(first.route.token, async (): Promise<PostOutcome> => {
       const found = await getRouteByConfirmToken(token)
       if (!found) return { response: NextResponse.json({ error: 'not_found' }, { status: 404 }) }
       const { route, assignee } = found
@@ -159,6 +159,10 @@ export const POST = withPublicTokenRoute(async (req: NextRequest, { params }: { 
         // does not become Completed and the punch is not half-closed. Atomicity here
         // is structural, not bolted on.
         try { await saveRoute(route) } catch { return saveFail }
+        // Completion may have closed this crew member's punch automatically. The
+        // index has to learn that here, or the shift stays "open" in enforcement
+        // and blocks their next job.
+        await syncAssigneePunchIndex('route', route.token, route.routeDate, assignee)
         return { response: NextResponse.json({ ok: true, route: pub(), clockedOut: punchOpen }) }
       }
 
@@ -167,36 +171,39 @@ export const POST = withPublicTokenRoute(async (req: NextRequest, { params }: { 
       // still record their shift, and the owner sees that the pin is missing.
       if (action === 'clock_in' || action === 'clock_out') {
         if (!canClock) return { response: NextResponse.json({ error: 'The timeclock is turned off for you. Contact dispatch if this is a mistake.' }, { status: 403 }) }
-        if (!assignee.confirmedAt) return { response: NextResponse.json({ error: 'Please confirm the route before clocking in.' }, { status: 409 }) }
+        // The policy scan was made for the route date observed before taking the
+        // per-route lock. If dispatch moved the route concurrently, retry against
+        // the new date instead of enforcing the wrong date's punch set.
+        if (
+          isEnabled('SINGLE_OPEN_PUNCH_ENABLED') &&
+          route.routeDate !== first.route.routeDate
+        ) {
+          return { response: NextResponse.json({ error: 'The route was updated — please try again.' }, { status: 503 }) }
+        }
+        const clockAction = action as ClockAction
+        const gps = { lat: body.lat, lng: body.lng, accuracy: body.accuracy, locationDenied: body.locationDenied }
         const lat = coord(body.lat, -90, 90)
         const lng = coord(body.lng, -180, 180)
-        const acc = coord(body.accuracy, 0, 100_000)
-        const hasFix = lat != null && lng != null
-        const denied = body.locationDenied === true || !hasFix
-        const now = Date.now()
-
-        if (action === 'clock_in') {
-          if (assignee.clockInAt) return { response: NextResponse.json({ ok: true, already: true, route: pub() }) }
-          assignee.clockInAt = now
-          assignee.clockInLat = lat; assignee.clockInLng = lng; assignee.clockInAccuracy = acc
-          assignee.clockInLocationDenied = denied || undefined
-          pushEvent(route, 'clock_in', ip, ua)
-          pushAudit(route, 'contractor', `${assignee.name} clocked in · ${fmtCoord(lat, lng)}${denied ? ' (location off)' : ''}`)
-        } else {
-          if (!assignee.clockInAt) return { response: NextResponse.json({ error: 'Clock in before you clock out.' }, { status: 409 }) }
-          if (assignee.clockOutAt) return { response: NextResponse.json({ ok: true, already: true, route: pub() }) }
-          assignee.clockOutAt = now
-          assignee.clockOutLat = lat; assignee.clockOutLng = lng; assignee.clockOutAccuracy = acc
-          assignee.clockOutLocationDenied = denied || undefined
-          pushEvent(route, 'clock_out', ip, ua)
-          pushAudit(route, 'contractor', `${assignee.name} clocked out · ${fmtCoord(lat, lng)}${denied ? ' (location off)' : ''}`)
+        const punch = applyPunch(assignee, clockAction, gps, Date.now())
+        if (!punch.ok) {
+          const error = punch.code === 'not_confirmed'
+            ? 'Please confirm the route before clocking in.'
+            : 'Clock in before you clock out.'
+          return { response: NextResponse.json({ error }, { status: 409 }) }
         }
+        if (!punch.changed) {
+          return { response: NextResponse.json({ ok: true, already: true, route: pub() }) }
+        }
+        pushEvent(route, clockAction, ip, ua)
+        pushAudit(route, 'contractor',
+          `${assignee.name} ${clockAction === 'clock_in' ? 'clocked in' : 'clocked out'} · ${fmtCoord(lat, lng)}${punch.denied ? ' (location off)' : ''}`)
         try { await saveRoute(route) } catch { return saveFail }
+        await syncAssigneePunchIndex('route', route.token, route.routeDate, assignee)
         // Location off → tell the carrier in real time (best-effort; runs after the lock).
         const crewName = assignee.name
         return {
-          response: NextResponse.json({ ok: true, route: pub(), locationOff: denied }),
-          notify: denied ? () => alertOwnerClockLocationOff(route, { name: crewName }, action) : undefined,
+          response: NextResponse.json({ ok: true, route: pub(), locationOff: punch.denied }),
+          notify: punch.denied ? () => alertOwnerClockLocationOff(route, { name: crewName }, clockAction) : undefined,
         }
       }
 
@@ -233,6 +240,28 @@ export const POST = withPublicTokenRoute(async (req: NextRequest, { params }: { 
       }
       return { response: NextResponse.json({ error: 'Unknown action.' }, { status: 400 }) }
     })
+
+    if (action === 'clock_in' || action === 'clock_out') {
+      const governed = await withSingleOpenPunchPolicy(action, {
+        type: 'route',
+        jobToken: first.route.token,
+        staffId: first.assignee.staffId,
+        serviceDate: first.route.routeDate,
+      }, write)
+      if (!governed.ok) {
+        outcome = governed.block === 'other_open_punch'
+          ? { response: NextResponse.json({ error: 'You’re still clocked into another job on this service date. Clock out there first.' }, { status: 409 }) }
+          // Permanent until dispatch sets a date. Saying "try again" would invite a
+          // retry loop against a condition the crew member cannot change.
+          : governed.block === 'undated_job'
+            ? { response: NextResponse.json({ error: 'This job has no service date yet. Ask dispatch to set one before clocking in.' }, { status: 409 }) }
+            : { response: NextResponse.json({ error: 'Could not verify your other punches — please try again.' }, { status: 503 }) }
+      } else {
+        outcome = governed.value
+      }
+    } else {
+      outcome = await write()
+    }
   } catch (e) {
     if (e instanceof RouteBusyError) return NextResponse.json({ error: 'The route is being updated — please try again.' }, { status: 503 })
     throw e
