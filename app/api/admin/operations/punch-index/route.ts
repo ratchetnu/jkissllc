@@ -18,7 +18,7 @@ import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-ro
 import { requirePermission } from '../../_lib/session'
 import { isEnabled } from '../../../../lib/platform/flags'
 import { indexIsAuthoritative, readReadyMarker } from '../../../../lib/timeclock/open-punch-index'
-import { backfillOpenPunchIndex, reconcileOpenPunchIndex } from '../../../../lib/timeclock/open-punch-backfill'
+import { backfillOpenPunchIndex, planOpenPunchBackfill, reconcileOpenPunchIndex } from '../../../../lib/timeclock/open-punch-backfill'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -60,6 +60,17 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
 
   try {
     if (action === 'backfill') {
+      // Dry run FIRST, before runId is minted or the lease is reachable. A planning
+      // request must be structurally incapable of falling through into a real
+      // backfill — so this returns rather than setting a flag the code below reads.
+      if (body.dryRun === true) {
+        const plan = await planOpenPunchBackfill()
+        if (!plan.ok) {
+          return NextResponse.json({ error: 'incomplete', message: plan.reason }, { status: 409 })
+        }
+        return NextResponse.json({ ok: true, plan })
+      }
+
       const runId = S(body.runId, 60) || `bf_${Date.now().toString(36)}`
       const result = await backfillOpenPunchIndex(runId, Date.now())
       if (!result.ok) {

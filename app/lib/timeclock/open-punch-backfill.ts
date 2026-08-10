@@ -36,6 +36,7 @@ import {
   markPunchClosed,
   markPunchOpen,
   readBucket,
+  readReadyMarker,
   writeReadyMarker,
   type ReadyMarker,
 } from './open-punch-index'
@@ -150,6 +151,42 @@ export type BackfillResult =
   | { ok: true; marker: ReadyMarker; removedStale: number }
   | { ok: false; reason: string; block?: 'busy' | 'incomplete' }
 
+/**
+ * What a backfill WOULD do, and what the index looks like right now.
+ *
+ * Produced without a single write. It answers the two questions nobody can
+ * currently answer before committing to a first Production run: how many open
+ * punches actually exist, and how far the index already is from truth.
+ */
+export type BackfillPlan =
+  | {
+      ok: true
+      dryRun: true
+      /** Open punches found in truth — the live population. */
+      openPunches: number
+      routesScanned: number
+      bookingsScanned: number
+      /** Entries a real run would write (missing + misfiled). */
+      wouldIndex: number
+      /** Already indexed under the right bucket — a real run would rewrite these to the same value. */
+      alreadyCorrect: number
+      /** Index entries truth does not support; a real run would remove them. */
+      wouldRemoveStale: number
+      /** Open in truth, absent from the index. The dangerous direction — the index would UNDER-report. */
+      missing: string[]
+      /** Indexed but not open in truth. Blocks a crew member wrongly. */
+      extra: string[]
+      /** Indexed under the wrong bucket. */
+      misfiled: { punchId: string; indexed: string; expected: string }[]
+      /**
+       * Whether a completion marker exists TODAY. If true the index is already
+       * treated as authoritative, so any drift above is live, not hypothetical.
+       */
+      markerPresent: boolean
+      markerRunId?: string
+    }
+  | { ok: false; dryRun: true; reason: string; block?: 'incomplete' }
+
 const LEASE_KEY = 'punchidx:backfill-lease'
 
 /**
@@ -165,6 +202,72 @@ const LEASE_KEY = 'punchidx:backfill-lease'
  * and an index with no marker is never read as authoritative — so a partial
  * backfill can never under-report an open punch.
  */
+/**
+ * Plan a backfill without performing one. Read-only, by construction.
+ *
+ * WHY THIS EXISTS. Until now the only way to learn what a backfill would do was to
+ * run it. On a first Production pass against live crew data that makes the first
+ * observation of the result the same moment it is already written — the wrong order
+ * for a subsystem whose failure mode is "a crew member cannot clock in".
+ *
+ * THREE THINGS IT DELIBERATELY DOES NOT DO:
+ *
+ *   • It takes NO LEASE. A dry run needs no mutual exclusion — it writes nothing —
+ *     and taking the lease would let a planning run block a real one. The scan can
+ *     take a while, so that is not a theoretical cost.
+ *   • It never writes the READY MARKER. Writing it would make an unpopulated index
+ *     authoritative, which fails OPEN and permits exactly the double clock-in the
+ *     policy exists to prevent. The marker is the one write that changes how the
+ *     system BEHAVES, so a planning path must never be able to emit it.
+ *   • It never calls markPunchOpen / markPunchClosed, so no index state moves.
+ *
+ * The numbers it returns are a snapshot taken without a lock, so a punch opened
+ * mid-scan may land on either side of it. That is fine for planning and is NOT fine
+ * as a parity proof — `reconcileOpenPunchIndex` is what must be clean before the
+ * index is trusted.
+ */
+export async function planOpenPunchBackfill(): Promise<BackfillPlan> {
+  const truth = await enumerateOpenPunchesFromTruth()
+  if (!truth.complete) return { ok: false, dryRun: true, reason: truth.reason, block: 'incomplete' }
+
+  const expected = new Map(truth.punches.map(p => [p.punchId, p]))
+  const seen = new Map<string, { staffId: string; bucket: string }>()
+  for (const ref of await listRegisteredBuckets()) {
+    for (const id of await readBucket(ref.staffId, ref.bucket)) {
+      seen.set(id, { staffId: ref.staffId, bucket: ref.bucket })
+    }
+  }
+
+  const missing: string[] = []
+  const misfiled: { punchId: string; indexed: string; expected: string }[] = []
+  let alreadyCorrect = 0
+  for (const [id, p] of expected) {
+    const at = seen.get(id)
+    if (!at) { missing.push(id); continue }
+    if (at.bucket !== p.bucket) misfiled.push({ punchId: id, indexed: at.bucket, expected: p.bucket })
+    else alreadyCorrect++
+  }
+  const extra = [...seen.keys()].filter(id => !expected.has(id))
+
+  const marker = await readReadyMarker()
+
+  return {
+    ok: true,
+    dryRun: true,
+    openPunches: truth.punches.length,
+    routesScanned: truth.routesScanned,
+    bookingsScanned: truth.bookingsScanned,
+    wouldIndex: missing.length + misfiled.length,
+    alreadyCorrect,
+    wouldRemoveStale: extra.length,
+    missing,
+    extra,
+    misfiled,
+    markerPresent: !!marker,
+    markerRunId: marker?.runId,
+  }
+}
+
 export async function backfillOpenPunchIndex(runId: string, now: number): Promise<BackfillResult> {
   return withLock<BackfillResult>(
     LEASE_KEY,
