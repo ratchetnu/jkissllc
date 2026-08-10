@@ -25,7 +25,7 @@
 | **E4b dry-run RUN against Production** | ⬜ **OPEN** |
 | E5 Production reconcile clean after backfill | ⬜ open |
 | E6 rollback rehearsed with a populated index | ⬜ open |
-| **B6 orphan-handling decision** | ⬜ **OPEN — new blocker found during E3** |
+| **B6 orphan-handling decision (#198)** | ⬜ **OPEN — new blocker found during E3** |
 
 **Nothing has been run against Production — no backfill, no dry run, no flag change.**
 E3 ran against the **Preview** store (`still-colt-145891`) with flags set **in-process only**;
@@ -179,7 +179,7 @@ Tests prove nothing is *written* with the index off. A **previously populated** 
 going stale while the flag is off is a different state and is **not covered**. Matters for
 rollback: turning the flag off does not empty the index.
 
-### B6 — Orphaned punch index entries can block ALL clock-ins → **NEW, found during E3**
+### B6 — Orphaned punch index entries can block ALL clock-ins → **NEW, found during E3** (#198)
 Blocks `OPEN_PUNCH_INDEX_ENABLED`. **A decision is required before activation.**
 
 **Problem.** An `rt:index` entry whose `rt:{token}` record is missing makes
