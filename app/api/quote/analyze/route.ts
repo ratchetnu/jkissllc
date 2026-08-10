@@ -102,11 +102,21 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   // on labor, crew, travel and access. Neither state invents a landfill trip.
   if (serviceFamily(serviceType) === 'moving') {
     const movingStartedAt = Date.now()
-    const { stored, analyzedOk, outcome } = await buildMovingEstimate({
+    // Same ceiling, same budget, same single-shot rule as the junk lane below. This
+    // lane has one model call and no critic, so it takes the primary slice only —
+    // but it MUST take one: unbudgeted it inherits the 30s platform default and the
+    // service's transient retry, and two attempts alone reach this route's 60s
+    // ceiling with no margin left to answer in.
+    const movingBudget = interactiveBudget(movingStartedAt)
+    const { stored, analyzedOk, outcome, degraded } = await buildMovingEstimate({
       analysisId, bookingId: 'draft', photoUrls: photos, serviceType, facts: readMovingFacts(body),
+      budget: movingBudget,
     })
     const movingTotalMs = Date.now() - movingStartedAt
     await recordFunnelEvent(analyzedOk ? 'ai_analysis_completed' : 'ai_analysis_failed', nowIso)
+    // A budget overrun is its own funnel outcome in BOTH lanes, so the degrade rate
+    // a rollout has to watch is one number across the whole route.
+    if (degraded) await recordFunnelEvent('ai_analysis_timeout', nowIso)
     await recordFunnelEvent(
       stored.decision === 'instant_quote' ? 'instant_quote_displayed'
         : stored.decision === 'estimate_range' ? 'estimate_range_displayed'

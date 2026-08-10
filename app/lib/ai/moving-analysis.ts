@@ -31,6 +31,13 @@ export type AnalyzeMovingPhotosInput = {
   photoUrls: string[]
   serviceLabel?: string
   nowIso: string
+  // Latency policy (ai/interactive-policy) — identical seam to analyzeJunkPhotos.
+  // Omitted ⇒ today's defaults: the platform 30s per-call timeout and the AI
+  // service's transient retry. The interactive route passes an explicit single-shot
+  // slice, because this lane runs on the SAME 60s function ceiling as the junk lane
+  // and two 30s attempts alone would exhaust it.
+  timeoutMs?: number
+  attempts?: number
 }
 
 export type AnalyzeMovingPhotosResult = {
@@ -40,6 +47,8 @@ export type AnalyzeMovingPhotosResult = {
   model?: string
   latencyMs?: number
   outcome: string
+  /** Provider failure classification — 'network' covers our own abort/timeout. */
+  errorClass?: string
   /** Provider stop reason; 'length' means the cap cut the JSON off. */
   finishReason?: string
   outputTokens?: number
@@ -99,6 +108,10 @@ export async function analyzeMovingPhotos(input: AnalyzeMovingPhotosInput): Prom
     messages: prep.messages,
     maxOutputTokens: MOVING_MAX_OUTPUT_TOKENS,
     temperature: 0.2,
+    // Interactive callers pin an explicit slice + single shot; the durable path
+    // passes neither and keeps the platform default timeout and retry.
+    ...(input.timeoutMs && input.timeoutMs > 0 ? { timeoutMs: input.timeoutMs } : {}),
+    ...(input.attempts && input.attempts > 0 ? { attempts: input.attempts } : {}),
     requestChars: photos.join(',').length,
     kind: 'primary',
     bookingId: input.bookingId,
@@ -110,6 +123,7 @@ export async function analyzeMovingPhotos(input: AnalyzeMovingPhotosInput): Prom
     return {
       analysis: reviewFallbackMovingAnalysis(ctx, [`Automated analysis was unavailable (${res.outcome}). A team member will review your photos.`]),
       ok: false, callId: res.callId, outcome: res.outcome, latencyMs: res.latencyMs,
+      errorClass: res.errorClass,
     }
   }
 
