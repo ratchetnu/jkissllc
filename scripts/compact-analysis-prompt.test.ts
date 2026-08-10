@@ -235,12 +235,23 @@ test('the admin audit surface still has every field it renders', () => {
 
 test('dropped per-item fields take their existing normalizer defaults', () => {
   const b = normalizeAnalysis(COMPACT_RESPONSE, ctx)
+  const v = normalizeAnalysis(V1_RESPONSE, ctx)
   for (const item of b.normalizedItems) {
-    assert.equal(item.bulky, false)
+    // `bulky` is no longer a flat default. Operational-catalog normalization derives
+    // it from the matched entry, so a field the compact spec stopped asking for can
+    // still come back true — RECOVERED from the catalog, not invented. The invariant
+    // that matters is that it may only be true off a catalog match, and may never
+    // claim more than the verbose read does for the same item.
+    if (item.bulky) {
+      assert.ok(item.catalogId, `${item.label}: bulky must come from a catalog match, not thin air`)
+      const verbose = v.normalizedItems.find(i => i.label === item.label)
+      assert.equal(item.bulky, verbose?.bulky, `${item.label}: compact must not exceed the verbose read`)
+    }
     assert.equal(item.evidence, '')
     assert.equal(item.likelyDisposalType, 'unknown')
     assert.ok(item.estimatedWeightPounds.likely >= 0, 'a range object, never undefined')
   }
+  assert.ok(b.normalizedItems.some(i => !i.bulky), 'an unmatched item still takes the plain default')
   // Unrequested confidence sub-scores fall back to `overall` — the documented default.
   assert.equal(b.confidence.weight, b.confidence.overall)
   assert.equal(b.confidence.itemClassification, b.confidence.overall)
