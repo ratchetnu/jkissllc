@@ -5,11 +5,32 @@
 > Everything under *Verified ground truth* was established by direct inspection of the
 > repository and the live system — treat it as fact rather than re-deriving it.
 >
-> **Written:** 2026-08-09 · **Updated:** 2026-08-09 (dry-run shipped, `c1deff4`)
+> **Written:** 2026-08-09 · **Updated:** 2026-08-09 (dry-run `c1deff4`; concurrency `a3e2873`)
 > **Production:** `680d363` / `dpl_DRVCTFMZ2V8tuV3FNBGHyfK1sKSD`
 >
 > **NOTHING IN THIS DOCUMENT AUTHORISES ENABLING A FLAG.** Both flags are off, and the
 > work below exists to earn the right to turn them on — not to assume it.
+
+---
+
+## Status at a glance
+
+| evidence | state |
+|---|---|
+| E1 concurrency on the KV emulator | ✅ satisfied (`a3e2873`) |
+| E2 mutation: remove the policy lock | ✅ satisfied — fails 5 of 8 tests |
+| **E3 Preview against real Upstash** | ⬜ **OPEN — the remaining blocker** |
+| E4 dry-run capability | ✅ satisfied (`c1deff4`) |
+| **E4b dry-run RUN against Production** | ⬜ **OPEN** |
+| E5 Production reconcile clean after backfill | ⬜ open |
+| E6 rollback rehearsed with a populated index | ⬜ open |
+
+**Nothing has been run against Production — no backfill, no dry run, no flag change.**
+Both flags remain `false` in code and unset in Production.
+
+The four open items share one property: **none can be produced from a developer machine.**
+E3 needs Preview with the flag on; E4b, E5 and E6 need authorised Production access. Every
+item that *could* be closed locally now has been.
 
 ---
 
@@ -77,12 +98,38 @@ Checked directly in `app/lib/timeclock/open-punch-backfill.ts` and
 
 ## Activation blockers
 
-### B1 — Concurrency is unproven → #189
-Blocks `SINGLE_OPEN_PUNCH_ENABLED`.
+### ~~B1 — Concurrency is unproven~~ → **RESOLVED LOCALLY** (#189, `a3e2873`) — E3 still open
 
-All 25 tests run a **single caller** against an in-memory `Map`. The feature exists to
-arbitrate simultaneous clock-ins, and that scenario is untested. **The most likely place
-for this to be wrong is the place not covered.**
+`scripts/punch-concurrency.test.ts` drives the policy against the **real KV emulator as a
+child process**. That substrate is the point, not a convenience: the policy's lock is
+**distributed** (`SET NX PX` over the store), and a stubbed `fetch` resolves synchronously
+— handing the winner the lock before the loser ever asks. An in-process fake cannot
+express this race at all. The emulator is single-threaded, which is how Redis executes
+commands, so `SET NX` atomicity models production rather than approximating it.
+
+**Flag-ON behaviour, proven:**
+
+- 2-way and 5-way simultaneous clock-ins each produce **exactly one open punch**, asserted
+  by reading the routes back — not by absence of error
+- every loser is refused for a **named** reason (`other_open_punch` / `busy`), never a
+  generic failure
+- a refusal is a **result, never a rejection** (checked with `allSettled`)
+- a refused caller retrying three times still converges on one punch
+- the winner re-tapping its own job does not double-open
+- after a race the index agrees with truth **in both directions**: no `missing` (which
+  would under-report and permit a double clock-in) and no `extra` (which would wrongly
+  block a crew member)
+
+**Flag-OFF baseline, also proven — and it is what makes the above meaningful:** the same
+race with enforcement off produces **TWO open punches**. That is today's behaviour, and
+exactly what the flag exists to stop. Without this baseline the flag-ON assertions could
+pass for reasons unrelated to the policy.
+
+**Mutation validation complete:** removing the distributed lock — same checks, no mutual
+exclusion — **fails 5 of the 8 tests**. The coverage is load-bearing, not decorative.
+
+**What it still does not prove → E3.** No network partition, no Upstash latency, no lease
+expiry under real wall-clock pressure. B1 is closed *locally*; the Preview half is not.
 
 ### ~~B2 — No dry-run before the first backfill~~ → **RESOLVED** (#190, `c1deff4`)
 
@@ -134,9 +181,9 @@ rollback: turning the flag off does not empty the index.
 
 | # | evidence | who verifies |
 |---|---|---|
-| E1 | Concurrent clock-in test on the KV emulator: exactly one punch, losers get `other_open_punch`, retries converge, stale state does not corrupt the index | #189 |
-| E2 | **Mutation:** remove the policy lock → the "exactly one punch" assertion fails | #189 |
-| E3 | Preview run against **real Upstash**, concurrent, flag ON in Preview only | #189 |
+| ~~E1~~ | ~~Concurrent clock-in test on the KV emulator~~ — **SATISFIED** by #189 (`a3e2873`), 8 tests incl. the flag-OFF baseline | ✅ |
+| ~~E2~~ | ~~**Mutation:** remove the policy lock~~ — **SATISFIED**: removing it fails 5 of 8 tests | ✅ |
+| **E3** | **Preview run against real Upstash**, concurrent, flag ON **in Preview only**. **STILL OPEN** — cannot be produced from a developer machine | operator |
 | ~~E4~~ | ~~Dry-run writes zero keys, plan matches the subsequent real run, marker stays absent~~ — **SATISFIED** by #190 (`c1deff4`), 11 tests + 2 mutations | ✅ |
 | **E4b** | **A dry run actually RUN against Production**, reporting the live open-punch population and drift. **Not yet done** — no authorised Production KV access from a developer machine | operator |
 | E5 | Production `reconcile` reports zero drift after backfill | operator |
@@ -152,7 +199,7 @@ Preview and authorised Production access respectively.
 `OPEN_PUNCH_INDEX_ENABLED` may be enabled when **E4b + E5** hold and B3's order is followed.
 E4 is satisfied; the capability exists. What remains is *using* it against Production.
 
-`SINGLE_OPEN_PUNCH_ENABLED` may be enabled when **E1 + E2 + E3** hold, the index has been
+`SINGLE_OPEN_PUNCH_ENABLED` may be enabled when **E3** holds (E1 and E2 are satisfied), the index has been
 on and clean for an observation window, and **B4 has an owner decision recorded**.
 
 Neither may be enabled on the strength of a green local test run alone. The emulator
