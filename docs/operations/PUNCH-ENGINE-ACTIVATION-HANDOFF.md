@@ -5,7 +5,8 @@
 > Everything under *Verified ground truth* was established by direct inspection of the
 > repository and the live system — treat it as fact rather than re-deriving it.
 >
-> **Written:** 2026-08-09 · **Production:** `680d363` / `dpl_DRVCTFMZ2V8tuV3FNBGHyfK1sKSD`
+> **Written:** 2026-08-09 · **Updated:** 2026-08-09 (dry-run shipped, `c1deff4`)
+> **Production:** `680d363` / `dpl_DRVCTFMZ2V8tuV3FNBGHyfK1sKSD`
 >
 > **NOTHING IN THIS DOCUMENT AUTHORISES ENABLING A FLAG.** Both flags are off, and the
 > work below exists to earn the right to turn them on — not to assume it.
@@ -83,12 +84,31 @@ All 25 tests run a **single caller** against an in-memory `Map`. The feature exi
 arbitrate simultaneous clock-ins, and that scenario is untested. **The most likely place
 for this to be wrong is the place not covered.**
 
-### B2 — No dry-run before the first backfill → #190
-Blocks `OPEN_PUNCH_INDEX_ENABLED`.
+### ~~B2 — No dry-run before the first backfill~~ → **RESOLVED** (#190, `c1deff4`)
 
-There is no way to see what a backfill would do without doing it. For a subsystem whose
-failure mode is "a crew member cannot clock in", first-observation-equals-first-write is
-the wrong order on live crew data.
+`planOpenPunchBackfill()` now reports the live population, what a real run would write,
+what it would remove as stale, drift in both directions, and whether the index is already
+authoritative — **without a single write**.
+
+Three properties are enforced rather than intended, each pinned by a test:
+
+- **takes no lease**, so a planning run can never block the real run it is planning
+- **never writes the ready marker** — the one write that changes how the system behaves
+- **never calls** `markPunchOpen` / `markPunchClosed`
+
+The route's dry-run branch returns *before* `runId` is minted, so a planning request is
+structurally incapable of falling through into a real backfill.
+
+Verified against the **real KV emulator as a child process** — the entire store dump is
+compared before and after, which catches a rewritten value a key-count would miss.
+Mutation-checked twice: making the planner write entries fails the no-writes test; making
+it write the marker fails four tests including authoritativeness.
+
+**Surface:** `POST /api/admin/operations/punch-index` with `{ "action": "backfill", "dryRun": true }`
+(permission: `settings:manage`).
+
+**B2 is resolved as a capability. It has NOT been exercised against Production** — see the
+open item below.
 
 ### B3 — Flag order is load-bearing
 An index that is authoritative but **unpopulated** reads as *"nobody has an open punch."*
@@ -117,7 +137,8 @@ rollback: turning the flag off does not empty the index.
 | E1 | Concurrent clock-in test on the KV emulator: exactly one punch, losers get `other_open_punch`, retries converge, stale state does not corrupt the index | #189 |
 | E2 | **Mutation:** remove the policy lock → the "exactly one punch" assertion fails | #189 |
 | E3 | Preview run against **real Upstash**, concurrent, flag ON in Preview only | #189 |
-| E4 | Dry-run writes zero keys, plan matches the subsequent real run, marker stays absent | #190 |
+| ~~E4~~ | ~~Dry-run writes zero keys, plan matches the subsequent real run, marker stays absent~~ — **SATISFIED** by #190 (`c1deff4`), 11 tests + 2 mutations | ✅ |
+| **E4b** | **A dry run actually RUN against Production**, reporting the live open-punch population and drift. **Not yet done** — no authorised Production KV access from a developer machine | operator |
 | E5 | Production `reconcile` reports zero drift after backfill | operator |
 | E6 | Rollback rehearsed: flag off with a populated index leaves behaviour unchanged | B5 |
 
@@ -128,7 +149,8 @@ Preview and authorised Production access respectively.
 
 ## Completion criteria
 
-`OPEN_PUNCH_INDEX_ENABLED` may be enabled when **E4 + E5** hold and B3's order is followed.
+`OPEN_PUNCH_INDEX_ENABLED` may be enabled when **E4b + E5** hold and B3's order is followed.
+E4 is satisfied; the capability exists. What remains is *using* it against Production.
 
 `SINGLE_OPEN_PUNCH_ENABLED` may be enabled when **E1 + E2 + E3** hold, the index has been
 on and clean for an observation window, and **B4 has an owner decision recorded**.
@@ -143,9 +165,12 @@ wall-clock pressure — so a green local run is necessary and *not sufficient*.
 
 - No authenticated Production UI verification was performed; admin surfaces were proven to
   exist and be auth-gated (`401`), not visually confirmed.
-- No Production data was inspected. How many open punches exist today — and therefore how
-  large the first backfill is — is **unknown** and should be measured by a dry run (#190)
-  before anything is written.
+- **No Production backfill has been performed — real or dry.** The dry-run capability now
+  exists (#190, `c1deff4`) but has never been pointed at Production, because no authorised
+  Production KV access exists from a developer machine. **How many open punches exist
+  today, and therefore how large the first backfill is, remains UNKNOWN.** Running the dry
+  run is the next operator action, and it is safe: it writes nothing and cannot make the
+  index authoritative.
 - Test coverage above is measured by reference and by mutation, not by exhaustive audit.
   Two coverage claims in this repo have already proven vacuous under mutation, so treat
   counts as a floor.
