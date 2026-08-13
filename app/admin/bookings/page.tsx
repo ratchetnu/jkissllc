@@ -1463,15 +1463,31 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
           <StatusBadge s={b.status} />
           <button type="button" onClick={primary.onClick} className="hidden sm:block text-xs font-bold px-3 py-1.5 rounded-lg shrink-0" style={{ background: 'var(--red)', color: '#fff' }}>{primary.label}</button>
         </div>
-        <div className="flex gap-1.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }} role="tablist" aria-label="Booking sections">
-          {visibleTabs.map(([k, label]) => (
-            <button key={k} role="tab" aria-selected={tabKey === k} onClick={() => setTabKey(k as typeof tabKey)} style={{
-              fontSize: 13, fontWeight: 800, padding: '7px 14px', borderRadius: 10, whiteSpace: 'nowrap', cursor: 'pointer', border: '1px solid',
-              background: tabKey === k ? 'var(--red)' : 'rgba(255,255,255,.05)',
-              borderColor: tabKey === k ? 'var(--red)' : 'rgba(255,255,255,.1)',
-              color: tabKey === k ? '#fff' : 'var(--muted)',
-            }}>{label}</button>
-          ))}
+        {/* Apple-style segmented control.
+            One recessed TRACK holding the segments, rather than separately bordered
+            pills: the group reads as a single control and the eye follows the thumb
+            instead of re-parsing every outline. The selected segment is a neutral
+            RAISED thumb (lighter fill + hairline shadow), not a saturated brand fill —
+            accent colour belongs on actions, and a tab bar is navigation. Weight drops
+            800 → 590/450 with slight negative tracking; that is most of what stops it
+            shouting. Tab count here is variable (the shadow tab is conditional), so the
+            track hugs its content via inline-flex. */}
+        <div className="overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+          <div role="tablist" aria-label="Booking sections" style={{
+            display: 'inline-flex', gap: 2, padding: 2, borderRadius: 10,
+            background: 'rgba(118,118,128,.18)',
+          }}>
+            {visibleTabs.map(([k, label]) => (
+              <button key={k} role="tab" aria-selected={tabKey === k} onClick={() => setTabKey(k as typeof tabKey)} style={{
+                fontSize: 13, fontWeight: tabKey === k ? 590 : 450, letterSpacing: '-.01em',
+                padding: '5px 13px', borderRadius: 8, whiteSpace: 'nowrap', cursor: 'pointer', border: 'none',
+                background: tabKey === k ? 'rgba(118,118,128,.52)' : 'transparent',
+                color: tabKey === k ? '#fff' : 'var(--muted)',
+                boxShadow: tabKey === k ? '0 1px 2px rgba(0,0,0,.30), 0 0 0 .5px rgba(0,0,0,.12)' : 'none',
+                transition: 'background .18s ease, color .18s ease',
+              }}>{label}</button>
+            ))}
+          </div>
         </div>
       </div>
 
