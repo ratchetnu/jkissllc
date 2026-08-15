@@ -77,6 +77,29 @@ export function analysisOutputTokenBudget(photoCount: number): number {
   return Math.min(8000, 2000 + n * 600)
 }
 
+/**
+ * Wall-clock allowance for the analysis call, DERIVED from the output budget.
+ *
+ * These two numbers are coupled in reality and were independent in code, which is a bug
+ * waiting to happen and duly happened: raising the token budget from 1600 to 5600
+ * without touching the 30s default turned a truncation failure into a timeout failure
+ * (60,008ms recorded = exactly 2 x 30s, $0 billed, nothing completed). Deriving the
+ * timeout from the budget makes that particular drift impossible — you cannot raise one
+ * and forget the other, because there is only one to raise.
+ *
+ * Sizing comes from measurement, not guesswork: a 6-photo job generating 1600 tokens
+ * completed in 25.5s, implying ~10s of fixed overhead (image fetch, input processing)
+ * and ~107 output tokens/sec. 12ms per token is roughly that with margin. The ceiling
+ * keeps a pathological call from eating a whole function invocation.
+ *
+ * This is the DURABLE-worker allowance. Interactive callers still pin their own, much
+ * tighter slice and it continues to win — a customer waiting on a page must never
+ * inherit a worker's patience.
+ */
+export function analysisTimeoutMs(photoCount: number): number {
+  return Math.min(150_000, 20_000 + analysisOutputTokenBudget(photoCount) * 12)
+}
+
 export type AnalysisRead = {
   raw?: unknown
   /** The model stopped because it hit the token cap — the JSON is cut off. */
@@ -174,9 +197,11 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
     messages,
     maxOutputTokens: analysisOutputTokenBudget(photos.length),
     temperature: 0.2,
-    // Interactive callers pin an explicit slice + single shot; the durable worker
-    // passes neither and keeps the platform default timeout and retry.
-    ...(input.timeoutMs && input.timeoutMs > 0 ? { timeoutMs: input.timeoutMs } : {}),
+    // Interactive callers pin an explicit slice + single shot and it still wins. The
+    // durable worker no longer falls back to the platform's 30s default: that default is
+    // sized for a small text call, and a multi-photo vision generation cannot finish
+    // inside it — it just burns both attempts and bills nothing.
+    timeoutMs: input.timeoutMs && input.timeoutMs > 0 ? input.timeoutMs : analysisTimeoutMs(photos.length),
     ...(input.attempts && input.attempts > 0 ? { attempts: input.attempts } : {}),
     requestChars: photos.join(',').length,
     // Telemetry attribution: the authoritative (primary) V1 Book Now vision pass.

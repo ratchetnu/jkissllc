@@ -20,7 +20,7 @@ import test from 'node:test'
 process.env.KV_REST_API_URL = 'http://fake-upstash.local'
 process.env.KV_REST_API_TOKEN = 'test-token'
 
-import { analysisOutputTokenBudget, readAnalysisResponse } from '../app/lib/ai/junk-analysis'
+import { analysisOutputTokenBudget, analysisTimeoutMs, readAnalysisResponse } from '../app/lib/ai/junk-analysis'
 import { normalizeAnalysis, type NormalizeCtx } from '../app/lib/ai/analysis-schema'
 
 const CTX: NormalizeCtx = {
@@ -135,6 +135,48 @@ test('T6: the budget scales with photo count and clears the value that failed', 
   assert.ok(analysisOutputTokenBudget(6) > analysisOutputTokenBudget(1), 'more photos, more output')
   assert.equal(analysisOutputTokenBudget(1), 2600)
   assert.equal(analysisOutputTokenBudget(6), 5600)
+})
+
+// ── T7 — the budget and the clock must move together ─────────────────────────
+
+test('T7: raising the budget without the clock is what actually failed in production', () => {
+  // The first attempt at this fix raised the token budget alone. The 6-photo job then
+  // recorded 60,008ms across 2 attempts — exactly 2 x the 30s platform default — and
+  // billed $0, because neither attempt ever finished generating. A truncation bug had
+  // become a timeout bug.
+  //
+  // Measured throughput: 1600 tokens + 6 images completed in 25,564ms, i.e. ~10s fixed
+  // overhead and ~107 output tokens/sec. The allowance must clear that for the budget
+  // it is paired with, or the pairing is a slow trap.
+  const PLATFORM_DEFAULT_MS = 30_000
+  const OVERHEAD_MS = 10_000
+  const OBSERVED_TOKENS_PER_SEC = 107
+
+  for (const photos of [1, 3, 6, 8]) {
+    const budget = analysisOutputTokenBudget(photos)
+    const needMs = OVERHEAD_MS + (budget / OBSERVED_TOKENS_PER_SEC) * 1000
+    assert.ok(analysisTimeoutMs(photos) > needMs,
+      `${photos} photos: ${analysisTimeoutMs(photos)}ms must exceed the ~${Math.round(needMs)}ms this budget needs`)
+  }
+
+  // And specifically: the six-photo case that timed out must now have room.
+  assert.ok(analysisTimeoutMs(6) > PLATFORM_DEFAULT_MS * 2,
+    'the 6-photo job burned both 30s attempts — the allowance has to clear that outright')
+})
+
+test('T7: the timeout is DERIVED from the budget, so the two cannot drift apart', () => {
+  // This is the structural guarantee, not a magic number: whenever the budget rises the
+  // allowance rises with it. Anyone tuning the budget in future gets the clock for free.
+  const pairs = [1, 2, 4, 6, 8].map(n => [analysisOutputTokenBudget(n), analysisTimeoutMs(n)] as const)
+  for (let i = 1; i < pairs.length; i++) {
+    const [prevBudget, prevMs] = pairs[i - 1]
+    const [budget, ms] = pairs[i]
+    assert.ok(budget >= prevBudget)
+    assert.ok(ms >= prevMs, 'a larger budget must never come with a smaller allowance')
+    if (budget > prevBudget) assert.ok(ms > prevMs, 'and a strictly larger budget needs strictly more time')
+  }
+  // Bounded, like the budget it follows.
+  assert.ok(analysisTimeoutMs(999) <= 150_000)
 })
 
 test('T6: the budget is bounded and total on junk input', () => {
