@@ -1,14 +1,78 @@
-import { generateText, type ModelMessage } from 'ai'
+import { generateText, type ModelMessage, type LanguageModel } from 'ai'
+import { anthropic } from '@ai-sdk/anthropic'
 
-// Single entry point for all AI features. Uses the Vercel AI Gateway via a plain
-// "provider/model" string (auto-authenticated by VERCEL_OIDC_TOKEN in prod, or an
-// AI_GATEWAY_API_KEY). Everything fails soft so a missing key / no credits never
-// breaks a page — the caller just shows a friendly "AI unavailable" message.
+// Single entry point for all AI features. Everything fails soft so a missing key /
+// no credits never breaks a page — the caller just shows a friendly "AI unavailable"
+// message.
+//
+// TWO TRANSPORTS, ONE MODEL IDENTITY. A model is named everywhere in this codebase by
+// its canonical "provider/model" string — routing.ts resolves one, cost-tables.ts is
+// keyed on one, and telemetry records one. That string is the model's IDENTITY and it
+// does NOT change with the transport. Only `resolveModel()` below knows the difference,
+// and it converts the identity into whatever the active transport wants at the last
+// possible moment.
+//
+// Keeping identity and transport separate is what makes the switch measurable: the same
+// feature bills against the same cost-table row and writes the same `model` field to
+// telemetry whether it went through the Gateway or straight to Anthropic, so a
+// before/after comparison is about latency and cost — not about renamed dimensions.
 
 const MODEL = process.env.AI_MODEL || 'anthropic/claude-sonnet-4-6'
 
+export type AiProvider = 'gateway' | 'anthropic'
+
+/**
+ * Which transport carries model calls. Defaults to 'gateway' — the historical
+ * behavior — so this module is inert until AI_PROVIDER is deliberately set.
+ */
+export function aiProvider(): AiProvider {
+  return (process.env.AI_PROVIDER ?? '').trim().toLowerCase() === 'anthropic'
+    ? 'anthropic'
+    : 'gateway'
+}
+
+/**
+ * Convert a canonical "provider/model" identity into a model the active transport can
+ * call.
+ *
+ * Gateway: the AI SDK takes the string as-is and routes on the prefix.
+ * Anthropic: the prefix is the Gateway's routing syntax, not part of the model id, so
+ *   it is stripped — `anthropic/claude-sonnet-4-6` → `claude-sonnet-4-6`.
+ *
+ * A non-Anthropic model under AI_PROVIDER=anthropic THROWS rather than substituting a
+ * default. Silently serving a different model than the one routing.ts selected would
+ * corrupt every downstream number — cost is priced against the requested identity and
+ * quality scores are attributed to it — and it would do so invisibly, since the call
+ * would still succeed. A loud config failure is recoverable; a quiet wrong model is not.
+ */
+export function resolveModel(id: string, provider: AiProvider = aiProvider()): LanguageModel {
+  if (provider === 'gateway') return id
+  const slash = id.indexOf('/')
+  if (slash === -1) return anthropic(id)          // already a bare Anthropic model id
+  const prefix = id.slice(0, slash)
+  if (prefix !== 'anthropic') {
+    throw new Error(
+      `AI config error: AI_PROVIDER=anthropic cannot serve "${id}". ` +
+      `Route this feature to an anthropic/* model or set AI_PROVIDER=gateway.`,
+    )
+  }
+  return anthropic(id.slice(slash + 1))
+}
+
+/**
+ * Whether a credential for the ACTIVE transport is present.
+ *
+ * Note this has always been — and remains — a presence check, not a proof of working
+ * credit. On the Gateway path it is especially weak: VERCEL_OIDC_TOKEN is set on every
+ * Vercel runtime, so this returns true even with a zero Gateway balance, and every call
+ * then fails at request time while health reports green. The Anthropic path at least
+ * requires a real key to be configured. Use /api/diagnostics/ai-provider to learn
+ * whether calls actually succeed.
+ */
 export function aiConfigured(): boolean {
-  return Boolean(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN)
+  return aiProvider() === 'anthropic'
+    ? Boolean(process.env.ANTHROPIC_API_KEY)
+    : Boolean(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN)
 }
 
 // Bounded external-model call timeout. A client-side abort after this many ms keeps a
@@ -20,7 +84,7 @@ export function aiCallTimeoutMs(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : 30_000
 }
 
-export type AiErrorKind = 'timeout' | 'validation' | 'provider' | 'unknown'
+export type AiErrorKind = 'timeout' | 'validation' | 'provider' | 'config' | 'unknown'
 
 function errName(e: unknown): string {
   return typeof e === 'object' && e !== null && typeof (e as { name?: unknown }).name === 'string'
@@ -44,6 +108,11 @@ export function classifyAiError(e: unknown): { kind: AiErrorKind; retryable: boo
   if (name === 'TimeoutError' || name === 'AbortError' || /\btimed?\s?out\b|\babort/i.test(msg)) {
     return { kind: 'timeout', retryable: true }
   }
+  // Must precede the generic branches: a transport/model misconfiguration matches none
+  // of their patterns, so without this it would fall through to 'unknown' and be
+  // RETRIED — burning the whole attempt budget re-issuing a call that cannot succeed
+  // until a human edits an env var.
+  if (/^AI config error:/.test(msg)) return { kind: 'config', retryable: false }
   if (/schema|invalid|parse|validation|unsupported/i.test(msg)) return { kind: 'validation', retryable: false }
   if (/credit|quota|billing|payment|insufficient|unauthor|forbidden|api key|token/i.test(msg)) return { kind: 'provider', retryable: false }
   return { kind: 'unknown', retryable: true } // default: treat unknown as transient
@@ -51,13 +120,49 @@ export function classifyAiError(e: unknown): { kind: AiErrorKind; retryable: boo
 
 export type AiResult = { ok: true; text: string } | { ok: false; error: string; retryable?: boolean; errorKind?: AiErrorKind }
 
-function friendlyError(e: unknown): string {
+/**
+ * CUSTOMER-FACING text. `POST /api/ai/photo-estimate` returns this verbatim in its 503
+ * body, so whatever is written here is read by the public.
+ *
+ * It previously named our infrastructure: a depleted balance rendered as "AI Gateway
+ * needs credits enabled on your Vercel account to use this", and an auth failure as
+ * "Enable Vercel AI Gateway for this project" — shipped to a customer who uploaded a
+ * photo. That disclosed the vendor, the account model, and the fact that we were the
+ * ones who were broken. None of it is actionable by the reader.
+ *
+ * Billing and auth are now one customer-visible state ("temporarily unavailable"),
+ * because to a customer they ARE one state. Operators lose nothing: the raw error still
+ * reaches the log with a provider-aware hint (see operatorHint), and telemetry keeps the
+ * machine-readable `errorKind`/`errorClass` that the retry policy and dashboards use.
+ */
+export function friendlyError(e: unknown): string {
   const msg = errMsg(e)
   const name = errName(e)
   if (name === 'TimeoutError' || name === 'AbortError' || /\btimed?\s?out\b/i.test(msg)) return 'The AI request timed out — please try again in a moment.'
-  if (/credit|quota|billing|payment|insufficient/i.test(msg)) return 'AI Gateway needs credits enabled on your Vercel account to use this.'
-  if (/unauthor|forbidden|api key|token/i.test(msg)) return 'AI is not connected. Enable Vercel AI Gateway for this project.'
+  if (/^AI config error:/.test(msg)) return 'AI is temporarily unavailable. Please try again shortly.'
+  if (/credit|quota|billing|payment|insufficient|unauthor|forbidden|api key|token/i.test(msg)) return 'AI is temporarily unavailable. Please try again shortly.'
   return 'The AI request failed — please try again in a moment.'
+}
+
+/**
+ * OPERATOR-facing remediation hint, logged next to the raw error — never returned to a
+ * caller. Names the transport that actually failed, so "top up the wrong vendor" is not
+ * a possible response to an outage.
+ */
+export function operatorHint(e: unknown): string {
+  const msg = errMsg(e)
+  if (/^AI config error:/.test(msg)) return 'fix AI_PROVIDER / per-feature model routing'
+  const billing = /credit|quota|billing|payment|insufficient/i.test(msg)
+  const auth = /unauthor|forbidden|api key|token/i.test(msg)
+  if (!billing && !auth) return ''
+  if (aiProvider() === 'anthropic') {
+    return billing
+      ? 'Anthropic organization credits are exhausted — top up or enable auto-reload'
+      : 'ANTHROPIC_API_KEY is missing, revoked, or lacks access to the routed model'
+  }
+  return billing
+    ? 'Vercel AI Gateway credits are exhausted — add credits on the Vercel account'
+    : 'AI Gateway is not authenticated (AI_GATEWAY_API_KEY / OIDC)'
 }
 
 export function aiModel(): string { return MODEL }
@@ -106,7 +211,9 @@ export async function generateAI(opts: {
   const timeoutMs = opts.timeoutMs && opts.timeoutMs > 0 ? opts.timeoutMs : aiCallTimeoutMs()
   try {
     const res = await generateText({
-      model,
+      // `model` (the canonical "provider/model" string) stays the identity recorded in
+      // the result and in telemetry; only the transport-specific handle is resolved here.
+      model: resolveModel(model),
       system: opts.system,
       ...(opts.messages ? { messages: opts.messages } : { prompt: opts.prompt ?? '' }),
       maxOutputTokens: opts.maxOutputTokens ?? 700,
@@ -129,7 +236,8 @@ export async function generateAI(opts: {
     // A bounded-timeout abort is recorded as a TRANSIENT failure so the caller's retry
     // policy re-attempts it; credit/auth/validation errors stay non-retryable.
     const cls = classifyAiError(e)
-    console.error('[ai]', cls.kind, e)
+    const hint = operatorHint(e)
+    console.error('[ai]', aiProvider(), cls.kind, e, ...(hint ? ['—', hint] : []))
     return { ok: false, error: friendlyError(e), retryable: cls.retryable, errorKind: cls.kind }
   }
 }
@@ -146,7 +254,7 @@ export async function aiText(opts: {
   // so features light up automatically once the Gateway is enabled (no redeploy).
   try {
     const { text } = await generateText({
-      model: MODEL,
+      model: resolveModel(MODEL),
       system: opts.system,
       ...(opts.messages ? { messages: opts.messages } : { prompt: opts.prompt ?? '' }),
       maxOutputTokens: opts.maxOutputTokens ?? 700,
@@ -156,7 +264,8 @@ export async function aiText(opts: {
     return { ok: true, text: text.trim() }
   } catch (e) {
     const cls = classifyAiError(e)
-    console.error('[ai]', cls.kind, e)
+    const hint = operatorHint(e)
+    console.error('[ai]', aiProvider(), cls.kind, e, ...(hint ? ['—', hint] : []))
     return { ok: false, error: friendlyError(e), retryable: cls.retryable, errorKind: cls.kind }
   }
 }
