@@ -137,6 +137,40 @@ test('T6: the budget scales with photo count and clears the value that failed', 
   assert.equal(analysisOutputTokenBudget(6), 5600)
 })
 
+// ── T8 — the analyzer must fit inside the worker's deadline ──────────────────
+
+test('T8: one attempt at the largest photo set fits the durable per-job deadline', async () => {
+  // The layer above the analyzer enforces a graceful 150s per-job deadline, and it is
+  // the analyzer's allowance that has to fit inside it. When the allowance became
+  // photo-count-scaled this stopped being free: at 2 attempts an 8-photo set came to
+  // ~204s against a 150s deadline, so a large job that hit one transient blip could
+  // never finish — the retry meant to rescue it was what guaranteed it failed.
+  const { DEFAULT_AI_JOB_DEADLINE_MS } = await import('../app/lib/book-now-ai')
+  const { durableBudget } = await import('../app/lib/ai/interactive-policy')
+
+  const attempts = durableBudget().primary(0).attempts
+  assert.equal(attempts, 1, 'the durable path must take exactly one attempt per tick')
+
+  const worst = analysisTimeoutMs(8) * attempts
+  assert.ok(worst < DEFAULT_AI_JOB_DEADLINE_MS,
+    `worst-case analysis ${worst}ms must fit inside the ${DEFAULT_AI_JOB_DEADLINE_MS}ms job deadline`)
+
+  // MUTATION GUARD: this is what the old two-attempt policy produced. Pinned so that
+  // restoring it, or raising the budget far enough, fails here instead of in production
+  // as a large booking that quietly never completes.
+  assert.ok(analysisTimeoutMs(8) * 2 > DEFAULT_AI_JOB_DEADLINE_MS,
+    'two attempts would NOT fit — that is the regression this guards')
+})
+
+test('T8: the critic still has room after the largest primary read', async () => {
+  // Both stages run inside the same per-job deadline. The critic keeps the platform
+  // default allowance, so headroom has to survive the biggest primary read.
+  const { DEFAULT_AI_JOB_DEADLINE_MS } = await import('../app/lib/book-now-ai')
+  const CRITIC_DEFAULT_MS = 30_000
+  assert.ok(analysisTimeoutMs(8) + CRITIC_DEFAULT_MS < DEFAULT_AI_JOB_DEADLINE_MS,
+    'primary + critic must fit the deadline, or the verification silently stops running')
+})
+
 // ── T7 — the budget and the clock must move together ─────────────────────────
 
 test('T7: raising the budget without the clock is what actually failed in production', () => {

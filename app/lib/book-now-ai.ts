@@ -45,7 +45,7 @@ const BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000] // 1m, 5m, 15m
 // = "kept reloading"). Env-overridable; must stay comfortably below the cron route's
 // maxDuration (300s). Raising the worker budget from 60s→300s means most legitimate
 // heavy analyses now finish well within this deadline; only true hangs degrade.
-const DEFAULT_AI_JOB_DEADLINE_MS = 150_000
+export const DEFAULT_AI_JOB_DEADLINE_MS = 150_000
 function aiJobDeadlineMs(): number {
   const raw = Number(process.env.AI_JOB_DEADLINE_MS)
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_AI_JOB_DEADLINE_MS

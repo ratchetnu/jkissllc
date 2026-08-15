@@ -94,10 +94,16 @@ test('the durable worker is explicitly NOT on this budget', () => {
   const d = durableBudget()
   assert.equal(d.mode, 'durable')
   assert.equal(d.remainingMs(T0), Number.POSITIVE_INFINITY)
-  // 0/0 is read downstream as "no override" — the platform default timeout and the
-  // AI service's retry stay in force, and the worker keeps its own 150s deadline.
-  assert.deepEqual(d.primary(T0), { timeoutMs: 0, attempts: 0 })
-  assert.deepEqual(d.critic(T0), { timeoutMs: 0, attempts: 0 })
+  // timeoutMs 0 is still "no override" — the analyzer's own photo-count-scaled
+  // allowance applies and the worker keeps its 150s deadline.
+  //
+  // attempts is NOT a passthrough any more. It is pinned to 1 because the retry lives on
+  // the booking (MAX_ATTEMPTS, 1m/5m/15m/1h backoff), so a second attempt inside the call
+  // added no resilience and consumed the deadline: at ~102s per attempt for an 8-photo
+  // set, two attempts came to ~204s against a 150s deadline, and the retry meant to
+  // rescue a blip was what guaranteed the job failed.
+  assert.deepEqual(d.primary(T0), { timeoutMs: 0, attempts: 1 })
+  assert.deepEqual(d.critic(T0), { timeoutMs: 0, attempts: 1 })
   assert.equal(isSkipped(d.critic(T0), 'durable'), false, 'a durable critic is never budget-skipped')
 })
 
@@ -170,7 +176,10 @@ test('durable: no timeout or attempt override — the worker keeps its own polic
   const h = harness()
   const res = await buildPhotoEstimate({ ...input }, h.deps)   // no budget ⇒ durable
   assert.equal(h.analyzeCalls[0].timeoutMs, 0, '0 ⇒ no override, platform default applies')
-  assert.equal(h.analyzeCalls[0].attempts, 0, '0 ⇒ no override, the service retry applies')
+  assert.equal(h.analyzeCalls[0].attempts, 1,
+    'attempts is now an explicit pin, not a passthrough: the booking owns the retry ladder '
+    + '(MAX_ATTEMPTS with 1m/5m/15m/1h backoff), so a second attempt inside the call only '
+    + 'consumed the 150s per-job deadline and stopped large photo sets from ever finishing')
   assert.equal(res.degraded, undefined)
   assert.equal(res.stored.latency, undefined, 'durable runs record no interactive latency accounting')
 })
