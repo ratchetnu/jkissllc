@@ -92,7 +92,11 @@ test('the moving cap is 2400 and the junk cap is untouched', async () => {
   assert.equal(MOVING_MAX_OUTPUT_TOKENS, 2400)
   const junk = await import('node:fs').then(fs =>
     fs.readFileSync(new URL('../app/lib/ai/junk-analysis.ts', import.meta.url), 'utf8'))
-  assert.match(junk, /maxOutputTokens: 1600/, 'the junk lane keeps its own cap — this PR must not move it')
+  // Junk keeps its own cap — now a photo-count-scaled budget rather than a flat
+  // literal, after a six-photo job truncated against the old 1600 and silently
+  // discarded the entire read (JK-B-1022).
+  assert.match(junk, /analysisOutputTokenBudget\(photos\.length\)/, 'the junk lane keeps its own cap — this PR must not move it')
+  assert.doesNotMatch(junk, /MOVING_MAX_OUTPUT_TOKENS/, 'the lanes stay independent')
 })
 
 // ── compact parsing ──────────────────────────────────────────────────────────

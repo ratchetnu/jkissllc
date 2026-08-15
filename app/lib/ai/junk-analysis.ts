@@ -56,6 +56,64 @@ export type AnalyzeJunkPhotosResult = {
 
 const providerOf = (model: string): string => (model.includes('/') ? model.split('/')[0] : 'vercel-ai-gateway')
 
+/**
+ * Output-token budget for the analysis, scaled by how many photos are in the set.
+ *
+ * This was a flat 1600 for every job. The response contract is large and mostly
+ * PER-ITEM — each `normalizedItems` entry carries eleven fields including a nested
+ * weight range, a sourcePhotoIds array and an evidence string — and there is one
+ * `photoObservations` entry per photo on top. A six-photo cleanout therefore needs
+ * several times the output of a one-photo pickup, and on JK-B-1022 it hit the cap
+ * exactly (output = 1600, arithmetic confirmed against the recorded cost), truncating
+ * the JSON mid-object and discarding the entire read.
+ *
+ * A flat cap has to be sized for the WORST case or it silently fails on large jobs; but
+ * sizing a flat cap for the worst case pays for headroom on every small one. Scaling
+ * removes the tradeoff. The ceiling stays well under the model's limit so a runaway
+ * response is still bounded — this raises a budget, it does not remove one.
+ */
+export function analysisOutputTokenBudget(photoCount: number): number {
+  const n = Math.max(1, Math.min(8, Math.floor(photoCount) || 1))
+  return Math.min(8000, 2000 + n * 600)
+}
+
+export type AnalysisRead = {
+  raw?: unknown
+  /** The model stopped because it hit the token cap — the JSON is cut off. */
+  truncated: boolean
+  /** No JSON object could be recovered from the response text. */
+  parseFailed: boolean
+}
+
+/**
+ * Turn a model response into either a parsed object or a NAMED failure.
+ *
+ * Exported and pure so the failure branches can be driven directly. Reaching them
+ * through `analyzeJunkPhotos` needs a live model call, which is exactly the shape of
+ * gap that let the silent-parse-failure bug live in production: the route-level path
+ * short-circuits long before here, so these branches went untested while coverage
+ * looked fine.
+ *
+ * Truncation is checked FIRST and independently of parsing, because a truncated
+ * response can still parse by luck — the regex ends at the last `}` it finds, which may
+ * close a nested object and yield syntactically valid but semantically amputated JSON.
+ * Trusting that would silently price a job off a partial inventory, which is worse than
+ * failing: it produces a confident wrong number instead of a review.
+ */
+export function readAnalysisResponse(
+  text: string,
+  meta: { finishReason?: string; outputTruncated?: boolean } = {},
+): AnalysisRead {
+  const truncated = meta.outputTruncated === true || meta.finishReason === 'length'
+  try {
+    const m = String(text ?? '').match(/\{[\s\S]*\}/)
+    if (!m) return { truncated, parseFailed: true }
+    return { raw: JSON.parse(m[0]), truncated, parseFailed: false }
+  } catch {
+    return { truncated, parseFailed: true }
+  }
+}
+
 /** Which primary-analysis prompt spec runs. Flag OFF ⇒ the shipped v1 spec. */
 export function analysisTaskId(env: Record<string, string | undefined> = process.env): string {
   return isEnabled('AI_COMPACT_ANALYSIS_PROMPT', env) ? 'ops.junkAnalysisCompact' : 'ops.junkAnalysis'
@@ -114,7 +172,7 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
     feature: 'ops.junkAnalysis',
     vars: await truckVars(),
     messages,
-    maxOutputTokens: 1600,
+    maxOutputTokens: analysisOutputTokenBudget(photos.length),
     temperature: 0.2,
     // Interactive callers pin an explicit slice + single shot; the durable worker
     // passes neither and keeps the platform default timeout and retry.
@@ -147,8 +205,44 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
 
   // runAiTask ran without the flat schema (the shape is nested), so parse here and
   // hand the raw object to the robust normalizer.
-  let raw: unknown
-  try { const m = res.text.match(/\{[\s\S]*\}/); if (m) raw = JSON.parse(m[0]) } catch { raw = undefined }
+  //
+  // WHY THIS IS NOT JUST `try { JSON.parse } catch {}` ANY MORE. It used to be, and the
+  // failure was invisible in a way that cost a real booking. On JK-B-1022 the model was
+  // cut off at the token cap mid-object; the regex still matched a prefix ending at some
+  // inner `}`, `JSON.parse` threw, the catch set `raw = undefined`, and
+  // `normalizeAnalysis({})` then FABRICATED a complete-looking analysis out of pure
+  // defaults — zero items, every confidence 0, every condition false, truck loads
+  // 0.7/1/1.4, and one synthesized photoObservation per URL with imageQuality
+  // 'limited'. Downstream that reads as "the AI looked and found nothing", so the
+  // booking went to manual review while `runAiTask` recorded outcome=success and the
+  // dashboards showed a clean call. Nothing anywhere said "we threw the answer away".
+  //
+  // So: a response we could not read is now a FAILURE with its own outcome, and it
+  // returns the honest review fallback rather than a fabricated analysis.
+  const read = readAnalysisResponse(res.text, res)
+  const { raw, truncated, parseFailed } = read
+
+  if (truncated || parseFailed) {
+    // Truncation is reported separately from an unreadable-for-other-reasons response
+    // because they have different fixes: one is a token budget, the other is a prompt or
+    // a model that stopped emitting JSON. Collapsing them into one bucket is what made
+    // this take a booking-shaped outage to notice.
+    const outcome = truncated ? 'output_truncated' : 'unparseable_response'
+    markStageFailure('provider', res.latencyMs, outcome, false)
+    void updateAiCall(res.callId, { manualReviewReason: outcome })
+    return {
+      analysis: reviewFallbackAnalysis(ctx, [
+        truncated
+          ? 'The automated read was cut off before it finished. A team member will review your photos.'
+          : 'The automated read could not be interpreted. A team member will review your photos.',
+      ]),
+      ok: false,
+      callId: res.callId,
+      model: res.model,
+      latencyMs: res.latencyMs,
+      outcome,
+    }
+  }
 
   const analysis = normalizeAnalysis(raw, { ...ctx, modelName: res.model, modelProvider: providerOf(res.model) })
   const usable = analysis.normalizedItems.length > 0

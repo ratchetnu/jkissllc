@@ -153,7 +153,10 @@ test('the caps and lane separation the specification claims are the ones in forc
   const movingSrc = fs.readFileSync(new URL('../app/lib/ai/moving-analysis.ts', import.meta.url), 'utf8')
   const junkSrc = fs.readFileSync(new URL('../app/lib/ai/junk-analysis.ts', import.meta.url), 'utf8')
   assert.match(movingSrc, /MOVING_MAX_OUTPUT_TOKENS = 2400/)
-  assert.match(junkSrc, /maxOutputTokens: 1600/, 'the junk ceiling is unchanged by this work')
+  // Junk now scales its ceiling with photo count; the invariant this test guards is
+  // that the junk ceiling is its OWN, not moving's.
+  assert.match(junkSrc, /analysisOutputTokenBudget\(photos\.length\)/, 'the junk ceiling is unchanged by this work')
+  assert.doesNotMatch(junkSrc, /MOVING_MAX_OUTPUT_TOKENS/, 'the lanes stay independent')
   // Separate schemas and normalizers — the property §1 exists to protect.
   assert.match(movingSrc, /normalizeMovingAnalysis/)
   assert.match(junkSrc, /normalizeAnalysis/)

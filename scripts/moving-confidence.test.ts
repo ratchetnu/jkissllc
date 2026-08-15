@@ -163,7 +163,11 @@ test('the compact schema, caps and junk behaviour are untouched', async () => {
   const moving = fs.readFileSync(new URL('../app/lib/ai/moving-analysis.ts', import.meta.url), 'utf8')
   const junk = fs.readFileSync(new URL('../app/lib/ai/junk-analysis.ts', import.meta.url), 'utf8')
   assert.match(moving, /MOVING_MAX_OUTPUT_TOKENS = 2400/)
-  assert.match(junk, /maxOutputTokens: 1600/, 'the junk cap is not this PR to change')
+  // The junk lane sizes its own budget from the photo count (see
+  // analysisOutputTokenBudget). What matters here is unchanged: the two lanes have
+  // SEPARATE caps, and moving's must not leak into junk.
+  assert.match(junk, /analysisOutputTokenBudget\(photos\.length\)/, 'the junk cap is not this PR to change')
+  assert.doesNotMatch(junk, /MOVING_MAX_OUTPUT_TOKENS/, 'the lanes stay independent')
   // The junk lane has its own confidence shape and must not gain moving penalties.
   assert.ok(!junk.includes('normalizeConfidence'), 'junk confidence behaviour is unchanged')
   const a = normalizeMovingAnalysis(payload(), ctx())
