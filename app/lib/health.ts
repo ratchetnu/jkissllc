@@ -17,6 +17,8 @@ import { buildId } from './alerts'
 import { twilioConfigured } from './sms'
 import { completionUploadReadiness } from './job-assignment'
 import { tenancyOperatingProfile } from './platform/tenancy/operating-profile'
+// Dependency-free by design — importing ./ai would pull the AI SDK into the health bundle.
+import { resolveAiProvider, providerCredentialPresent, credentialKeysFor } from './ai/provider-config'
 
 export type ComponentStatus = 'ok' | 'degraded' | 'down'
 export type HealthComponent = { name: string; status: ComponentStatus; critical: boolean; detail: string }
@@ -33,6 +35,52 @@ export function summarize(components: HealthComponent[]): OverallStatus {
 type Env = Record<string, string | undefined>
 
 /** Presence-only configuration checks — NEVER the secret value, only whether set. */
+/**
+ * Credential PRESENCE for whichever transport is active. Pure and env-only; the
+ * "does it actually work" half is applied by runHealthChecks when an outcome reader
+ * is supplied.
+ */
+export function aiProviderComponent(env: Env): HealthComponent {
+  const provider = resolveAiProvider(env)
+  const label = provider === 'anthropic' ? 'Anthropic API' : 'Vercel AI Gateway'
+  const present = providerCredentialPresent(env)
+  return {
+    name: 'ai_provider',
+    critical: false,
+    status: present ? 'ok' : 'degraded',
+    detail: present
+      ? `${label} credential present — presence only; reachability and credit are proven by real calls`
+      : `${label} has no credential configured (${credentialKeysFor(provider).join(' / ')}) — analysis falls back to manual review`,
+  }
+}
+
+/**
+ * Downgrade `ai_provider` when the most recent real call FAILED at the provider.
+ *
+ * This is the half a config check can never cover, and the reason the outage was
+ * invisible: credentials were present and the component said ok while every request was
+ * rejected. Billing and auth failures are the ones worth surfacing — they are persistent
+ * and need a human — whereas a one-off timeout is noise, so only provider-class failures
+ * flip it.
+ *
+ * Fail-soft by construction: no reader supplied, a throw, or no calls recorded all leave
+ * the presence verdict untouched. Health must never go red because health itself broke.
+ */
+export function applyObservedAiOutcome(
+  component: HealthComponent,
+  last: { ok: boolean; outcome?: string; errorClass?: string; at?: number } | null | undefined,
+): HealthComponent {
+  if (!last || last.ok) return component
+  const cls = String(last.errorClass ?? '')
+  const persistent = cls === 'billing' || cls === 'auth' || last.outcome === 'provider_error'
+  if (!persistent) return component
+  return {
+    ...component,
+    status: 'degraded',
+    detail: `${component.detail} — LAST CALL FAILED (${last.outcome ?? 'provider_error'}${cls ? `/${cls}` : ''}); AI features are failing soft to manual review`,
+  }
+}
+
 export function configChecks(env: Env): HealthComponent[] {
   const has = (...keys: string[]) => keys.some(k => !!env[k])
   const tenancy = tenancyOperatingProfile(env)
@@ -46,9 +94,21 @@ export function configChecks(env: Env): HealthComponent[] {
     // `storage` above still reads ok. Asserted with the SAME predicate the upload route
     // calls, so readiness cannot drift from what actually gates the upload.
     { name: 'completion_uploads', critical: false, status: completionUploadReadiness(env.BLOB_STORE_ID).ready ? 'ok' : 'degraded', detail: completionUploadReadiness(env.BLOB_STORE_ID).ready ? 'Completion-photo uploads configured' : 'BLOB_STORE_ID not set — crew completion uploads fail closed (blob_store_not_configured)' },
-    // The Vercel AI Gateway authenticates via auto-injected OIDC when deployed on
-    // Vercel (no static key needed), so `VERCEL` presence is a valid "configured".
-    { name: 'ai_provider', critical: false, status: has('AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN', 'VERCEL') ? 'ok' : 'degraded', detail: has('AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN', 'VERCEL') ? 'AI gateway credentials present — runtime availability and credits are verified only by actual calls' : 'AI gateway not configured — analysis falls back to manual review' },
+    // Reports on the ACTIVE transport (AI_PROVIDER), not on the Gateway specifically.
+    //
+    // This previously accepted `VERCEL` as a credential, on the reasoning that the
+    // Gateway auto-authenticates via OIDC on Vercel. But `VERCEL` is set on every Vercel
+    // runtime unconditionally, which made the check structurally incapable of returning
+    // anything but ok — and it duly reported ok throughout a total outage where every
+    // single request came back 402. A signal that cannot go red is not a signal.
+    //
+    // It also only ever knew Gateway credentials, so after the transport switch it was
+    // reporting on a path carrying no traffic. Both the provider rule and the credential
+    // list now come from ai/provider-config, shared with the AI layer itself.
+    //
+    // This remains a PRESENCE check and says so. Whether calls actually succeed is
+    // answered by the observed-outcome upgrade in runHealthChecks below.
+    aiProviderComponent(env),
     { name: 'scheduled_worker', critical: false, status: has('CRON_SECRET') ? 'ok' : 'degraded', detail: has('CRON_SECRET') ? 'Cron secret set' : 'CRON_SECRET not set — durable worker + cron disabled' },
     { name: 'payments', critical: false, status: has('STRIPE_SECRET_KEY') ? 'ok' : 'degraded', detail: has('STRIPE_SECRET_KEY') ? 'Stripe configured' : 'Stripe not configured — card payments disabled' },
     // Taking a card and CONFIRMING it are separate capabilities on the same provider.
@@ -83,6 +143,10 @@ export type HealthDeps = {
   env: Env
   now?: () => number
   build?: string
+  /** Most recent AI call, if the caller wants `ai_provider` backed by observed reality
+   *  rather than env presence alone. Optional and fail-soft — omit it and the report is
+   *  exactly as before. */
+  lastAiCall?: () => Promise<{ ok: boolean; outcome?: string; errorClass?: string; at?: number } | null>
 }
 
 /** Run all checks and produce the report. Injectable for tests. */
@@ -94,7 +158,16 @@ export async function runHealthChecks(deps: HealthDeps): Promise<HealthReport> {
     status: kvOk ? 'ok' : 'down',
     detail: kvOk ? 'Redis/KV read+write OK' : 'Redis/KV unreachable',
   }
-  const components = [kv, ...configChecks(deps.env)]
+  // Observed-outcome upgrade for ai_provider. Wrapped so a telemetry hiccup can never
+  // make the health endpoint itself unhealthy.
+  let lastAi: Awaited<ReturnType<NonNullable<HealthDeps['lastAiCall']>>> = null
+  if (deps.lastAiCall) {
+    try { lastAi = await deps.lastAiCall() } catch { lastAi = null }
+  }
+  const components = [
+    kv,
+    ...configChecks(deps.env).map(c => (c.name === 'ai_provider' ? applyObservedAiOutcome(c, lastAi) : c)),
+  ]
   return {
     status: summarize(components),
     components,

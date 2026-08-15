@@ -1,5 +1,6 @@
 import { generateText, type ModelMessage, type LanguageModel } from 'ai'
 import { anthropic } from '@ai-sdk/anthropic'
+import { resolveAiProvider, credentialKeysFor, type AiProvider } from './ai/provider-config'
 
 // Single entry point for all AI features. Everything fails soft so a missing key /
 // no credits never breaks a page — the caller just shows a friendly "AI unavailable"
@@ -19,16 +20,18 @@ import { anthropic } from '@ai-sdk/anthropic'
 
 const MODEL = process.env.AI_MODEL || 'anthropic/claude-sonnet-4-6'
 
-export type AiProvider = 'gateway' | 'anthropic'
+export type { AiProvider }
 
 /**
  * Which transport carries model calls. Defaults to 'gateway' — the historical
  * behavior — so this module is inert until AI_PROVIDER is deliberately set.
+ *
+ * The rule itself lives in ./ai/provider-config so `health.ts` can share it without
+ * importing this module (and with it the whole AI SDK). Two copies of this decision is
+ * precisely how the health check ended up reporting on the wrong transport.
  */
 export function aiProvider(): AiProvider {
-  return (process.env.AI_PROVIDER ?? '').trim().toLowerCase() === 'anthropic'
-    ? 'anthropic'
-    : 'gateway'
+  return resolveAiProvider(process.env)
 }
 
 /**
@@ -70,9 +73,7 @@ export function resolveModel(id: string, provider: AiProvider = aiProvider()): L
  * whether calls actually succeed.
  */
 export function aiConfigured(): boolean {
-  return aiProvider() === 'anthropic'
-    ? Boolean(process.env.ANTHROPIC_API_KEY)
-    : Boolean(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN)
+  return credentialKeysFor(aiProvider()).some(k => !!process.env[k])
 }
 
 // Bounded external-model call timeout. A client-side abort after this many ms keeps a
