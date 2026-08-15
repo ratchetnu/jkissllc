@@ -40,6 +40,14 @@ import {
 import { listEffectiveOpenPunches } from '../../../../lib/time-corrections'
 
 export const runtime = 'nodejs'
+// The `run-ai` / `retry-ai` / `retry-final-ai` actions call processAiJob SYNCHRONOUSLY —
+// an owner clicking retry waits for a real multi-photo vision generation, not a queue
+// ack. With the analysis timeout derived from the photo count (analysisTimeoutMs) and the
+// service's two attempts, the worst case is ~2 x 87s, so this route needs the same
+// headroom the ai-jobs cron already declares. Undeclared, it inherits a default sized for
+// ordinary CRUD and would cut the retry off mid-call — indistinguishable, from the
+// operator's side, from the analysis itself failing.
+export const maxDuration = 300
 
 const METHODS: PaymentMethod[] = ['stripe', 'zelle', 'apple_cash', 'cash', 'other']
 
