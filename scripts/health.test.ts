@@ -22,8 +22,22 @@ const FULL_ENV = {
 }
 
 test('ai_provider is "ok" via Vercel OIDC even without a static AI key (no false degraded)', () => {
-  const onVercel = configChecks({ ...FULL_ENV, AI_GATEWAY_API_KEY: undefined, VERCEL: '1' })
+  // The original intent stands: an OIDC-authenticated Gateway needs no static key, so
+  // its absence must not read as degraded. What changed is WHICH variable proves that.
+  //
+  // This used to pass `VERCEL: '1'`, conflating "Vercel injects an OIDC token" with
+  // "the VERCEL variable is set". Only the first is a credential; the second is set on
+  // every Vercel runtime unconditionally, which made the component incapable of ever
+  // reporting degraded — and it duly stayed green through an outage where every call
+  // returned 402. VERCEL_OIDC_TOKEN is still accepted, so the no-false-degraded
+  // guarantee this test was written for is intact.
+  const onVercel = configChecks({ ...FULL_ENV, AI_GATEWAY_API_KEY: undefined, VERCEL: '1', VERCEL_OIDC_TOKEN: 'oidc-token' })
   assert.equal(onVercel.find(c => c.name === 'ai_provider')?.status, 'ok')
+
+  // …but being on Vercel, alone, is not a credential.
+  const vercelOnly = configChecks({ ...FULL_ENV, AI_GATEWAY_API_KEY: undefined, VERCEL_OIDC_TOKEN: undefined, VERCEL: '1' })
+  assert.equal(vercelOnly.find(c => c.name === 'ai_provider')?.status, 'degraded')
+
   const nowhere = configChecks({ CRON_SECRET: 'x' })
   assert.equal(nowhere.find(c => c.name === 'ai_provider')?.status, 'degraded')
 })

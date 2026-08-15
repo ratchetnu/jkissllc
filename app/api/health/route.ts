@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireSession } from '../admin/_lib/session'
 import { runHealthChecks, projectHealth, httpStatusFor, pingKv } from '../../lib/health'
+import { listAiCalls } from '../../lib/ai/telemetry'
 import { alert } from '../../lib/alerts'
 
 export const runtime = 'nodejs'
@@ -13,7 +14,16 @@ export const dynamic = 'force-dynamic'
 //     per-component breakdown. Still never exposes a secret VALUE — only presence
 //     booleans + status. No customer data, no connection strings, no stack traces.
 export async function GET(req: NextRequest) {
-  const report = await runHealthChecks({ pingKv, env: process.env })
+  // `lastAiCall` is what lets ai_provider report reality instead of env presence. One
+  // ZSET page + one GET, fail-soft: a telemetry problem must never make health unhealthy.
+  const report = await runHealthChecks({
+    pingKv,
+    env: process.env,
+    lastAiCall: async () => {
+      const [last] = await listAiCalls(1)
+      return last ? { ok: last.ok, outcome: last.outcome, errorClass: last.errorClass, at: last.at } : null
+    },
+  })
 
   // Detailed access: an authenticated admin, or a matching health-check secret.
   const secret = process.env.HEALTH_CHECK_SECRET
