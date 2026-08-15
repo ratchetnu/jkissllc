@@ -169,7 +169,10 @@ test('durable: no timeout or attempt override — today’s behaviour, byte for 
   const h = harness()
   const res = await buildMovingEstimate({ ...input }, h.deps)     // no budget ⇒ durable
   assert.equal(h.analyzeCalls[0].timeoutMs, 0, '0 ⇒ no override, platform default applies')
-  assert.equal(h.analyzeCalls[0].attempts, 0, '0 ⇒ no override, the service retry applies')
+  assert.equal(h.analyzeCalls[0].attempts, 1,
+    'attempts is now an explicit pin, not a passthrough: the booking owns the retry ladder '
+    + '(MAX_ATTEMPTS with 1m/5m/15m/1h backoff), so a second attempt inside the call only '
+    + 'consumed the 150s per-job deadline and stopped large photo sets from ever finishing')
   assert.equal(res.degraded, undefined)
   assert.equal(res.stored.latency, undefined, 'durable runs record no interactive latency accounting')
 })

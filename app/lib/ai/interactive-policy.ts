@@ -140,10 +140,24 @@ export function interactiveBudget(startedAt: number, config?: Partial<Interactiv
 
 /**
  * The durable worker's policy, expressed in the same shape so `buildPhotoEstimate`
- * has ONE budget type to thread. Unbounded here means "keep today's behaviour":
- * the per-call timeout stays whatever the AI layer defaults to and the AI service
- * keeps its retry, because the durable worker owns its own 150s deadline and its
- * own attempt/backoff ladder on the booking.
+ * has ONE budget type to thread. The per-call TIMEOUT stays unbounded here (0 ⇒ "no
+ * override"), so the analyzer's own photo-count-scaled allowance applies.
+ *
+ * ATTEMPTS are pinned to 1, and deliberately so. The comment this replaces said the
+ * worker "owns its own attempt/backoff ladder on the booking" — which is exactly right,
+ * and exactly why a second attempt INSIDE the call is redundant here. The booking
+ * already retries up to MAX_ATTEMPTS with a 1m/5m/15m/1h backoff, so a transient failure
+ * is picked up by the next cron tick regardless.
+ *
+ * What the inner retry does add is deadline consumption. Once the analysis allowance
+ * became photo-count-scaled (up to ~102s for an 8-photo set), two inner attempts came to
+ * ~204s against the worker's 150s per-job deadline — so a large job that hit one
+ * transient blip could never finish, and the retry that was supposed to rescue it was
+ * what guaranteed it failed. One honest attempt plus the outer ladder is strictly better:
+ * it fits the deadline, and the resilience is unchanged because it was never coming from
+ * here.
+ *
+ * Worst case now: 8 photos ⇒ ~102s primary + ~30s critic = ~132s, inside 150s.
  */
 export function durableBudget(): InteractiveBudget {
   const cfg = resolveInteractiveBudget()
@@ -153,9 +167,10 @@ export function durableBudget(): InteractiveBudget {
     deadlineAt: Number.POSITIVE_INFINITY,
     remainingMs: () => Number.POSITIVE_INFINITY,
     // timeoutMs 0 with mode 'durable' is read by callers as "no override" — the
-    // existing default timeout and retry policy apply, unchanged.
-    primary: () => ({ timeoutMs: 0, attempts: 0 }),
-    critic: () => ({ timeoutMs: 0, attempts: 0 }),
+    // analyzer's own scaled allowance applies. attempts 1 is an explicit pin, not a
+    // default: the retry lives on the booking, not inside the call.
+    primary: () => ({ timeoutMs: 0, attempts: 1 }),
+    critic: () => ({ timeoutMs: 0, attempts: 1 }),
   }
 }
 
