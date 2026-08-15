@@ -41,6 +41,7 @@
     "dataset:auto": "npx --yes tsx@4 tools/vision-benchmark/curation/cli.ts auto"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.39",
     "@vercel/analytics": "^2.0.1",
     "@vercel/blob": "^2.5.0",
     "ai": "^7.0.4",

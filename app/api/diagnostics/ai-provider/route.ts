@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { generateAI, aiModel, aiConfigured } from '../../../lib/ai'
+import { generateAI, aiModel, aiConfigured, aiProvider } from '../../../lib/ai'
 import { modelForFeature } from '../../../lib/ai/routing'
 import { isEnabled } from '../../../lib/platform/flags'
 
@@ -63,16 +63,34 @@ export async function GET(_req: NextRequest) {
   const feature = 'ops.junkAnalysis'
   const model = modelForFeature(feature)
 
+  // TRANSPORT vs MODEL FAMILY are different questions and this report must not conflate
+  // them. `modelSelected` is the canonical "provider/model" identity routing.ts chose;
+  // its prefix names the model's VENDOR. `transport` is how the call physically leaves
+  // the process, which AI_PROVIDER controls independently. Reading the vendor prefix as
+  // the transport — as this line used to — reports "anthropic" while the request is in
+  // fact going through the Gateway, which is precisely the confusion the direct-provider
+  // switch has to be able to rule out.
+  const transport = aiProvider()
+  const modelFamily = model.includes('/') ? model.split('/')[0] : 'unknown'
+
   const report: Record<string, unknown> = {
     environment: process.env.VERCEL_ENV ?? 'unknown',
-    providerSelected: model.includes('/') ? model.split('/')[0] : 'vercel-ai-gateway',
+    transport: transport === 'anthropic' ? 'anthropic-direct' : 'vercel-ai-gateway',
+    modelFamily,
     modelSelected: model,
     defaultModel: aiModel(),
     // Presence only — never the values.
     credentialsConfigured: aiConfigured(),
-    credentialSource: process.env.AI_GATEWAY_API_KEY
-      ? 'AI_GATEWAY_API_KEY'
-      : process.env.VERCEL_OIDC_TOKEN ? 'VERCEL_OIDC_TOKEN' : 'none',
+    credentialSource: transport === 'anthropic'
+      ? (process.env.ANTHROPIC_API_KEY ? 'ANTHROPIC_API_KEY' : 'none')
+      : process.env.AI_GATEWAY_API_KEY
+        ? 'AI_GATEWAY_API_KEY'
+        : process.env.VERCEL_OIDC_TOKEN ? 'VERCEL_OIDC_TOKEN' : 'none',
+    // The one combination that cannot make a call at all: the active transport is
+    // Anthropic but routing selected a model it cannot serve. resolveModel() throws on
+    // this, so surfacing it here turns an opaque run of provider_error telemetry into a
+    // one-line answer.
+    routableOnTransport: transport === 'gateway' || modelFamily === 'anthropic',
   }
 
   // ── Probe 1: text-only. Separates "can we reach and pay for the gateway at
@@ -88,7 +106,9 @@ export async function GET(_req: NextRequest) {
   report.textProbe = text.ok
     ? { ok: true, latencyMs: Date.now() - textStarted, model: text.model, outputTokens: text.usage.outputTokens }
     : { ok: false, latencyMs: Date.now() - textStarted, ...categorize(text.error), errorKind: text.errorKind, excerpt: scrub(text.error) }
-  report.gatewayReachable = text.ok || !/fetch failed|network|econn|dns/i.test(text.error ?? '')
+  // Renamed from `gatewayReachable`: with two transports, "the gateway" is no longer
+  // necessarily what we failed to reach.
+  report.providerReachable = text.ok || !/fetch failed|network|econn|dns/i.test(text.error ?? '')
 
   // ── Probe 2: multimodal, only if the text probe passed. Running it after a
   // billing failure would just reproduce the same error and bill nothing useful.
@@ -116,12 +136,19 @@ export async function GET(_req: NextRequest) {
       healthy: false,
       category: failing.category,
       fixOwner: failing.owner,
+      // Remediation names the ACTIVE transport. A stale instruction to top up Vercel
+      // while traffic runs on Anthropic sends an operator to spend money in the one
+      // place that cannot fix the outage.
       action: failing.category === 'no_credit_balance'
-        ? 'Add credits to the Vercel AI Gateway for this team. No application change will help.'
+        ? (transport === 'anthropic'
+          ? 'Anthropic organization credits are exhausted. Top up (or enable auto-reload) in the Anthropic Console. No application change will help.'
+          : 'Add credits to the Vercel AI Gateway for this team. No application change will help.')
         : failing.category === 'credentials_rejected'
-          ? 'Provision AI_GATEWAY_API_KEY for this environment, or confirm the project OIDC issuer is trusted by the gateway.'
+          ? (transport === 'anthropic'
+            ? 'Provision ANTHROPIC_API_KEY for this environment, or confirm the key has not been revoked.'
+            : 'Provision AI_GATEWAY_API_KEY for this environment, or confirm the project OIDC issuer is trusted by the gateway.')
           : failing.category === 'model_unavailable'
-            ? `Model "${model}" is not available through this gateway — check the model id or the routing override.`
+            ? `Model "${model}" is not available on the ${transport === 'anthropic' ? 'Anthropic API' : 'gateway'} — check the model id or the routing override.`
             : 'See excerpt; category is not one of the known external causes.',
     }
     : { healthy: true, action: 'Provider is answering. Benchmarking can proceed.' }
