@@ -65,10 +65,10 @@ export const COMPANY = {
 
   // ── Physical address ──
   address: {
-    line1: '2901 East Mayfield Road #2103',
-    city: 'Grand Prairie',
+    line1: '8055 Windrose Ave #4119',
+    city: 'Plano',
     state: 'TX',
-    zip: '75052',
+    zip: '75024',
   },
 
   // ── Payment handles ──
@@ -113,6 +113,6 @@ export const PLATFORM = {
 export const CREDENTIALS_DOT = `US DOT ${COMPANY.usdot} · MC ${COMPANY.mc}`   // footer, receipts (·)
 export const CREDENTIALS_SLASH = `US DOT ${COMPANY.usdot} / MC ${COMPANY.mc}` // email footers (/)
 
-/** "2901 East Mayfield Road #2103, Grand Prairie, TX 75052" */
+/** "8055 Windrose Ave #4119, Plano, TX 75024" */
 export const ADDRESS_ONE_LINE =
   `${COMPANY.address.line1}, ${COMPANY.address.city}, ${COMPANY.address.state} ${COMPANY.address.zip}`

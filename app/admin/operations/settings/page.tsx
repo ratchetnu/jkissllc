@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { MessageSquare, Mail, Star, Briefcase, CalendarCheck, Trash2, ScrollText, BarChart3, CalendarDays, LogOut, Check, ClipboardList, DollarSign, FileText, Wallet, EyeOff, ShieldCheck, Sparkles } from 'lucide-react'
+import { MessageSquare, Mail, Star, Briefcase, CalendarCheck, Trash2, ScrollText, BarChart3, CalendarDays, LogOut, Check, ClipboardList, DollarSign, FileText, Wallet, EyeOff, ShieldCheck, Sparkles, MapPin } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { osField as field, AccessDenied, DataError } from '../ui'
 import { accessStateForStatus, type LoadState } from '../../../lib/access-state'
@@ -9,6 +9,7 @@ import { accessStateForStatus, type LoadState } from '../../../lib/access-state'
 type Config = { sms: boolean; email: boolean; smsTo: string; emailTo: string }
 type FinanceCfg = { showPayInConfirm: boolean }
 type AutoCfg = { confirmationReminders: boolean; morningReminders: boolean }
+type BusinessAddress = { line1: string; line2?: string; city: string; state: string; postalCode: string }
 
 const TOOL_GROUPS: { label: string; items: { href: string; label: string; Icon: typeof Star }[] }[] = [
   { label: 'Work', items: [
@@ -50,6 +51,10 @@ function Settings() {
   const [cfg, setCfg] = useState<Config | null>(null)
   const [fin, setFin] = useState<FinanceCfg | null>(null)
   const [auto, setAuto] = useState<AutoCfg | null>(null)
+  const [businessAddress, setBusinessAddress] = useState<BusinessAddress | null>(null)
+  const [addressBusy, setAddressBusy] = useState(false)
+  const [addressSaved, setAddressSaved] = useState(false)
+  const [addressError, setAddressError] = useState('')
   const [finBusy, setFinBusy] = useState(false)
   // Settings is governed by `settings:manage`, which a manager does not hold
   // (app/lib/rbac.ts). Both /api/admin/alerts and /api/admin/finance refuse them, and
@@ -63,22 +68,26 @@ function Settings() {
   const load = useCallback(async () => {
     setState('loading')
     try {
-      const [aRes, fRes, auRes] = await Promise.all([
+      const [aRes, fRes, auRes, addressRes] = await Promise.all([
         fetch('/api/admin/alerts', { credentials: 'same-origin' }),
         fetch('/api/admin/finance', { credentials: 'same-origin' }),
         fetch('/api/admin/reminder-settings', { credentials: 'same-origin' }),
+        fetch('/api/admin/business-address', { credentials: 'same-origin' }),
       ])
       // The refusal is the answer. Terminal — no retry, no spinner left running.
       if (accessStateForStatus(aRes.status) === 'denied') { setState('denied'); return }
       if (!aRes.ok) { setState('error'); return }
-      const [a, f, au] = await Promise.all([
+      if (!addressRes.ok) { setState('error'); return }
+      const [a, f, au, addressData] = await Promise.all([
         aRes.json().catch(() => ({})),
         fRes.ok ? fRes.json().catch(() => ({})) : Promise.resolve({}),
         auRes.ok ? auRes.json().catch(() => ({})) : Promise.resolve({}),
+        addressRes.json().catch(() => ({})),
       ])
       if (a.config) setCfg(a.config)
       if (f.settings) setFin(f.settings)
       if (au.settings) setAuto(au.settings)
+      if (addressData.address) setBusinessAddress(addressData.address)
       setState('ready')
     } catch { setState('error') }
   }, [])
@@ -117,6 +126,22 @@ function Settings() {
     } finally { setSaving(false) }
   }
   const set = (patch: Partial<Config>) => setCfg(c => c ? { ...c, ...patch } : c)
+
+  async function saveBusinessAddress() {
+    if (!businessAddress) return
+    setAddressBusy(true); setAddressSaved(false); setAddressError('')
+    try {
+      const res = await fetch('/api/admin/business-address', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify(businessAddress),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.address) { setAddressError(data.error ?? 'Couldn’t save the business address.'); return }
+      setBusinessAddress(data.address); setAddressSaved(true); setTimeout(() => setAddressSaved(false), 2500)
+    } catch { setAddressError('Couldn’t save the business address.') } finally { setAddressBusy(false) }
+  }
+
+  const setAddress = (patch: Partial<BusinessAddress>) => setBusinessAddress(current => current ? { ...current, ...patch } : current)
 
   async function signOut() { try { await fetch('/api/admin/logout', { method: 'POST', credentials: 'same-origin' }) } catch {} location.href = '/admin/operations' }
 
@@ -223,6 +248,42 @@ function Settings() {
               </div>
             </div>
           </>
+        )}
+      </div>
+
+      {/* Business address */}
+      <div className="os-card os-rise" style={{ padding: 22, marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+          <MapPin size={18} style={{ color: 'var(--red-glow)' }} />
+          <h2 className="jkos-h" style={{ fontSize: 18, margin: 0 }}>Business address</h2>
+        </div>
+        <p style={{ fontSize: 13.5, color: 'var(--muted)', marginBottom: 18 }}>Shown on pay statements and other company documents. Only administrators can update it.</p>
+        {state === 'loading' || !businessAddress ? (
+          <div className="skeleton" style={{ width: '100%', height: 150, borderRadius: 12 }} />
+        ) : (
+          <div style={{ display: 'grid', gap: 10 }}>
+            <label style={{ fontSize: 12, fontWeight: 700 }}>Street address
+              <input value={businessAddress.line1} onChange={e => setAddress({ line1: e.target.value })} autoComplete="street-address" style={{ ...field, marginTop: 6 }} />
+            </label>
+            <label style={{ fontSize: 12, fontWeight: 700 }}>Suite or unit <span style={{ color: 'var(--muted)', fontWeight: 500 }}>(optional)</span>
+              <input value={businessAddress.line2 ?? ''} onChange={e => setAddress({ line2: e.target.value })} style={{ ...field, marginTop: 6 }} />
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.4fr) minmax(72px,.5fr) minmax(100px,.7fr)', gap: 10 }}>
+              <label style={{ fontSize: 12, fontWeight: 700 }}>City
+                <input value={businessAddress.city} onChange={e => setAddress({ city: e.target.value })} autoComplete="address-level2" style={{ ...field, marginTop: 6 }} />
+              </label>
+              <label style={{ fontSize: 12, fontWeight: 700 }}>State
+                <input value={businessAddress.state} onChange={e => setAddress({ state: e.target.value.toUpperCase().slice(0, 2) })} autoComplete="address-level1" style={{ ...field, marginTop: 6 }} />
+              </label>
+              <label style={{ fontSize: 12, fontWeight: 700 }}>ZIP
+                <input value={businessAddress.postalCode} onChange={e => setAddress({ postalCode: e.target.value })} autoComplete="postal-code" inputMode="numeric" style={{ ...field, marginTop: 6 }} />
+              </label>
+            </div>
+            {addressError && <p role="alert" style={{ color: '#fca5a5', fontSize: 13, margin: 0 }}>{addressError}</p>}
+            <button onClick={saveBusinessAddress} disabled={addressBusy} className="btn os-tap" style={{ borderRadius: 12, height: 46, justifyContent: 'center', marginTop: 4 }}>
+              {addressSaved ? <><Check size={17} /> Saved</> : addressBusy ? 'Saving…' : 'Save business address'}
+            </button>
+          </div>
         )}
       </div>
 

@@ -11,13 +11,14 @@ import { isHistoricalStatement, paymentMethodLabel, type StatementYtd } from '..
 function StatementView({ id }: { id: string }) {
   const [statement, setStatement] = useState<PayStatement | null>(null)
   const [ytd, setYtd] = useState<StatementYtd | undefined>()
+  const [businessAddress, setBusinessAddress] = useState<string | undefined>()
   const [loading, setLoading] = useState(true)
   const [variant, setVariant] = useState<'standard' | 'verification'>('standard')
 
   useEffect(() => {
     fetch(`/api/admin/pay-statements/${id}`, { credentials: 'same-origin' })
       .then(r => r.json())
-      .then(d => { setStatement(d.statement ?? null); setYtd(d.ytd) })
+      .then(d => { setStatement(d.statement ?? null); setYtd(d.ytd); setBusinessAddress(d.businessAddress) })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [id])
@@ -41,7 +42,7 @@ function StatementView({ id }: { id: string }) {
       {loading && <p style={{ color: 'var(--muted)', fontSize: 14 }}>Loading…</p>}
       {!loading && !statement && <div className="os-card" style={{ padding: 18 }}><p style={{ color: 'var(--muted)', fontSize: 14 }}>Statement not found.</p></div>}
       {statement && isHistoricalStatement(statement) && <div className="no-print os-card" style={{ padding: '10px 14px', color: '#93c5fd', fontSize: 12.5 }}>Operion record: this stub was entered manually. This indicator is not included when printing or saving the stub.</div>}
-      {statement && <PayStatementDoc s={statement} variant={variant} showInternalNote meta={{
+      {statement && <PayStatementDoc s={statement} variant={variant} showInternalNote businessAddress={businessAddress} meta={{
         paymentDate: statement.paymentDate,
         paymentMethodLabel: paymentMethodLabel(statement.paymentMethod),
         ytd,

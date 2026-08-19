@@ -1,4 +1,4 @@
-import { COMPANY, CREDENTIALS_SLASH } from './company'
+import { COMPANY, CREDENTIALS_SLASH, ADDRESS_ONE_LINE } from './company'
 import type { PayStatement } from './pay-statements'
 import { isHistoricalStatement, paymentMethodLabel } from './pay-statements'
 
@@ -12,7 +12,7 @@ const day = (iso: string) => {
   return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
 }
 
-export function renderStatementEmail(s: PayStatement): string {
+export function renderStatementEmail(s: PayStatement, businessAddress = ADDRESS_ONE_LINE): string {
   const historical = isHistoricalStatement(s)
   const lines = s.lines.map(l => historical ? `
     <tr>
@@ -35,6 +35,7 @@ export function renderStatementEmail(s: PayStatement): string {
   return `
   <div style="max-width:600px;margin:0 auto;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111">
     <h1 style="font-size:20px;margin:0 0 2px">${escapeHtml(COMPANY.legalName)}</h1>
+    <p style="margin:0 0 4px;font-size:12px;color:#666">${escapeHtml(businessAddress)}</p>
     <p style="margin:0 0 16px;font-size:12px;color:#666">${CREDENTIALS_SLASH} · ${escapeHtml(COMPANY.phoneDisplay)}</p>
     <div style="background:#f7f7f8;border-radius:10px;padding:16px 18px;margin-bottom:16px">
       <p style="margin:0;font-size:15px;font-weight:600">Pay Statement ${escapeHtml(s.statementNumber)}</p>

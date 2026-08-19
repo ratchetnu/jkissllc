@@ -37,6 +37,7 @@ export type AuditAction =
   // so the entry records which fields moved and their old → new values, not the
   // bare fact that "settings changed". ──
   | 'settings.moving_pricing_updated'
+  | 'settings.business_address_updated'
 
 export type AuditOutcome = 'success' | 'denied' | 'failure'
 

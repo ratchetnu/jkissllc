@@ -31,7 +31,7 @@ function Meta({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-export default function PayStatementDoc({ s, meta = {}, variant = 'standard', verifyUrl, showInternalNote = false }: { s: PayStatementDocument; meta?: PayStatementMeta; variant?: 'standard' | 'verification'; verifyUrl?: string; showInternalNote?: boolean }) {
+export default function PayStatementDoc({ s, meta = {}, variant = 'standard', verifyUrl, showInternalNote = false, businessAddress = ADDRESS_ONE_LINE }: { s: PayStatementDocument; meta?: PayStatementMeta; variant?: 'standard' | 'verification'; verifyUrl?: string; showInternalNote?: boolean; businessAddress?: string }) {
   const internallyEntered = isHistoricalStatement(s)
   const calculatedLines = s.lines.some(line => line.earningKind != null)
   const groups = groupEarnings(s.lines)
@@ -54,7 +54,7 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
         <div>
           <p style={{ fontSize: 21, fontWeight: 700, letterSpacing: '-.01em', margin: 0 }}>{COMPANY.legalName}</p>
           <p style={{ fontSize: 11.5, color: SUBTLE, margin: '6px 0 0', lineHeight: 1.6 }}>
-            {ADDRESS_ONE_LINE}<br />
+            {businessAddress}<br />
             {COMPANY.phoneDisplay} · {COMPANY.email} · {COMPANY.domain}<br />
             {CREDENTIALS_SLASH}
           </p>

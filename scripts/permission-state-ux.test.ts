@@ -180,12 +180,12 @@ test('finance separates a failed request from an empty ledger', () => {
   assert.match(FINANCE, /<DataError/)
 })
 
-test('settings renders a Manager denial and never leaves its three skeletons running', () => {
+test('settings renders a Manager denial and never leaves its four skeletons running', () => {
   assert.match(SETTINGS, /state === 'denied'/)
   assert.match(SETTINGS, /Settings is restricted to administrators/)
-  // All three section skeletons were `loading || !x`, which never cleared on a 403.
+  // All four section skeletons are reachable only while the page is loading.
   assert.doesNotMatch(code(SETTINGS), /\{loading \|\| !(cfg|auto|fin)/)
-  assert.equal((SETTINGS.match(/state === 'loading' \|\| !/g) ?? []).length, 3)
+  assert.equal((SETTINGS.match(/state === 'loading' \|\| !/g) ?? []).length, 4)
 })
 
 test('settings tells a denied manager how to sign out, since its own button is gone', () => {

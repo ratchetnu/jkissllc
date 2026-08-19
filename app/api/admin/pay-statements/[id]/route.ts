@@ -8,6 +8,7 @@ import { getStaff } from '../../../../lib/staff'
 import { emailRaw } from '../../../../lib/booking-emails'
 import { renderStatementEmail } from '../../../../lib/statement-render'
 import { COMPANY } from '../../../../lib/company'
+import { formatBusinessAddress, getBusinessAddress } from '../../../../lib/business-address'
 
 export const GET = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const who = await requirePermission(req, 'pay:view:all')
@@ -15,7 +16,8 @@ export const GET = withTenantRoute(async (req: NextRequest, { params }: { params
   const { id } = await params
   const statement = await getStatement(id)
   if (!statement) return NextResponse.json({ ok: false, error: 'Not found.' }, { status: 404 })
-  return NextResponse.json({ ok: true, statement, ytd: await recordedYtdForStatement(statement) })
+  const [ytd, businessAddress] = await Promise.all([recordedYtdForStatement(statement), getBusinessAddress()])
+  return NextResponse.json({ ok: true, statement, ytd, businessAddress: formatBusinessAddress(businessAddress) })
 })
 
 export const POST = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
@@ -79,7 +81,7 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
     await emailRaw({
       to: [to],
       subject: `Pay statement ${statement.statementNumber} — ${COMPANY.legalName}`,
-      html: renderStatementEmail(statement),
+      html: renderStatementEmail(statement, formatBusinessAddress(await getBusinessAddress())),
     })
     statement.emailedAt = Date.now()
     await saveStatement(statement)
