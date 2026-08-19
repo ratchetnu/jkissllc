@@ -151,7 +151,7 @@ test('crew can print a full-month stub with no manual provenance while admin kee
   assert.match(crewHtml, /Mailing address/)
   assert.match(crewHtml, /2901 E Mayfield Rd, #2103, Grand Prairie, TX 75052/)
   assert.match(crewHtml, /@page \{ size: Letter portrait; margin: 0\.32in; \}/)
-  assert.match(crewHtml, /zoom: \.82/)
+  assert.match(crewHtml, /zoom: \.94/)
   assert.match(crewHtml, /Jan 1, 2026 – Jan 31, 2026/)
   assert.match(crewHtml, /Compensation basis/)
   assert.match(crewHtml, /Services compensated for Jan 1, 2026–Jan 31, 2026 · Hourly rate: \$20\.00/)

@@ -251,7 +251,7 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
             max-width: 100% !important;
             padding: 0 !important;
             line-height: 1.3 !important;
-            zoom: .82;
+            zoom: .94;
           }
           .pay-doc-header { gap: 18px !important; }
           .pay-doc-header > div:last-child { padding: 9px 12px !important; }
