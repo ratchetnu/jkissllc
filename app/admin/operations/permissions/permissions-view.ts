@@ -56,6 +56,7 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'roles:manage': 'Manage roles',
   'pay:configure': 'Configure pay rules',
   'pay:generate': 'Generate pay statements',
+  'pay:history:import': 'Record historical pay',
   'pay:view:all': "View everyone's pay",
   'pay:adjust:submit': 'Submit pay adjustments',
   'pay:approve': 'Approve pay',

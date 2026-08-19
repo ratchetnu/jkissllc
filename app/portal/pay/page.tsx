@@ -9,8 +9,9 @@ type CompLine = { routeNumber: string; businessName: string; date: string; payCe
 type Summary = {
   lifetimeEarningsCents: number; ytdEarningsCents: number; periodEarningsCents: number
   completedRoutes: number; upcomingRoutes: number; businesses: string[]; recent: CompLine[]
+  issuedYtd: { grossCents: number; deductionCents: number; netCents: number }
 }
-type Statement = { id: string; statementNumber: string; periodStart: string; periodEnd: string; netCents: number; routeCount: number; issuedAt: number }
+type Statement = { id: string; statementNumber: string; periodStart: string; periodEnd: string; netCents: number; routeCount: number; issuedAt: number; paymentDate?: string }
 type Correction = { id: string; message: string; status: 'pending' | 'approved' | 'denied'; statementNumber?: string; createdAt: number; decisionNote?: string }
 
 function Tile({ label, value, big }: { label: string; value: string; big?: boolean }) {
@@ -90,7 +91,8 @@ function MyPay() {
         <>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
             <Tile label="This week" value={money(s.periodEarningsCents)} big />
-            <Tile label="Year to date" value={money(s.ytdEarningsCents)} />
+            <Tile label="Completed work YTD" value={money(s.ytdEarningsCents)} />
+            <Tile label="Issued statements YTD" value={money(s.issuedYtd.netCents)} />
             <Tile label="Lifetime" value={money(s.lifetimeEarningsCents)} />
           </div>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
@@ -137,7 +139,7 @@ function MyPay() {
               <FileText size={17} style={{ color: 'var(--muted)', flexShrink: 0 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <p style={{ fontWeight: 600, fontSize: 14 }}>{st.statementNumber}</p>
-                <p style={{ color: 'var(--muted)', fontSize: 12.5 }}>{fmtDay(st.periodStart)} – {fmtDay(st.periodEnd)} · {st.routeCount} completed job{st.routeCount === 1 ? '' : 's'}</p>
+                <p style={{ color: 'var(--muted)', fontSize: 12.5 }}>{fmtDay(st.periodStart)} – {fmtDay(st.periodEnd)}{st.paymentDate ? ` · paid ${fmtDay(st.paymentDate)}` : ` · ${st.routeCount} completed job${st.routeCount === 1 ? '' : 's'}`}</p>
               </div>
               <span style={{ fontWeight: 700, fontSize: 15 }}>{money(st.netCents)}</span>
             </Link>

@@ -2,8 +2,10 @@
 
 import { QRCodeSVG } from 'qrcode.react'
 import { COMPANY, CREDENTIALS_SLASH, ADDRESS_ONE_LINE } from '../lib/company'
-import type { PayStatement } from '../lib/pay-statements'
+import { isHistoricalStatement, type PayStatement, type CrewStatementLine } from '../lib/pay-statements'
 import { groupEarnings, summaryRows, DEFAULT_CLASSIFICATION, type PayStatementMeta } from '../lib/pay-statement-view'
+
+type PayStatementDocument = Omit<PayStatement, 'issuedBy' | 'lines'> & { issuedBy?: string; lines: CrewStatementLine[] }
 
 // ── Premium Contractor Pay Statement ─────────────────────────────────────────
 // A restrained, executive document (Apple-doc feel, not payroll software). Rendered on a
@@ -29,7 +31,9 @@ function Meta({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-export default function PayStatementDoc({ s, meta = {}, variant = 'standard', verifyUrl }: { s: PayStatement; meta?: PayStatementMeta; variant?: 'standard' | 'verification'; verifyUrl?: string }) {
+export default function PayStatementDoc({ s, meta = {}, variant = 'standard', verifyUrl, showInternalNote = false }: { s: PayStatementDocument; meta?: PayStatementMeta; variant?: 'standard' | 'verification'; verifyUrl?: string; showInternalNote?: boolean }) {
+  const internallyEntered = isHistoricalStatement(s)
+  const calculatedLines = s.lines.some(line => line.earningKind != null)
   const groups = groupEarnings(s.lines)
   const rows = summaryRows(s, meta)
   const classification = meta.classification ?? DEFAULT_CLASSIFICATION
@@ -79,6 +83,7 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
         <Meta label="Classification" value={classification} />
         {(meta.businessName || COMPANY.legalName) && <Meta label="Business" value={meta.businessName ?? COMPANY.legalName} />}
         {meta.paymentMethodLabel && <Meta label="Payment method" value={meta.paymentMethodLabel} />}
+        {s.paymentReference && <Meta label="Payment reference" value={s.paymentReference} />}
       </section>
 
       {/* ── Verification panel (verification copy only) — income verification + QR ── */}
@@ -113,10 +118,33 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
         </div>
       </section>
 
-      {/* ── Earnings (grouped by business) ── */}
+      {/* ── Earnings ── */}
       <section style={{ marginTop: 32 }} aria-label="Earnings detail">
         <h2 style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: SUBTLE, margin: '0 0 4px' }}>Earnings</h2>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        {calculatedLines ? <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ color: SUBTLE, fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em' }}>
+              <th style={{ textAlign: 'left', fontWeight: 600, padding: '8px 0' }}>Description</th>
+              <th style={{ textAlign: 'left', fontWeight: 600, padding: '8px 0' }}>Calculation</th>
+              <th style={{ textAlign: 'right', fontWeight: 600, padding: '8px 0' }}>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {s.lines.map((line, i) => {
+              const unit = line.earningKind === 'hourly' ? 'hour' : line.earningKind === 'daily' ? 'day' : ''
+              const calculation = line.earningKind === 'fixed'
+                ? 'Fixed amount'
+                : `${line.quantity ?? 0} ${unit}${line.quantity === 1 ? '' : 's'} × ${money(line.rateCents ?? 0)}/${unit}`
+              return (
+                <tr key={`${line.description ?? line.routeNumber}-${i}`}>
+                  <td style={{ padding: '10px 0', borderTop: `1px solid ${HAIR}`, color: INK }}>{line.description ?? line.routeNumber}</td>
+                  <td style={{ padding: '10px 0', borderTop: `1px solid ${HAIR}`, color: SUBTLE }}>{calculation}</td>
+                  <td style={{ padding: '10px 0', borderTop: `1px solid ${HAIR}`, color: INK, textAlign: 'right' }} className="tabular-nums">{money(line.amountCents)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table> : <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ color: SUBTLE, fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em' }}>
               <th style={{ textAlign: 'left', fontWeight: 600, padding: '8px 0' }}>Date</th>
@@ -144,8 +172,15 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
               </tr>,
             ])}
           </tbody>
-        </table>
+        </table>}
       </section>
+
+      {internallyEntered && showInternalNote && s.historicalNote && (
+        <section className="no-print" style={{ marginTop: 26 }} aria-label="Internal pay record note">
+          <h2 style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: SUBTLE, margin: '0 0 6px' }}>Record note</h2>
+          <p style={{ margin: 0, fontSize: 12.5, color: INK, whiteSpace: 'pre-wrap' }}>{s.historicalNote}</p>
+        </section>
+      )}
 
       {/* ── Deductions & offsets ── */}
       {s.deductions.length > 0 && (
@@ -184,10 +219,11 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
       {/* ── Footer ── */}
       <footer style={{ marginTop: 34, paddingTop: 16, borderTop: `1px solid ${HAIR}` }}>
         <p style={{ fontSize: 10.5, color: SUBTLE, margin: 0, lineHeight: 1.6 }}>
-          This statement summarizes contractor compensation recorded by {COMPANY.legalName} for the period shown. It is not a tax return or a substitute for Form 1099. Questions? Use the Pay Correction request in your crew portal or contact <span style={{ color: INK }}>{COMPANY.email}</span>.
+          This statement summarizes contractor compensation recorded by {COMPANY.legalName} for the period shown.{' '}
+          It is not a tax return or a substitute for Form 1099. Questions? Use the Pay Correction request in your crew portal or contact <span style={{ color: INK }}>{COMPANY.email}</span>.
         </p>
         <p style={{ fontSize: 10, color: SUBTLE, margin: '10px 0 0', display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-          <span>Generated by Operion</span>
+          <span>Issued through Operion</span>
           <span>·</span>
           <span>Statement {s.statementNumber}</span>
           <span>·</span>

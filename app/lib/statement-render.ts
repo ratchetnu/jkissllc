@@ -1,5 +1,6 @@
 import { COMPANY, CREDENTIALS_SLASH } from './company'
 import type { PayStatement } from './pay-statements'
+import { isHistoricalStatement, paymentMethodLabel } from './pay-statements'
 
 // Branded HTML render of a pay statement for email delivery. The on-screen /
 // print-to-PDF view is a React component (see the statement pages); this is the
@@ -12,7 +13,13 @@ const day = (iso: string) => {
 }
 
 export function renderStatementEmail(s: PayStatement): string {
-  const lines = s.lines.map(l => `
+  const historical = isHistoricalStatement(s)
+  const lines = s.lines.map(l => historical ? `
+    <tr>
+      <td style="padding:8px 0;border-top:1px solid #eee;font-size:13px;color:#333">${escapeHtml(l.description ?? l.routeNumber)}</td>
+      <td style="padding:8px 0;border-top:1px solid #eee;font-size:13px;color:#666">${l.earningKind === 'fixed' ? 'Fixed amount' : `${l.quantity ?? 0} ${l.earningKind === 'hourly' ? 'hour' : 'day'}${l.quantity === 1 ? '' : 's'} × ${money(l.rateCents ?? 0)}`}</td>
+      <td style="padding:8px 0;border-top:1px solid #eee;font-size:13px;color:#333;text-align:right">${money(l.amountCents)}</td>
+    </tr>` : `
     <tr>
       <td style="padding:8px 0;border-top:1px solid #eee;font-size:13px;color:#333">${day(l.routeDate)}</td>
       <td style="padding:8px 0;border-top:1px solid #eee;font-size:13px;color:#333">${escapeHtml(l.businessName)} · ${l.source === 'booking' ? 'Booking ' : ''}${escapeHtml(l.routeNumber)}${l.workedMinutes !== undefined ? ` · ${Math.floor(l.workedMinutes / 60)}h ${l.workedMinutes % 60}m` : ''}</td>
@@ -32,13 +39,14 @@ export function renderStatementEmail(s: PayStatement): string {
     <div style="background:#f7f7f8;border-radius:10px;padding:16px 18px;margin-bottom:16px">
       <p style="margin:0;font-size:15px;font-weight:600">Pay Statement ${escapeHtml(s.statementNumber)}</p>
       <p style="margin:4px 0 0;font-size:13px;color:#555">${escapeHtml(s.staffName)} · ${day(s.periodStart)} – ${day(s.periodEnd)}</p>
+      ${historical && s.paymentDate ? `<p style="margin:4px 0 0;font-size:12px;color:#666">Paid ${day(s.paymentDate)}${paymentMethodLabel(s.paymentMethod) ? ` · ${escapeHtml(paymentMethodLabel(s.paymentMethod) as string)}` : ''}</p>` : ''}
     </div>
     <table style="width:100%;border-collapse:collapse;margin-bottom:8px">
       <tbody>${lines}</tbody>
     </table>
     <table style="width:100%;border-collapse:collapse;border-top:2px solid #111;margin-top:6px">
       <tbody>
-        <tr><td colspan="2" style="padding:8px 0;font-size:13px;color:#333">Gross (${s.routeCount} completed job${s.routeCount === 1 ? '' : 's'})</td><td style="padding:8px 0;font-size:13px;color:#333;text-align:right">${money(s.grossCents)}</td></tr>
+        <tr><td colspan="2" style="padding:8px 0;font-size:13px;color:#333">Gross${historical ? '' : ` (${s.routeCount} completed job${s.routeCount === 1 ? '' : 's'})`}</td><td style="padding:8px 0;font-size:13px;color:#333;text-align:right">${money(s.grossCents)}</td></tr>
         ${deductions}
         <tr><td colspan="2" style="padding:10px 0;font-size:15px;font-weight:700;border-top:1px solid #eee">Net pay</td><td style="padding:10px 0;font-size:15px;font-weight:700;border-top:1px solid #eee;text-align:right">${money(s.netCents)}</td></tr>
       </tbody>

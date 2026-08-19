@@ -14,6 +14,7 @@ import { can } from '../app/lib/rbac'
 
 const sample = (): Staff => ({
   id: 's1', name: 'Marcus Vela', phone: '555-0100', email: 'm@x.com', role: 'driver',
+  address: { line1: '1 Private Way', city: 'Austin', state: 'TX', postalCode: '78701' },
   active: true,
   payKind: 'driver', defaultPayCents: 5000, payByBusiness: { amazon: 6000 },
   payNotes: 'raise pending', payEffectiveDate: '2026-08-01', payActive: true,
@@ -43,6 +44,7 @@ test('a non-privileged viewer (manager) gets pay + W-9 stripped, identity kept',
   assert.equal(view.payActive, undefined)
   // W-9 / TIN gone.
   assert.equal(view.w9, undefined)
+  assert.equal(view.address, undefined, 'home address is admin/owner-only PII')
   // Operational identity retained so the directory is still useful.
   assert.equal(view.name, 'Marcus Vela')
   assert.equal(view.phone, '555-0100')
@@ -55,6 +57,7 @@ test('a full-privilege viewer (admin) gets the record unchanged', () => {
   assert.equal(view.defaultPayCents, 5000)
   assert.deepEqual(view.payByBusiness, { amazon: 6000 })
   assert.deepEqual(view.w9, { status: 'verified', tinLast4: '1234', addressComplete: true, collectedAt: 1 })
+  assert.equal(view.address?.postalCode, '78701')
 })
 
 test('pay-only viewer keeps comp but loses W-9, and vice versa', () => {

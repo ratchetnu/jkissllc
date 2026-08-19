@@ -162,6 +162,7 @@ function exec(args) {
   switch (cmd) {
     case 'PING': return 'PONG'
     case 'GET': return getStr(A[1])
+    case 'MGET': return A.slice(1).map(getStr)
     case 'SET': {
       const [, k, v, ...rest] = A
       const flags = rest.map((f) => f.toUpperCase())

@@ -6,6 +6,7 @@ import { computeCrewComp } from '../../../lib/crew-comp'
 import { computePay } from '../../../lib/route-pay'
 import { getFinanceSettings } from '../../../lib/finance'
 import { centralToday, mondayOf } from '../../../lib/dates'
+import { recordedYtdForStaff } from '../../../lib/pay-statements'
 
 // My earnings — computed ONLY from completed work already snapshotted onto routes
 // (see lib/crew-comp: truthful, never fabricated). Scoped to the caller's staffId.
@@ -48,5 +49,6 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
   }))
 
   const summary = computeCrewComp(who.staffId, projected, today, mondayOf(today))
-  return NextResponse.json({ ok: true, visible: true, summary })
+  const issuedYtd = await recordedYtdForStaff(who.staffId, today)
+  return NextResponse.json({ ok: true, visible: true, summary: { ...summary, issuedYtd } })
 })

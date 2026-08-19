@@ -43,6 +43,7 @@ globalThis.fetch = (async (url: string, init: { body?: string }) => {
   let result: unknown = null
   switch (command) {
     case 'GET': result = live(key); break
+    case 'MGET': result = args.map(live); break
     case 'SET': {
       const flags = args.slice(2).map(a => String(a).toUpperCase())
       const nx = flags.includes('NX')
@@ -276,10 +277,11 @@ test('void contention: safe 423, no mutation, and the holder\'s lock is left int
   assert.equal(live(periodKey()), a.id, 'and the period index is untouched')
 })
 
-test('void does not block an unrelated crew member or an unrelated period', async () => {
+test('void leaves other crew independent and serializes another period for the same crew', async () => {
   await reset()
   const a = (await readJson(await generate())).statement!
-  // Hold marcus/week-1 with a void while unrelated work proceeds.
+  // Dana remains independent. Marcus/week-2 shares the staff lock, waits for the
+  // void to settle, and then issues against the resulting non-overlapping history.
   const [v, otherStaff, otherWeek] = await Promise.all([
     voidStmt(a.id),
     generate('dana'),
@@ -287,7 +289,7 @@ test('void does not block an unrelated crew member or an unrelated period', asyn
   ])
   assert.equal(v.status, 200)
   assert.equal(otherStaff.status, 200, 'a different crew member is never blocked')
-  assert.equal(otherWeek.status, 200, 'a different period is never blocked')
+  assert.equal(otherWeek.status, 200, 'a different period waits and then succeeds')
   assert.equal((await liveStatements('dana')).length, 1)
 })
 

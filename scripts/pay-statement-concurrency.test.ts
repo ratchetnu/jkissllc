@@ -57,6 +57,7 @@ globalThis.fetch = (async (url: string, init: { body?: string }) => {
   let result: unknown = null
   switch (command) {
     case 'GET': result = live(key); break
+    case 'MGET': result = args.map(live); break
     case 'SET': {
       // SET key value [NX] [PX ms]
       const flags = args.slice(2).map(a => String(a).toUpperCase())
@@ -107,11 +108,12 @@ import { NextRequest } from 'next/server'
 import { createUserSessionToken } from '../app/api/admin/_lib/session'
 import { POST as generatePOST, GET as adminListGET } from '../app/api/admin/pay-statements/route'
 import { GET as portalGET } from '../app/api/portal/pay-statements/route'
+import { GET as portalDetailGET } from '../app/api/portal/pay-statements/[id]/route'
 import { saveStaff } from '../app/lib/staff'
 import { saveRoute, generateToken, type RouteRecord } from '../app/lib/routes'
 import { saveBooking, type Booking } from '../app/lib/bookings'
 import { saveClaim, type ClaimRecord } from '../app/lib/claims'
-import { listStatements, findByPeriod } from '../app/lib/pay-statements'
+import { historicalYtdByStaff, listStatements, findByPeriod, recordedYtdForStaff, recordedYtdForStatement, saveStatement, type PayStatement } from '../app/lib/pay-statements'
 import { listAudit } from '../app/lib/audit'
 import {
   withPayStatementLock, payStatementLockKey, normalizePeriodBoundary, StatementGenerationBusyError,
@@ -138,6 +140,14 @@ const getReq = (url: string, cookie: string) =>
 
 const generate = (staffId: string, periodStart = START, periodEnd = END) =>
   generatePOST(req({ staffId, periodStart, periodEnd }), CTX)
+
+const historical = (over: Record<string, unknown> = {}, cookie = adminCookie) => generatePOST(req({
+  action: 'historical', staffId: 'marcus', periodUnit: 'week', periodStart: START, periodEnd: END,
+  paymentDate: '2026-07-15', paymentMethod: 'check', paymentReference: '1042',
+  lines: [{ kind: 'hourly', description: 'Regular hours', quantity: 40, rate: '20.00' }],
+  deductions: [],
+  ...over,
+}, cookie), CTX)
 
 async function readJson(res: Response) {
   return await res.json() as { ok: boolean; error?: string; reason?: string; statement?: { id: string; statementNumber: string; grossCents: number; netCents: number; deductionCents: number; routeCount: number }; statements?: unknown[] }
@@ -264,7 +274,7 @@ test('different crew members generate concurrently — one does not block the ot
   assert.equal(periodKeys().length, 2)
 })
 
-test('different periods for the same crew member generate concurrently', async () => {
+test('different non-overlapping periods for the same crew member serialize and both issue', async () => {
   await reset()
   await saveRoute(route('marcus', 'JK-R-2001', '2026-07-07', 17500))
   await saveRoute(route('marcus', 'JK-R-2002', '2026-07-14', 22500))
@@ -466,16 +476,17 @@ test('a lost lease ABORTS the generation: 423, and nothing is written', async ()
   assert.equal(live(key), 'stolen-by-another-instance', 'and the thief\'s lock was not deleted')
 })
 
-test('lock key: mirrors the period index, normalizes boundaries, scopes per tenant', () => {
-  assert.equal(payStatementLockKey('marcus', START, END), `paystmt:lock:marcus:${START}:${END}`)
+test('lock key: serializes every period for one staff member and scopes per tenant', () => {
+  assert.equal(payStatementLockKey('marcus', START, END), 'paystmt:lock:marcus')
   // Same period spelled differently → the SAME lock.
-  assert.equal(payStatementLockKey(' marcus ', ' 2026-07-06 ', '2026-07-12T00:00:00.000Z'), `paystmt:lock:marcus:${START}:${END}`)
+  assert.equal(payStatementLockKey(' marcus ', ' 2026-07-06 ', '2026-07-12T00:00:00.000Z'), 'paystmt:lock:marcus')
   assert.equal(normalizePeriodBoundary('2026-07-06T23:59:59Z'), '2026-07-06')
   assert.throws(() => normalizePeriodBoundary('07/06/2026'))
   assert.throws(() => payStatementLockKey('', START, END))
-  // Different staff / different period → different keys (no cross-blocking).
+  // Different staff remain independent; different periods for one staff deliberately
+  // share the lock so overlapping day/week/month/custom ranges cannot race.
   assert.notEqual(payStatementLockKey('marcus', START, END), payStatementLockKey('dana', START, END))
-  assert.notEqual(payStatementLockKey('marcus', START, END), payStatementLockKey('marcus', '2026-07-13', '2026-07-19'))
+  assert.equal(payStatementLockKey('marcus', START, END), payStatementLockKey('marcus', '2026-07-13', '2026-07-19'))
 })
 
 test('tenant isolation: two tenants take physically different locks', () => {
@@ -596,4 +607,177 @@ test('audit: exactly one issuance event, and none for the blocked duplicates', a
   assert.match(issued[0].summary, /JK-PS-1001/)
   // No money in the audit meta — the statement itself is the money record.
   assert.ok(!JSON.stringify(issued[0].meta ?? {}).match(/Cents/), 'audit meta carries no amounts')
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Historical/manual statements — real stubs without synthetic work records
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('historical pay issues an immutable stub without a route, booking, or punch', async () => {
+  await reset()
+  const res = await historical({
+    periodUnit: 'month', periodStart: '2026-01-01', periodEnd: '2026-01-31', paymentDate: '2026-02-02',
+    lines: [
+      { kind: 'hourly', description: 'Regular hours', quantity: 40, rate: '20' },
+      { kind: 'daily', description: 'Daily work', quantity: 2, rate: '150' },
+      { kind: 'fixed', description: 'Bonus', amount: '75' },
+    ],
+    deductions: [{ label: 'Advance', amount: '25' }],
+  })
+  assert.equal(res.status, 200)
+  const body = await res.json() as { ok: boolean; statement: import('../app/lib/pay-statements').PayStatement }
+  assert.equal(body.ok, true)
+  assert.equal(body.statement.statementSource, 'historical_manual')
+  assert.equal(body.statement.routeCount, 0)
+  assert.equal(body.statement.grossCents, 117500)
+  assert.equal(body.statement.deductionCents, 2500)
+  assert.equal(body.statement.netCents, 115000)
+  assert.deepEqual(body.statement.lines.map(line => line.source), ['historical', 'historical', 'historical'])
+  assert.equal(body.statement.paymentReference, '1042')
+  assert.equal((await listAudit()).filter(event => event.action === 'paystatement.historical_issued').length, 1)
+})
+
+test('five simultaneous historical submissions issue exactly one stub and one number', async () => {
+  await reset()
+  const results = await Promise.all(Array.from({ length: 5 }, () => historical()))
+  assert.equal(results.filter(res => res.status === 200).length, 1)
+  assert.equal((await listStatements()).length, 1)
+  assert.equal(live('paystmt:counter'), '1')
+  assert.equal(periodKeys().length, 1)
+  assert.deepEqual(lockKeys(), [])
+  assert.equal((await listAudit()).filter(event => event.action === 'paystatement.historical_issued').length, 1)
+})
+
+test('historical month/week/day overlaps are rejected so YTD cannot double-count them', async () => {
+  await reset()
+  assert.equal((await historical({
+    periodUnit: 'month', periodStart: '2026-07-01', periodEnd: '2026-07-31',
+    lines: [{ kind: 'fixed', amount: '4000' }],
+  })).status, 200)
+
+  for (const period of [
+    { periodUnit: 'week', periodStart: '2026-07-13', periodEnd: '2026-07-19' },
+    { periodUnit: 'day', periodStart: '2026-07-15', periodEnd: '2026-07-15' },
+  ]) {
+    const res = await historical({ ...period, lines: [{ kind: 'fixed', amount: '200' }] })
+    assert.equal(res.status, 409)
+    assert.equal((await readJson(res)).reason, 'overlapping_period')
+  }
+  assert.equal((await listStatements()).length, 1)
+  assert.equal(live('paystmt:counter'), '1', 'overlap rejection consumes no statement number')
+})
+
+test('two differently-shaped overlapping submissions race to exactly one live statement', async () => {
+  await reset()
+  const [month, week] = await Promise.all([
+    historical({ periodUnit: 'month', periodStart: '2026-07-01', periodEnd: '2026-07-31', lines: [{ kind: 'fixed', amount: '4000' }] }),
+    historical({ periodUnit: 'week', periodStart: '2026-07-13', periodEnd: '2026-07-19', lines: [{ kind: 'fixed', amount: '900' }] }),
+  ])
+  assert.equal([month, week].filter(res => res.status === 200).length, 1)
+  assert.equal([month, week].filter(res => res.status === 409 || res.status === 423).length, 1)
+  assert.equal((await listStatements()).length, 1)
+  assert.equal(live('paystmt:counter'), '1')
+})
+
+test('historical issuance that loses its staff lock aborts before allocating or writing', async () => {
+  await reset()
+  const key = payStatementLockKey('marcus', START, END)
+  onCommand = (cmd, k) => {
+    if (cmd === 'ZREVRANGE' && k === 'paystmt:staff:marcus') {
+      kv.set(key, { value: 'stolen-by-another-instance', expiresAt: Date.now() + 30_000 })
+      onCommand = null
+    }
+  }
+  const res = await historical()
+  assert.equal(res.status, 423)
+  assert.equal((await readJson(res)).reason, 'generation_in_progress')
+  assert.equal((await listStatements()).length, 0)
+  assert.equal(live('paystmt:counter'), null)
+  assert.equal(live(key), 'stolen-by-another-instance')
+})
+
+test('crew receives the complete monthly stub without internal manual-entry provenance', async () => {
+  await reset()
+  const issued = await historical({
+    periodUnit: 'month', periodStart: '2026-07-01', periodEnd: '2026-07-31',
+    note: 'Reconstructed from owner spreadsheet',
+  })
+  const id = (await issued.json() as { statement: { id: string } }).statement.id
+  const list = await portalGET(getReq('http://localhost/api/portal/pay-statements', crewCookie), CTX)
+  const listed = await list.json() as { statements: Array<Record<string, unknown>> }
+  assert.equal(listed.statements.length, 1)
+  assert.equal('statementSource' in listed.statements[0], false)
+  const res = await portalDetailGET(
+    getReq(`http://localhost/api/portal/pay-statements/${id}`, crewCookie),
+    { params: Promise.resolve({ id }) },
+  )
+  assert.equal(res.status, 200)
+  const payload = await res.json() as { statement: Record<string, unknown> & { lines: Array<Record<string, unknown>>; periodStart: string; periodEnd: string } }
+  assert.equal('historicalNote' in payload.statement, false)
+  assert.equal('statementSource' in payload.statement, false)
+  assert.equal('issuedBy' in payload.statement, false)
+  assert.equal('periodUnit' in payload.statement, false)
+  assert.equal(payload.statement.lines.some(line => 'source' in line), false)
+  assert.equal(payload.statement.lines.some(line => 'businessName' in line), false)
+  assert.doesNotMatch(JSON.stringify(payload.statement), /historical|manual|manually|prior[ -]pay|entered by|administrator/i)
+  assert.equal(payload.statement.periodStart, '2026-07-01')
+  assert.equal(payload.statement.periodEnd, '2026-07-31')
+})
+
+test('historical import is admin-only but accepts inactive former crew', async () => {
+  await reset()
+  const manager = await createUserSessionToken({ id: 'u_manager', role: 'manager' })
+  assert.equal((await historical({}, manager)).status, 403)
+
+  await saveStaff({ id: 'dana', name: 'Dana', phone: '+15550002', role: 'Driver', active: false, createdAt: 1, updatedAt: 2 })
+  const res = await historical({ staffId: 'dana' })
+  assert.equal(res.status, 200)
+  const statement = (await res.json() as { statement: { staffName: string } }).statement
+  assert.equal(statement.staffName, 'Dana')
+})
+
+test('recorded YTD includes historical and generated statements once and excludes later periods', async () => {
+  await reset()
+  await historical({ periodUnit: 'month', periodStart: '2026-01-01', periodEnd: '2026-01-31', paymentDate: '2026-02-01', lines: [{ kind: 'fixed', amount: '500' }] })
+  await historical({ periodUnit: 'month', periodStart: '2026-02-01', periodEnd: '2026-02-28', paymentDate: '2026-03-01', lines: [{ kind: 'fixed', amount: '700' }] })
+  await historical({ periodUnit: 'month', periodStart: '2026-03-01', periodEnd: '2026-03-31', paymentDate: '2026-04-01', lines: [{ kind: 'fixed', amount: '900' }] })
+  const feb = (await listStatements()).find(statement => statement.periodEnd === '2026-02-28')!
+  assert.deepEqual(await recordedYtdForStatement(feb), { grossCents: 120000, deductionCents: 0, netCents: 120000 })
+})
+
+test('recorded YTD is uncapped, batched, same-year only, and excludes void statements', async () => {
+  await reset()
+  const make = (i: number, over: Partial<PayStatement> = {}): PayStatement => ({
+    id: `ps_ytd_${i}`, statementNumber: `TEST-${i}`, staffId: 'marcus', staffName: 'Marcus',
+    periodStart: '2026-01-01', periodEnd: '2026-01-01', grossCents: 100,
+    deductionCents: 0, netCents: 100, routeCount: 0, lines: [], deductions: [],
+    statementSource: 'historical_manual', status: 'issued', issuedBy: 'test', issuedAt: i + 1, updatedAt: i + 1,
+    ...over,
+  })
+  const target = make(500)
+  for (let i = 0; i <= 500; i++) {
+    const statement = i === 500 ? target : make(i)
+    await saveStatement(statement)
+  }
+  await saveStatement(make(600, { id: 'ps_void', status: 'void', grossCents: 99900, netCents: 99900 }))
+  await saveStatement(make(601, { id: 'ps_prior_year', periodStart: '2025-12-31', periodEnd: '2025-12-31', grossCents: 99900, netCents: 99900 }))
+
+  const limited = await (await adminListGET(getReq('http://localhost/api/admin/pay-statements', adminCookie), CTX)).json() as { statements: Array<{ statementNumber: string }> }
+  assert.equal(limited.statements.some(statement => statement.statementNumber === 'TEST-0'), false, 'control: oldest statement is outside the 500-row admin list')
+  const resolved = await (await adminListGET(getReq(
+    'http://localhost/api/admin/pay-statements?resolveCorrection=1&staffId=marcus&statementNumber=TEST-0',
+    adminCookie,
+  ), CTX)).json() as { statement: { statementNumber: string } | null }
+  assert.equal(resolved.statement?.statementNumber, 'TEST-0', 'correction lookup scans authoritative uncapped staff history')
+
+  const calls = new Map<string, number>()
+  onCommand = (cmd) => calls.set(cmd, (calls.get(cmd) ?? 0) + 1)
+  const ytd = await recordedYtdForStatement(target)
+  onCommand = null
+
+  assert.deepEqual(ytd, { grossCents: 50_100, deductionCents: 0, netCents: 50_100 })
+  assert.deepEqual(await recordedYtdForStaff('marcus', '2026-12-31'), ytd)
+  assert.deepEqual(await historicalYtdByStaff('2026'), { marcus: 50_100 })
+  assert.equal(calls.get('GET') ?? 0, 0, 'YTD never fans out to one GET per statement')
+  assert.ok((calls.get('MGET') ?? 0) <= 3, `expected at most 3 batched reads, got ${calls.get('MGET')}`)
 })

@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
-import { requirePermission } from '../_lib/session'
+import { requirePermission, requirePrincipal } from '../_lib/session'
 import { computePay } from '../../../lib/route-pay'
 import { getStaff } from '../../../lib/staff'
 import {
-  listStatements, findByPeriod, saveStatement, nextStatementNumber, newStatementId,
+  listStatements, findByPeriod, findOverlappingStatement, findStatementForCorrection, historicalYtdByStaff, saveStatement, nextStatementNumber, newStatementId,
   type PayStatement, type StatementLine, type StatementDeduction,
 } from '../../../lib/pay-statements'
+import { validateHistoricalPay } from '../../../lib/historical-pay'
 import { withPayStatementLock, StatementGenerationBusyError, StatementLockLostError } from '../../../lib/pay-statement-mutex'
 import { auditAdmin } from '../../../lib/audit'
-import { roleLabel } from '../../../lib/rbac'
+import { can, roleLabel } from '../../../lib/rbac'
 import { isDateStr } from '../../../lib/dates'
 
 type PayrollGap = { bookingNumber: string; staffIds: string[]; reason: string }
@@ -19,6 +20,7 @@ type PayrollGap = { bookingNumber: string; staffIds: string[]; reason: string }
 type GenerateOutcome =
   | { kind: 'created'; statement: PayStatement }
   | { kind: 'duplicate'; existing: PayStatement }
+  | { kind: 'overlap'; existing: PayStatement }
   | { kind: 'no_activity' }
   | { kind: 'payroll_gap'; gaps: PayrollGap[] }
 
@@ -55,19 +57,41 @@ async function buildSnapshot(staffId: string, start: string, end: string) {
 export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requirePermission(req, 'pay:view:all')
   if (who instanceof NextResponse) return who
-  const staffId = new URL(req.url).searchParams.get('staffId')
+  const params = new URL(req.url).searchParams
+  const staffId = params.get('staffId')
+  const historicalYear = params.get('historicalYtdYear')
+  if (historicalYear) {
+    if (!/^\d{4}$/.test(historicalYear)) return NextResponse.json({ ok: false, error: 'Invalid year.' }, { status: 400 })
+    return NextResponse.json({ ok: true, historicalGrossByStaff: await historicalYtdByStaff(historicalYear) })
+  }
+  if (params.get('resolveCorrection') === '1') {
+    const statementNumber = params.get('statementNumber')?.trim() || undefined
+    const periodStart = params.get('periodStart')?.trim() || undefined
+    const periodEnd = params.get('periodEnd')?.trim() || undefined
+    if (!staffId || (!statementNumber && (!periodStart || !periodEnd))) {
+      return NextResponse.json({ ok: false, error: 'Correction statement context is incomplete.' }, { status: 400 })
+    }
+    const statement = await findStatementForCorrection(staffId, statementNumber, periodStart, periodEnd)
+    return NextResponse.json({ ok: true, statement })
+  }
   const all = await listStatements()
   return NextResponse.json({ ok: true, statements: staffId ? all.filter(s => s.staffId === staffId) : all })
 })
 
 export const POST = withTenantRoute(async (req: NextRequest) => {
-  const who = await requirePermission(req, 'pay:generate')
-  if (who instanceof NextResponse) return who
-
+  // Authenticate before parsing an attacker-controlled body. Authorization is
+  // selected after parsing because historical imports have a narrower permission.
+  const principal = await requirePrincipal(req)
+  if (principal instanceof NextResponse) return principal
   const body = await req.json().catch(() => ({}))
+  const historical = body?.action === 'historical'
+  const permission = historical ? 'pay:history:import' : 'pay:generate'
+  if (!can(principal.role, permission)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  const who = principal
+
   const staffId = String(body?.staffId ?? '')
-  const start = String(body?.periodStart ?? '')
-  const end = String(body?.periodEnd ?? '')
+  const start = String(body?.periodStart ?? '').trim()
+  const end = String(body?.periodEnd ?? '').trim()
   const preview = body?.action === 'preview'
 
   if (!staffId || !isDateStr(start) || !isDateStr(end) || end < start) {
@@ -75,6 +99,104 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   }
   const staff = await getStaff(staffId)
   if (!staff) return NextResponse.json({ ok: false, error: 'Crew member not found.' }, { status: 404 })
+
+  if (historical) {
+    const validated = validateHistoricalPay({
+      periodStart: start,
+      periodEnd: end,
+      periodUnit: body?.periodUnit,
+      paymentDate: body?.paymentDate,
+      paymentMethod: body?.paymentMethod,
+      paymentReference: body?.paymentReference,
+      note: body?.note,
+      lines: body?.lines,
+      deductions: body?.deductions,
+    })
+    if (!validated.ok) {
+      return NextResponse.json({ ok: false, error: validated.error, field: validated.field }, { status: 400 })
+    }
+
+    let historicalOutcome: GenerateOutcome
+    try {
+      historicalOutcome = await withPayStatementLock({ staffId, periodStart: start, periodEnd: end }, async (lock) => {
+        const existing = await findByPeriod(staffId, start, end)
+        if (existing) return { kind: 'duplicate', existing } as const
+        const overlap = await findOverlappingStatement(staffId, start, end)
+        if (overlap) return { kind: 'overlap', existing: overlap } as const
+        await lock.assertHeld()
+
+        const value = validated.value
+        const now = Date.now()
+        const statement: PayStatement = {
+          id: newStatementId(),
+          statementNumber: await nextStatementNumber(),
+          staffId,
+          staffName: staff.name,
+          periodStart: value.periodStart,
+          periodEnd: value.periodEnd,
+          grossCents: value.grossCents,
+          deductionCents: value.deductionCents,
+          netCents: value.netCents,
+          routeCount: 0,
+          lines: value.lines,
+          deductions: value.deductions,
+          statementSource: 'historical_manual',
+          periodUnit: value.periodUnit,
+          paymentDate: value.paymentDate,
+          paymentMethod: value.paymentMethod,
+          paymentReference: value.paymentReference,
+          historicalNote: value.note,
+          status: 'issued',
+          issuedBy: who.sub === 'owner' ? 'Owner' : `${roleLabel[who.role]} (${who.sub})`,
+          issuedAt: now,
+          updatedAt: now,
+        }
+        await saveStatement(statement)
+        return { kind: 'created', statement } as const
+      })
+    } catch (err) {
+      if (err instanceof StatementGenerationBusyError || err instanceof StatementLockLostError) {
+        return NextResponse.json({
+          ok: false,
+          reason: 'generation_in_progress',
+          error: 'This crew member’s pay period is being updated. Try again in a moment.',
+        }, { status: 423 })
+      }
+      throw err
+    }
+
+    if (historicalOutcome.kind === 'duplicate') {
+      return NextResponse.json({
+        ok: false,
+        reason: 'duplicate_period',
+        error: `A statement for this period already exists (${historicalOutcome.existing.statementNumber}). Void it first to replace it.`,
+        existing: historicalOutcome.existing,
+      }, { status: 409 })
+    }
+    if (historicalOutcome.kind === 'overlap') {
+      return NextResponse.json({
+        ok: false,
+        reason: 'overlapping_period',
+        error: `This period overlaps ${historicalOutcome.existing.statementNumber} (${historicalOutcome.existing.periodStart} → ${historicalOutcome.existing.periodEnd}). Void that statement or choose a non-overlapping period.`,
+        existing: historicalOutcome.existing,
+      }, { status: 409 })
+    }
+    if (historicalOutcome.kind !== 'created') throw new Error('Unexpected historical statement outcome')
+
+    await auditAdmin(who, 'paystatement.historical_issued', {
+      entity: 'pay_statement',
+      entityId: historicalOutcome.statement.id,
+      summary: `Recorded historical pay statement ${historicalOutcome.statement.statementNumber} for ${historicalOutcome.statement.staffName} (${start} → ${end})`,
+      meta: {
+        statementNumber: historicalOutcome.statement.statementNumber,
+        staffId,
+        periodStart: start,
+        periodEnd: end,
+        statementSource: 'historical_manual',
+      },
+    })
+    return NextResponse.json({ ok: true, statement: historicalOutcome.statement })
+  }
 
   // Preview reads only — it issues nothing, so it never takes the generation lock
   // and can never be blocked by (or block) an in-flight generation.
@@ -92,7 +214,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   // FIN-1: the duplicate check and the write must be ONE atomic step. Everything
   // that decides whether a statement may exist — the duplicate check, the payroll-gap
   // validation, the immutable snapshot, the statement number and the persist — runs
-  // inside the per-crew+period lock, so a second caller cannot pass the duplicate
+  // inside the per-crew lock, so a second caller cannot pass the duplicate/overlap
   // check while the first is still generating. Losers return before any number is
   // allocated, so a blocked request never consumes a statement number.
   let outcome: GenerateOutcome
@@ -100,6 +222,8 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     outcome = await withPayStatementLock({ staffId, periodStart: start, periodEnd: end }, async (lock) => {
       const existing = await findByPeriod(staffId, start, end)
       if (existing) return { kind: 'duplicate', existing } as const
+      const overlap = await findOverlappingStatement(staffId, start, end)
+      if (overlap) return { kind: 'overlap', existing: overlap } as const
 
       const snap = await buildSnapshot(staffId, start, end)
       if (!snap) return { kind: 'no_activity' } as const
@@ -124,6 +248,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
         routeCount: snap.routeCount,
         lines: snap.lines,
         deductions: snap.deductions,
+        statementSource: 'operion_generated',
         status: 'issued',
         issuedBy: who.sub === 'owner' ? 'Owner' : `${roleLabel[who.role]} (${who.sub})`,
         issuedAt: now,
@@ -134,7 +259,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     })
   } catch (err) {
     // Ordinary contention is not an error condition: the lock is held by another
-    // generation for this exact crew + period, or this caller's lease lapsed before
+    // generation for this crew member, or this caller's lease lapsed before
     // it could write (nothing was written — it aborted). 423 Locked, never a 500.
     if (err instanceof StatementGenerationBusyError || err instanceof StatementLockLostError) {
       return NextResponse.json({
@@ -156,6 +281,13 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
         ok: false,
         reason: 'duplicate_period',
         error: `A statement for this period already exists (${outcome.existing.statementNumber}). Void it first to re-issue.`,
+        existing: outcome.existing,
+      }, { status: 409 })
+    case 'overlap':
+      return NextResponse.json({
+        ok: false,
+        reason: 'overlapping_period',
+        error: `This period overlaps ${outcome.existing.statementNumber} (${outcome.existing.periodStart} → ${outcome.existing.periodEnd}). Void that statement or choose a non-overlapping period.`,
         existing: outcome.existing,
       }, { status: 409 })
     case 'created':

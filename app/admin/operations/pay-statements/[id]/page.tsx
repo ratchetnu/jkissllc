@@ -6,16 +6,18 @@ import { ArrowLeft, Printer } from 'lucide-react'
 import OperationsShell from '../../OperationsShell'
 import PayStatementDoc from '../../../../components/PayStatementDoc'
 import type { PayStatement } from '../../../../lib/pay-statements'
+import { isHistoricalStatement, paymentMethodLabel, type StatementYtd } from '../../../../lib/pay-statements'
 
 function StatementView({ id }: { id: string }) {
   const [statement, setStatement] = useState<PayStatement | null>(null)
+  const [ytd, setYtd] = useState<StatementYtd | undefined>()
   const [loading, setLoading] = useState(true)
   const [variant, setVariant] = useState<'standard' | 'verification'>('standard')
 
   useEffect(() => {
     fetch(`/api/admin/pay-statements/${id}`, { credentials: 'same-origin' })
       .then(r => r.json())
-      .then(d => setStatement(d.statement ?? null))
+      .then(d => { setStatement(d.statement ?? null); setYtd(d.ytd) })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [id])
@@ -38,7 +40,12 @@ function StatementView({ id }: { id: string }) {
       </div>
       {loading && <p style={{ color: 'var(--muted)', fontSize: 14 }}>Loading…</p>}
       {!loading && !statement && <div className="os-card" style={{ padding: 18 }}><p style={{ color: 'var(--muted)', fontSize: 14 }}>Statement not found.</p></div>}
-      {statement && <PayStatementDoc s={statement} variant={variant} />}
+      {statement && isHistoricalStatement(statement) && <div className="no-print os-card" style={{ padding: '10px 14px', color: '#93c5fd', fontSize: 12.5 }}>Operion record: this stub was entered manually. This indicator is not included when printing or saving the stub.</div>}
+      {statement && <PayStatementDoc s={statement} variant={variant} showInternalNote meta={{
+        paymentDate: statement.paymentDate,
+        paymentMethodLabel: paymentMethodLabel(statement.paymentMethod),
+        ytd,
+      }} />}
     </div>
   )
 }

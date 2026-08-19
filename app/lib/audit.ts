@@ -20,10 +20,12 @@ export type AuditAction =
   // ── Administrative identity / security events (Wave D/E) ──
   | 'user.created' | 'user.updated' | 'user.role_changed'
   | 'user.suspended' | 'user.reactivated' | 'user.deleted'
+  | 'staff.address_updated'
   // ── Payroll (FIN-1) ──
   // Exactly one line per statement that was actually issued; blocked duplicates and
   // lock contention record nothing.
   | 'paystatement.issued'
+  | 'paystatement.historical_issued'
   // One line per statement actually voided (FIN-2); a repeated void of an
   // already-void statement changes nothing and records nothing.
   | 'paystatement.voided'

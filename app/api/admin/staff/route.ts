@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission, requireAdmin } from '../_lib/session'
 import { can } from '../../../lib/rbac'
-import { listStaff, saveStaff, deleteStaff, redactStaffForViewer, type Staff, type PayKind, type PayHistoryEntry } from '../../../lib/staff'
+import { listStaff, saveStaff, deleteStaff, redactStaffForViewer, parseStaffAddress, type Staff, type PayKind, type PayHistoryEntry } from '../../../lib/staff'
+import { recordAudit } from '../../../lib/audit'
 import { bizKey } from '../../../lib/businesses'
 import { parseMoneyCents } from '../../../lib/finance'
 import { repriceCrewRoutes, repriceCandidates, isApplyTo, type ApplyTo } from '../../../lib/route-reprice'
@@ -66,6 +67,13 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   const now = Date.now()
   const existing = body.id ? (await listStaff()).find(s => s.id === body.id) : undefined
 
+  let address = existing?.address
+  if (body.address !== undefined) {
+    const parsed = parseStaffAddress(body.address)
+    if (parsed.error) return NextResponse.json({ error: parsed.error }, { status: 400 })
+    address = parsed.address
+  }
+
   // ── Pay settings ──
   // `defaultPay` is a dollar amount. Absent = leave as-is; empty = clear it.
   let defaultPayCents = existing?.defaultPayCents
@@ -126,6 +134,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     phone: typeof body.phone === 'string' ? body.phone.trim().slice(0, 40) || undefined : existing?.phone,
     role: typeof body.role === 'string' ? body.role.trim().slice(0, 60) || undefined : existing?.role,
     photoUrl: typeof body.photoUrl === 'string' ? body.photoUrl.trim().slice(0, 600) || undefined : existing?.photoUrl,
+    address,
     active: body.active !== false && body.active !== 'false',
     // Absent in the request = leave as-is; present = the toggle's new value.
     usesTimeclock: typeof body.usesTimeclock === 'boolean' ? body.usesTimeclock : existing?.usesTimeclock,
@@ -140,11 +149,21 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     email: existing?.email,
     applicantId: existing?.applicantId,
     onboarding: existing?.onboarding,
-    w9: parseW9(body.w9, existing?.w9),
+    w9: body.address !== undefined
+      ? { ...(parseW9(body.w9, existing?.w9) ?? { status: 'not_collected' as const }), addressComplete: !!address }
+      : parseW9(body.w9, existing?.w9),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   }
   await saveStaff(staff)
+  if (body.address !== undefined && JSON.stringify(existing?.address) !== JSON.stringify(address)) {
+    await recordAudit({
+      actor: who.sub, actorRole: who.role, action: 'staff.address_updated',
+      entity: 'crew', entityId: staff.id,
+      summary: `${staff.name}'s mailing address was ${address ? 'updated' : 'cleared'} by an administrator.`,
+      meta: { via: 'admin' },
+    })
+  }
 
   // Apply the new pay to routes already on the board. Default 'none'. Completed
   // routes keep the pay they ran at; a pay typed in by hand for one route wins.

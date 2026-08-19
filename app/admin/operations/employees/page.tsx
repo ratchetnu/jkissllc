@@ -17,6 +17,7 @@ type PayKind = 'driver' | 'helper' | 'contractor' | 'employee'
 type PayHistoryEntry = { at: number; defaultPayCents?: number; payByBusiness?: Record<string, number>; effectiveDate?: string; active: boolean; notes?: string }
 type Staff = {
   id: string; name: string; phone?: string; role?: string; photoUrl?: string; active: boolean
+  address?: { line1: string; line2?: string; city: string; state: string; postalCode: string }
   payKind?: PayKind; defaultPayCents?: number; payByBusiness?: Record<string, number>
   payNotes?: string; payEffectiveDate?: string; payActive?: boolean; payHistory?: PayHistoryEntry[]
   usesTimeclock?: boolean
@@ -45,15 +46,18 @@ function Hub() {
   const [timeOffPending, setTimeOffPending] = useState(0)
   const [signals, setSignals] = useState<Record<string, { availabilityWeeksSubmitted: number; availabilityWeeksExpected: number; incidents: number }>>({})
   const [isAdmin, setIsAdmin] = useState(false) // 1099/tax info is admin-only (tax:view)
+  const [historicalYtd, setHistoricalYtd] = useState<Record<string, number>>({})
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [s, r] = await Promise.all([
+      const year = ymd(new Date()).slice(0, 4)
+      const [s, r, h] = await Promise.all([
         fetch('/api/admin/staff', { credentials: 'same-origin' }).then(x => x.json()),
         fetch('/api/admin/routes', { credentials: 'same-origin' }).then(x => x.json()),
+        fetch(`/api/admin/pay-statements?historicalYtdYear=${year}`, { credentials: 'same-origin' }).then(x => x.json()).catch(() => ({})),
       ])
-      setStaff(s.items || []); setStats(r.stats || {}); setRoutes(r.items || [])
+      setStaff(s.items || []); setStats(r.stats || {}); setRoutes(r.items || []); setHistoricalYtd(h.historicalGrossByStaff || {})
     } catch { /* ignore */ } finally { setLoading(false) }
   }, [])
 
@@ -150,16 +154,16 @@ function Hub() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {active.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} scoreData={scores[s.id]} isAdmin={isAdmin} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
+          {active.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} scoreData={scores[s.id]} isAdmin={isAdmin} historicalYtdCents={historicalYtd[s.id] ?? 0} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
           {inactive.length > 0 && <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)', margin: '14px 0 2px' }}>Inactive</div>}
-          {inactive.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} scoreData={scores[s.id]} isAdmin={isAdmin} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
+          {inactive.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} scoreData={scores[s.id]} isAdmin={isAdmin} historicalYtdCents={historicalYtd[s.id] ?? 0} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
         </div>
       )}
     </div>
   )
 }
 
-function EmployeeCard({ s, st, scoreData, isAdmin, businesses, upcoming, comp, open, onToggle, onOpen, onChanged, setMsg, delay }: { s: Staff; st?: CStats; scoreData?: CrewScore; isAdmin?: boolean; businesses: string[]; upcoming: RouteLite[]; comp?: CrewCompSummary; open: boolean; onToggle: () => void; onOpen: () => void; onChanged: () => void; setMsg: (m: string) => void; delay: number }) {
+function EmployeeCard({ s, st, scoreData, isAdmin, historicalYtdCents, businesses, upcoming, comp, open, onToggle, onOpen, onChanged, setMsg, delay }: { s: Staff; st?: CStats; scoreData?: CrewScore; isAdmin?: boolean; historicalYtdCents: number; businesses: string[]; upcoming: RouteLite[]; comp?: CrewCompSummary; open: boolean; onToggle: () => void; onOpen: () => void; onChanged: () => void; setMsg: (m: string) => void; delay: number }) {
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
   // Collapsing the card drops edit mode too, so reopening it shows the detail view
@@ -211,7 +215,7 @@ function EmployeeCard({ s, st, scoreData, isAdmin, businesses, upcoming, comp, o
 
               {comp && <CrewEarnings comp={comp} s={s} />}
 
-              {isAdmin && <Tax1099Card s={s} ytdGrossCents={comp?.ytdEarningsCents ?? 0} onChanged={onChanged} />}
+              {isAdmin && <Tax1099Card s={s} ytdGrossCents={(comp?.ytdEarningsCents ?? 0) + historicalYtdCents} onChanged={onChanged} />}
 
               {scoreData && <CrewScoreCard data={scoreData} />}
 
@@ -334,10 +338,10 @@ function Tax1099Card({ s, ytdGrossCents, onChanged }: { s: Staff; ytdGrossCents:
           style={{ padding: '7px 10px', fontSize: 12.5, borderRadius: 9, background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', color: 'var(--text)', cursor: 'pointer' }}>
           {(['not_collected', 'on_file', 'verified'] as const).map(v => <option key={v} value={v}>W-9: {w9StatusLabel[v]}</option>)}
         </select>
-        <button onClick={() => saveW9({ addressComplete: !s.w9?.addressComplete })} disabled={busy} className="os-tap"
-          style={{ padding: '7px 11px', fontSize: 12, fontWeight: 700, borderRadius: 9, cursor: 'pointer', border: '1px solid var(--line)', background: 'rgba(255,255,255,.05)', color: s.w9?.addressComplete ? '#86efac' : 'var(--muted)' }}>
-          {s.w9?.addressComplete ? '✓ Address on file' : 'Address incomplete'}
-        </button>
+        <span title={s.address ? 'Edit the address from this crew member’s profile.' : 'Use Edit to add this crew member’s address.'}
+          style={{ padding: '7px 11px', fontSize: 12, fontWeight: 700, borderRadius: 9, border: '1px solid var(--line)', background: 'rgba(255,255,255,.05)', color: s.address ? '#86efac' : 'var(--muted)' }}>
+          {s.address ? '✓ Address on file' : 'Address incomplete'}
+        </span>
         <input value={tin} onChange={e => setTin(e.target.value.replace(/\D/g, '').slice(0, 4))} onBlur={() => tin !== (s.w9?.tinLast4 ?? '') && saveW9({ tinLast4: tin })}
           placeholder="TIN ••••" maxLength={4} inputMode="numeric"
           style={{ width: 92, padding: '7px 10px', fontSize: 12.5, borderRadius: 9, background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', color: 'var(--text)', outline: 'none' }} />
@@ -609,6 +613,10 @@ function EmployeeForm({ existing, onDone, onCancel }: { existing?: Staff; onDone
   const [phone, setPhone] = useState(existing?.phone || '')
   const [role, setRole] = useState(existing?.role || '')
   const [photoUrl, setPhotoUrl] = useState(existing?.photoUrl || '')
+  const [address, setAddress] = useState({
+    line1: existing?.address?.line1 || '', line2: existing?.address?.line2 || '',
+    city: existing?.address?.city || '', state: existing?.address?.state || '', postalCode: existing?.address?.postalCode || '',
+  })
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
@@ -629,7 +637,7 @@ function EmployeeForm({ existing, onDone, onCancel }: { existing?: Staff; onDone
     if (!name.trim()) { setErr('A name is required.'); return }
     setSaving(true); setErr('')
     try {
-      const res = await fetch('/api/admin/staff', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ id: existing?.id, name, phone, role, photoUrl, active: existing ? existing.active : true }) })
+      const res = await fetch('/api/admin/staff', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ id: existing?.id, name, phone, role, photoUrl, address, active: existing ? existing.active : true }) })
       const d = await res.json()
       if (!res.ok) { setErr(d.error || 'Could not save.'); return }
       onDone(existing ? undefined : `${name.trim()} added to your crew.`)
@@ -668,6 +676,19 @@ function EmployeeForm({ existing, onDone, onCancel }: { existing?: Staff; onDone
           <input autoFocus placeholder="Role name" value={role === 'Other' ? '' : role} onChange={e => setRole(e.target.value)} style={{ ...field, marginTop: 8 }} />
         )}
       </div>
+      <fieldset style={{ border: 0, padding: 0, margin: '16px 0 0' }}>
+        <legend style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--muted)', marginBottom: 8 }}>Mailing address</legend>
+        <div style={{ display: 'grid', gap: 9 }}>
+          <input aria-label="Street address" autoComplete="street-address" placeholder="Street address" value={address.line1} onChange={e => setAddress(a => ({ ...a, line1: e.target.value }))} style={field} />
+          <input aria-label="Apartment, suite, or unit" autoComplete="address-line2" placeholder="Apartment, suite, or unit (optional)" value={address.line2} onChange={e => setAddress(a => ({ ...a, line2: e.target.value }))} style={field} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 9 }}>
+            <input aria-label="City" autoComplete="address-level2" placeholder="City" value={address.city} onChange={e => setAddress(a => ({ ...a, city: e.target.value }))} style={field} />
+            <input aria-label="State" autoComplete="address-level1" placeholder="State" value={address.state} onChange={e => setAddress(a => ({ ...a, state: e.target.value }))} style={field} />
+            <input aria-label="ZIP code" autoComplete="postal-code" inputMode="numeric" placeholder="ZIP code" value={address.postalCode} onChange={e => setAddress(a => ({ ...a, postalCode: e.target.value }))} style={field} />
+          </div>
+        </div>
+        <p style={{ color: 'var(--muted)', fontSize: 11.5, marginTop: 6 }}>Leave every address field blank if none is on file.</p>
+      </fieldset>
       {err && <p style={{ color: '#f87171', fontSize: 13, marginTop: 10 }}>{err}</p>}
       <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
         <button onClick={save} disabled={saving || uploading} className="btn os-tap" style={{ borderRadius: 11, height: 40, flex: 1, justifyContent: 'center' }}>{saving ? 'Saving…' : existing ? 'Save changes' : 'Add crew member'}</button>

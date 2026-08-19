@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Clock, MapPin, AlertTriangle, PencilLine, History, X } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
 import { Stat } from '../ui'
@@ -311,14 +312,15 @@ function CorrectionModal({ entry, onClose, onSaved }: {
 }
 
 function Board() {
+  const searchParams = useSearchParams()
   const [staff, setStaff] = useState<Staff[]>([])
   const [data, setData] = useState<Payload | null>(null)
   const [loading, setLoading] = useState(true)
   const [state, setState] = useState<'ok' | 'denied' | 'error'>('ok')
 
-  const [staffId, setStaffId] = useState('')
-  const [start, setStart] = useState('')
-  const [end, setEnd] = useState('')
+  const [staffId, setStaffId] = useState(() => searchParams.get('staffId') ?? '')
+  const [start, setStart] = useState(() => searchParams.get('start') ?? '')
+  const [end, setEnd] = useState(() => searchParams.get('end') ?? '')
   const [type, setType] = useState<'' | 'route' | 'booking'>('')
   const [editing, setEditing] = useState<TimeEntry | null>(null)
 
@@ -354,6 +356,13 @@ function Board() {
           Hours worked from crew clock-ins. Read-only — payable totals count completed punches only.
         </p>
       </header>
+
+      {searchParams.has('staffId') && (
+        <div className="os-card" style={{ padding: '11px 14px', marginBottom: 14, borderColor: 'rgba(134,239,172,.35)', fontSize: 13 }}>
+          <strong style={{ color: '#86efac' }}>Approved pay correction:</strong>{' '}
+          the affected crew member and pay period are already filtered below. Open the relevant row’s <strong>Edit time</strong> control, save the correction, then return to Pay Statements to void and replace the old stub.
+        </div>
+      )}
 
       {/* Filters */}
       <div style={filterRow}>
@@ -511,5 +520,5 @@ function Board() {
 }
 
 export default function TimesheetsPage() {
-  return <OperationsShell><Board /></OperationsShell>
+  return <OperationsShell><Suspense fallback={<p style={{ color: 'var(--muted)', padding: 20 }}>Loading timesheets…</p>}><Board /></Suspense></OperationsShell>
 }

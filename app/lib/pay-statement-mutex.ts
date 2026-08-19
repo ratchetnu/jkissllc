@@ -1,4 +1,4 @@
-// Per crew-member-and-period statement generation lock — the pay-statement
+// Per crew-member statement generation lock — the pay-statement
 // counterpart to lib/route-mutex and lib/claim-mutex.
 //
 // FIN-1 (July 2026 audit). Issuing a statement was a check-then-act sequence:
@@ -11,8 +11,9 @@
 //
 // The fix is the same primitive the rest of the OS uses for money: serialize the
 // whole check → compute → allocate → persist section behind a short Redis lock
-// keyed on the identity that must be unique (crew member + exact period), so the
-// duplicate check can no longer be read while a generation is still in flight.
+// keyed on the crew member. Historical statements may use day, week, month, or
+// custom periods, so different date tuples can overlap; serializing every issuance
+// for one crew member makes the overlap check atomic too.
 //
 // Tenancy: the key is a `paystmt:` logical key, so app/lib/redis.ts routes it
 // through scopeKey() and it becomes `t:{tenantId}:paystmt:lock:...` when
@@ -20,8 +21,8 @@
 // lock. Building the prefix here by hand is forbidden (bypass-detection gate);
 // the chokepoint is the one place that does it.
 //
-// Different crew members, and different periods for the same crew member, use
-// different keys and never block each other.
+// Different crew members use different keys and never block each other. Different
+// periods for the same crew member deliberately serialize.
 import { redis } from './redis'
 
 // ── Lease sizing ─────────────────────────────────────────────────────────────
@@ -91,15 +92,17 @@ export function normalizePeriodBoundary(day: string): string {
 }
 
 /**
- * The logical lock key. Mirrors the period index key
- * (`paystmt:period:{staffId}:{start}:{end}`) exactly, so the lock guards precisely
- * the uniqueness the index enforces. Tenant namespacing is applied by the redis
- * chokepoint, not here.
+ * The logical lock key. Period boundaries are still validated at this boundary,
+ * but are intentionally absent from the key: exact-period uniqueness and
+ * cross-scale overlap prevention must share one critical section per crew member.
+ * Tenant namespacing is applied by the redis chokepoint, not here.
  */
 export function payStatementLockKey(staffId: string, periodStart: string, periodEnd: string): string {
   const staff = String(staffId ?? '').trim()
   if (!staff) throw new Error('pay-statement lock: staffId is required')
-  return `paystmt:lock:${staff}:${normalizePeriodBoundary(periodStart)}:${normalizePeriodBoundary(periodEnd)}`
+  normalizePeriodBoundary(periodStart)
+  normalizePeriodBoundary(periodEnd)
+  return `paystmt:lock:${staff}`
 }
 
 export type PayStatementLockOpts = {
@@ -110,7 +113,7 @@ export type PayStatementLockOpts = {
 }
 
 /**
- * Run `fn` while holding the generation lock for one crew member + period. The
+ * Run `fn` while holding the generation lock for one crew member. The
  * caller must do the ENTIRE critical section inside `fn` — duplicate check,
  * payroll-gap validation, snapshot build, statement-number allocation and persist
  * — otherwise the race is only narrowed, not closed.

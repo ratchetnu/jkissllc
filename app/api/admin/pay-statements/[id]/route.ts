@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../../_lib/session'
-import { getStatement, saveStatement, voidStatement, type VoidOutcome } from '../../../../lib/pay-statements'
+import { getStatement, saveStatement, voidStatement, recordedYtdForStatement, type VoidOutcome } from '../../../../lib/pay-statements'
 import { withPayStatementLock, StatementGenerationBusyError, StatementLockLostError } from '../../../../lib/pay-statement-mutex'
 import { auditAdmin } from '../../../../lib/audit'
 import { getStaff } from '../../../../lib/staff'
@@ -15,7 +15,7 @@ export const GET = withTenantRoute(async (req: NextRequest, { params }: { params
   const { id } = await params
   const statement = await getStatement(id)
   if (!statement) return NextResponse.json({ ok: false, error: 'Not found.' }, { status: 404 })
-  return NextResponse.json({ ok: true, statement })
+  return NextResponse.json({ ok: true, statement, ytd: await recordedYtdForStatement(statement) })
 })
 
 export const POST = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {

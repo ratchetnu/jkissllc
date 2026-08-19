@@ -56,6 +56,7 @@ export type Permission =
   // ── Compensation / pay ──
   | 'pay:configure'        // set rates / pay structures
   | 'pay:generate'         // generate pay statements
+  | 'pay:history:import'   // issue manual historical pay statements (admin only)
   | 'pay:view:all'         // view any crew's compensation
   | 'pay:adjust:submit'    // submit a comp adjustment for review (manager)
   | 'pay:approve'          // approve pay / corrections
@@ -99,7 +100,7 @@ const ADMIN: Permission[] = [
   'ai:use', 'ai:analytics', 'ai:prompts:manage',
   'messages:send', 'reminders:view', 'reminders:manage', 'dispatch:send', 'comms:analytics',
   'users:manage', 'roles:manage',
-  'pay:configure', 'pay:generate', 'pay:view:all', 'pay:adjust:submit', 'pay:approve', 'tax:view',
+  'pay:configure', 'pay:generate', 'pay:history:import', 'pay:view:all', 'pay:adjust:submit', 'pay:approve', 'tax:view',
   'customers:view',
   'invoices:manage', 'profitability:view',
   'claims:manage', 'claims:create', 'claimguard:use',
@@ -177,7 +178,7 @@ export const PERMISSION_DOMAINS: ReadonlyArray<{ domain: string; permissions: re
   { domain: 'AI', permissions: ['ai:use', 'ai:analytics', 'ai:prompts:manage'] },
   { domain: 'Communications', permissions: ['messages:send', 'reminders:view', 'reminders:manage', 'dispatch:send', 'comms:analytics'] },
   { domain: 'Users & identity', permissions: ['users:manage', 'roles:manage'] },
-  { domain: 'Compensation & pay', permissions: ['pay:configure', 'pay:generate', 'pay:view:all', 'pay:adjust:submit', 'pay:approve', 'tax:view'] },
+  { domain: 'Compensation & pay', permissions: ['pay:configure', 'pay:generate', 'pay:history:import', 'pay:view:all', 'pay:adjust:submit', 'pay:approve', 'tax:view'] },
   { domain: 'Customers', permissions: ['customers:view'] },
   { domain: 'Money', permissions: ['invoices:manage', 'profitability:view'] },
   { domain: 'Claims', permissions: ['claims:manage', 'claims:create', 'claimguard:use'] },

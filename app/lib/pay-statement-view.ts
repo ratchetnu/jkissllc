@@ -7,6 +7,8 @@
 
 import type { PayStatement, StatementLine } from './pay-statements'
 
+export type DisplayStatementLine = Omit<StatementLine, 'businessName'> & { businessName?: string }
+
 export type PayStatementMeta = {
   contractorId?: string
   role?: string
@@ -24,12 +26,13 @@ export type PayStatementMeta = {
 export const DEFAULT_CLASSIFICATION = 'Independent Contractor (1099)'
 
 /** Group earning lines by business, preserving order, with a subtotal per group. */
-export function groupEarnings(lines: StatementLine[]): { businessName: string; lines: StatementLine[]; subtotalCents: number }[] {
+export function groupEarnings(lines: DisplayStatementLine[]): { businessName: string; lines: DisplayStatementLine[]; subtotalCents: number }[] {
   const order: string[] = []
-  const map = new Map<string, StatementLine[]>()
+  const map = new Map<string, DisplayStatementLine[]>()
   for (const l of lines) {
-    if (!map.has(l.businessName)) { map.set(l.businessName, []); order.push(l.businessName) }
-    map.get(l.businessName)!.push(l)
+    const businessName = l.businessName ?? 'Earnings'
+    if (!map.has(businessName)) { map.set(businessName, []); order.push(businessName) }
+    map.get(businessName)!.push(l)
   }
   return order.map(businessName => {
     const groupLines = map.get(businessName)!
@@ -38,9 +41,10 @@ export function groupEarnings(lines: StatementLine[]): { businessName: string; l
 }
 
 export type SummaryRow = { key: string; label: string; cents: number; negative?: boolean; emphasis?: boolean }
+type StatementAmounts = Pick<PayStatement, 'grossCents' | 'deductionCents' | 'netCents'>
 
 /** The pay-summary rows that actually have values (optional rows omitted when absent/zero). */
-export function summaryRows(s: PayStatement, meta: PayStatementMeta = {}): SummaryRow[] {
+export function summaryRows(s: StatementAmounts, meta: PayStatementMeta = {}): SummaryRow[] {
   const rows: SummaryRow[] = [{ key: 'gross', label: 'Gross earnings', cents: s.grossCents }]
   if (meta.bonusCents) rows.push({ key: 'bonus', label: 'Bonuses', cents: meta.bonusCents })
   if (meta.reimbursementCents) rows.push({ key: 'reimb', label: 'Reimbursements', cents: meta.reimbursementCents })

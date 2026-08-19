@@ -10,12 +10,16 @@ import { DEFAULT_TENANT_ID } from './platform/tenancy/types'
 // the snapshot is the record. Duplicate prevention is keyed on crew + exact period.
 
 export type StatementLine = {
-  source?: 'route' | 'booking'
+  source?: 'route' | 'booking' | 'historical'
   routeNumber: string
   routeDate: string
   businessName: string
   amountCents: number
   workedMinutes?: number
+  description?: string
+  earningKind?: 'hourly' | 'daily' | 'fixed'
+  quantity?: number
+  rateCents?: number
 }
 
 export type StatementDeduction = {
@@ -36,11 +40,69 @@ export type PayStatement = {
   routeCount: number
   lines: StatementLine[]
   deductions: StatementDeduction[]
+  statementSource?: 'operion_generated' | 'historical_manual'
+  periodUnit?: 'day' | 'week' | 'month' | 'custom'
+  paymentDate?: string
+  paymentMethod?: 'cash' | 'check' | 'direct_deposit' | 'zelle' | 'other'
+  paymentReference?: string
+  historicalNote?: string
   status: 'issued' | 'void'
   issuedBy: string
   issuedAt: number
   emailedAt?: number
   updatedAt: number
+}
+
+export type StatementYtd = { grossCents: number; deductionCents: number; netCents: number }
+
+export type CrewStatementSummary = Pick<PayStatement,
+  'id' | 'statementNumber' | 'periodStart' | 'periodEnd' | 'netCents' | 'routeCount' | 'issuedAt' | 'paymentDate'
+>
+
+export type CrewStatementLine = Omit<StatementLine, 'source' | 'businessName'> & { businessName?: string }
+
+export type CrewPayStatement = Omit<PayStatement,
+  'historicalNote' | 'statementSource' | 'issuedBy' | 'periodUnit' | 'lines'
+> & { lines: CrewStatementLine[] }
+
+/** Crew-facing records intentionally omit internal/manual-entry provenance. */
+export function crewStatementSummary(s: PayStatement): CrewStatementSummary {
+  return {
+    id: s.id,
+    statementNumber: s.statementNumber,
+    periodStart: s.periodStart,
+    periodEnd: s.periodEnd,
+    netCents: s.netCents,
+    routeCount: s.routeCount,
+    issuedAt: s.issuedAt,
+    ...(s.paymentDate ? { paymentDate: s.paymentDate } : {}),
+  }
+}
+
+export function crewPayStatement(s: PayStatement): CrewPayStatement {
+  const historical = isHistoricalStatement(s)
+  const {
+    historicalNote: _historicalNote,
+    statementSource: _statementSource,
+    issuedBy: _issuedBy,
+    periodUnit: _periodUnit,
+    ...statement
+  } = s
+  return {
+    ...statement,
+    lines: statement.lines.map(({ source: _source, businessName, ...line }) => (
+      historical ? line : { ...line, businessName }
+    )),
+  }
+}
+
+export function isHistoricalStatement(s: Pick<PayStatement, 'statementSource'>): boolean {
+  return s.statementSource === 'historical_manual'
+}
+
+export function paymentMethodLabel(method: PayStatement['paymentMethod']): string | undefined {
+  if (!method) return undefined
+  return ({ cash: 'Cash', check: 'Check', direct_deposit: 'Direct deposit', zelle: 'Zelle', other: 'Other' })[method]
 }
 
 const KEY = (id: string) => `paystmt:${id}`
@@ -112,9 +174,97 @@ export async function listForStaff(staffId: string, limit = 100): Promise<PaySta
   return hydrate(ids)
 }
 
+const STAFF_SCAN_PAGE = 250
+
+// Exact, uncapped staff history. Each page is one ZRANGE + one MGET, so a 500-row
+// history costs four store round trips instead of 501 individual REST requests.
+// Paging avoids a hidden correctness cap and keeps each response payload bounded.
+async function allForStaff(staffId: string): Promise<PayStatement[]> {
+  const all: PayStatement[] = []
+  for (let offset = 0; ; offset += STAFF_SCAN_PAGE) {
+    const ids = await redis.zrevrange(STAFF_INDEX(staffId), offset, offset + STAFF_SCAN_PAGE - 1)
+    all.push(...await hydrate(ids))
+    if (ids.length < STAFF_SCAN_PAGE) return all
+  }
+}
+
+async function allStatements(): Promise<PayStatement[]> {
+  const all: PayStatement[] = []
+  for (let offset = 0; ; offset += STAFF_SCAN_PAGE) {
+    const ids = await redis.zrevrange(INDEX, offset, offset + STAFF_SCAN_PAGE - 1)
+    all.push(...await hydrate(ids))
+    if (ids.length < STAFF_SCAN_PAGE) return all
+  }
+}
+
+/** The live statement whose period intersects [start, end], if one exists. */
+export async function findOverlappingStatement(staffId: string, start: string, end: string): Promise<PayStatement | null> {
+  const statements = await allForStaff(staffId)
+  return statements.find(candidate =>
+    candidate.status === 'issued' && candidate.periodStart <= end && candidate.periodEnd >= start,
+  ) ?? null
+}
+
+/** Resolve the immutable statement attached to a correction without relying on a capped admin list. */
+export async function findStatementForCorrection(
+  staffId: string,
+  statementNumber?: string,
+  start?: string,
+  end?: string,
+): Promise<PayStatement | null> {
+  const statements = await allForStaff(staffId)
+  if (statementNumber) {
+    const numbered = statements.find(candidate => candidate.statementNumber === statementNumber)
+    if (numbered) return numbered
+  }
+  if (!start || !end) return null
+  return statements.find(candidate =>
+    candidate.status === 'issued' && candidate.periodStart <= end && candidate.periodEnd >= start,
+  ) ?? null
+}
+
+// Recorded YTD is derived from immutable issued statements whose pay period ends in
+// the same calendar year and no later than this statement. This includes historical
+// stubs and Operion-generated statements exactly once; void records never count.
+export async function recordedYtdForStatement(statement: PayStatement): Promise<StatementYtd> {
+  const year = statement.periodEnd.slice(0, 4)
+  const statements = await allForStaff(statement.staffId)
+  return statements.reduce<StatementYtd>((sum, candidate) => {
+    if (candidate.status !== 'issued' || candidate.periodEnd.slice(0, 4) !== year || candidate.periodEnd > statement.periodEnd) return sum
+    sum.grossCents += candidate.grossCents
+    sum.deductionCents += candidate.deductionCents
+    sum.netCents += candidate.netCents
+    return sum
+  }, { grossCents: 0, deductionCents: 0, netCents: 0 })
+}
+
+/** Current issued-statement YTD for a crew member, exact and uncapped. */
+export async function recordedYtdForStaff(staffId: string, throughDate: string): Promise<StatementYtd> {
+  const year = throughDate.slice(0, 4)
+  const statements = await allForStaff(staffId)
+  return statements.reduce<StatementYtd>((sum, candidate) => {
+    if (candidate.status !== 'issued' || candidate.periodEnd.slice(0, 4) !== year || candidate.periodEnd > throughDate) return sum
+    sum.grossCents += candidate.grossCents
+    sum.deductionCents += candidate.deductionCents
+    sum.netCents += candidate.netCents
+    return sum
+  }, { grossCents: 0, deductionCents: 0, netCents: 0 })
+}
+
+/** Historical issued gross by crew for tax readiness; generated payroll is excluded to prevent double-counting routes. */
+export async function historicalYtdByStaff(year: string): Promise<Record<string, number>> {
+  const statements = await allStatements()
+  return statements.reduce<Record<string, number>>((totals, statement) => {
+    if (statement.status === 'issued' && statement.statementSource === 'historical_manual' && statement.periodEnd.slice(0, 4) === year) {
+      totals[statement.staffId] = (totals[statement.staffId] ?? 0) + statement.grossCents
+    }
+    return totals
+  }, {})
+}
+
 async function hydrate(ids: string[]): Promise<PayStatement[]> {
   if (!ids.length) return []
-  const raws = await Promise.all(ids.map(id => redis.get(KEY(id))))
+  const raws = await redis.mget(ids.map(KEY))
   return raws
     .filter(Boolean)
     .map(r => { try { return JSON.parse(r as string) as PayStatement } catch { return null } })

@@ -14,7 +14,10 @@ type Route = {
   payCents: number | null; confirmedAt: number | null; clockInAt: number | null; clockOutAt: number | null
   crew: Crewmate[]
 }
-type PaySummary = { periodEarningsCents: number; ytdEarningsCents: number; completedRoutes: number; upcomingRoutes: number }
+type PaySummary = {
+  periodEarningsCents: number; ytdEarningsCents: number; completedRoutes: number; upcomingRoutes: number
+  issuedYtd: { grossCents: number; deductionCents: number; netCents: number }
+}
 
 function StatTile({ label, value }: { label: string; value: string }) {
   return (
@@ -167,7 +170,7 @@ function Home() {
             {pay?.visible && pay.summary ? (
               <>
                 <StatTile label="This pay period" value={money(pay.summary.periodEarningsCents)} />
-                <StatTile label="Year to date" value={money(pay.summary.ytdEarningsCents)} />
+                <StatTile label="Issued statements YTD" value={money(pay.summary.issuedYtd.netCents)} />
               </>
             ) : (
               <StatTile label="Completed" value={String(pay?.summary?.completedRoutes ?? 0)} />

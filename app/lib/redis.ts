@@ -73,6 +73,27 @@ export const redis = {
     }
     return (await call(['GET', scopeKey(key)])) as string | null
   },
+  async mget(keys: string[]): Promise<(string | null)[]> {
+    if (!keys.length) return []
+    const primary = keys.map(key => scopeKey(key))
+    if (!isEnabled('TENANCY_DARK_LAUNCH')) {
+      return ((await call(['MGET', ...primary])) ?? []) as (string | null)[]
+    }
+
+    // Dark launch compares the same batch in both namespaces while preserving the
+    // legacy response. This keeps batched readers on the tenancy chokepoint without
+    // regressing them to one REST request per key.
+    const pairs = keys.map(key => compareLegacyAndTenantKey(key))
+    const legacyKeys = pairs.map((pair, i) => pair?.legacy ?? primary[i])
+    const tenantKeys = pairs.map((pair, i) => pair?.tenant ?? primary[i])
+    const [legacy, tenant] = await Promise.all([
+      call(['MGET', ...legacyKeys]),
+      call(['MGET', ...tenantKeys]),
+    ]) as [(string | null)[], (string | null)[]]
+    const tid = currentTenantId()
+    if (tid) pairs.forEach((pair, i) => { if (pair) recordComparison(keys[i], tid, legacy[i], tenant[i]) })
+    return legacy
+  },
   async set(key: string, value: string): Promise<void> {
     for (const k of writeTargets(key)) await call(['SET', k, value])
   },

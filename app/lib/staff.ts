@@ -19,6 +19,39 @@ export type PayHistoryEntry = {
   notes?: string
 }
 
+export type StaffAddress = {
+  line1: string
+  line2?: string
+  city: string
+  state: string
+  postalCode: string
+}
+
+export type StaffAddressResult = { address?: StaffAddress; error?: string }
+
+const addressText = (value: unknown, max: number): string =>
+  typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').slice(0, max) : ''
+
+// One parser shared by admin entry and crew self-service. An entirely blank object
+// clears the address; a partially filled address is rejected so a record never looks
+// complete while lacking mail-delivery fields.
+export function parseStaffAddress(value: unknown): StaffAddressResult {
+  if (value == null) return {}
+  if (typeof value !== 'object' || Array.isArray(value)) return { error: 'Address must be an object.' }
+  const raw = value as Record<string, unknown>
+  const line1 = addressText(raw.line1, 120)
+  const line2 = addressText(raw.line2, 120)
+  const city = addressText(raw.city, 80)
+  const state = addressText(raw.state, 40).toUpperCase()
+  const postalCode = addressText(raw.postalCode, 20).toUpperCase()
+  if (!line1 && !line2 && !city && !state && !postalCode) return {}
+  if (!line1) return { error: 'Street address is required.' }
+  if (!city) return { error: 'City is required.' }
+  if (!state) return { error: 'State is required.' }
+  if (!/^\d{5}(?:-\d{4})?$/.test(postalCode)) return { error: 'Enter a valid ZIP code (12345 or 12345-6789).' }
+  return { address: { line1, line2: line2 || undefined, city, state, postalCode } }
+}
+
 export type Staff = {
   id: string
   name: string
@@ -26,6 +59,7 @@ export type Staff = {
   email?: string          // carried over from an applicant on hire; contact only
   role?: string
   photoUrl?: string
+  address?: StaffAddress  // mailing/home address; admin + the crew member themself only
   active: boolean
   applicantId?: string    // back-link to the Applicant this crew member was hired from
 
@@ -90,7 +124,10 @@ export function redactStaffForViewer(s: Staff, opts: { pay: boolean; tax: boolea
     delete out.payActive
     delete out.payHistory
   }
-  if (!opts.tax) delete out.w9
+  if (!opts.tax) {
+    delete out.w9
+    delete out.address
+  }
   return out
 }
 

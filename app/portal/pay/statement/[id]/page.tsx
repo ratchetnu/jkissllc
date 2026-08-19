@@ -4,16 +4,17 @@ import { use, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Printer } from 'lucide-react'
 import PayStatementDoc from '../../../../components/PayStatementDoc'
-import type { PayStatement } from '../../../../lib/pay-statements'
+import { paymentMethodLabel, type CrewPayStatement, type StatementYtd } from '../../../../lib/pay-statements'
 
 function StatementView({ id }: { id: string }) {
-  const [statement, setStatement] = useState<PayStatement | null>(null)
+  const [statement, setStatement] = useState<CrewPayStatement | null>(null)
+  const [ytd, setYtd] = useState<StatementYtd | undefined>()
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     fetch(`/api/portal/pay-statements/${id}`, { credentials: 'same-origin' })
       .then(r => r.json())
-      .then(d => setStatement(d.statement ?? null))
+      .then(d => { setStatement(d.statement ?? null); setYtd(d.ytd) })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [id])
@@ -26,7 +27,11 @@ function StatementView({ id }: { id: string }) {
       </div>
       {loading && <p style={{ color: 'var(--muted)', fontSize: 14 }}>Loading…</p>}
       {!loading && !statement && <div className="os-card" style={{ padding: 18 }}><p style={{ color: 'var(--muted)', fontSize: 14 }}>Statement not found.</p></div>}
-      {statement && <PayStatementDoc s={statement} />}
+      {statement && <PayStatementDoc s={statement} meta={{
+        paymentDate: statement.paymentDate,
+        paymentMethodLabel: paymentMethodLabel(statement.paymentMethod),
+        ytd,
+      }} />}
     </div>
   )
 }

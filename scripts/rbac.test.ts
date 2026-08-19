@@ -55,7 +55,7 @@ test('admin holds every operational/management permission', () => {
   // so they are intentionally excluded from the admin grant.
   const perms: Permission[] = [
     'routes:manage', 'crew:assign', 'crew:manage', 'claims:create', 'users:manage',
-    'roles:manage', 'pay:configure', 'pay:approve', 'tax:view', 'profitability:view',
+    'roles:manage', 'pay:configure', 'pay:history:import', 'pay:approve', 'tax:view', 'profitability:view',
     'settings:manage', 'audit:view', 'accounts:suspend', 'reports:view', 'crew:score:view',
   ]
   for (const p of perms) assert.equal(can('admin', p), true, `admin missing ${p}`)
@@ -68,7 +68,7 @@ test('managers get operations but NOT the admin-only sensitive actions', () => {
     assert.equal(can('manager', p), true, `manager should have ${p}`)
   }
   // denied (the spec's "Managers should NOT" list)
-  for (const p of ['roles:manage', 'users:manage', 'settings:manage', 'pay:configure', 'pay:approve', 'tax:view', 'profitability:view', 'integrations:manage', 'accounts:suspend'] as Permission[]) {
+  for (const p of ['roles:manage', 'users:manage', 'settings:manage', 'pay:configure', 'pay:history:import', 'pay:approve', 'tax:view', 'profitability:view', 'integrations:manage', 'accounts:suspend'] as Permission[]) {
     assert.equal(can('manager', p), false, `manager must NOT have ${p}`)
   }
 })
