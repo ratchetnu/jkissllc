@@ -174,10 +174,13 @@ test('PAYSTMT: an unknown id resolves to nothing', async () => {
 // ── Public field-sensitivity review ──────────────────────────────────────────
 
 test('PAYSTMT: the public view exposes ONLY the approved non-sensitive fields', () => {
-  const s = statement('ps_dddddddddddddddddd')
+  const s = statement('ps_dddddddddddddddddd', {
+    contractorAddress: { line1: '2901 E Mayfield Rd', line2: '#2103', city: 'Grand Prairie', state: 'TX', postalCode: '75052' },
+  })
   const pub = publicStatement(s, 'J Kiss LLC') as unknown as Record<string, unknown>
   assert.deepEqual(Object.keys(pub).sort(),
     ['business', 'contractorInitials', 'issuedAt', 'periodEnd', 'periodStart', 'statementNumber', 'status'])
+  assert.doesNotMatch(JSON.stringify(pub), /2901 E Mayfield|75052/, 'mailing address must not enter public verification')
 })
 
 test('PAYSTMT: no money, no ids, no crew full name, no route detail leaves the public view', () => {

@@ -12,6 +12,7 @@ export type DisplayStatementLine = Omit<StatementLine, 'businessName'> & { busin
 
 export type PayStatementMeta = {
   contractorId?: string
+  contractorAddress?: string
   role?: string
   classification?: string          // defaults to "Independent Contractor (1099)"
   businessName?: string

@@ -41,5 +41,5 @@ test('business address changes are admin-only and flow into statement surfaces',
   assert.match(read('app/api/admin/pay-statements/[id]/route.ts'), /businessAddress: formatBusinessAddress/)
   assert.match(read('app/api/portal/pay-statements/[id]/route.ts'), /businessAddress: formatBusinessAddress/)
   assert.match(read('app/components/PayStatementDoc.tsx'), /businessAddress = ADDRESS_ONE_LINE/)
-  assert.match(read('app/lib/statement-render.ts'), /renderStatementEmail\(s: PayStatement, businessAddress = ADDRESS_ONE_LINE\)/)
+  assert.match(read('app/lib/statement-render.ts'), /renderStatementEmail\(s: PayStatement, businessAddress = ADDRESS_ONE_LINE, contractorAddress\?: string\)/)
 })

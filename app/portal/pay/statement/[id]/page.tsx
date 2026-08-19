@@ -10,12 +10,13 @@ function StatementView({ id }: { id: string }) {
   const [statement, setStatement] = useState<CrewPayStatement | null>(null)
   const [ytd, setYtd] = useState<StatementYtd | undefined>()
   const [businessAddress, setBusinessAddress] = useState<string | undefined>()
+  const [contractorAddress, setContractorAddress] = useState<string | undefined>()
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     fetch(`/api/portal/pay-statements/${id}`, { credentials: 'same-origin' })
       .then(r => r.json())
-      .then(d => { setStatement(d.statement ?? null); setYtd(d.ytd); setBusinessAddress(d.businessAddress) })
+      .then(d => { setStatement(d.statement ?? null); setYtd(d.ytd); setBusinessAddress(d.businessAddress); setContractorAddress(d.contractorAddress) })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [id])
@@ -31,6 +32,7 @@ function StatementView({ id }: { id: string }) {
       {statement && <PayStatementDoc s={statement} businessAddress={businessAddress} meta={{
         paymentDate: statement.paymentDate,
         paymentMethodLabel: paymentMethodLabel(statement.paymentMethod),
+        contractorAddress,
         ytd,
       }} />}
     </div>

@@ -112,8 +112,9 @@ test('crew email explains compensation professionally with no manual-entry label
     statementSource: 'historical_manual', paymentDate: result.value.paymentDate, paymentMethod: result.value.paymentMethod,
     status: 'issued', issuedBy: 'Owner', issuedAt: 1, updatedAt: 1,
   }
-  const html = renderStatementEmail(statement)
+  const html = renderStatementEmail(statement, undefined, '2901 E Mayfield Rd, #2103, Grand Prairie, TX 75052')
   assert.match(html, /Pay Statement JK-PS-1001/)
+  assert.match(html, /Mailing address: 2901 E Mayfield Rd, #2103, Grand Prairie, TX 75052/)
   assert.match(html, /Services compensated for Jan 1, 2026–Jan 31, 2026 · Hourly rate: \$20\.00/)
   assert.match(html, /Paid workdays · Jan 1, 2026–Jan 31, 2026 · Weekly on Fridays · Daily rate: \$150\.00/)
   assert.match(html, /Fixed compensation for Jan 1, 2026–Jan 31, 2026/)
@@ -129,6 +130,7 @@ test('crew can print a full-month stub with no manual provenance while admin kee
   if (!result.ok) return
   const statement: PayStatement = {
     id: 'ps_history', statementNumber: 'JK-PS-1001', staffId: 'crew-1', staffName: 'Jordan Rivera',
+    contractorAddress: { line1: '2901 E Mayfield Rd', line2: '#2103', city: 'Grand Prairie', state: 'TX', postalCode: '75052' },
     periodStart: result.value.periodStart, periodEnd: result.value.periodEnd,
     grossCents: result.value.grossCents, deductionCents: result.value.deductionCents, netCents: result.value.netCents,
     routeCount: 0, lines: result.value.lines, deductions: result.value.deductions,
@@ -139,9 +141,17 @@ test('crew can print a full-month stub with no manual provenance while admin kee
   const crewPayload = JSON.stringify(crewStatement)
   assert.doesNotMatch(crewPayload, /historical|manual|manually|prior[ -]pay|entered by|administrator/i)
   assert.equal('periodUnit' in crewStatement, false)
+  assert.equal('contractorAddress' in crewStatement, false)
   assert.equal('businessName' in crewStatement.lines[0], false)
-  const crewHtml = renderToStaticMarkup(createElement(PayStatementDoc, { s: crewStatement }))
+  const crewHtml = renderToStaticMarkup(createElement(PayStatementDoc, {
+    s: crewStatement,
+    meta: { contractorAddress: '2901 E Mayfield Rd, #2103, Grand Prairie, TX 75052' },
+  }))
   assert.match(crewHtml, /Contractor Pay Statement/)
+  assert.match(crewHtml, /Mailing address/)
+  assert.match(crewHtml, /2901 E Mayfield Rd, #2103, Grand Prairie, TX 75052/)
+  assert.match(crewHtml, /@page \{ size: Letter portrait; margin: 0\.32in; \}/)
+  assert.match(crewHtml, /zoom: \.82/)
   assert.match(crewHtml, /Jan 1, 2026 – Jan 31, 2026/)
   assert.match(crewHtml, /Compensation basis/)
   assert.match(crewHtml, /Services compensated for Jan 1, 2026–Jan 31, 2026 · Hourly rate: \$20\.00/)

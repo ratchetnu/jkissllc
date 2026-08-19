@@ -50,7 +50,7 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
       boxShadow: '0 1px 4px rgba(0,0,0,.14)', lineHeight: 1.5, WebkitFontSmoothing: 'antialiased',
     }}>
       {/* ── Header ── */}
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 28, flexWrap: 'wrap' }}>
+      <header className="pay-doc-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 28, flexWrap: 'wrap' }}>
         <div>
           <p style={{ fontSize: 21, fontWeight: 700, letterSpacing: '-.01em', margin: 0 }}>{COMPANY.legalName}</p>
           <p style={{ fontSize: 11.5, color: SUBTLE, margin: '6px 0 0', lineHeight: 1.6 }}>
@@ -76,11 +76,12 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
         </div>
       </header>
 
-      <div style={{ height: 1, background: INK, margin: '22px 0 26px' }} />
+      <div className="pay-doc-divider" style={{ height: 1, background: INK, margin: '22px 0 26px' }} />
 
       {/* ── Contractor profile ── */}
-      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 18 }}>
+      <section className="pay-doc-profile" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 18 }}>
         <Meta label="Contractor" value={<span style={{ fontSize: 15, fontWeight: 600 }}>{s.staffName}</span>} />
+        {meta.contractorAddress && <Meta label="Mailing address" value={meta.contractorAddress} />}
         {meta.contractorId && <Meta label="Contractor ID" value={meta.contractorId} />}
         {meta.role && <Meta label="Role" value={meta.role} />}
         <Meta label="Classification" value={classification} />
@@ -91,7 +92,7 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
 
       {/* ── Verification panel (verification copy only) — income verification + QR ── */}
       {isVerify && (
-        <section aria-label="Verification" style={{ marginTop: 24, border: `1px solid ${HAIR}`, borderRadius: 14, padding: 18, display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap', background: '#fbfbfd' }}>
+        <section className="pay-doc-verification" aria-label="Verification" style={{ marginTop: 24, border: `1px solid ${HAIR}`, borderRadius: 14, padding: 18, display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap', background: '#fbfbfd' }}>
           <div style={{ background: '#fff', padding: 8, borderRadius: 10, border: `1px solid ${HAIR}`, lineHeight: 0 }}>
             <QRCodeSVG value={verifyLink} size={96} level="M" bgColor="#ffffff" fgColor={INK} aria-label="Scan to verify this statement" />
           </div>
@@ -108,7 +109,7 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
       )}
 
       {/* ── Pay summary — Net Payment dominant ── */}
-      <section aria-label="Pay summary" style={{ marginTop: 28, border: `1px solid ${HAIR}`, borderRadius: 14, overflow: 'hidden' }}>
+      <section className="pay-doc-summary" aria-label="Pay summary" style={{ marginTop: 28, border: `1px solid ${HAIR}`, borderRadius: 14, overflow: 'hidden' }}>
         {rows.filter(r => !r.emphasis).map(r => (
           <div key={r.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '12px 20px', borderBottom: `1px solid ${HAIR}` }}>
             <span style={{ fontSize: 13.5, color: r.negative ? '#b3261e' : INK }}>{r.label}</span>
@@ -122,7 +123,7 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
       </section>
 
       {/* ── Earnings ── */}
-      <section style={{ marginTop: 32 }} aria-label="Earnings detail">
+      <section className="pay-doc-earnings" style={{ marginTop: 32 }} aria-label="Earnings detail">
         <h2 style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: SUBTLE, margin: '0 0 4px' }}>Earnings</h2>
         {calculatedLines ? <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
@@ -183,7 +184,7 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
 
       {/* ── Deductions & offsets ── */}
       {s.deductions.length > 0 && (
-        <section style={{ marginTop: 28 }} aria-label="Deductions and offsets">
+        <section className="pay-doc-deductions" style={{ marginTop: 28 }} aria-label="Deductions and offsets">
           <h2 style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: SUBTLE, margin: '0 0 4px' }}>Deductions & offsets</h2>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <tbody>
@@ -204,7 +205,7 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
 
       {/* ── Year to date (only when the caller supplies it) ── */}
       {meta.ytd && Object.values(meta.ytd).some(v => v != null) && (
-        <section style={{ marginTop: 28 }} aria-label="Year to date">
+        <section className="pay-doc-ytd" style={{ marginTop: 28 }} aria-label="Year to date">
           <h2 style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: SUBTLE, margin: '0 0 8px' }}>Year to date</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))', gap: 14 }}>
             {meta.ytd.grossCents != null && <Meta label="Gross" value={money(meta.ytd.grossCents)} />}
@@ -216,7 +217,7 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
       )}
 
       {/* ── Footer ── */}
-      <footer style={{ marginTop: 34, paddingTop: 16, borderTop: `1px solid ${HAIR}` }}>
+      <footer className="pay-doc-footer" style={{ marginTop: 34, paddingTop: 16, borderTop: `1px solid ${HAIR}` }}>
         <p style={{ fontSize: 10.5, color: SUBTLE, margin: 0, lineHeight: 1.6 }}>
           This statement summarizes contractor compensation recorded by {COMPANY.legalName} for the period shown.{' '}
           It is not a tax return or a substitute for Form 1099. Questions? Use the Pay Correction request in your crew portal or contact <span style={{ color: INK }}>{COMPANY.email}</span>.
@@ -240,11 +241,34 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
         .pay-doc tr.pay-group { page-break-after: avoid; } /* keep a group header with its first row */
         .pay-doc section, .pay-doc footer, .pay-doc header { break-inside: avoid; }
         @media print {
-          @page { size: Letter; margin: 0.6in; }
+          @page { size: Letter portrait; margin: 0.32in; }
           html, body { background: #fff !important; }
           .no-print { display: none !important; }
           nav, [data-dock], [data-fab], [data-dock="mobile-more"], [data-dock="mobile-more-overlay"] { display: none !important; }
-          .pay-doc { box-shadow: none !important; border-radius: 0 !important; max-width: 100% !important; padding: 0 !important; }
+          .pay-doc {
+            box-shadow: none !important;
+            border-radius: 0 !important;
+            max-width: 100% !important;
+            padding: 0 !important;
+            line-height: 1.3 !important;
+            zoom: .82;
+          }
+          .pay-doc-header { gap: 18px !important; }
+          .pay-doc-header > div:last-child { padding: 9px 12px !important; }
+          .pay-doc-header > div:last-child > div { margin-top: 6px !important; gap: 4px !important; }
+          .pay-doc-divider { margin: 12px 0 14px !important; }
+          .pay-doc-profile { gap: 10px 16px !important; }
+          .pay-doc-verification { margin-top: 12px !important; padding: 10px !important; gap: 12px !important; }
+          .pay-doc-summary { margin-top: 14px !important; }
+          .pay-doc-summary > div { padding: 7px 12px !important; }
+          .pay-doc-summary > div:last-child { padding: 10px 12px !important; }
+          .pay-doc-summary > div:last-child span:last-child { font-size: 25px !important; }
+          .pay-doc-earnings { margin-top: 16px !important; }
+          .pay-doc table th { padding-top: 5px !important; padding-bottom: 5px !important; }
+          .pay-doc table td { padding-top: 6px !important; padding-bottom: 6px !important; }
+          .pay-doc-deductions, .pay-doc-ytd { margin-top: 14px !important; }
+          .pay-doc-footer { margin-top: 16px !important; padding-top: 8px !important; }
+          .pay-doc-footer p:last-child { margin-top: 5px !important; }
         }
         @media (max-width: 560px) { .pay-doc { padding: 22px 18px !important; } }
       `}</style>

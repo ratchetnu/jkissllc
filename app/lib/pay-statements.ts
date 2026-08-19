@@ -2,6 +2,7 @@ import { redis } from './redis'
 import { bindToken, revokeTokenBinding } from './platform/tenancy/token-binding'
 import { currentTenantId } from './platform/tenancy/context'
 import { DEFAULT_TENANT_ID } from './platform/tenancy/types'
+import type { StaffAddress } from './staff'
 
 // Contractor Pay Statements (Part 5). A statement is an ISSUED, immutable snapshot
 // of one crew member's pay for a period — gross, claim-recovery deductions, and net
@@ -32,6 +33,7 @@ export type PayStatement = {
   statementNumber: string      // JK-PS-1001
   staffId: string
   staffName: string
+  contractorAddress?: StaffAddress // immutable mailing-address snapshot at issuance
   periodStart: string          // YYYY-MM-DD
   periodEnd: string            // YYYY-MM-DD
   grossCents: number
@@ -62,7 +64,7 @@ export type CrewStatementSummary = Pick<PayStatement,
 export type CrewStatementLine = Omit<StatementLine, 'source' | 'businessName'> & { businessName?: string }
 
 export type CrewPayStatement = Omit<PayStatement,
-  'historicalNote' | 'statementSource' | 'issuedBy' | 'periodUnit' | 'lines'
+  'historicalNote' | 'statementSource' | 'issuedBy' | 'periodUnit' | 'contractorAddress' | 'lines'
 > & { lines: CrewStatementLine[] }
 
 /** Crew-facing records intentionally omit internal/manual-entry provenance. */
@@ -86,6 +88,7 @@ export function crewPayStatement(s: PayStatement): CrewPayStatement {
     statementSource: _statementSource,
     issuedBy: _issuedBy,
     periodUnit: _periodUnit,
+    contractorAddress: _contractorAddress,
     ...statement
   } = s
   return {

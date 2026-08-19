@@ -4,7 +4,7 @@ import { requirePermission } from '../../_lib/session'
 import { getStatement, saveStatement, voidStatement, recordedYtdForStatement, type VoidOutcome } from '../../../../lib/pay-statements'
 import { withPayStatementLock, StatementGenerationBusyError, StatementLockLostError } from '../../../../lib/pay-statement-mutex'
 import { auditAdmin } from '../../../../lib/audit'
-import { getStaff } from '../../../../lib/staff'
+import { formatStaffAddress, getStaff } from '../../../../lib/staff'
 import { emailRaw } from '../../../../lib/booking-emails'
 import { renderStatementEmail } from '../../../../lib/statement-render'
 import { COMPANY } from '../../../../lib/company'
@@ -16,8 +16,16 @@ export const GET = withTenantRoute(async (req: NextRequest, { params }: { params
   const { id } = await params
   const statement = await getStatement(id)
   if (!statement) return NextResponse.json({ ok: false, error: 'Not found.' }, { status: 404 })
-  const [ytd, businessAddress] = await Promise.all([recordedYtdForStatement(statement), getBusinessAddress()])
-  return NextResponse.json({ ok: true, statement, ytd, businessAddress: formatBusinessAddress(businessAddress) })
+  const [ytd, businessAddress, staff] = await Promise.all([
+    recordedYtdForStatement(statement), getBusinessAddress(), getStaff(statement.staffId),
+  ])
+  return NextResponse.json({
+    ok: true,
+    statement,
+    ytd,
+    businessAddress: formatBusinessAddress(businessAddress),
+    contractorAddress: formatStaffAddress(statement.contractorAddress ?? staff?.address),
+  })
 })
 
 export const POST = withTenantRoute(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
@@ -81,7 +89,11 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
     await emailRaw({
       to: [to],
       subject: `Pay statement ${statement.statementNumber} — ${COMPANY.legalName}`,
-      html: renderStatementEmail(statement, formatBusinessAddress(await getBusinessAddress())),
+      html: renderStatementEmail(
+        statement,
+        formatBusinessAddress(await getBusinessAddress()),
+        formatStaffAddress(statement.contractorAddress ?? staff.address),
+      ),
     })
     statement.emailedAt = Date.now()
     await saveStatement(statement)

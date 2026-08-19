@@ -27,6 +27,13 @@ export type StaffAddress = {
   postalCode: string
 }
 
+export function formatStaffAddress(address?: StaffAddress): string | undefined {
+  if (!address) return undefined
+  return [address.line1, address.line2, `${address.city}, ${address.state} ${address.postalCode}`]
+    .filter(Boolean)
+    .join(', ')
+}
+
 export type StaffAddressResult = { address?: StaffAddress; error?: string }
 
 const addressText = (value: unknown, max: number): string =>

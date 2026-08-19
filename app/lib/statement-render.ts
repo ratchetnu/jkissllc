@@ -13,7 +13,7 @@ const day = (iso: string) => {
   return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
 }
 
-export function renderStatementEmail(s: PayStatement, businessAddress = ADDRESS_ONE_LINE): string {
+export function renderStatementEmail(s: PayStatement, businessAddress = ADDRESS_ONE_LINE, contractorAddress?: string): string {
   const historical = isHistoricalStatement(s)
   const lines = s.lines.map(l => historical ? `
     <tr>
@@ -41,6 +41,7 @@ export function renderStatementEmail(s: PayStatement, businessAddress = ADDRESS_
     <div style="background:#f7f7f8;border-radius:10px;padding:16px 18px;margin-bottom:16px">
       <p style="margin:0;font-size:15px;font-weight:600">Pay Statement ${escapeHtml(s.statementNumber)}</p>
       <p style="margin:4px 0 0;font-size:13px;color:#555">${escapeHtml(s.staffName)} · ${day(s.periodStart)} – ${day(s.periodEnd)}</p>
+      ${contractorAddress ? `<p style="margin:4px 0 0;font-size:12px;color:#666">Mailing address: ${escapeHtml(contractorAddress)}</p>` : ''}
       ${historical ? `<p style="margin:4px 0 0;font-size:12px;color:#666">Pay schedule: ${escapeHtml(COMPANY.paySchedule)}${paymentMethodLabel(s.paymentMethod) ? ` · ${escapeHtml(paymentMethodLabel(s.paymentMethod) as string)}` : ''}</p>` : ''}
     </div>
     <table style="width:100%;border-collapse:collapse;margin-bottom:8px">

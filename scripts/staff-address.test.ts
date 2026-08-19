@@ -35,7 +35,7 @@ import { NextRequest } from 'next/server'
 import { createSessionToken, createUserSessionToken } from '../app/api/admin/_lib/session'
 import { POST as adminStaffPOST } from '../app/api/admin/staff/route'
 import { GET as meGET, PATCH as mePATCH } from '../app/api/portal/me/route'
-import { getStaff, parseStaffAddress, saveStaff, type Staff } from '../app/lib/staff'
+import { formatStaffAddress, getStaff, parseStaffAddress, saveStaff, type Staff } from '../app/lib/staff'
 import { listAuditForEntity } from '../app/lib/audit'
 
 const CTX = { params: Promise.resolve({} as Record<string, string>) }
@@ -61,6 +61,13 @@ test('address parser normalizes a complete US mailing address and permits cleari
   assert.deepEqual(parseStaffAddress({ line1: '', line2: '', city: '', state: '', postalCode: '' }), {})
   assert.match(parseStaffAddress({ line1: '123 Main', city: 'Dallas', state: 'TX', postalCode: 'bad' }).error ?? '', /valid ZIP/)
   assert.match(parseStaffAddress({ city: 'Dallas', state: 'TX', postalCode: '75201' }).error ?? '', /Street address/)
+})
+
+test('statement mailing address uses a professional one-line format', () => {
+  assert.equal(formatStaffAddress({
+    line1: '2901 E Mayfield Rd', line2: '#2103', city: 'Grand Prairie', state: 'TX', postalCode: '75052',
+  }), '2901 E Mayfield Rd, #2103, Grand Prairie, TX 75052')
+  assert.equal(formatStaffAddress(), undefined)
 })
 
 test('admin can set a crew address and the change is audited without storing address details in the audit', async () => {
