@@ -6,6 +6,7 @@
 // when supplied — nothing is fabricated. No React, so it's unit-testable.
 
 import type { PayStatement, StatementLine } from './pay-statements'
+import { COMPANY } from './company'
 
 export type DisplayStatementLine = Omit<StatementLine, 'businessName'> & { businessName?: string }
 
@@ -24,6 +25,47 @@ export type PayStatementMeta = {
 }
 
 export const DEFAULT_CLASSIFICATION = 'Independent Contractor (1099)'
+
+const money = (cents: number) => (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+const displayDate = (iso: string) => {
+  const [year, month, date] = iso.split('-').map(Number)
+  return new Date(Date.UTC(year, month - 1, date)).toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC',
+  })
+}
+const weekdayCount = (start: string, end: string) => {
+  const cursor = new Date(`${start}T00:00:00Z`)
+  const last = new Date(`${end}T00:00:00Z`)
+  let count = 0
+  while (cursor <= last) {
+    const day = cursor.getUTCDay()
+    if (day >= 1 && day <= 5) count += 1
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+  return count
+}
+
+/** Plain-language compensation basis suitable for a formal pay statement. */
+export function compensationBasis(
+  line: Pick<StatementLine, 'earningKind' | 'quantity' | 'rateCents'>,
+  periodStart: string,
+  periodEnd: string,
+): string {
+  const period = `${displayDate(periodStart)}–${displayDate(periodEnd)}`
+  if (line.earningKind === 'fixed') return `Fixed compensation for ${period}`
+
+  const rate = money(line.rateCents ?? 0)
+  if (line.earningKind === 'hourly') {
+    return `Services compensated for ${period} · Hourly rate: ${rate}`
+  }
+  if (line.earningKind === 'daily') {
+    const schedule = line.quantity === weekdayCount(periodStart, periodEnd)
+      ? 'Monday–Friday schedule'
+      : 'Paid workdays'
+    return `${schedule} · ${period} · ${COMPANY.paySchedule} · Daily rate: ${rate}`
+  }
+  return `Compensation for ${period}`
+}
 
 /** Group earning lines by business, preserving order, with a subtotal per group. */
 export function groupEarnings(lines: DisplayStatementLine[]): { businessName: string; lines: DisplayStatementLine[]; subtotalCents: number }[] {

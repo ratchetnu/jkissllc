@@ -1,6 +1,7 @@
 import { COMPANY, CREDENTIALS_SLASH, ADDRESS_ONE_LINE } from './company'
 import type { PayStatement } from './pay-statements'
 import { isHistoricalStatement, paymentMethodLabel } from './pay-statements'
+import { compensationBasis } from './pay-statement-view'
 
 // Branded HTML render of a pay statement for email delivery. The on-screen /
 // print-to-PDF view is a React component (see the statement pages); this is the
@@ -17,7 +18,7 @@ export function renderStatementEmail(s: PayStatement, businessAddress = ADDRESS_
   const lines = s.lines.map(l => historical ? `
     <tr>
       <td style="padding:8px 0;border-top:1px solid #eee;font-size:13px;color:#333">${escapeHtml(l.description ?? l.routeNumber)}</td>
-      <td style="padding:8px 0;border-top:1px solid #eee;font-size:13px;color:#666">${l.earningKind === 'fixed' ? 'Fixed amount' : `${l.quantity ?? 0} ${l.earningKind === 'hourly' ? 'hour' : 'day'}${l.quantity === 1 ? '' : 's'} × ${money(l.rateCents ?? 0)}`}</td>
+      <td style="padding:8px 0;border-top:1px solid #eee;font-size:13px;color:#666">${escapeHtml(compensationBasis(l, s.periodStart, s.periodEnd))}</td>
       <td style="padding:8px 0;border-top:1px solid #eee;font-size:13px;color:#333;text-align:right">${money(l.amountCents)}</td>
     </tr>` : `
     <tr>
@@ -40,7 +41,7 @@ export function renderStatementEmail(s: PayStatement, businessAddress = ADDRESS_
     <div style="background:#f7f7f8;border-radius:10px;padding:16px 18px;margin-bottom:16px">
       <p style="margin:0;font-size:15px;font-weight:600">Pay Statement ${escapeHtml(s.statementNumber)}</p>
       <p style="margin:4px 0 0;font-size:13px;color:#555">${escapeHtml(s.staffName)} · ${day(s.periodStart)} – ${day(s.periodEnd)}</p>
-      ${historical && s.paymentDate ? `<p style="margin:4px 0 0;font-size:12px;color:#666">Paid ${day(s.paymentDate)}${paymentMethodLabel(s.paymentMethod) ? ` · ${escapeHtml(paymentMethodLabel(s.paymentMethod) as string)}` : ''}</p>` : ''}
+      ${historical ? `<p style="margin:4px 0 0;font-size:12px;color:#666">Pay schedule: ${escapeHtml(COMPANY.paySchedule)}${paymentMethodLabel(s.paymentMethod) ? ` · ${escapeHtml(paymentMethodLabel(s.paymentMethod) as string)}` : ''}</p>` : ''}
     </div>
     <table style="width:100%;border-collapse:collapse;margin-bottom:8px">
       <tbody>${lines}</tbody>

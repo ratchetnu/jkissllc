@@ -3,7 +3,7 @@
 import { QRCodeSVG } from 'qrcode.react'
 import { COMPANY, CREDENTIALS_SLASH, ADDRESS_ONE_LINE } from '../lib/company'
 import { isHistoricalStatement, type PayStatement, type CrewStatementLine } from '../lib/pay-statements'
-import { groupEarnings, summaryRows, DEFAULT_CLASSIFICATION, type PayStatementMeta } from '../lib/pay-statement-view'
+import { compensationBasis, groupEarnings, summaryRows, DEFAULT_CLASSIFICATION, type PayStatementMeta } from '../lib/pay-statement-view'
 
 type PayStatementDocument = Omit<PayStatement, 'issuedBy' | 'lines'> & { issuedBy?: string; lines: CrewStatementLine[] }
 
@@ -64,7 +64,10 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
           <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
             <Meta label="Statement" value={<span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{s.statementNumber}</span>} />
             <Meta label="Pay period" value={`${day(s.periodStart)} – ${day(s.periodEnd)}`} />
-            <Meta label="Payment date" value={meta.paymentDate ? day(meta.paymentDate) : '—'} />
+            <Meta
+              label={calculatedLines ? 'Pay schedule' : 'Payment date'}
+              value={calculatedLines ? COMPANY.paySchedule : meta.paymentDate ? day(meta.paymentDate) : '—'}
+            />
             <div style={{ display: 'flex', gap: 20 }}>
               <Meta label="Status" value={<span style={{ color: s.status === 'void' ? '#c00' : ACCENT, fontWeight: 600 }}>{statusLabel}</span>} />
               <Meta label="Version" value={`v${version}`} />
@@ -125,20 +128,16 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
           <thead>
             <tr style={{ color: SUBTLE, fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em' }}>
               <th style={{ textAlign: 'left', fontWeight: 600, padding: '8px 0' }}>Description</th>
-              <th style={{ textAlign: 'left', fontWeight: 600, padding: '8px 0' }}>Calculation</th>
+              <th style={{ textAlign: 'left', fontWeight: 600, padding: '8px 0' }}>Compensation basis</th>
               <th style={{ textAlign: 'right', fontWeight: 600, padding: '8px 0' }}>Amount</th>
             </tr>
           </thead>
           <tbody>
             {s.lines.map((line, i) => {
-              const unit = line.earningKind === 'hourly' ? 'hour' : line.earningKind === 'daily' ? 'day' : ''
-              const calculation = line.earningKind === 'fixed'
-                ? 'Fixed amount'
-                : `${line.quantity ?? 0} ${unit}${line.quantity === 1 ? '' : 's'} × ${money(line.rateCents ?? 0)}/${unit}`
               return (
                 <tr key={`${line.description ?? line.routeNumber}-${i}`}>
                   <td style={{ padding: '10px 0', borderTop: `1px solid ${HAIR}`, color: INK }}>{line.description ?? line.routeNumber}</td>
-                  <td style={{ padding: '10px 0', borderTop: `1px solid ${HAIR}`, color: SUBTLE }}>{calculation}</td>
+                  <td style={{ padding: '10px 0', borderTop: `1px solid ${HAIR}`, color: SUBTLE }}>{compensationBasis(line, s.periodStart, s.periodEnd)}</td>
                   <td style={{ padding: '10px 0', borderTop: `1px solid ${HAIR}`, color: INK, textAlign: 'right' }} className="tabular-nums">{money(line.amountCents)}</td>
                 </tr>
               )

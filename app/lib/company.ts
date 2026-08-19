@@ -71,6 +71,9 @@ export const COMPANY = {
     zip: '75024',
   },
 
+  // ── Contractor compensation schedule ──
+  paySchedule: 'Weekly on Fridays',
+
   // ── Payment handles ──
   zelle: 'jkissbiz@gmail.com',
   // Apple Cash uses the plain-hyphen phone; kept as its own field so a clone can

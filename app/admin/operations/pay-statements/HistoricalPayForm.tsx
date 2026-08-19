@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { osField as field, osLabel, money } from '../ui'
+import { payAvailableThrough } from '../../../lib/pay-schedule'
 
 type Staff = { id: string; name: string; active: boolean }
 type PeriodUnit = 'day' | 'week' | 'month' | 'custom'
@@ -16,22 +17,21 @@ const today = () => new Intl.DateTimeFormat('en-CA', {
 const toYmd = (d: Date) => d.toISOString().slice(0, 10)
 
 function rangeFor(unit: PeriodUnit, anchor: string): { start: string; end: string } {
-  if (unit === 'custom') return { start: anchor, end: anchor }
-  const d = new Date(`${anchor}T00:00:00Z`)
-  if (unit === 'day') return { start: anchor, end: anchor }
+  const availableThrough = payAvailableThrough(today())
+  const safeAnchor = anchor > availableThrough ? availableThrough : anchor
+  if (unit === 'custom') return { start: safeAnchor, end: safeAnchor }
+  const d = new Date(`${safeAnchor}T00:00:00Z`)
+  if (unit === 'day') return { start: safeAnchor, end: safeAnchor }
   if (unit === 'week') {
-    const offset = (d.getUTCDay() + 6) % 7
-    const start = new Date(d); start.setUTCDate(d.getUTCDate() - offset)
-    const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6)
-    if (toYmd(end) > today()) {
-      start.setUTCDate(start.getUTCDate() - 7)
-      end.setUTCDate(end.getUTCDate() - 7)
-    }
+    const offsetToFriday = (5 - d.getUTCDay() + 7) % 7
+    const end = new Date(d); end.setUTCDate(d.getUTCDate() + offsetToFriday)
+    if (toYmd(end) > availableThrough) end.setUTCDate(end.getUTCDate() - 7)
+    const start = new Date(end); start.setUTCDate(end.getUTCDate() - 6)
     return { start: toYmd(start), end: toYmd(end) }
   }
   let start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1))
   let end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0))
-  if (toYmd(end) > today()) {
+  if (toYmd(end) > availableThrough) {
     start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1))
     end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 0))
   }
@@ -71,16 +71,17 @@ export default function HistoricalPayForm({ staff, onCreated, initial }: {
   initial?: HistoricalPayInitial
 }) {
   const todayValue = today()
+  const availableThrough = payAvailableThrough(todayValue)
   const seededUnit = initial?.periodUnit ?? (initial?.periodStart ? 'custom' : 'week')
   const initialRange = initial?.periodStart && initial?.periodEnd
     ? { start: initial.periodStart, end: initial.periodEnd }
-    : rangeFor('week', todayValue)
+    : rangeFor('week', availableThrough)
   const [staffId, setStaffId] = useState(initial?.staffId ?? '')
   const [periodUnit, setPeriodUnit] = useState<PeriodUnit>(seededUnit)
-  const [anchor, setAnchor] = useState(initial?.periodStart ?? todayValue)
+  const [anchor, setAnchor] = useState(initial?.periodStart ?? availableThrough)
   const [start, setStart] = useState(initialRange.start)
   const [end, setEnd] = useState(initialRange.end)
-  const [paymentDate, setPaymentDate] = useState(todayValue)
+  const [paymentDate, setPaymentDate] = useState(availableThrough)
   const [paymentMethod, setPaymentMethod] = useState('')
   const [paymentReference, setPaymentReference] = useState('')
   const [note, setNote] = useState(initial?.note ?? '')
@@ -176,11 +177,11 @@ export default function HistoricalPayForm({ staff, onCreated, initial }: {
           </div>
           <div>
             <label htmlFor="history-anchor" style={osLabel}>Period containing</label>
-            <input id="history-anchor" type="date" value={anchor} onChange={e => setAnchorAndRange(e.target.value)} style={{ ...field, marginTop: 6 }} />
+            <input id="history-anchor" type="date" max={availableThrough} value={anchor} onChange={e => setAnchorAndRange(e.target.value)} style={{ ...field, marginTop: 6 }} />
           </div>
           <div>
             <label htmlFor="history-paid" style={osLabel}>Date paid</label>
-            <input id="history-paid" type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} required style={{ ...field, marginTop: 6 }} />
+            <input id="history-paid" type="date" max={todayValue} value={paymentDate} onChange={e => setPaymentDate(e.target.value)} required style={{ ...field, marginTop: 6 }} />
           </div>
         </div>
 
@@ -197,8 +198,8 @@ export default function HistoricalPayForm({ staff, onCreated, initial }: {
         </fieldset>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 12, marginTop: 14 }}>
-          <div><label htmlFor="history-start" style={osLabel}>Period start</label><input id="history-start" type="date" value={start} onChange={e => setStart(e.target.value)} disabled={periodUnit !== 'custom'} style={{ ...field, marginTop: 6 }} /></div>
-          <div><label htmlFor="history-end" style={osLabel}>Period end</label><input id="history-end" type="date" value={end} onChange={e => setEnd(e.target.value)} disabled={periodUnit !== 'custom'} style={{ ...field, marginTop: 6 }} /></div>
+          <div><label htmlFor="history-start" style={osLabel}>Period start</label><input id="history-start" type="date" max={availableThrough} value={start} onChange={e => setStart(e.target.value)} disabled={periodUnit !== 'custom'} style={{ ...field, marginTop: 6 }} /></div>
+          <div><label htmlFor="history-end" style={osLabel}>Period end</label><input id="history-end" type="date" max={availableThrough} value={end} onChange={e => setEnd(e.target.value)} disabled={periodUnit !== 'custom'} style={{ ...field, marginTop: 6 }} /></div>
         </div>
       </div>
 

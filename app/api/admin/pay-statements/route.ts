@@ -12,6 +12,7 @@ import { withPayStatementLock, StatementGenerationBusyError, StatementLockLostEr
 import { auditAdmin } from '../../../lib/audit'
 import { can, roleLabel } from '../../../lib/rbac'
 import { isDateStr } from '../../../lib/dates'
+import { payAvailableThrough } from '../../../lib/pay-schedule'
 
 type PayrollGap = { bookingNumber: string; staffIds: string[]; reason: string }
 
@@ -96,6 +97,13 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
 
   if (!staffId || !isDateStr(start) || !isDateStr(end) || end < start) {
     return NextResponse.json({ ok: false, error: 'Select a crew member and a valid period.' }, { status: 400 })
+  }
+  const availableThrough = payAvailableThrough()
+  if (!preview && end > availableThrough) {
+    return NextResponse.json({
+      ok: false,
+      error: `The current week is not available until Friday. Statements are available through ${availableThrough}.`,
+    }, { status: 400 })
   }
   const staff = await getStaff(staffId)
   if (!staff) return NextResponse.json({ ok: false, error: 'Crew member not found.' }, { status: 404 })

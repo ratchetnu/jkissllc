@@ -8,6 +8,8 @@ import { renderStatementEmail } from '../app/lib/statement-render'
 import PayStatementDoc from '../app/components/PayStatementDoc'
 import HistoricalPayForm from '../app/admin/operations/pay-statements/HistoricalPayForm'
 import { crewPayStatement, type PayStatement } from '../app/lib/pay-statements'
+import { compensationBasis } from '../app/lib/pay-statement-view'
+import { payAvailableThrough } from '../app/lib/pay-schedule'
 
 const base = {
   periodStart: '2026-01-01', periodEnd: '2026-01-31', periodUnit: 'month',
@@ -98,7 +100,7 @@ test('historical pay trims operator text and never accepts a client-computed tot
   assert.equal(result.value.netCents, 116000)
 })
 
-test('crew email shows a normal monthly pay statement with calculations and no manual-entry label', () => {
+test('crew email explains compensation professionally with no manual-entry label', () => {
   const result = validateHistoricalPay(base)
   assert.equal(result.ok, true)
   if (!result.ok) return
@@ -112,7 +114,11 @@ test('crew email shows a normal monthly pay statement with calculations and no m
   }
   const html = renderStatementEmail(statement)
   assert.match(html, /Pay Statement JK-PS-1001/)
-  assert.match(html, /40\.5 hours/)
+  assert.match(html, /Services compensated for Jan 1, 2026–Jan 31, 2026 · Hourly rate: \$20\.00/)
+  assert.match(html, /Paid workdays · Jan 1, 2026–Jan 31, 2026 · Weekly on Fridays · Daily rate: \$150\.00/)
+  assert.match(html, /Fixed compensation for Jan 1, 2026–Jan 31, 2026/)
+  assert.match(html, /Pay schedule: Weekly on Fridays/)
+  assert.doesNotMatch(html, /×/)
   assert.doesNotMatch(html, /historical|manual|manually|entered by an administrator/i)
   assert.doesNotMatch(html, /completed job/)
 })
@@ -137,13 +143,37 @@ test('crew can print a full-month stub with no manual provenance while admin kee
   const crewHtml = renderToStaticMarkup(createElement(PayStatementDoc, { s: crewStatement }))
   assert.match(crewHtml, /Contractor Pay Statement/)
   assert.match(crewHtml, /Jan 1, 2026 – Jan 31, 2026/)
-  assert.match(crewHtml, /40\.5 hours/)
+  assert.match(crewHtml, /Compensation basis/)
+  assert.match(crewHtml, /Services compensated for Jan 1, 2026–Jan 31, 2026 · Hourly rate: \$20\.00/)
+  assert.match(crewHtml, /Paid workdays · Jan 1, 2026–Jan 31, 2026 · Weekly on Fridays · Daily rate: \$150\.00/)
+  assert.match(crewHtml, /Fixed compensation for Jan 1, 2026–Jan 31, 2026/)
+  assert.match(crewHtml, /Pay schedule/)
+  assert.match(crewHtml, /Weekly on Fridays/)
+  assert.doesNotMatch(crewHtml, /×/)
   assert.doesNotMatch(crewHtml, /historical|manual|manually|entered by an administrator/i)
   assert.doesNotMatch(crewHtml, /Internal reconstruction source/)
 
   const adminHtml = renderToStaticMarkup(createElement(PayStatementDoc, { s: statement, showInternalNote: true }))
   assert.match(adminHtml, /Internal reconstruction source/)
   assert.match(adminHtml, /class="no-print"[^>]*aria-label="Internal pay record note"/)
+})
+
+test('weekday daily pay identifies its schedule and covered dates for verification', () => {
+  assert.equal(
+    compensationBasis(
+      { earningKind: 'daily', quantity: 162, rateCents: 17_500 },
+      '2026-01-01',
+      '2026-08-14',
+    ),
+    'Monday–Friday schedule · Jan 1, 2026–Aug 14, 2026 · Weekly on Fridays · Daily rate: $175.00',
+  )
+})
+
+test('current pay becomes available on Friday and not earlier in the week', () => {
+  assert.equal(payAvailableThrough('2026-08-19'), '2026-08-14') // Wednesday
+  assert.equal(payAvailableThrough('2026-08-20'), '2026-08-14') // Thursday
+  assert.equal(payAvailableThrough('2026-08-21'), '2026-08-21') // Friday
+  assert.equal(payAvailableThrough('2026-08-23'), '2026-08-21') // Sunday
 })
 
 test('historical form associates every rendered label and uses wrapping mobile grids', () => {
