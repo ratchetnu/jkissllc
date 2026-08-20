@@ -132,6 +132,10 @@ test('verification statements print as one undistorted Letter page', async () =>
 
       const pdf = await page.pdf({ format: 'Letter', preferCSSPageSize: true, printBackground: true, displayHeaderFooter: false })
       const info = spawnSync('pdfinfo', ['-'], { input: pdf, encoding: 'utf8' })
+      // A missing binary comes back as status null with an ENOENT error, not a
+      // non-zero exit. Say so, rather than letting the page-count assertion fail
+      // as `null !== 0` and read like a layout regression.
+      assert.ok(!info.error, `pdfinfo is required to count PDF pages (poppler-utils): ${info.error?.message}`)
       assert.equal(info.status, 0, info.stderr)
       const pages = Number(info.stdout.match(/^Pages:\s+(\d+)$/m)?.[1])
       assert.equal(pages, 1, `${scenario.name}: expected one Letter page`)

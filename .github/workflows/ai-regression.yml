@@ -29,6 +29,13 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'npm'
       - run: npm ci
+      # The pay-statement print test renders a real PDF in headless Chrome and
+      # asks poppler how many pages came out. Chrome ships on the runner image;
+      # poppler does not. Without this the test fails as `null !== 0` — spawnSync
+      # reports a missing binary as a null exit status, which reads like a broken
+      # assertion rather than a missing dependency.
+      - name: Install PDF tooling (poppler-utils)
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Full test suite (tenancy, bypass-detection, rbac, authz, security, AI, workflows)
