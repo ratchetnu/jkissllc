@@ -4,7 +4,7 @@ import { requirePermission, requirePrincipal } from '../_lib/session'
 import { computePay } from '../../../lib/route-pay'
 import { getStaff } from '../../../lib/staff'
 import {
-  listStatements, findByPeriod, findOverlappingStatement, findStatementForCorrection, historicalYtdByStaff, saveStatement, nextStatementNumber, newStatementId,
+  listStatements, listForStaff, findByPeriod, findOverlappingStatement, findStatementForCorrection, historicalYtdByStaff, issueStatement, newStatementId,
   type PayStatement, type StatementLine, type StatementDeduction,
 } from '../../../lib/pay-statements'
 import { validateHistoricalPay } from '../../../lib/historical-pay'
@@ -12,7 +12,9 @@ import { withPayStatementLock, StatementGenerationBusyError, StatementLockLostEr
 import { auditAdmin } from '../../../lib/audit'
 import { can, roleLabel } from '../../../lib/rbac'
 import { isDateStr } from '../../../lib/dates'
-import { payAvailableThrough } from '../../../lib/pay-schedule'
+import { isPayPeriodAvailable, payAvailableThrough, scheduledPayDate } from '../../../lib/pay-schedule'
+import { getBusinessAddress } from '../../../lib/business-address'
+import { resolveCorrection } from '../../../lib/pay-corrections'
 
 type PayrollGap = { bookingNumber: string; staffIds: string[]; reason: string }
 
@@ -27,6 +29,27 @@ type GenerateOutcome =
 
 const gapError = (gaps: PayrollGap[]) =>
   `Cannot generate this statement: ${gaps.map(g => g.bookingNumber).join(', ')} needs a service date.`
+
+async function resolveIssuedCorrection(
+  correctionId: string,
+  statement: PayStatement,
+  actorLabel: string,
+): Promise<string | undefined> {
+  if (!correctionId) return undefined
+  let lastError: unknown
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const resolved = await resolveCorrection(correctionId, statement, actorLabel)
+      return resolved
+        ? undefined
+        : 'The statement was issued, but the correction request could not be linked to it. Review the correction before closing it.'
+    } catch (error) {
+      lastError = error
+    }
+  }
+  console.error('[pay-statement] correction resolution failed', { correctionId, statementId: statement.id, error: lastError })
+  return 'The statement was issued, but its correction request is still open. Retry the correction workflow or contact support.'
+}
 
 // Build the pay figures for ONE crew member over a period from the deterministic
 // engine (computePay uses completed routes/bookings + the claims ledger). Returns
@@ -60,6 +83,8 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
   if (who instanceof NextResponse) return who
   const params = new URL(req.url).searchParams
   const staffId = params.get('staffId')
+  const offset = Math.max(0, Number.parseInt(params.get('offset') ?? '0', 10) || 0)
+  const limit = Math.min(500, Math.max(1, Number.parseInt(params.get('limit') ?? '500', 10) || 500))
   const historicalYear = params.get('historicalYtdYear')
   if (historicalYear) {
     if (!/^\d{4}$/.test(historicalYear)) return NextResponse.json({ ok: false, error: 'Invalid year.' }, { status: 400 })
@@ -75,8 +100,8 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
     const statement = await findStatementForCorrection(staffId, statementNumber, periodStart, periodEnd)
     return NextResponse.json({ ok: true, statement })
   }
-  const all = await listStatements()
-  return NextResponse.json({ ok: true, statements: staffId ? all.filter(s => s.staffId === staffId) : all })
+  const statements = staffId ? await listForStaff(staffId, limit, offset) : await listStatements(limit, offset)
+  return NextResponse.json({ ok: true, statements, nextOffset: statements.length === limit ? offset + statements.length : null })
 })
 
 export const POST = withTenantRoute(async (req: NextRequest) => {
@@ -89,6 +114,8 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   const permission = historical ? 'pay:history:import' : 'pay:generate'
   if (!can(principal.role, permission)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   const who = principal
+  const correctionId = typeof body?.correctionId === 'string' ? body.correctionId.trim() : ''
+  const actorLabel = who.sub === 'owner' ? 'Owner' : `${roleLabel[who.role]} (${who.sub})`
 
   const staffId = String(body?.staffId ?? '')
   const start = String(body?.periodStart ?? '').trim()
@@ -99,7 +126,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     return NextResponse.json({ ok: false, error: 'Select a crew member and a valid period.' }, { status: 400 })
   }
   const availableThrough = payAvailableThrough()
-  if (!preview && end > availableThrough) {
+  if (!preview && !isPayPeriodAvailable(end)) {
     return NextResponse.json({
       ok: false,
       error: `The current week is not available until Friday. Statements are available through ${availableThrough}.`,
@@ -107,6 +134,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   }
   const staff = await getStaff(staffId)
   if (!staff) return NextResponse.json({ ok: false, error: 'Crew member not found.' }, { status: 404 })
+  const businessAddress = preview ? undefined : await getBusinessAddress()
 
   if (historical) {
     const validated = validateHistoricalPay({
@@ -137,10 +165,11 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
         const now = Date.now()
         const statement: PayStatement = {
           id: newStatementId(),
-          statementNumber: await nextStatementNumber(),
+          statementNumber: '',
           staffId,
           staffName: staff.name,
           contractorAddress: staff.address,
+          businessAddress,
           periodStart: value.periodStart,
           periodEnd: value.periodEnd,
           grossCents: value.grossCents,
@@ -156,12 +185,12 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
           paymentReference: value.paymentReference,
           historicalNote: value.note,
           status: 'issued',
-          issuedBy: who.sub === 'owner' ? 'Owner' : `${roleLabel[who.role]} (${who.sub})`,
+          issuedBy: actorLabel,
           issuedAt: now,
           updatedAt: now,
         }
-        await saveStatement(statement)
-        return { kind: 'created', statement } as const
+        const issued = await issueStatement(statement)
+        return { kind: 'created', statement: issued } as const
       })
     } catch (err) {
       if (err instanceof StatementGenerationBusyError || err instanceof StatementLockLostError) {
@@ -204,7 +233,8 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
         statementSource: 'historical_manual',
       },
     })
-    return NextResponse.json({ ok: true, statement: historicalOutcome.statement })
+    const warning = await resolveIssuedCorrection(correctionId, historicalOutcome.statement, actorLabel)
+    return NextResponse.json({ ok: true, statement: historicalOutcome.statement, ...(warning ? { warning } : {}) })
   }
 
   // Preview reads only — it issues nothing, so it never takes the generation lock
@@ -246,10 +276,11 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
       const now = Date.now()
       const statement: PayStatement = {
         id: newStatementId(),
-        statementNumber: await nextStatementNumber(),
+        statementNumber: '',
         staffId,
         staffName: staff.name,
         contractorAddress: staff.address,
+        businessAddress,
         periodStart: start,
         periodEnd: end,
         grossCents: snap.grossCents,
@@ -259,13 +290,14 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
         lines: snap.lines,
         deductions: snap.deductions,
         statementSource: 'operion_generated',
+        paymentDate: scheduledPayDate(end),
         status: 'issued',
-        issuedBy: who.sub === 'owner' ? 'Owner' : `${roleLabel[who.role]} (${who.sub})`,
+        issuedBy: actorLabel,
         issuedAt: now,
         updatedAt: now,
       }
-      await saveStatement(statement)
-      return { kind: 'created', statement } as const
+      const issued = await issueStatement(statement)
+      return { kind: 'created', statement: issued } as const
     })
   } catch (err) {
     // Ordinary contention is not an error condition: the lock is held by another
@@ -309,6 +341,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
         summary: `Issued pay statement ${outcome.statement.statementNumber} for ${outcome.statement.staffName} (${start} → ${end})`,
         meta: { statementNumber: outcome.statement.statementNumber, staffId, periodStart: start, periodEnd: end },
       })
-      return NextResponse.json({ ok: true, statement: outcome.statement })
+      const warning = await resolveIssuedCorrection(correctionId, outcome.statement, actorLabel)
+      return NextResponse.json({ ok: true, statement: outcome.statement, ...(warning ? { warning } : {}) })
   }
 })

@@ -12,7 +12,7 @@ type Summary = {
   issuedYtd: { grossCents: number; deductionCents: number; netCents: number }
 }
 type Statement = { id: string; statementNumber: string; periodStart: string; periodEnd: string; netCents: number; routeCount: number; issuedAt: number; paymentDate?: string }
-type Correction = { id: string; message: string; status: 'pending' | 'approved' | 'denied'; statementNumber?: string; createdAt: number; decisionNote?: string }
+type Correction = { id: string; message: string; status: 'pending' | 'approved' | 'denied' | 'resolved'; statementNumber?: string; createdAt: number; decisionNote?: string; replacementStatementNumber?: string }
 
 function Tile({ label, value, big }: { label: string; value: string; big?: boolean }) {
   return (
@@ -28,7 +28,9 @@ function MyPay() {
   const [s, setS] = useState<Summary | null>(null)
   const [loading, setLoading] = useState(true)
   const [statements, setStatements] = useState<Statement[]>([])
+  const [nextStatementOffset, setNextStatementOffset] = useState<number | null>(null)
   const [corrections, setCorrections] = useState<Correction[]>([])
+  const [loadError, setLoadError] = useState('')
 
   // Correction request form
   const [showCorrection, setShowCorrection] = useState(false)
@@ -38,19 +40,42 @@ function MyPay() {
   const [corrErr, setCorrErr] = useState('')
 
   const loadExtras = useCallback(async () => {
-    const [st, co] = await Promise.all([
-      fetch('/api/portal/pay-statements', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
-      fetch('/api/portal/pay-correction', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
-    ])
-    setStatements(st.statements ?? [])
-    setCorrections(co.corrections ?? [])
+    try {
+      const [statementRes, correctionRes] = await Promise.all([
+        fetch('/api/portal/pay-statements', { credentials: 'same-origin' }),
+        fetch('/api/portal/pay-correction', { credentials: 'same-origin' }),
+      ])
+      const [st, co] = await Promise.all([statementRes.json(), correctionRes.json()])
+      if (!statementRes.ok || !correctionRes.ok) throw new Error('Some pay records could not be loaded.')
+      setStatements(st.statements ?? [])
+      setNextStatementOffset(st.nextOffset ?? null)
+      setCorrections(co.corrections ?? [])
+    } catch {
+      setLoadError('Some pay records are temporarily unavailable. Refresh to try again.')
+    }
   }, [])
+
+  async function loadMoreStatements() {
+    if (nextStatementOffset == null) return
+    try {
+      const res = await fetch(`/api/portal/pay-statements?offset=${nextStatementOffset}`, { credentials: 'same-origin' })
+      const data = await res.json()
+      if (!res.ok || !data.ok) throw new Error()
+      setStatements(current => [...current, ...(data.statements ?? [])])
+      setNextStatementOffset(data.nextOffset ?? null)
+    } catch {
+      setLoadError('Older statements could not be loaded. Try again.')
+    }
+  }
 
   useEffect(() => {
     fetch('/api/portal/pay', { credentials: 'same-origin' })
-      .then(r => r.json())
-      .then(d => { setVisible(!!d.visible); setS(d.summary ?? null) })
-      .catch(() => setVisible(false))
+      .then(async r => ({ r, d: await r.json() }))
+      .then(({ r, d }) => {
+        if (!r.ok || !d.ok) throw new Error('Pay summary unavailable.')
+        setVisible(!!d.visible); setS(d.summary ?? null)
+      })
+      .catch(() => setLoadError('Pay information is temporarily unavailable. Refresh to try again.'))
       .finally(() => setLoading(false))
     loadExtras()
   }, [loadExtras])
@@ -80,6 +105,7 @@ function MyPay() {
       </div>
 
       {loading && <p style={{ color: 'var(--muted)', fontSize: 14 }}>Loading…</p>}
+      {loadError && <div className="os-card" role="alert" style={{ padding: 14, color: '#fca5a5', fontSize: 13.5 }}>{loadError}</div>}
 
       {!loading && !visible && (
         <div className="os-card" style={{ padding: 20 }}>
@@ -145,6 +171,7 @@ function MyPay() {
             </Link>
           ))}
           {statements.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 13.5, marginTop: 8 }}>No statements yet.</p>}
+          {nextStatementOffset != null && <button onClick={loadMoreStatements} className="os-tap" style={{ marginTop: 12, padding: '8px 12px', borderRadius: 9, background: 'rgba(255,255,255,.05)', border: '1px solid var(--line)', color: 'var(--muted)', fontWeight: 700, cursor: 'pointer' }}>Load older statements</button>}
         </div>
       )}
 
@@ -174,8 +201,8 @@ function MyPay() {
                 <div key={c.id} style={{ padding: '10px 0', borderTop: '1px solid var(--line)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 999,
-                      color: c.status === 'pending' ? '#fcd34d' : c.status === 'approved' ? '#86efac' : '#fca5a5',
-                      background: c.status === 'pending' ? 'rgba(252,211,77,.14)' : c.status === 'approved' ? 'rgba(134,239,172,.14)' : 'rgba(248,113,113,.14)' }}>{c.status}</span>
+                      color: c.status === 'pending' ? '#fcd34d' : c.status === 'denied' ? '#fca5a5' : '#86efac',
+                      background: c.status === 'pending' ? 'rgba(252,211,77,.14)' : c.status === 'denied' ? 'rgba(248,113,113,.14)' : 'rgba(134,239,172,.14)' }}>{c.status}</span>
                     <span style={{ color: 'var(--muted)', fontSize: 12 }}>{fmtDay(new Date(c.createdAt).toISOString().slice(0, 10))}</span>
                   </div>
                   <p style={{ fontSize: 13.5, marginTop: 5 }}>{c.message}</p>

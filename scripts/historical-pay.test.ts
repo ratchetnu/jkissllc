@@ -13,7 +13,7 @@ import { payAvailableThrough } from '../app/lib/pay-schedule'
 
 const base = {
   periodStart: '2026-01-01', periodEnd: '2026-01-31', periodUnit: 'month',
-  paymentDate: '2026-02-02', paymentMethod: 'check', paymentReference: '1042',
+  paymentDate: '2026-02-06', paymentMethod: 'check', paymentReference: '1042',
   lines: [
     { kind: 'hourly', description: 'Regular hours', quantity: '40.5', rate: '20.00' },
     { kind: 'daily', description: 'Two day jobs', quantity: 2, rate: '$150' },
@@ -50,7 +50,7 @@ test('historical pay rounds exact half-cents from integer hundredths and rejects
 
 test('historical pay needs no job, route, booking, punch, or work reference', () => {
   const result = validateHistoricalPay({
-    periodStart: '2026-01-06', periodEnd: '2026-01-06', periodUnit: 'day', paymentDate: '2026-01-06',
+    periodStart: '2026-01-06', periodEnd: '2026-01-06', periodUnit: 'day', paymentDate: '2026-01-09',
     lines: [{ kind: 'fixed', amount: '200' }],
   })
   assert.equal(result.ok, true)
@@ -72,6 +72,7 @@ test('historical pay rejects malformed periods, quantities, rates, and over-dedu
     { ...base, periodStart: '3000-01-01', periodEnd: '3000-01-31', paymentDate: '3000-02-01' },
     { ...base, periodUnit: 'custom', periodStart: '2025-01-01', periodEnd: '2026-02-01' },
     { ...base, paymentDate: '2025-12-31' },
+    { ...base, paymentDate: '2026-02-05' },
     { ...base, lines: [{ kind: 'hourly', quantity: '1.234', rate: '20' }] },
     { ...base, lines: [{ kind: 'daily', quantity: '2', rate: '-1' }] },
     { ...base, lines: [{ kind: 'fixed', amount: '10' }], deductions: [{ label: 'Too much', amount: '11' }] },
@@ -150,8 +151,12 @@ test('crew can print a full-month stub with no manual provenance while admin kee
   assert.match(crewHtml, /Contractor Pay Statement/)
   assert.match(crewHtml, /Mailing address/)
   assert.match(crewHtml, /2901 E Mayfield Rd, #2103, Grand Prairie, TX 75052/)
-  assert.match(crewHtml, /@page \{ size: Letter portrait; margin: 0\.32in; \}/)
-  assert.match(crewHtml, /zoom: \.94/)
+  assert.match(crewHtml, /@page \{ size: Letter portrait; margin: 0; \}/)
+  assert.match(crewHtml, /body:has\(\.pay-doc\) \.jkos > :not\(main\)/)
+  assert.match(crewHtml, /width: 100% !important/)
+  assert.match(crewHtml, /padding: 24px 34px !important/)
+  assert.match(crewHtml, /flex-wrap: nowrap !important/)
+  assert.doesNotMatch(crewHtml, /zoom:/)
   assert.match(crewHtml, /Jan 1, 2026 – Jan 31, 2026/)
   assert.match(crewHtml, /Compensation basis/)
   assert.match(crewHtml, /Services compensated for Jan 1, 2026–Jan 31, 2026 · Hourly rate: \$20\.00/)

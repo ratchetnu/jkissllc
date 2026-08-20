@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../../_lib/session'
-import { getStatement, saveStatement, voidStatement, recordedYtdForStatement, type VoidOutcome } from '../../../../lib/pay-statements'
+import { getStatement, markStatementEmailed, voidStatement, recordedYtdForStatement, type VoidOutcome } from '../../../../lib/pay-statements'
 import { withPayStatementLock, StatementGenerationBusyError, StatementLockLostError } from '../../../../lib/pay-statement-mutex'
 import { auditAdmin } from '../../../../lib/audit'
 import { formatStaffAddress, getStaff } from '../../../../lib/staff'
@@ -23,7 +23,7 @@ export const GET = withTenantRoute(async (req: NextRequest, { params }: { params
     ok: true,
     statement,
     ytd,
-    businessAddress: formatBusinessAddress(businessAddress),
+    businessAddress: formatBusinessAddress(statement.businessAddress ?? businessAddress),
     contractorAddress: formatStaffAddress(statement.contractorAddress ?? staff?.address),
   })
 })
@@ -83,6 +83,9 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
   }
 
   if (body?.action === 'email') {
+    if (statement.status !== 'issued') {
+      return NextResponse.json({ ok: false, error: 'Voided statements cannot be emailed.' }, { status: 409 })
+    }
     const staff = await getStaff(statement.staffId)
     const to = staff?.email
     if (!to) return NextResponse.json({ ok: false, error: 'This crew member has no email on file.' }, { status: 400 })
@@ -91,13 +94,20 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
       subject: `Pay statement ${statement.statementNumber} — ${COMPANY.legalName}`,
       html: renderStatementEmail(
         statement,
-        formatBusinessAddress(await getBusinessAddress()),
+        formatBusinessAddress(statement.businessAddress ?? await getBusinessAddress()),
         formatStaffAddress(statement.contractorAddress ?? staff.address),
       ),
     })
-    statement.emailedAt = Date.now()
-    await saveStatement(statement)
-    return NextResponse.json({ ok: true, statement })
+    const updated = await markStatementEmailed(statement.id)
+    if (updated === 'not_found') return NextResponse.json({ ok: false, error: 'Not found.' }, { status: 404 })
+    if (updated === 'not_issued') {
+      return NextResponse.json({
+        ok: true,
+        statement: await getStatement(statement.id),
+        warning: 'The email was sent, but the statement was voided at the same time. It remains void.',
+      })
+    }
+    return NextResponse.json({ ok: true, statement: updated })
   }
 
   return NextResponse.json({ ok: false, error: 'Unsupported action.' }, { status: 400 })

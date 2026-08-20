@@ -58,6 +58,7 @@ const rowButton: React.CSSProperties = {
 }
 
 type HistoricalPayInitial = {
+  correctionId?: string
   staffId: string
   periodStart?: string
   periodEnd?: string
@@ -67,7 +68,7 @@ type HistoricalPayInitial = {
 
 export default function HistoricalPayForm({ staff, onCreated, initial }: {
   staff: Staff[]
-  onCreated: () => Promise<void> | void
+  onCreated: (warning?: string) => Promise<void> | void
   initial?: HistoricalPayInitial
 }) {
   const todayValue = today()
@@ -146,6 +147,7 @@ export default function HistoricalPayForm({ staff, onCreated, initial }: {
         credentials: 'same-origin',
         body: JSON.stringify({
           action: 'historical', staffId, periodUnit, periodStart: start, periodEnd: end,
+          correctionId: initial?.correctionId,
           paymentDate, paymentMethod, paymentReference, note,
           lines: lines.map(({ kind, description, quantity, rate, amount }) => ({ kind, description, quantity, rate, amount })),
           deductions: deductions.map(({ label, amount }) => ({ label, amount })),
@@ -153,7 +155,7 @@ export default function HistoricalPayForm({ staff, onCreated, initial }: {
       })
       const data = await res.json()
       if (!res.ok || !data.ok) { setError(data.error ?? 'Could not issue the historical statement.'); return }
-      await onCreated()
+      await onCreated(typeof data.warning === 'string' ? data.warning : undefined)
     } catch {
       setError('Connection error — try again.')
     } finally {
@@ -182,6 +184,7 @@ export default function HistoricalPayForm({ staff, onCreated, initial }: {
           <div>
             <label htmlFor="history-paid" style={osLabel}>Date paid</label>
             <input id="history-paid" type="date" max={todayValue} value={paymentDate} onChange={e => setPaymentDate(e.target.value)} required style={{ ...field, marginTop: 6 }} />
+            <p style={{ color: 'var(--muted)', fontSize: 11.5, marginTop: 5 }}>Weekly payday is Friday.</p>
           </div>
         </div>
 

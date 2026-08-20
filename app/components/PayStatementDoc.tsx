@@ -41,10 +41,11 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
   const statusLabel = s.status === 'void' ? 'Void' : 'Issued'
   const num = (c: number, neg?: boolean) => <span className="tabular-nums" style={{ fontVariantNumeric: 'tabular-nums' }}>{neg ? '–' : ''}{money(Math.abs(c))}</span>
   const isVerify = variant === 'verification'
+  const densePrint = s.lines.length >= 8
   const verifyLink = verifyUrl ?? `${COMPANY.siteUrl}/verify/${encodeURIComponent(s.id)}`   // opaque ps_ id, not enumerable
 
   return (
-    <div className="pay-doc" style={{
+    <div className={`pay-doc${isVerify ? ' pay-doc-verification-copy' : ''}${densePrint ? ' pay-doc-dense' : ''}`} style={{
       background: PAPER, color: INK, borderRadius: 16, padding: '40px 44px', maxWidth: 760, margin: '0 auto',
       fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
       boxShadow: '0 1px 4px rgba(0,0,0,.14)', lineHeight: 1.5, WebkitFontSmoothing: 'antialiased',
@@ -241,34 +242,88 @@ export default function PayStatementDoc({ s, meta = {}, variant = 'standard', ve
         .pay-doc tr.pay-group { page-break-after: avoid; } /* keep a group header with its first row */
         .pay-doc section, .pay-doc footer, .pay-doc header { break-inside: avoid; }
         @media print {
-          @page { size: Letter portrait; margin: 0.32in; }
-          html, body { background: #fff !important; }
+          @page { size: Letter portrait; margin: 0; }
+          html, body { background: #fff !important; margin: 0 !important; min-height: 0 !important; height: auto !important; overflow: visible !important; }
           .no-print { display: none !important; }
-          nav, [data-dock], [data-fab], [data-dock="mobile-more"], [data-dock="mobile-more-overlay"] { display: none !important; }
+          body:has(.pay-doc) .jkos { min-height: 0 !important; height: auto !important; background: #fff !important; }
+          body:has(.pay-doc) .jkos > :not(main) { display: none !important; }
+          body:has(.pay-doc) .jkos > main { max-width: none !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }
+          body:has(.pay-doc) .jkos > main > * { margin: 0 !important; gap: 0 !important; }
+          nav, header[data-topbar], [data-dock], [data-fab], [data-dock="mobile-more"], [data-dock="mobile-more-overlay"] { display: none !important; }
           .pay-doc {
             box-shadow: none !important;
             border-radius: 0 !important;
-            max-width: 100% !important;
-            padding: 0 !important;
-            line-height: 1.3 !important;
-            zoom: .94;
+            box-sizing: border-box !important;
+            width: 100% !important;
+            max-width: none !important;
+            min-height: 0 !important;
+            margin: 0 !important;
+            padding: 24px 34px !important;
+            line-height: 1.35 !important;
           }
-          .pay-doc-header { gap: 18px !important; }
-          .pay-doc-header > div:last-child { padding: 9px 12px !important; }
+          .pay-doc-header { gap: 20px !important; flex-wrap: nowrap !important; }
+          .pay-doc-header > div:first-child { flex: 1 1 auto !important; min-width: 0 !important; }
+          .pay-doc-header > div:first-child > p:first-child { font-size: 18px !important; }
+          .pay-doc-header > div:first-child > p:last-child { font-size: 10px !important; line-height: 1.45 !important; margin-top: 4px !important; }
+          .pay-doc-header > div:last-child { box-sizing: border-box !important; flex: 0 0 300px !important; min-width: 0 !important; padding: 10px 12px !important; }
+          .pay-doc-header > div:last-child > p { font-size: 8.5px !important; }
           .pay-doc-header > div:last-child > div { margin-top: 6px !important; gap: 4px !important; }
-          .pay-doc-divider { margin: 12px 0 14px !important; }
-          .pay-doc-profile { gap: 10px 16px !important; }
-          .pay-doc-verification { margin-top: 12px !important; padding: 10px !important; gap: 12px !important; }
+          .pay-doc-header > div:last-child > div p:first-child { font-size: 8px !important; }
+          .pay-doc-header > div:last-child > div p:last-child { font-size: 11px !important; margin-top: 1px !important; }
+          .pay-doc-divider { margin: 14px 0 16px !important; }
+          .pay-doc-profile { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 12px !important; }
+          .pay-doc-profile p:first-child { font-size: 8px !important; }
+          .pay-doc-profile p:last-child, .pay-doc-profile p:last-child span { font-size: 11px !important; margin-top: 1px !important; }
+          .pay-doc-verification { margin-top: 14px !important; padding: 12px !important; gap: 14px !important; flex-wrap: nowrap !important; }
+          .pay-doc-verification svg { width: 82px !important; height: 82px !important; }
+          .pay-doc-verification > div:first-child { padding: 6px !important; }
+          .pay-doc-verification > div:last-child { min-width: 0 !important; }
+          .pay-doc-verification > div:last-child p:nth-child(1) { font-size: 10px !important; }
+          .pay-doc-verification > div:last-child p:nth-child(2) { font-size: 10.5px !important; line-height: 1.4 !important; margin-top: 4px !important; }
+          .pay-doc-verification > div:last-child p:nth-child(3) { font-size: 9.5px !important; margin-top: 5px !important; }
           .pay-doc-summary { margin-top: 14px !important; }
-          .pay-doc-summary > div { padding: 7px 12px !important; }
-          .pay-doc-summary > div:last-child { padding: 10px 12px !important; }
-          .pay-doc-summary > div:last-child span:last-child { font-size: 25px !important; }
-          .pay-doc-earnings { margin-top: 16px !important; }
-          .pay-doc table th { padding-top: 5px !important; padding-bottom: 5px !important; }
-          .pay-doc table td { padding-top: 6px !important; padding-bottom: 6px !important; }
-          .pay-doc-deductions, .pay-doc-ytd { margin-top: 14px !important; }
-          .pay-doc-footer { margin-top: 16px !important; padding-top: 8px !important; }
-          .pay-doc-footer p:last-child { margin-top: 5px !important; }
+          .pay-doc-summary > div:not(:last-child) { padding: 7px 14px !important; }
+          .pay-doc-summary > div:last-child { padding: 11px 14px !important; }
+          .pay-doc-summary > div:last-child > span:last-child { font-size: 26px !important; }
+          .pay-doc-earnings, .pay-doc-deductions, .pay-doc-ytd { margin-top: 18px !important; }
+          .pay-doc-earnings h2, .pay-doc-deductions h2, .pay-doc-ytd h2 { font-size: 10.5px !important; }
+          .pay-doc-earnings table, .pay-doc-deductions table { font-size: 11.5px !important; }
+          .pay-doc-earnings th { padding: 5px 0 !important; font-size: 9px !important; }
+          .pay-doc-earnings td, .pay-doc-deductions td { padding-top: 6px !important; padding-bottom: 6px !important; }
+          .pay-doc-ytd { gap: 10px !important; }
+          .pay-doc-ytd p:first-child { font-size: 8px !important; }
+          .pay-doc-ytd p:last-child { font-size: 11px !important; margin-top: 1px !important; }
+          .pay-doc-footer { margin-top: 18px !important; padding-top: 10px !important; }
+          .pay-doc-footer > p:first-child { font-size: 9px !important; line-height: 1.45 !important; }
+          .pay-doc-footer > p:last-child { font-size: 8.5px !important; margin-top: 6px !important; gap: 10px !important; }
+          .pay-doc.pay-doc-dense { padding: 16px 30px !important; line-height: 1.25 !important; }
+          .pay-doc-dense .pay-doc-header { gap: 14px !important; }
+          .pay-doc-dense .pay-doc-header > div:first-child > p:last-child { line-height: 1.3 !important; }
+          .pay-doc-dense .pay-doc-header > div:last-child { padding: 7px 10px !important; }
+          .pay-doc-dense .pay-doc-header > div:last-child > div { margin-top: 3px !important; }
+          .pay-doc-dense .pay-doc-divider { margin: 8px 0 10px !important; }
+          .pay-doc-dense .pay-doc-profile { gap: 7px !important; }
+          .pay-doc-dense .pay-doc-verification { margin-top: 8px !important; padding: 8px 10px !important; gap: 10px !important; }
+          .pay-doc-dense .pay-doc-verification svg { width: 64px !important; height: 64px !important; }
+          .pay-doc-dense .pay-doc-verification > div:first-child { padding: 4px !important; }
+          .pay-doc-dense .pay-doc-verification > div:last-child p:nth-child(2) { font-size: 9.5px !important; line-height: 1.25 !important; margin-top: 2px !important; }
+          .pay-doc-dense .pay-doc-verification > div:last-child p:nth-child(3) { font-size: 8.5px !important; margin-top: 2px !important; }
+          .pay-doc-dense .pay-doc-summary { margin-top: 8px !important; }
+          .pay-doc-dense .pay-doc-summary > div:not(:last-child) { padding: 4px 12px !important; }
+          .pay-doc-dense .pay-doc-summary > div:last-child { padding: 6px 12px !important; }
+          .pay-doc-dense .pay-doc-summary > div:last-child > span:last-child { font-size: 22px !important; }
+          .pay-doc-dense .pay-doc-earnings,
+          .pay-doc-dense .pay-doc-deductions,
+          .pay-doc-dense .pay-doc-ytd { margin-top: 9px !important; }
+          .pay-doc-dense .pay-doc-earnings table,
+          .pay-doc-dense .pay-doc-deductions table { font-size: 9.5px !important; line-height: 1.15 !important; }
+          .pay-doc-dense .pay-doc-earnings th { padding: 2px 0 !important; font-size: 7.5px !important; }
+          .pay-doc-dense .pay-doc-earnings td,
+          .pay-doc-dense .pay-doc-deductions td { padding-top: 2px !important; padding-bottom: 2px !important; }
+          .pay-doc-dense .pay-doc-earnings tr.pay-group td { padding-top: 4px !important; }
+          .pay-doc-dense .pay-doc-footer { margin-top: 8px !important; padding-top: 6px !important; }
+          .pay-doc-dense .pay-doc-footer > p:first-child { font-size: 8px !important; line-height: 1.3 !important; }
+          .pay-doc-dense .pay-doc-footer > p:last-child { font-size: 7.5px !important; margin-top: 3px !important; }
         }
         @media (max-width: 560px) { .pay-doc { padding: 22px 18px !important; } }
       `}</style>

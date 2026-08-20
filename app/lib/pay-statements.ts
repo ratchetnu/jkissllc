@@ -1,8 +1,9 @@
 import { redis } from './redis'
-import { bindToken, revokeTokenBinding } from './platform/tenancy/token-binding'
+import { bindToken, resolveTokenBinding, revokeTokenBinding } from './platform/tenancy/token-binding'
 import { currentTenantId } from './platform/tenancy/context'
 import { DEFAULT_TENANT_ID } from './platform/tenancy/types'
 import type { StaffAddress } from './staff'
+import type { BusinessAddress } from './business-address'
 
 // Contractor Pay Statements (Part 5). A statement is an ISSUED, immutable snapshot
 // of one crew member's pay for a period — gross, claim-recovery deductions, and net
@@ -34,6 +35,7 @@ export type PayStatement = {
   staffId: string
   staffName: string
   contractorAddress?: StaffAddress // immutable mailing-address snapshot at issuance
+  businessAddress?: BusinessAddress // immutable issuer-address snapshot at issuance
   periodStart: string          // YYYY-MM-DD
   periodEnd: string            // YYYY-MM-DD
   grossCents: number
@@ -64,7 +66,7 @@ export type CrewStatementSummary = Pick<PayStatement,
 export type CrewStatementLine = Omit<StatementLine, 'source' | 'businessName'> & { businessName?: string }
 
 export type CrewPayStatement = Omit<PayStatement,
-  'historicalNote' | 'statementSource' | 'issuedBy' | 'periodUnit' | 'contractorAddress' | 'lines'
+  'historicalNote' | 'statementSource' | 'issuedBy' | 'periodUnit' | 'contractorAddress' | 'businessAddress' | 'lines'
 > & { lines: CrewStatementLine[] }
 
 /** Crew-facing records intentionally omit internal/manual-entry provenance. */
@@ -89,6 +91,7 @@ export function crewPayStatement(s: PayStatement): CrewPayStatement {
     issuedBy: _issuedBy,
     periodUnit: _periodUnit,
     contractorAddress: _contractorAddress,
+    businessAddress: _businessAddress,
     ...statement
   } = s
   return {
@@ -113,14 +116,45 @@ const INDEX = 'paystmt:index'
 const STAFF_INDEX = (staffId: string) => `paystmt:staff:${staffId}`
 const PERIOD_KEY = (staffId: string, start: string, end: string) => `paystmt:period:${staffId}:${start}:${end}`
 const COUNTER = 'paystmt:counter'
+const STATEMENT_NUMBER_PLACEHOLDER = '__OPERION_STATEMENT_NUMBER_PENDING__'
+
+const PERSIST_STATEMENT = `
+redis.call('SET', KEYS[1], ARGV[1])
+redis.call('ZADD', KEYS[2], ARGV[2], ARGV[3])
+redis.call('ZADD', KEYS[3], ARGV[2], ARGV[3])
+local statement = cjson.decode(ARGV[1])
+if statement.status ~= 'void' then redis.call('SET', KEYS[4], ARGV[3]) end
+return 1
+`
+
+const ISSUE_STATEMENT = `
+local encoded = ARGV[1]
+local placeholder = ARGV[5]
+local needle = '"statementNumber":"' .. placeholder .. '"'
+local fieldStart = string.find(encoded, needle, 1, true)
+if not fieldStart then return redis.error_reply('missing statement number placeholder') end
+local n = redis.call('INCR', KEYS[1])
+local statementNumber = ARGV[2] .. tostring(1000 + n)
+local valueStart = fieldStart + string.len('"statementNumber":"')
+encoded = string.sub(encoded, 1, valueStart - 1) .. statementNumber .. string.sub(encoded, valueStart + string.len(placeholder))
+redis.call('SET', KEYS[2], encoded)
+redis.call('ZADD', KEYS[3], ARGV[3], ARGV[4])
+redis.call('ZADD', KEYS[4], ARGV[3], ARGV[4])
+redis.call('SET', KEYS[5], ARGV[4])
+return encoded
+`
+
+const MARK_EMAILED_IF_ISSUED = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 'NOT_FOUND' end
+local statement = cjson.decode(raw)
+if statement.status ~= 'issued' then return 'NOT_ISSUED' end
+redis.call('SET', KEYS[1], ARGV[1])
+return ARGV[1]
+`
 
 export function newStatementId(): string {
   return `ps_${crypto.randomUUID().replace(/-/g, '').slice(0, 18)}`
-}
-
-export async function nextStatementNumber(): Promise<string> {
-  const n = await redis.incr(COUNTER)
-  return `JK-PS-${1000 + n}`
 }
 
 export async function getStatement(id: string): Promise<PayStatement | null> {
@@ -139,11 +173,12 @@ export async function findByPeriod(staffId: string, start: string, end: string):
 
 async function persist(s: PayStatement): Promise<void> {
   s.updatedAt = Date.now()
-  await redis.set(KEY(s.id), JSON.stringify(s))
-  await redis.zadd(INDEX, s.issuedAt, s.id)
-  await redis.zadd(STAFF_INDEX(s.staffId), s.issuedAt, s.id)
-  if (s.status !== 'void') await redis.set(PERIOD_KEY(s.staffId, s.periodStart, s.periodEnd), s.id)
+  await redis.eval(PERSIST_STATEMENT, [
+    KEY(s.id), INDEX, STAFF_INDEX(s.staffId), PERIOD_KEY(s.staffId, s.periodStart, s.periodEnd),
+  ], [JSON.stringify(s), String(s.issuedAt), s.id])
+}
 
+async function bindStatementTokenBeforeCommit(s: PayStatement): Promise<boolean> {
   // WAVE 6D-B — the opaque ps_ id IS the public capability (owner decision 2), so the
   // binding is keyed by the id itself and every printed, emailed and saved
   // verification link keeps working untouched.
@@ -154,26 +189,72 @@ async function persist(s: PayStatement): Promise<void> {
   // voided". Revoking the binding would turn that meaningful answer into a bare 404,
   // i.e. "no such statement", which is both less true and less useful. The reader,
   // not the binding, decides what a void statement discloses.
+  const existed = await resolveTokenBinding(s.id) !== null
+  await bindToken(s.id, {
+    tenantId: currentTenantId() ?? DEFAULT_TENANT_ID,
+    resourceType: 'pay-statement',
+    resourceId: s.id,
+  })
+  return !existed
+}
+
+async function revokeUncommittedBinding(id: string, createdBinding: boolean): Promise<void> {
+  if (!createdBinding) return
   try {
-    await bindToken(s.id, {
-      tenantId: currentTenantId() ?? DEFAULT_TENANT_ID,
-      resourceType: 'pay-statement',
-      resourceId: s.id,
-    })
-  } catch { /* conflict: never overwrite another tenant's binding */ }
+    // A transport can fail after Redis committed. Only revoke when the
+    // authoritative record is provably absent; ambiguity keeps the binding.
+    if (await getStatement(id) === null) await revokeTokenBinding(id)
+  } catch { /* preserve the binding when commit state cannot be established */ }
 }
 
 export async function saveStatement(s: PayStatement): Promise<void> {
-  await persist(s)
+  const createdBinding = await bindStatementTokenBeforeCommit(s)
+  try {
+    await persist(s)
+  } catch (error) {
+    await revokeUncommittedBinding(s.id, createdBinding)
+    throw error
+  }
 }
 
-export async function listStatements(limit = 500): Promise<PayStatement[]> {
-  const ids = await redis.zrevrange(INDEX, 0, limit - 1)
+/** Atomically allocate the number and commit every authoritative statement key. */
+export async function issueStatement(s: PayStatement): Promise<PayStatement> {
+  s.updatedAt = Date.now()
+  const pending = { ...s, statementNumber: STATEMENT_NUMBER_PLACEHOLDER }
+  const createdBinding = await bindStatementTokenBeforeCommit(pending)
+  try {
+    const encoded = await redis.eval(ISSUE_STATEMENT, [
+      COUNTER, KEY(s.id), INDEX, STAFF_INDEX(s.staffId), PERIOD_KEY(s.staffId, s.periodStart, s.periodEnd),
+    ], [JSON.stringify(pending), 'JK-PS-', String(s.issuedAt), s.id, STATEMENT_NUMBER_PLACEHOLDER])
+    if (typeof encoded !== 'string') throw new Error('PAY_STATEMENT_ISSUE_FAILED')
+    const issued = JSON.parse(encoded) as PayStatement
+    if (!Array.isArray(issued.lines) || !Array.isArray(issued.deductions)) throw new Error('PAY_STATEMENT_SHAPE_INVALID')
+    return issued
+  } catch (error) {
+    await revokeUncommittedBinding(s.id, createdBinding)
+    throw error
+  }
+}
+
+export async function markStatementEmailed(id: string, at = Date.now()): Promise<'not_found' | 'not_issued' | PayStatement> {
+  const current = await getStatement(id)
+  if (!current) return 'not_found'
+  if (current.status !== 'issued') return 'not_issued'
+  const candidate: PayStatement = { ...current, emailedAt: at, updatedAt: at }
+  const result = await redis.eval(MARK_EMAILED_IF_ISSUED, [KEY(id)], [JSON.stringify(candidate)])
+  if (result === 'NOT_FOUND') return 'not_found'
+  if (result === 'NOT_ISSUED') return 'not_issued'
+  if (typeof result !== 'string') throw new Error('PAY_STATEMENT_EMAIL_MARK_FAILED')
+  return JSON.parse(result) as PayStatement
+}
+
+export async function listStatements(limit = 500, offset = 0): Promise<PayStatement[]> {
+  const ids = await redis.zrevrange(INDEX, offset, offset + limit - 1)
   return hydrate(ids)
 }
 
-export async function listForStaff(staffId: string, limit = 100): Promise<PayStatement[]> {
-  const ids = await redis.zrevrange(STAFF_INDEX(staffId), 0, limit - 1)
+export async function listForStaff(staffId: string, limit = 100, offset = 0): Promise<PayStatement[]> {
+  const ids = await redis.zrevrange(STAFF_INDEX(staffId), offset, offset + limit - 1)
   return hydrate(ids)
 }
 

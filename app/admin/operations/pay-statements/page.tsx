@@ -7,6 +7,7 @@ import OperationsShell from '../OperationsShell'
 import { osField as field, osLabel, Avatar, money, fmtDay, fmtTs } from '../ui'
 import HistoricalPayForm from './HistoricalPayForm'
 import { historicalReplacementSeed, payCorrectionTimesheetHref, type HistoricalReplacementSeed } from '../../../lib/pay-correction-workflow'
+import { payAvailableThrough } from '../../../lib/pay-schedule'
 
 type Staff = { id: string; name: string; active: boolean }
 type Statement = {
@@ -18,7 +19,8 @@ type Statement = {
 type Correction = {
   id: string; staffId: string; staffName?: string; statementNumber?: string; message: string
   periodStart?: string; periodEnd?: string
-  status: 'pending' | 'approved' | 'denied'; decidedBy?: string; decisionNote?: string; createdAt: number
+  status: 'pending' | 'approved' | 'denied' | 'resolved'; decidedBy?: string; decisionNote?: string; createdAt: number
+  replacementStatementId?: string; replacementStatementNumber?: string
 }
 
 function mondayOf(d: Date): string {
@@ -31,6 +33,7 @@ function PayStatements() {
   const [tab, setTab] = useState<'statements' | 'prior-pay' | 'corrections'>('statements')
   const [staff, setStaff] = useState<Staff[]>([])
   const [statements, setStatements] = useState<Statement[]>([])
+  const [nextStatementOffset, setNextStatementOffset] = useState<number | null>(null)
   const [corrections, setCorrections] = useState<Correction[]>([])
   const [forbidden, setForbidden] = useState(false)
   const [err, setErr] = useState('')
@@ -41,25 +44,45 @@ function PayStatements() {
   const [correctionResolution, setCorrectionResolution] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const correctionWorkspace = useRef<HTMLDivElement>(null)
 
-  const today = new Date().toISOString().slice(0, 10)
+  const availableThrough = payAvailableThrough()
   const [staffId, setStaffId] = useState('')
-  const [start, setStart] = useState(mondayOf(new Date()))
-  const [end, setEnd] = useState(today)
+  const [start, setStart] = useState(mondayOf(new Date(`${availableThrough}T12:00:00`)))
+  const [end, setEnd] = useState(availableThrough)
 
   const load = useCallback(async () => {
     try {
       const res = await fetch('/api/admin/pay-statements', { credentials: 'same-origin' })
       if (res.status === 403) { setForbidden(true); return }
       const d = await res.json()
+      if (!res.ok || !d.ok) throw new Error(d.error ?? 'Could not load pay statements.')
       setStatements(d.statements ?? [])
-      const [s, c] = await Promise.all([
-        fetch('/api/admin/staff', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
-        fetch('/api/admin/pay-corrections', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
+      setNextStatementOffset(d.nextOffset ?? null)
+      const [staffRes, correctionRes] = await Promise.all([
+        fetch('/api/admin/staff', { credentials: 'same-origin' }),
+        fetch('/api/admin/pay-corrections', { credentials: 'same-origin' }),
       ])
+      const [s, c] = await Promise.all([staffRes.json(), correctionRes.json()])
+      if (!staffRes.ok || !correctionRes.ok) throw new Error('Could not load the complete pay workspace.')
       setStaff(s.items ?? [])
       setCorrections(c.corrections ?? [])
-    } catch { /* ignore */ }
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : 'Could not load the pay workspace. Try again.')
+    }
   }, [])
+
+  async function loadMoreStatements() {
+    if (nextStatementOffset == null) return
+    setBusy(true); setErr('')
+    try {
+      const res = await fetch(`/api/admin/pay-statements?offset=${nextStatementOffset}`, { credentials: 'same-origin' })
+      const data = await res.json()
+      if (!res.ok || !data.ok) throw new Error(data.error ?? 'Could not load more statements.')
+      setStatements(current => [...current, ...(data.statements ?? [])])
+      setNextStatementOffset(data.nextOffset ?? null)
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : 'Could not load more statements.')
+    } finally { setBusy(false) }
+  }
   useEffect(() => { load() }, [load])
   useEffect(() => {
     if (!editingCorrection) return
@@ -99,11 +122,13 @@ function PayStatements() {
     try {
       const res = await fetch('/api/admin/pay-statements', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-        body: JSON.stringify({ staffId, periodStart: start, periodEnd: end }),
+        body: JSON.stringify({ staffId, periodStart: start, periodEnd: end, correctionId: editingCorrection?.id }),
       })
       const d = await res.json()
       if (!res.ok || !d.ok) { setErr(d.error ?? 'Could not generate.'); return }
       await load()
+      setEditingCorrection(null)
+      if (d.warning) setErr(d.warning)
     } catch { setErr('Connection error — try again.') } finally { setBusy(false) }
   }
 
@@ -185,14 +210,14 @@ function PayStatements() {
             <div style={{ ...osLabel, marginBottom: 12 }}>Generate a statement</div>
             <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'minmax(0,1.4fr) minmax(0,1fr) minmax(0,1fr) auto', alignItems: 'end' }}>
               <div>
-                <label style={osLabel}>Crew member</label>
-                <select value={staffId} onChange={e => setStaffId(e.target.value)} style={{ ...field, marginTop: 6 }}>
+                <label htmlFor="generate-pay-staff" style={osLabel}>Crew member</label>
+                <select id="generate-pay-staff" value={staffId} onChange={e => setStaffId(e.target.value)} style={{ ...field, marginTop: 6 }}>
                   <option value="">Select…</option>
                   {staff.filter(s => s.active).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>
-              <div><label style={osLabel}>From</label><input type="date" value={start} onChange={e => setStart(e.target.value)} style={{ ...field, marginTop: 6 }} /></div>
-              <div><label style={osLabel}>To</label><input type="date" value={end} onChange={e => setEnd(e.target.value)} style={{ ...field, marginTop: 6 }} /></div>
+              <div><label htmlFor="generate-pay-start" style={osLabel}>From</label><input id="generate-pay-start" type="date" max={availableThrough} value={start} onChange={e => setStart(e.target.value)} style={{ ...field, marginTop: 6 }} /></div>
+              <div><label htmlFor="generate-pay-end" style={osLabel}>To</label><input id="generate-pay-end" type="date" max={availableThrough} value={end} onChange={e => setEnd(e.target.value)} style={{ ...field, marginTop: 6 }} /></div>
               <button onClick={generate} disabled={busy} className="btn os-tap" style={{ borderRadius: 12, height: 44, gap: 7, justifyContent: 'center' }}><Plus size={16} /> Generate</button>
             </div>
           </div>
@@ -226,10 +251,11 @@ function PayStatements() {
               )}
             </div>
           ))}
+          {nextStatementOffset != null && <button onClick={loadMoreStatements} disabled={busy} className="os-tap" style={{ ...miniBtn, alignSelf: 'center' }}>{busy ? 'Loading…' : 'Load older statements'}</button>}
         </>
       )}
 
-      {tab === 'prior-pay' && <HistoricalPayForm key={editingCorrection?.id ?? 'new'} staff={staff} initial={historicalInitial} onCreated={async () => { await load(); setHistoricalInitial(undefined); setEditingCorrection(null); setTab('statements') }} />}
+      {tab === 'prior-pay' && <HistoricalPayForm key={editingCorrection?.id ?? 'new'} staff={staff} initial={historicalInitial} onCreated={async warning => { await load(); setHistoricalInitial(undefined); setEditingCorrection(null); setTab('statements'); if (warning) setErr(warning) }} />}
 
       {tab === 'corrections' && (
         <>
@@ -265,8 +291,8 @@ function PayStatements() {
                 <span style={{ fontWeight: 700, fontSize: 15 }}>{c.staffName ?? 'Crew'}</span>
                 {c.statementNumber && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{c.statementNumber}</span>}
                 <span style={{ fontSize: 11, fontWeight: 800, padding: '2px 9px', borderRadius: 999,
-                  color: c.status === 'pending' ? '#fcd34d' : c.status === 'approved' ? '#86efac' : '#fca5a5',
-                  background: c.status === 'pending' ? 'rgba(252,211,77,.14)' : c.status === 'approved' ? 'rgba(134,239,172,.14)' : 'rgba(248,113,113,.14)' }}>{c.status}</span>
+                  color: c.status === 'pending' ? '#fcd34d' : c.status === 'denied' ? '#fca5a5' : '#86efac',
+                  background: c.status === 'pending' ? 'rgba(252,211,77,.14)' : c.status === 'denied' ? 'rgba(248,113,113,.14)' : 'rgba(134,239,172,.14)' }}>{c.status}</span>
               </div>
               <p style={{ fontSize: 14, marginTop: 6 }}>“{c.message}”</p>
               <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 4 }}>{fmtTs(c.createdAt)}{c.decidedBy ? ` · ${c.decidedBy}` : ''}{c.decisionNote ? ` · ${c.decisionNote}` : ''}</p>
@@ -278,6 +304,9 @@ function PayStatements() {
               )}
               {c.status === 'approved' && (
                 <button onClick={() => setEditingCorrection(c)} disabled={busy} className="os-tap" style={{ ...miniBtn, color: '#93c5fd', marginTop: 12 }}><PencilLine size={14} style={{ marginRight: 5 }} />Continue correction</button>
+              )}
+              {c.status === 'resolved' && c.replacementStatementId && (
+                <Link href={`/admin/operations/pay-statements/${c.replacementStatementId}`} className="os-tap" style={{ ...miniBtn, color: '#86efac', marginTop: 12 }}><FileText size={14} style={{ marginRight: 5 }} />Open replacement {c.replacementStatementNumber}</Link>
               )}
             </div>
           ))}

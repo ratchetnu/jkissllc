@@ -14,13 +14,17 @@ function StatementView({ id }: { id: string }) {
   const [businessAddress, setBusinessAddress] = useState<string | undefined>()
   const [contractorAddress, setContractorAddress] = useState<string | undefined>()
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const [variant, setVariant] = useState<'standard' | 'verification'>('standard')
 
   useEffect(() => {
     fetch(`/api/admin/pay-statements/${id}`, { credentials: 'same-origin' })
-      .then(r => r.json())
-      .then(d => { setStatement(d.statement ?? null); setYtd(d.ytd); setBusinessAddress(d.businessAddress); setContractorAddress(d.contractorAddress) })
-      .catch(() => {})
+      .then(async r => ({ r, d: await r.json() }))
+      .then(({ r, d }) => {
+        if (!r.ok || !d.ok) throw new Error(r.status === 404 ? 'Statement not found.' : d.error ?? 'Could not load the statement.')
+        setStatement(d.statement); setYtd(d.ytd); setBusinessAddress(d.businessAddress); setContractorAddress(d.contractorAddress)
+      })
+      .catch(error => setError(error instanceof Error ? error.message : 'Could not load the statement.'))
       .finally(() => setLoading(false))
   }, [id])
 
@@ -41,7 +45,7 @@ function StatementView({ id }: { id: string }) {
         )}
       </div>
       {loading && <p style={{ color: 'var(--muted)', fontSize: 14 }}>Loading…</p>}
-      {!loading && !statement && <div className="os-card" style={{ padding: 18 }}><p style={{ color: 'var(--muted)', fontSize: 14 }}>Statement not found.</p></div>}
+      {!loading && !statement && <div className="os-card" style={{ padding: 18 }}><p role="alert" style={{ color: 'var(--muted)', fontSize: 14 }}>{error || 'Statement not found.'}</p></div>}
       {statement && isHistoricalStatement(statement) && <div className="no-print os-card" style={{ padding: '10px 14px', color: '#93c5fd', fontSize: 12.5 }}>Operion record: this stub was entered manually. This indicator is not included when printing or saving the stub.</div>}
       {statement && <PayStatementDoc s={statement} variant={variant} showInternalNote businessAddress={businessAddress} meta={{
         paymentDate: statement.paymentDate,

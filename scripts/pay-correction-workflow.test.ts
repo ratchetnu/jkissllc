@@ -23,7 +23,7 @@ test('statement dates fill legacy requests that did not save their own period', 
   }
   assert.match(payCorrectionTimesheetHref(legacy, statement), /start=2025-12-29&end=2026-01-04$/)
   assert.deepEqual(historicalReplacementSeed(legacy, statement), {
-    staffId: 'crew & one', periodStart: '2025-12-29', periodEnd: '2026-01-04', periodUnit: 'custom',
+    correctionId: 'pc_one', staffId: 'crew & one', periodStart: '2025-12-29', periodEnd: '2026-01-04', periodUnit: 'custom',
     note: 'Replacement for JK-PS-1001 — The hours are short.',
   })
 })

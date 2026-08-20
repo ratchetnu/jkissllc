@@ -5,7 +5,7 @@ import { redis } from './redis'
 // it does NOT move money on its own (the admin then adjusts via the claims ledger /
 // re-issues the statement). Mirrors the time-off request pattern.
 
-export type PayCorrectionStatus = 'pending' | 'approved' | 'denied'
+export type PayCorrectionStatus = 'pending' | 'approved' | 'denied' | 'resolved'
 
 export type PayCorrection = {
   id: string
@@ -19,6 +19,10 @@ export type PayCorrection = {
   decidedBy?: string
   decidedAt?: number
   decisionNote?: string
+  replacementStatementId?: string
+  replacementStatementNumber?: string
+  resolvedBy?: string
+  resolvedAt?: number
   createdAt: number
   updatedAt: number
 }
@@ -90,6 +94,23 @@ export async function decideCorrection(id: string, approve: boolean, by: string,
   c.decidedBy = by
   c.decidedAt = Date.now()
   c.decisionNote = note?.trim() || undefined
+  await persist(c)
+  return c
+}
+
+/** Close an approved request by linking the immutable replacement that resolved it. */
+export async function resolveCorrection(
+  id: string,
+  replacement: { id: string; statementNumber: string; staffId: string },
+  by: string,
+): Promise<PayCorrection | null> {
+  const c = await getCorrection(id)
+  if (!c || c.status !== 'approved' || c.staffId !== replacement.staffId) return null
+  c.status = 'resolved'
+  c.replacementStatementId = replacement.id
+  c.replacementStatementNumber = replacement.statementNumber
+  c.resolvedBy = by
+  c.resolvedAt = Date.now()
   await persist(c)
   return c
 }

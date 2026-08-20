@@ -1,7 +1,7 @@
-import { centralToday, daysBetween, isDateStr } from './dates'
+import { centralToday, daysBetween, isDateStr, weekdayOf } from './dates'
 import { parseMoneyCents } from './finance'
 import type { StatementDeduction, StatementLine } from './pay-statements'
-import { payAvailableThrough } from './pay-schedule'
+import { isPayPeriodAvailable, payAvailableThrough } from './pay-schedule'
 
 // Historical pay is a manual statement snapshot, never a synthetic route, booking,
 // or punch. The admin supplies the pay period and one or more earnings calculations;
@@ -118,11 +118,14 @@ export function validateHistoricalPay(input: HistoricalPayInput): HistoricalPayV
   }
   const today = centralToday()
   const availableThrough = payAvailableThrough(today)
-  if (start < MIN_HISTORICAL_DATE || end > availableThrough) {
+  if (start < MIN_HISTORICAL_DATE || !isPayPeriodAvailable(end, today)) {
     return { ok: false, field: 'period', error: `Pay statements are currently available through Friday, ${availableThrough}.` }
   }
   if (paymentDate < start || paymentDate > today) {
     return { ok: false, field: 'paymentDate', error: 'Payment date must be on or after the period start and no later than today.' }
+  }
+  if (weekdayOf(paymentDate) !== 5) {
+    return { ok: false, field: 'paymentDate', error: 'Payment date must be a Friday.' }
   }
 
   const periodUnit = input.periodUnit

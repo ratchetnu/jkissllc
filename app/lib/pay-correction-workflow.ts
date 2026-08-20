@@ -5,6 +5,7 @@ type StatementContext = Pick<PayStatement, 'staffId' | 'statementNumber' | 'peri
 type CorrectionContext = Pick<PayCorrection, 'id' | 'staffId' | 'statementNumber' | 'periodStart' | 'periodEnd' | 'message'>
 
 export type HistoricalReplacementSeed = {
+  correctionId: string
   staffId: string
   periodStart?: string
   periodEnd?: string
@@ -25,6 +26,7 @@ export function payCorrectionTimesheetHref(correction: CorrectionContext, statem
 /** Seed a manual replacement without copying the old amount the admin is correcting. */
 export function historicalReplacementSeed(correction: CorrectionContext, statement?: StatementContext): HistoricalReplacementSeed {
   return {
+    correctionId: correction.id,
     staffId: correction.staffId,
     periodStart: correction.periodStart ?? statement?.periodStart,
     periodEnd: correction.periodEnd ?? statement?.periodEnd,

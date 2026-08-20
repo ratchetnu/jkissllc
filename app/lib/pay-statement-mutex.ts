@@ -3,9 +3,9 @@
 //
 // FIN-1 (July 2026 audit). Issuing a statement was a check-then-act sequence:
 // findByPeriod() decided "no live statement for this crew+period yet", and only
-// later did saveStatement() write the period index that makes the next caller see
+// later did the separate persistence step write the period index that makes the next caller see
 // it. Five identical POSTs arriving together all ran the check before any of them
-// wrote, so all five passed and all five issued. nextStatementNumber() is atomic
+// wrote, so all five passed and all five issued. Number allocation is atomic
 // (INCR), so the duplicates even received valid sequential numbers — they look
 // legitimate, and a contractor sees five statements for one week.
 //

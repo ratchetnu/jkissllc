@@ -3,12 +3,14 @@
 // The July 2026 audit reproduced this 5/5: five concurrent identical POSTs to
 // /api/admin/pay-statements all returned 200 and issued five statements for the same
 // staffId + period, because findByPeriod() (check) and saveStatement() (act) were two
-// separate steps. nextStatementNumber() is atomic, so the duplicates even carried valid
+// separate steps. The old counter increment was atomic, so the duplicates even carried valid
 // sequential numbers and looked legitimate.
 //
 // These tests drive the REAL route handlers against an in-memory Upstash fake with a
 // genuine signed session. No Preview or Production data is touched.
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 // Must be set before any handler runs; redis.ts + the session signer read env lazily.
@@ -32,6 +34,9 @@ let failOnce: ((cmd: string, key: string) => boolean) | null = null
 // Injected interference: runs BEFORE the command is served, so a test can perturb the
 // store mid-request (e.g. steal a lock while a generation is between reads).
 let onCommand: ((cmd: string, key: string) => void) | null = null
+// Runs after the fake has applied a command. It models a lost response after a
+// successful commit and malformed store responses without changing production code.
+let afterCommand: ((cmd: string, key: string, result: unknown) => unknown) | null = null
 
 function live(key: string): string | null {
   const e = kv.get(key)
@@ -89,6 +94,29 @@ globalThis.fetch = (async (url: string, init: { body?: string }) => {
       //   renew:   if GET(KEYS[1]) == ARGV[1] then PEXPIRE(KEYS[1], ARGV[2]) else 0
       const script = String(args[0])
       const numKeys = Number(args[1])
+      const keys = args.slice(2, 2 + numKeys)
+      const argv = args.slice(2 + numKeys)
+      if (/return 'NOT_ISSUED'/i.test(script)) {
+        const raw = live(keys[0])
+        if (!raw) { result = 'NOT_FOUND'; break }
+        const statement = JSON.parse(raw)
+        if (statement.status !== 'issued') { result = 'NOT_ISSUED'; break }
+        result = argv[0]; kv.set(keys[0], { value: result as string }); break
+      }
+      if (/missing statement number placeholder/i.test(script)) {
+        const n = Number(live(keys[0]) ?? 0) + 1
+        kv.set(keys[0], { value: String(n) })
+        result = argv[0].replace(argv[4], `${argv[1]}${1000 + n}`)
+        kv.set(keys[1], { value: result as string })
+        z(keys[2]).set(argv[3], Number(argv[2])); z(keys[3]).set(argv[3], Number(argv[2])); kv.set(keys[4], { value: argv[3] })
+        break
+      }
+      if (/statement\.status\s*~=\s*'void'/i.test(script)) {
+        const statement = JSON.parse(argv[0])
+        kv.set(keys[0], { value: argv[0] }); z(keys[1]).set(argv[2], Number(argv[1])); z(keys[2]).set(argv[2], Number(argv[1]))
+        if (statement.status !== 'void') kv.set(keys[3], { value: argv[2] })
+        result = 1; break
+      }
       const k = args[2]
       const token = args[2 + numKeys]
       const owns = live(k) === token
@@ -101,6 +129,7 @@ globalThis.fetch = (async (url: string, init: { body?: string }) => {
     }
     default: result = null
   }
+  if (afterCommand) result = afterCommand(command, key, result)
   return { ok: true, json: async () => ({ result }) }
 }) as unknown as typeof fetch
 
@@ -110,15 +139,18 @@ import { POST as generatePOST, GET as adminListGET } from '../app/api/admin/pay-
 import { GET as portalGET } from '../app/api/portal/pay-statements/route'
 import { GET as portalDetailGET } from '../app/api/portal/pay-statements/[id]/route'
 import { saveStaff } from '../app/lib/staff'
+import { saveBusinessAddress } from '../app/lib/business-address'
 import { saveRoute, generateToken, type RouteRecord } from '../app/lib/routes'
 import { saveBooking, type Booking } from '../app/lib/bookings'
 import { saveClaim, type ClaimRecord } from '../app/lib/claims'
 import { historicalYtdByStaff, listStatements, findByPeriod, recordedYtdForStaff, recordedYtdForStatement, saveStatement, type PayStatement } from '../app/lib/pay-statements'
 import { listAudit } from '../app/lib/audit'
+import { createCorrection, decideCorrection, getCorrection } from '../app/lib/pay-corrections'
 import {
   withPayStatementLock, payStatementLockKey, normalizePeriodBoundary, StatementGenerationBusyError,
 } from '../app/lib/pay-statement-mutex'
 import { scopeKey } from '../app/lib/platform/tenancy/keys'
+import { resolveTokenBinding } from '../app/lib/platform/tenancy/token-binding'
 
 // ── Harness ──────────────────────────────────────────────────────────────────
 const CTX = { params: Promise.resolve({} as Record<string, string>) }
@@ -143,7 +175,7 @@ const generate = (staffId: string, periodStart = START, periodEnd = END) =>
 
 const historical = (over: Record<string, unknown> = {}, cookie = adminCookie) => generatePOST(req({
   action: 'historical', staffId: 'marcus', periodUnit: 'week', periodStart: START, periodEnd: END,
-  paymentDate: '2026-07-15', paymentMethod: 'check', paymentReference: '1042',
+  paymentDate: '2026-07-17', paymentMethod: 'check', paymentReference: '1042',
   lines: [{ kind: 'hourly', description: 'Regular hours', quantity: 40, rate: '20.00' }],
   deductions: [],
   ...over,
@@ -183,7 +215,7 @@ const claimWithDeduction = (staffId: string, amountCents: number, periodDate: st
 } as unknown as ClaimRecord)
 
 async function reset() {
-  kv.clear(); zsets.clear(); failOnce = null; onCommand = null
+  kv.clear(); zsets.clear(); failOnce = null; onCommand = null; afterCommand = null
   adminCookie = await createUserSessionToken({ id: 'u_admin', role: 'admin' })
   crewCookie = await createUserSessionToken({ id: 'u_marcus', role: 'crew', staffId: 'marcus' })
   await saveStaff({ id: 'marcus', name: 'Marcus', phone: '+15550001', role: 'Driver', active: true, createdAt: 1, updatedAt: 1 })
@@ -313,7 +345,7 @@ test('a persistence failure releases the lock and leaves NO period index', async
   await reset()
   await saveRoute(route('marcus', 'JK-R-2001', '2026-07-07', 17500))
 
-  failOnce = (cmd, key) => cmd === 'ZADD' && key === 'paystmt:index'   // mid-persist
+  failOnce = (cmd, key) => cmd === 'EVAL' && /missing statement number placeholder/i.test(key) // atomic issue command
   await assert.rejects(async () => { await generate('marcus') })
 
   assert.deepEqual(lockKeys(), [], 'a failed persist must release its lock')
@@ -616,7 +648,7 @@ test('audit: exactly one issuance event, and none for the blocked duplicates', a
 test('historical pay issues an immutable stub without a route, booking, or punch', async () => {
   await reset()
   const res = await historical({
-    periodUnit: 'month', periodStart: '2026-01-01', periodEnd: '2026-01-31', paymentDate: '2026-02-02',
+    periodUnit: 'month', periodStart: '2026-01-01', periodEnd: '2026-01-31', paymentDate: '2026-02-06',
     lines: [
       { kind: 'hourly', description: 'Regular hours', quantity: 40, rate: '20' },
       { kind: 'daily', description: 'Daily work', quantity: 2, rate: '150' },
@@ -635,6 +667,165 @@ test('historical pay issues an immutable stub without a route, booking, or punch
   assert.deepEqual(body.statement.lines.map(line => line.source), ['historical', 'historical', 'historical'])
   assert.equal(body.statement.paymentReference, '1042')
   assert.equal((await listAudit()).filter(event => event.action === 'paystatement.historical_issued').length, 1)
+})
+
+test('atomic Lua issuance preserves empty arrays instead of re-encoding them as objects', async () => {
+  await reset()
+  const res = await historical({ deductions: [] })
+  assert.equal(res.status, 200)
+  const body = await res.json() as { statement: PayStatement }
+  const stored = JSON.parse(live(`paystmt:${body.statement.id}`)!) as PayStatement
+  assert.equal(Array.isArray(body.statement.lines), true)
+  assert.equal(Array.isArray(body.statement.deductions), true)
+  assert.equal(Array.isArray(stored.lines), true)
+  assert.equal(Array.isArray(stored.deductions), true)
+  assert.deepEqual(stored.deductions, [])
+
+  const source = readFileSync(new URL('../app/lib/pay-statements.ts', import.meta.url), 'utf8')
+  const issueScript = source.match(/const ISSUE_STATEMENT = `([\s\S]*?)`/)?.[1] ?? ''
+  const emailScript = source.match(/const MARK_EMAILED_IF_ISSUED = `([\s\S]*?)`/)?.[1] ?? ''
+  assert.doesNotMatch(issueScript, /cjson\.encode/, 'Lua must never serialize an immutable statement')
+  assert.doesNotMatch(emailScript, /cjson\.encode/, 'email metadata must preserve caller JSON arrays')
+  assert.match(issueScript, /string\.find\(encoded, needle, 1, true\)/)
+  assert.match(emailScript, /redis\.call\('SET', KEYS\[1\], ARGV\[1\]\)/)
+
+  const lua = spawnSync('lua', ['-v'], { encoding: 'utf8' })
+  if (lua.status === 0) {
+    const pending = JSON.stringify({
+      id: 'ps_lua_array_check', statementNumber: '__OPERION_STATEMENT_NUMBER_PENDING__',
+      status: 'issued', lines: [], deductions: [],
+    })
+    const harness = `
+local values = { ['counter'] = '0' }
+local zsets = {}
+redis = {}
+function redis.error_reply(message) error(message) end
+function redis.call(command, ...)
+  local args = {...}
+  if command == 'INCR' then values[args[1]] = tostring(tonumber(values[args[1]] or '0') + 1); return tonumber(values[args[1]]) end
+  if command == 'SET' then values[args[1]] = args[2]; return 'OK' end
+  if command == 'ZADD' then zsets[args[1]] = { score = args[2], member = args[3] }; return 1 end
+  error('unsupported command ' .. command)
+end
+KEYS = {'counter', 'record', 'global', 'staff', 'period'}
+ARGV = {${JSON.stringify(pending)}, 'JK-PS-', '1', 'ps_lua_array_check', '__OPERION_STATEMENT_NUMBER_PENDING__'}
+local result = (function()
+${issueScript}
+end)()
+io.write(result)
+`
+    const executed = spawnSync('lua', ['-'], { input: harness, encoding: 'utf8' })
+    assert.equal(executed.status, 0, executed.stderr)
+    const luaIssued = JSON.parse(executed.stdout) as PayStatement
+    assert.equal(luaIssued.statementNumber, 'JK-PS-1001')
+    assert.deepEqual(luaIssued.lines, [])
+    assert.deepEqual(luaIssued.deductions, [])
+  }
+})
+
+test('post-issue shape validation rejects a malformed Redis payload', async () => {
+  await reset()
+  afterCommand = (command, key, result) => {
+    if (command !== 'EVAL' || !/missing statement number placeholder/i.test(key)) return result
+    afterCommand = null
+    const malformed = JSON.parse(String(result)) as Record<string, unknown>
+    malformed.deductions = {}
+    return JSON.stringify(malformed)
+  }
+  await assert.rejects(async () => historical(), /PAY_STATEMENT_SHAPE_INVALID/)
+})
+
+test('a lost response after commit keeps the verification binding', async () => {
+  await reset()
+  afterCommand = (command, key, result) => {
+    if (command !== 'EVAL' || !/missing statement number placeholder/i.test(key)) return result
+    afterCommand = null
+    throw new Error('simulated response loss after commit')
+  }
+  await assert.rejects(async () => historical(), /simulated response loss after commit/)
+  const [committed] = await listStatements()
+  assert.ok(committed, 'the fake committed before losing the response')
+  assert.equal((await resolveTokenBinding(committed.id))?.resourceId, committed.id,
+    'ambiguous commit state must preserve the verification binding')
+})
+
+test('statement detail keeps immutable crew and business address snapshots', async () => {
+  await reset()
+  await saveStaff({
+    id: 'marcus', name: 'Marcus', phone: '+15550001', role: 'Driver', active: true, createdAt: 1, updatedAt: 2,
+    address: { line1: '1 Old St', city: 'Dallas', state: 'TX', postalCode: '75201' },
+  })
+  await saveBusinessAddress({ line1: '10 Original Ave', city: 'Plano', state: 'TX', postalCode: '75024' })
+  const issued = await historical()
+  assert.equal(issued.status, 200)
+  const id = (await issued.json() as { statement: PayStatement }).statement.id
+
+  await saveStaff({
+    id: 'marcus', name: 'Marcus', phone: '+15550001', role: 'Driver', active: true, createdAt: 1, updatedAt: 3,
+    address: { line1: '999 New Ave', city: 'Irving', state: 'TX', postalCode: '75039' },
+  })
+  await saveBusinessAddress({ line1: '20 Replacement Rd', city: 'Frisco', state: 'TX', postalCode: '75034' })
+
+  const detail = await portalDetailGET(
+    getReq(`http://localhost/api/portal/pay-statements/${id}`, crewCookie),
+    { params: Promise.resolve({ id }) },
+  )
+  assert.equal(detail.status, 200)
+  const payload = await detail.json() as { contractorAddress?: string; businessAddress?: string; statement: Record<string, unknown> }
+  assert.equal(payload.contractorAddress, '1 Old St, Dallas, TX 75201')
+  assert.equal(payload.businessAddress, '10 Original Ave, Plano, TX 75024')
+  assert.equal('contractorAddress' in payload.statement, false)
+  assert.equal('businessAddress' in payload.statement, false)
+})
+
+test('replacement issuance resolves and links its approved correction', async () => {
+  await reset()
+  const correction = await createCorrection({
+    staffId: 'marcus', staffName: 'Marcus', statementNumber: 'JK-PS-0999',
+    periodStart: START, periodEnd: END, message: 'The amount is incorrect.',
+  })
+  await decideCorrection(correction.id, true, 'Owner')
+  const res = await historical({ correctionId: correction.id })
+  assert.equal(res.status, 200)
+  const issued = (await res.json() as { statement: PayStatement; warning?: string })
+  assert.equal(issued.warning, undefined)
+  const resolved = await getCorrection(correction.id)
+  assert.equal(resolved?.status, 'resolved')
+  assert.equal(resolved?.replacementStatementId, issued.statement.id)
+  assert.equal(resolved?.replacementStatementNumber, issued.statement.statementNumber)
+  assert.equal(resolved?.resolvedBy, 'Admin (u_admin)')
+})
+
+test('a correction can never resolve against another crew member replacement', async () => {
+  await reset()
+  const correction = await createCorrection({
+    staffId: 'different-crew', staffName: 'Different Crew', periodStart: START, periodEnd: END, message: 'Fix this.',
+  })
+  await decideCorrection(correction.id, true, 'Owner')
+  const res = await historical({ correctionId: correction.id })
+  assert.equal(res.status, 200)
+  const body = await res.json() as { warning?: string }
+  assert.match(body.warning ?? '', /could not be linked/i)
+  const untouched = await getCorrection(correction.id)
+  assert.equal(untouched?.status, 'approved')
+  assert.equal(untouched?.replacementStatementId, undefined)
+  assert.equal(untouched?.replacementStatementNumber, undefined)
+})
+
+test('a persistent correction-link failure is visible without rolling back the issued statement', async () => {
+  await reset()
+  const correction = await createCorrection({ staffId: 'marcus', periodStart: START, periodEnd: END, message: 'Fix this.' })
+  await decideCorrection(correction.id, true, 'Owner')
+  onCommand = (cmd, key) => {
+    if (cmd === 'SET' && key === `paycorr:${correction.id}`) throw new Error('simulated correction store outage')
+  }
+  const res = await historical({ correctionId: correction.id })
+  onCommand = null
+  assert.equal(res.status, 200)
+  const body = await res.json() as { statement: PayStatement; warning?: string }
+  assert.match(body.warning ?? '', /statement was issued/i)
+  assert.equal((await listStatements()).some(statement => statement.id === body.statement.id), true)
+  assert.equal((await getCorrection(correction.id))?.status, 'approved')
 })
 
 test('five simultaneous historical submissions issue exactly one stub and one number', async () => {
@@ -738,9 +929,9 @@ test('historical import is admin-only but accepts inactive former crew', async (
 
 test('recorded YTD includes historical and generated statements once and excludes later periods', async () => {
   await reset()
-  await historical({ periodUnit: 'month', periodStart: '2026-01-01', periodEnd: '2026-01-31', paymentDate: '2026-02-01', lines: [{ kind: 'fixed', amount: '500' }] })
-  await historical({ periodUnit: 'month', periodStart: '2026-02-01', periodEnd: '2026-02-28', paymentDate: '2026-03-01', lines: [{ kind: 'fixed', amount: '700' }] })
-  await historical({ periodUnit: 'month', periodStart: '2026-03-01', periodEnd: '2026-03-31', paymentDate: '2026-04-01', lines: [{ kind: 'fixed', amount: '900' }] })
+  await historical({ periodUnit: 'month', periodStart: '2026-01-01', periodEnd: '2026-01-31', paymentDate: '2026-02-06', lines: [{ kind: 'fixed', amount: '500' }] })
+  await historical({ periodUnit: 'month', periodStart: '2026-02-01', periodEnd: '2026-02-28', paymentDate: '2026-03-06', lines: [{ kind: 'fixed', amount: '700' }] })
+  await historical({ periodUnit: 'month', periodStart: '2026-03-01', periodEnd: '2026-03-31', paymentDate: '2026-04-03', lines: [{ kind: 'fixed', amount: '900' }] })
   const feb = (await listStatements()).find(statement => statement.periodEnd === '2026-02-28')!
   assert.deepEqual(await recordedYtdForStatement(feb), { grossCents: 120000, deductionCents: 0, netCents: 120000 })
 })
@@ -759,8 +950,8 @@ test('recorded YTD is uncapped, batched, same-year only, and excludes void state
     const statement = i === 500 ? target : make(i)
     await saveStatement(statement)
   }
-  await saveStatement(make(600, { id: 'ps_void', status: 'void', grossCents: 99900, netCents: 99900 }))
-  await saveStatement(make(601, { id: 'ps_prior_year', periodStart: '2025-12-31', periodEnd: '2025-12-31', grossCents: 99900, netCents: 99900 }))
+  await saveStatement(make(600, { id: 'ps_void_000', status: 'void', grossCents: 99900, netCents: 99900 }))
+  await saveStatement(make(601, { id: 'ps_prior_year_000', periodStart: '2025-12-31', periodEnd: '2025-12-31', grossCents: 99900, netCents: 99900 }))
 
   const limited = await (await adminListGET(getReq('http://localhost/api/admin/pay-statements', adminCookie), CTX)).json() as { statements: Array<{ statementNumber: string }> }
   assert.equal(limited.statements.some(statement => statement.statementNumber === 'TEST-0'), false, 'control: oldest statement is outside the 500-row admin list')

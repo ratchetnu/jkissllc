@@ -80,6 +80,9 @@ function parseScoreBound(tok) {
 const OWNED_RE = /redis\.call\('get',\s*KEYS\[1\]\)\s*==\s*ARGV\[1\]/i
 const RENEW_RE = /pexpire/i
 const CAS_RE = /cjson\.decode/i
+const PAY_ISSUE_RE = /missing statement number placeholder/i
+const PAY_PERSIST_RE = /statement\.status\s*~=\s*'void'/i
+const PAY_EMAIL_RE = /return 'NOT_ISSUED'/i
 // APRV-1's single-use transition also decodes JSON, so it must be recognised BEFORE
 // the generic version-CAS branch or it would be compared against the wrong field.
 const STATUS_CAS_RE = /decoded\.status/i
@@ -108,6 +111,33 @@ function evalScript(script, keys, args) {
     const cur = getStr(keys[0])
     if (cur !== null && cur === args[0]) { strings.delete(keys[0]); return 1 }
     return 0
+  }
+  if (PAY_EMAIL_RE.test(script)) {                     // status-safe email metadata update
+    const raw = getStr(keys[0])
+    if (raw === null) return 'NOT_FOUND'
+    const statement = JSON.parse(raw)
+    if (statement.status !== 'issued') return 'NOT_ISSUED'
+    const encoded = args[0]
+    strings.set(keys[0], { v: encoded, exp: null })
+    return encoded
+  }
+  if (PAY_ISSUE_RE.test(script)) {                     // allocate + persist one statement atomically
+    const current = Number(getStr(keys[0]) ?? 0) + 1
+    strings.set(keys[0], { v: String(current), exp: null })
+    const encoded = args[0].replace(args[4], `${args[1]}${1000 + current}`)
+    strings.set(keys[1], { v: encoded, exp: null })
+    zset(keys[2]).set(args[3], Number(args[2]))
+    zset(keys[3]).set(args[3], Number(args[2]))
+    strings.set(keys[4], { v: args[3], exp: null })
+    return encoded
+  }
+  if (PAY_PERSIST_RE.test(script)) {                   // record + indexes as one statement write
+    const statement = JSON.parse(args[0])
+    strings.set(keys[0], { v: args[0], exp: null })
+    zset(keys[1]).set(args[2], Number(args[1]))
+    zset(keys[2]).set(args[2], Number(args[1]))
+    if (statement.status !== 'void') strings.set(keys[3], { v: args[2], exp: null })
+    return 1
   }
   if (STATUS_CAS_RE.test(script)) {                    // status CAS: active → consumed
     const raw = getStr(keys[0])

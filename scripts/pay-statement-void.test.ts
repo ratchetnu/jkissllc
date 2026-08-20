@@ -71,6 +71,29 @@ globalThis.fetch = (async (url: string, init: { body?: string }) => {
       //   if GET(KEYS[1]) == ARGV[1] then DEL | PEXPIRE(KEYS[1], ARGV[2]) else 0
       const script = String(args[0])
       const numKeys = Number(args[1])
+      const keys = args.slice(2, 2 + numKeys)
+      const argv = args.slice(2 + numKeys)
+      if (/return 'NOT_ISSUED'/i.test(script)) {
+        const raw = live(keys[0])
+        if (!raw) { result = 'NOT_FOUND'; break }
+        const statement = JSON.parse(raw)
+        if (statement.status !== 'issued') { result = 'NOT_ISSUED'; break }
+        result = argv[0]; kv.set(keys[0], { value: result as string }); break
+      }
+      if (/missing statement number placeholder/i.test(script)) {
+        const n = Number(live(keys[0]) ?? 0) + 1
+        kv.set(keys[0], { value: String(n) })
+        result = argv[0].replace(argv[4], `${argv[1]}${1000 + n}`)
+        kv.set(keys[1], { value: result as string })
+        z(keys[2]).set(argv[3], Number(argv[2])); z(keys[3]).set(argv[3], Number(argv[2])); kv.set(keys[4], { value: argv[3] })
+        break
+      }
+      if (/statement\.status\s*~=\s*'void'/i.test(script)) {
+        const statement = JSON.parse(argv[0])
+        kv.set(keys[0], { value: argv[0] }); z(keys[1]).set(argv[2], Number(argv[1])); z(keys[2]).set(argv[2], Number(argv[1]))
+        if (statement.status !== 'void') kv.set(keys[3], { value: argv[2] })
+        result = 1; break
+      }
       const k = args[2]
       const token = args[2 + numKeys]
       const owns = live(k) === token
@@ -93,7 +116,7 @@ import { POST as statementPOST } from '../app/api/admin/pay-statements/[id]/rout
 import { GET as portalGET } from '../app/api/portal/pay-statements/route'
 import { saveStaff } from '../app/lib/staff'
 import { saveRoute, generateToken, type RouteRecord } from '../app/lib/routes'
-import { listStatements, getStatement, releasePeriodIndexIfOwned, type PayStatement } from '../app/lib/pay-statements'
+import { listStatements, getStatement, markStatementEmailed, releasePeriodIndexIfOwned, type PayStatement } from '../app/lib/pay-statements'
 import { listAudit } from '../app/lib/audit'
 import { withPayStatementLock, payStatementLockKey } from '../app/lib/pay-statement-mutex'
 
@@ -317,7 +340,7 @@ test('releasePeriodIndexIfOwned: frees only its own period', async () => {
 test('a persistence failure during void leaves recoverable, truthful state', async () => {
   await reset()
   const a = (await readJson(await generate())).statement!
-  failOnce = (cmd, key) => cmd === 'SET' && key === `paystmt:${a.id}`     // the void write itself
+  failOnce = (cmd, key) => cmd === 'EVAL' && /statement\.status\s*~=\s*'void'/i.test(key) // atomic void write
   await assert.rejects(async () => { await voidStmt(a.id) })
 
   assert.equal((await getStatement(a.id))!.status, 'issued', 'still issued — no half-void record')
@@ -328,6 +351,33 @@ test('a persistence failure during void leaves recoverable, truthful state', asy
   const retry = await voidStmt(a.id)                                     // and the void still works
   assert.equal(retry.status, 200)
   assert.equal((await liveStatements()).length, 0)
+})
+
+test('email metadata can never resurrect a statement after a concurrent void', async () => {
+  await reset()
+  const a = (await readJson(await generate())).statement!
+  assert.equal((await voidStmt(a.id)).status, 200)
+
+  assert.equal(await markStatementEmailed(a.id), 'not_issued')
+  assert.equal((await getStatement(a.id))!.status, 'void')
+  assert.equal(live(periodKey()), null, 'the email path cannot recreate period ownership')
+})
+
+test('email metadata update preserves empty statement arrays', async () => {
+  await reset()
+  const a = (await readJson(await generate())).statement!
+  const before = (await getStatement(a.id))!
+  assert.equal(Array.isArray(before.deductions), true)
+  assert.deepEqual(before.deductions, [])
+
+  const marked = await markStatementEmailed(a.id, 123456)
+  assert.notEqual(marked, 'not_found')
+  assert.notEqual(marked, 'not_issued')
+  const stored = (await getStatement(a.id))!
+  assert.equal(Array.isArray(stored.lines), true)
+  assert.equal(Array.isArray(stored.deductions), true)
+  assert.deepEqual(stored.deductions, [])
+  assert.equal(stored.emailedAt, 123456)
 })
 
 test('invariant: the period index never points at a missing or void statement once settled', async () => {

@@ -19,13 +19,22 @@ import { resolveTokenBinding } from '../app/lib/platform/tenancy/token-binding'
 import { runWithTenant } from '../app/lib/platform/tenancy/context'
 import { scopeKey, isPlatformGlobal, PLATFORM_GLOBAL_PREFIXES } from '../app/lib/platform/tenancy/keys'
 import { saveInvoice, deleteInvoice, type RouteInvoice } from '../app/lib/route-invoices'
-import { saveStatement, getStatement, type PayStatement } from '../app/lib/pay-statements'
+import { saveStatement, issueStatement, voidStatement, getStatement, type PayStatement } from '../app/lib/pay-statements'
 import { publicStatement } from '../app/lib/pay-statement-view'
 import { backfillTokenBindings } from '../app/lib/platform/tenancy/token-backfill'
 
 const A = 'fina'
 const B = 'finb'
 let kv: ChildProcess | null = null
+
+async function withTenancyEnabled<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = process.env.TENANCY_ENABLED
+  process.env.TENANCY_ENABLED = 'true'
+  try { return await fn() } finally {
+    if (previous === undefined) delete process.env.TENANCY_ENABLED
+    else process.env.TENANCY_ENABLED = previous
+  }
+}
 
 before(async () => {
   kv = spawn(process.execPath, ['scripts/local-audit/kv-emulator.mjs', '--port', String(PORT)], { stdio: 'ignore' })
@@ -145,8 +154,34 @@ test('PAYSTMT: an issued statement binds its existing ps_ id — links keep work
 })
 
 test('PAYSTMT: tenant A id cannot be claimed by tenant B', async () => {
-  await runWithTenant({ tenantId: B }, () => saveStatement(statement('ps_aaaaaaaaaaaaaaaaaa')))
-  assert.equal((await resolveTokenBinding('ps_aaaaaaaaaaaaaaaaaa'))?.tenantId, A)
+  await withTenancyEnabled(async () => {
+    await assert.rejects(
+      runWithTenant({ tenantId: B }, () => saveStatement(statement('ps_aaaaaaaaaaaaaaaaaa'))),
+      /different tenant/,
+    )
+    assert.equal((await resolveTokenBinding('ps_aaaaaaaaaaaaaaaaaa'))?.tenantId, A)
+    assert.equal(
+      await runWithTenant({ tenantId: B }, () => getStatement('ps_aaaaaaaaaaaaaaaaaa')),
+      null,
+      'binding must succeed before saveStatement can persist in the tenant namespace',
+    )
+  })
+})
+
+test('PAYSTMT: atomic issue binds before consuming a number or writing tenant data', async () => {
+  await withTenancyEnabled(async () => {
+    await assert.rejects(
+      runWithTenant({ tenantId: B }, () => issueStatement(statement('ps_aaaaaaaaaaaaaaaaaa', { statementNumber: '' }))),
+      /different tenant/,
+    )
+    assert.equal(
+      await runWithTenant({ tenantId: B }, () => getStatement('ps_aaaaaaaaaaaaaaaaaa')),
+      null,
+      'binding must succeed before issueStatement allocates or persists',
+    )
+    const { redis } = await import('../app/lib/redis')
+    assert.equal(await runWithTenant({ tenantId: B }, () => redis.get('paystmt:counter')), null, 'no number consumed')
+  })
 })
 
 test('PAYSTMT: one id does not resolve another statement in the same tenant', async () => {
@@ -165,6 +200,15 @@ test('PAYSTMT: a VOID statement KEEPS its binding so verify can answer "voided"'
   assert.ok(await resolveTokenBinding('ps_cccccccccccccccccc'), 'binding survives the void')
   const s = await runWithTenant({ tenantId: A }, () => getStatement('ps_cccccccccccccccccc'))
   assert.equal(s?.status, 'void', 'the reader still finds it and reports void')
+})
+
+test('PAYSTMT: the real void transition never revokes verification', async () => {
+  const id = 'ps_voidtransitioncheck'
+  await runWithTenant({ tenantId: A }, () => saveStatement(statement(id)))
+  const outcome = await runWithTenant({ tenantId: A }, () => voidStatement(id))
+  assert.equal(outcome.kind, 'voided')
+  assert.equal((await resolveTokenBinding(id))?.tenantId, A, 'void keeps the public authenticity record')
+  assert.equal((await runWithTenant({ tenantId: A }, () => getStatement(id)))?.status, 'void')
 })
 
 test('PAYSTMT: an unknown id resolves to nothing', async () => {

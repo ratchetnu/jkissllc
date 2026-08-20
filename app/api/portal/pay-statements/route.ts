@@ -9,6 +9,10 @@ import { crewStatementSummary, listForStaff } from '../../../lib/pay-statements'
 export const GET = withTenantRoute(async (req: NextRequest) => {
   const who = await requireCrew(req)
   if (who instanceof NextResponse) return who
-  const statements = (await listForStaff(who.staffId)).filter(s => s.status === 'issued').map(crewStatementSummary)
-  return NextResponse.json({ ok: true, statements })
+  const params = new URL(req.url).searchParams
+  const offset = Math.max(0, Number.parseInt(params.get('offset') ?? '0', 10) || 0)
+  const limit = Math.min(100, Math.max(1, Number.parseInt(params.get('limit') ?? '100', 10) || 100))
+  const page = await listForStaff(who.staffId, limit, offset)
+  const statements = page.filter(s => s.status === 'issued').map(crewStatementSummary)
+  return NextResponse.json({ ok: true, statements, nextOffset: page.length === limit ? offset + page.length : null })
 })

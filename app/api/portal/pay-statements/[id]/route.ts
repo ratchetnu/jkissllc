@@ -22,7 +22,7 @@ export const GET = withTenantRoute(async (req: NextRequest, { params }: { params
     ok: true,
     statement: crewPayStatement(statement),
     ytd,
-    businessAddress: formatBusinessAddress(businessAddress),
+    businessAddress: formatBusinessAddress(statement.businessAddress ?? businessAddress),
     contractorAddress: formatStaffAddress(statement.contractorAddress ?? staff?.address),
   })
 })

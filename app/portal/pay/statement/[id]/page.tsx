@@ -12,12 +12,16 @@ function StatementView({ id }: { id: string }) {
   const [businessAddress, setBusinessAddress] = useState<string | undefined>()
   const [contractorAddress, setContractorAddress] = useState<string | undefined>()
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     fetch(`/api/portal/pay-statements/${id}`, { credentials: 'same-origin' })
-      .then(r => r.json())
-      .then(d => { setStatement(d.statement ?? null); setYtd(d.ytd); setBusinessAddress(d.businessAddress); setContractorAddress(d.contractorAddress) })
-      .catch(() => {})
+      .then(async r => ({ r, d: await r.json() }))
+      .then(({ r, d }) => {
+        if (!r.ok || !d.ok) throw new Error(r.status === 404 ? 'Statement not found.' : d.error ?? 'Statement temporarily unavailable.')
+        setStatement(d.statement); setYtd(d.ytd); setBusinessAddress(d.businessAddress); setContractorAddress(d.contractorAddress)
+      })
+      .catch(error => setError(error instanceof Error ? error.message : 'Statement temporarily unavailable.'))
       .finally(() => setLoading(false))
   }, [id])
 
@@ -28,7 +32,7 @@ function StatementView({ id }: { id: string }) {
         {statement && <button onClick={() => window.print()} className="btn os-tap" style={{ borderRadius: 12, height: 42, gap: 7 }}><Printer size={16} /> Print / Save PDF</button>}
       </div>
       {loading && <p style={{ color: 'var(--muted)', fontSize: 14 }}>Loading…</p>}
-      {!loading && !statement && <div className="os-card" style={{ padding: 18 }}><p style={{ color: 'var(--muted)', fontSize: 14 }}>Statement not found.</p></div>}
+      {!loading && !statement && <div className="os-card" style={{ padding: 18 }}><p role="alert" style={{ color: 'var(--muted)', fontSize: 14 }}>{error || 'Statement not found.'}</p></div>}
       {statement && <PayStatementDoc s={statement} businessAddress={businessAddress} meta={{
         paymentDate: statement.paymentDate,
         paymentMethodLabel: paymentMethodLabel(statement.paymentMethod),
