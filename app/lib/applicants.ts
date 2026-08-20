@@ -7,6 +7,7 @@ import { redis } from './redis'
 import { scoreApplicant } from './ats-scoring'
 import type { ScoreInput, ScoreResult } from './ats-scoring'
 import type { DocKind, ExperienceLevel, Position } from './ats-config'
+import { releaseIfOwned } from './kv-lock'
 
 export type ApplicantStatus =
   | 'new' | 'reviewed' | 'information_requested' | 'interview' | 'second_interview'
@@ -87,6 +88,10 @@ export type Applicant = {
   recommendation?: Recommendation
   promotedStaffId?: string // set when "Approve/Hire" promotes them into the crew roster
   events?: ApplicantEvent[] // activity timeline
+  informationRequest?: { message: string; requestedAt: number; delivery: 'sent' | 'failed' }
+  informationResponse?: { message: string; submittedAt: number }
+  duplicateApplicantNumbers?: string[]
+  archivedAt?: number
   // meta
   source?: string
   createdAt: number
@@ -98,6 +103,18 @@ const KEY_PREFIX = 'app:'
 const KEY_NUM = 'app:num:' // app:num:{applicantNumber} -> id
 const KEY_INDEX = 'app:index' // sorted set, score=updatedAt, member=id
 const KEY_COUNTER = 'app:counter'
+const KEY_SUBMISSION = (key: string) => `app:submit:${key}`
+
+const COMMIT_APPLICATION = `
+if redis.call('get', KEYS[4]) ~= ARGV[5] then return 0 end
+redis.call('set', KEYS[1], ARGV[1])
+redis.call('set', KEYS[2], ARGV[2])
+redis.call('zadd', KEYS[3], ARGV[3], ARGV[2])
+redis.call('set', KEYS[4], ARGV[4], 'PX', ARGV[6])
+return 1
+`
+const SUBMISSION_TTL_MS = 7 * 24 * 60 * 60_000
+const SUBMISSION_CLAIM_MS = 60_000
 
 // ── Promotion identity claim (APP-1) ─────────────────────────────────────────
 //
@@ -223,17 +240,56 @@ export async function saveApplicant(a: Applicant): Promise<void> {
   await redis.zadd(KEY_INDEX, a.updatedAt, a.id)
 }
 
-export async function deleteApplicant(id: string): Promise<void> {
-  const a = await getApplicant(id)
-  await redis.del(`${KEY_PREFIX}${id}`)
-  if (a) await redis.del(`${KEY_NUM}${a.applicantNumber.toUpperCase()}`)
-  await redis.zrem(KEY_INDEX, id)
+export type ApplicantSubmissionResult =
+  | { ok: true; applicant: Applicant; replayed: boolean }
+  | { ok: false; reason: 'busy' }
+
+/**
+ * Public intake commit. A browser-generated submission key claims exactly one
+ * application, and the record + reverse index + list index + committed receipt are
+ * written in one Lua transaction. An ambiguous client retry receives the original
+ * applicant rather than allocating a duplicate.
+ */
+export async function submitApplicantOnce(
+  submissionKey: string,
+  create: () => Promise<Applicant>,
+): Promise<ApplicantSubmissionResult> {
+  if (!/^[a-zA-Z0-9-]{16,100}$/.test(submissionKey)) throw new Error('invalid submission key')
+  const key = KEY_SUBMISSION(submissionKey)
+  const token = `claiming:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  if (!(await redis.setNxPx(key, token, SUBMISSION_CLAIM_MS))) {
+    const held = await redis.get(key)
+    if (held?.startsWith('committed:')) {
+      const prior = await getApplicant(held.slice('committed:'.length))
+      if (prior) return { ok: true, applicant: prior, replayed: true }
+    }
+    return { ok: false, reason: 'busy' }
+  }
+
+  try {
+    const applicant = await create()
+    applicant.updatedAt = Date.now()
+    const committed = `committed:${applicant.id}`
+    const result = await redis.eval(COMMIT_APPLICATION, [
+      `${KEY_PREFIX}${applicant.id}`,
+      `${KEY_NUM}${applicant.applicantNumber.toUpperCase()}`,
+      KEY_INDEX,
+      key,
+    ], [
+      JSON.stringify(applicant), applicant.id, String(applicant.updatedAt), committed, token, String(SUBMISSION_TTL_MS),
+    ])
+    if (result !== 1 && result !== '1') return { ok: false, reason: 'busy' }
+    return { ok: true, applicant, replayed: false }
+  } catch (error) {
+    await releaseIfOwned(key, token)
+    throw error
+  }
 }
 
-export async function listApplicants(limit = 500): Promise<Applicant[]> {
-  const ids = await redis.zrevrange(KEY_INDEX, 0, limit - 1)
+export async function listApplicants(limit?: number): Promise<Applicant[]> {
+  const ids = await redis.zrevrange(KEY_INDEX, 0, limit === undefined ? -1 : Math.max(0, limit - 1))
   if (!ids.length) return []
-  const raws = await Promise.all(ids.map(i => redis.get(`${KEY_PREFIX}${i}`)))
+  const raws = await redis.mget(ids.map(i => `${KEY_PREFIX}${i}`))
   return raws
     .filter(Boolean)
     .map(r => { try { return normalize(JSON.parse(r as string) as Applicant) } catch { return null } })
@@ -262,7 +318,7 @@ export async function findApplicantDuplicates(
 ): Promise<Applicant[]> {
   const e = norm(email), p = digits(phone)
   if (!e && !p) return []
-  const all = await listApplicants(1000)
+  const all = await listApplicants()
   return all.filter(a => a.id !== excludeId && (
     (e && norm(a.email) === e) || (p && p.length >= 10 && digits(a.phone).endsWith(p.slice(-10)))
   ))

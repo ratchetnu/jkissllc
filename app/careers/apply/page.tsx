@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { COMPANY } from '../../lib/company';
 import Link from 'next/link'
 import {
@@ -80,12 +80,14 @@ export default function ApplyPage() {
   // <img>, so previews come from `previews` — the local data URL we already read
   // off the file. The applicant sees their photo; the bytes never round-trip.
   const [docs, setDocs] = useState<Partial<Record<DocKind, string>>>({})
+  const [docReceipts, setDocReceipts] = useState<Partial<Record<DocKind, string>>>({})
   const [previews, setPreviews] = useState<Partial<Record<DocKind, string>>>({})
   const [docBusy, setDocBusy] = useState<DocKind | null>(null)
   const [headshotWarn, setHeadshotWarn] = useState(false)
   // submit
   const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
   const [done, setDone] = useState<string | null>(null)
+  const submissionKey = useRef(crypto.randomUUID())
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search).get('position')
@@ -113,10 +115,11 @@ export default function ApplyPage() {
     try {
       const dataUrl = await toDataUrl(file)
       if (kind === 'headshot') setHeadshotWarn(!(await looksWhiteBg(dataUrl)))
-      const res = await fetch('/api/careers/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl, kind }) })
+      const res = await fetch('/api/careers/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl, kind, draftId: submissionKey.current }) })
       const j = await res.json()
-      if (res.ok && j.url) {
+      if (res.ok && j.url && j.receipt) {
         setDocs(prev => ({ ...prev, [kind]: j.url }))
+        setDocReceipts(prev => ({ ...prev, [kind]: j.receipt }))
         setPreviews(prev => ({ ...prev, [kind]: dataUrl }))
       }
       else setErr(j.error ?? 'Upload failed — please try again.')
@@ -133,12 +136,12 @@ export default function ApplyPage() {
       const res = await fetch('/api/careers/apply', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          position, name, email, phone,
+          submissionKey: submissionKey.current, position, name, email, phone,
           age21plus, reliableTransport, canOperateBoxTruck: isDriver ? canOperateBoxTruck : undefined, canLiftHeavy, smartphone,
           availableStart, availableDays, availabilityNotes, experienceSummary,
           skills,
           scenarios: SCENARIOS.map(s => ({ key: s.key, answer: scenarios[s.key] || '' })),
-          documents: Object.entries(docs).map(([kind, url]) => ({ kind, url })),
+          documents: Object.entries(docs).map(([kind, url]) => ({ kind, url, receipt: docReceipts[kind as DocKind] })),
         }),
       })
       const j = await res.json()
