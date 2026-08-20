@@ -37,7 +37,39 @@ export const COST_TABLES: readonly CostTable[] = [
       // Anthropic (the platform default family).
       'anthropic/claude-sonnet-4-6': { in: 3, out: 15 },
       'anthropic/claude-haiku-4-5': { in: 1, out: 5 },
+      // KNOWN WRONG — see the 2026-08 sheet. Anthropic's published price for Opus 4.8
+      // is $5/$25, not $15/$75. Left unmutated because sheets are immutable by
+      // contract and estimates already attributed to '2026-07' must stay reproducible;
+      // do not copy this row forward.
       'anthropic/claude-opus-4-8': { in: 15, out: 75 },
+      // Common alternate Gateway models — so a routing switch bills at the right rate
+      // instead of silently falling back to the Sonnet default.
+      'openai/gpt-4o': { in: 2.5, out: 10 },
+      'openai/gpt-4o-mini': { in: 0.15, out: 0.6 },
+      'openai/gpt-4.1-mini': { in: 0.4, out: 1.6 },
+      'google/gemini-2.5-flash': { in: 0.3, out: 2.5 },
+      // Fallback rate for any model without a published entry (Sonnet-class).
+      default: { in: 3, out: 15 },
+    },
+  },
+  {
+    // Corrects a real overcharge in the '2026-07' sheet and adds the Claude 5 family.
+    //
+    // Opus 4.8 was listed at $15/$75 — 3x Anthropic's published $5/$25. Every Opus
+    // estimate on that sheet overstated spend threefold, which matters beyond the
+    // dashboard: AI_DAILY_COST_CAP_USD is enforced against these numbers, so the cap
+    // tripped at a third of the spend the owner thought they were authorising.
+    version: '2026-08',
+    effectiveFrom: '2026-08-20',
+    currency: 'USD',
+    unit: 'per_1m_tokens',
+    rates: {
+      // Anthropic (the platform default family).
+      'anthropic/claude-sonnet-5': { in: 3, out: 15 },
+      'anthropic/claude-sonnet-4-6': { in: 3, out: 15 },
+      'anthropic/claude-haiku-4-5': { in: 1, out: 5 },
+      'anthropic/claude-opus-5': { in: 5, out: 25 },
+      'anthropic/claude-opus-4-8': { in: 5, out: 25 },
       // Common alternate Gateway models — so a routing switch bills at the right rate
       // instead of silently falling back to the Sonnet default.
       'openai/gpt-4o': { in: 2.5, out: 10 },

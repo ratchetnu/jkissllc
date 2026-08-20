@@ -14,6 +14,7 @@ process.env.TENANT_ID = 'test-tenant.example'
 import { runAiTask, type AiTaskDeps } from '../app/lib/ai/service'
 import { getPrompt } from '../app/lib/ai/prompts'
 import { modelForFeature } from '../app/lib/ai/routing'
+import { aiModel } from '../app/lib/ai'
 import { computeAiAnalytics } from '../app/lib/ai/analytics'
 import { can } from '../app/lib/rbac'
 import type { AiCallRecord } from '../app/lib/ai/telemetry'
@@ -39,8 +40,12 @@ const ADMIN = { sub: 'owner', role: 'admin' as const }
 
 // ── 1. Per-feature model routing ─────────────────────────────────────────────
 test('modelForFeature falls back to the default model when no override is set', () => {
+  // Platform default moved 4.6 -> 5 on 2026-08-20. What this guards is the FALLBACK
+  // PATH, not the specific model, so it reads the default from aiModel() rather than
+  // restating it — a second copy of the default is just another thing to go stale.
   delete process.env.AI_MODEL_OPS_COMMAND
-  assert.equal(modelForFeature('ops.command'), 'anthropic/claude-sonnet-4-6')
+  assert.equal(modelForFeature('ops.command'), aiModel())
+  assert.equal(aiModel(), process.env.AI_MODEL || 'anthropic/claude-sonnet-5')
 })
 
 test('modelForFeature honors a per-feature env override', () => {
