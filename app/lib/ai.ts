@@ -18,7 +18,10 @@ import { resolveAiProvider, credentialKeysFor, type AiProvider } from './ai/prov
 // telemetry whether it went through the Gateway or straight to Anthropic, so a
 // before/after comparison is about latency and cost — not about renamed dimensions.
 
-const MODEL = process.env.AI_MODEL || 'anthropic/claude-sonnet-4-6'
+// Sonnet 5 — same $3/$15 list as Sonnet 4.6 it replaces, and discounted to $2/$10
+// through 2026-08-31. The discount is not encoded in the cost table on purpose: it
+// expires, and a hardcoded promo rate would silently under-report spend afterwards.
+const MODEL = process.env.AI_MODEL || 'anthropic/claude-sonnet-5'
 
 export type { AiProvider }
 
