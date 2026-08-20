@@ -9,11 +9,13 @@ import {
 } from '../../../lib/ats-config'
 import {
   type Applicant, type ApplicantDoc, type ScenarioResponse, type SkillRating,
-  generateApplicantId, nextApplicantNumber, saveApplicant, rescore,
+  generateApplicantId, nextApplicantNumber, submitApplicantOnce, rescore, findApplicantDuplicates,
 } from '../../../lib/applicants'
 import { emailRaw } from '../../../lib/booking-emails'
 import { notifyOwnerOfReply } from '../../../lib/owner-alerts'
 import { COMPANY } from '../../../lib/company'
+import { validApplicationDraftId, validSealedApplicantDocumentPath, verifyApplicantDocumentReceipt } from '../../../lib/applicant-workflow'
+import { currentTenantId } from '../../../lib/platform/tenancy/context'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -65,19 +67,20 @@ function cleanScenarios(raw: unknown): ScenarioResponse[] {
 //   • a public https URL      — the headshot, and every doc uploaded before identity
 //                               documents were encrypted
 // Both must survive here: existing applicant records still carry https URLs.
-const SEALED_DOC_PATH = /^driver-docs\/[a-z_]+\/[a-zA-Z0-9-]+\.(jpg|png|webp|heic|heif)\.enc$/
 const PUBLIC_DOC_URL = /^https:\/\/\S+$/
 
-function cleanDocs(raw: unknown): ApplicantDoc[] {
+function cleanDocs(raw: unknown, draftId: string): ApplicantDoc[] {
   const input = Array.isArray(raw) ? raw : []
   const byKind = new Map<DocKind, ApplicantDoc>()
   for (const item of input) {
     if (!item || typeof item !== 'object') continue
     const kind = (item as Record<string, unknown>).kind as DocKind
     const url = String((item as Record<string, unknown>).url || '')
+    const receipt = String((item as Record<string, unknown>).receipt || '')
     if (!DOC_KINDS.has(kind)) continue
     if (url.length > 1000 || url.includes('..')) continue
-    if (!SEALED_DOC_PATH.test(url) && !PUBLIC_DOC_URL.test(url)) continue
+    if (!validSealedApplicantDocumentPath(url, currentTenantId()) && !PUBLIC_DOC_URL.test(url)) continue
+    if (!verifyApplicantDocumentReceipt({ receipt, draftId, kind, path: url })) continue
     byKind.set(kind, { kind, url, uploadedAt: Date.now() })
   }
   return Array.from(byKind.values())
@@ -93,6 +96,10 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   if (await isBlockedBot()) return NextResponse.json({ error: 'Submission blocked.' }, { status: 403 })
 
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
+  const submissionKey = body.submissionKey
+  if (!validApplicationDraftId(submissionKey)) {
+    return NextResponse.json({ error: 'Please refresh the application and try again.' }, { status: 400 })
+  }
 
   const pos: Position | null = body.position === 'driver' || body.position === 'helper' ? body.position : null
   if (!pos) return NextResponse.json({ error: 'Please choose a position.' }, { status: 400 })
@@ -104,58 +111,59 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   if (!email || !isValidEmail(email)) return NextResponse.json({ error: 'Please enter a valid email.' }, { status: 400 })
   if (!phone) return NextResponse.json({ error: 'Please enter a phone number.' }, { status: 400 })
 
-  const documents = cleanDocs(body.documents)
+  const documents = cleanDocs(body.documents, submissionKey)
   const present = new Set(documents.map(d => d.kind))
   const missing = requiredDocKinds(pos).filter(k => !present.has(k))
   if (missing.length) {
     return NextResponse.json({ error: 'Please upload all required documents before submitting.' }, { status: 400 })
   }
 
-  const now = Date.now()
-  const applicant: Applicant = {
-    id: generateApplicantId(),
-    applicantNumber: await nextApplicantNumber(),
-    position: pos,
-    name,
-    email,
-    phone,
-    age21plus: body.age21plus === true,
-    reliableTransport: body.reliableTransport === true,
-    canOperateBoxTruck: pos === 'driver' ? body.canOperateBoxTruck === true : undefined,
-    canLiftHeavy: body.canLiftHeavy === true,
-    smartphone: body.smartphone === true,
-    availableStart: str(body.availableStart, 40),
-    availableDays: Array.isArray(body.availableDays) ? body.availableDays.map(String).slice(0, 7) : [],
-    availabilityNotes: str(body.availabilityNotes, 500),
-    experienceSummary: str(body.experienceSummary, 2000),
-    skills: cleanSkills(pos, body.skills),
-    scenarios: cleanScenarios(body.scenarios),
-    documents,
-    score: { score: 0, band: 'not_qualified', components: [], strengths: [], weaknesses: [], riskFactors: [], suggestedQuestions: [], scenarioRubric: { safety: 0, customerService: 0, problemSolving: 0, honesty: 0, professionalism: 0 }, documentsComplete: true, missingDocs: [] },
-    status: 'new',
-    source: str(body.source, 120),
-    events: [{ at: now, actor: 'applicant', action: 'Application submitted' }],
-    createdAt: now,
-    updatedAt: now,
-  }
-  rescore(applicant)
-
+  let submitted
   try {
-    await saveApplicant(applicant)
+    submitted = await submitApplicantOnce(submissionKey, async () => {
+      const now = Date.now()
+      const duplicates = await findApplicantDuplicates(email, phone)
+      const applicant: Applicant = {
+        id: generateApplicantId(),
+        applicantNumber: await nextApplicantNumber(),
+        position: pos, name, email, phone,
+        age21plus: body.age21plus === true,
+        reliableTransport: body.reliableTransport === true,
+        canOperateBoxTruck: pos === 'driver' ? body.canOperateBoxTruck === true : undefined,
+        canLiftHeavy: body.canLiftHeavy === true,
+        smartphone: body.smartphone === true,
+        availableStart: str(body.availableStart, 40),
+        availableDays: Array.isArray(body.availableDays) ? body.availableDays.map(String).filter(d => ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].includes(d)).slice(0, 7) : [],
+        availabilityNotes: str(body.availabilityNotes, 500),
+        experienceSummary: str(body.experienceSummary, 2000),
+        skills: cleanSkills(pos, body.skills),
+        scenarios: cleanScenarios(body.scenarios), documents,
+        score: { score: 0, band: 'not_qualified', components: [], strengths: [], weaknesses: [], riskFactors: [], suggestedQuestions: [], scenarioRubric: { safety: 0, customerService: 0, problemSolving: 0, honesty: 0, professionalism: 0 }, documentsComplete: true, missingDocs: [] },
+        status: 'new', source: str(body.source, 120),
+        duplicateApplicantNumbers: duplicates.map(d => d.applicantNumber).slice(0, 10),
+        events: [{ at: now, actor: 'applicant', action: 'Application submitted' }],
+        createdAt: now, updatedAt: now,
+      }
+      return rescore(applicant)
+    })
   } catch (e) {
     console.error('[careers-apply] save', e)
     return NextResponse.json({ error: 'We couldn’t save your application. Please try again.' }, { status: 500 })
   }
+  if (!submitted.ok) {
+    return NextResponse.json({ error: 'This application is still being submitted. Please wait a moment and try again.' }, { status: 409 })
+  }
+  const applicant = submitted.applicant
 
   // Fire-and-forget notifications (never block the response on them).
   const title = POSITIONS[pos].title
   const admin = `${baseUrl()}/admin/careers`
-  void emailRaw({
+  if (!submitted.replayed) void emailRaw({
     to: [email],
     subject: `We received your ${COMPANY.legalName} application (${applicant.applicantNumber})`,
     html: `<p>Hi ${escapeHtml(name)},</p><p>Thanks for applying for the <strong>${title}</strong> position at ${COMPANY.legalName}. We received your application (<strong>${applicant.applicantNumber}</strong>) and our team will review it shortly.</p><p>If we&#39;d like to move forward, we&#39;ll reach out by phone or email to set up an interview.</p><p>— ${COMPANY.legalName} Hiring</p>`,
   }).catch(() => {})
-  void notifyOwnerOfReply({
+  if (!submitted.replayed) void notifyOwnerOfReply({
     via: 'email',
     customerName: name,
     fromPhone: phone,

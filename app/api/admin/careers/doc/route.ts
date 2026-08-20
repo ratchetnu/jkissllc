@@ -3,6 +3,8 @@ import { withTenantRoute } from '../../../../lib/platform/tenancy/with-tenant-ro
 import { get } from '@vercel/blob'
 import { requireAdmin } from '../../_lib/session'
 import { openDoc } from '../../../../lib/doc-crypto'
+import { currentTenantId } from '../../../../lib/platform/tenancy/context'
+import { validSealedApplicantDocumentPath } from '../../../../lib/applicant-workflow'
 
 export const runtime = 'nodejs'
 
@@ -17,8 +19,6 @@ export const runtime = 'nodejs'
 
 // Only ever serve from the applicant-document prefix, and never let a caller walk
 // out of it. `p` is untrusted input. Trailing `.enc` marks a sealed object.
-const SEALED_PATH = /^driver-docs\/[a-z_]+\/[a-zA-Z0-9-]+\.(jpg|png|webp|heic|heif)\.enc$/
-
 const MEDIA: Record<string, string> = {
   jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', heif: 'image/heif',
 }
@@ -29,7 +29,7 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
   if (who instanceof NextResponse) return who
 
   const pathname = req.nextUrl.searchParams.get('p') ?? ''
-  if (pathname.includes('..') || !SEALED_PATH.test(pathname)) {
+  if (!validSealedApplicantDocumentPath(pathname, currentTenantId())) {
     return NextResponse.json({ error: 'bad path' }, { status: 400 })
   }
 

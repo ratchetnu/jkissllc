@@ -3,14 +3,15 @@ import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route
 import { put } from '@vercel/blob'
 import { rateLimit } from '../../../lib/rate-limit'
 import { isBlockedBot } from '../../../lib/botcheck'
-import { isSensitiveDoc } from '../../../lib/ats-config'
+import { isSensitiveDoc, type DocKind } from '../../../lib/ats-config'
 import { sealDoc, docCryptoReady } from '../../../lib/doc-crypto'
 import { scopeBlobPath, sanitizeBlobSegment } from '../../../lib/platform/tenancy/blob-keys'
+import { createApplicantDocumentReceipt, validApplicationDraftId } from '../../../lib/applicant-workflow'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
 
-const KINDS = new Set(['drivers_license', 'id', 'ss_card', 'headshot'])
+const KINDS = new Set<DocKind>(['drivers_license', 'id', 'ss_card', 'headshot'])
 
 // Tenant-safe physical path for an applicant document. `kind` is a directory
 // segment drawn only from the fixed KINDS set; the filename is sanitized. Sealed
@@ -43,8 +44,12 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
 
   const body = await req.json().catch(() => ({}))
   const image = typeof body.image === 'string' ? body.image : ''
-  const kind = typeof body.kind === 'string' && KINDS.has(body.kind) ? body.kind : 'doc'
+  const kind = typeof body.kind === 'string' && KINDS.has(body.kind as DocKind) ? body.kind as DocKind : null
+  const draftId = body.draftId
   const m = image.match(/^data:(image\/(jpeg|png|webp|heic|heif));base64,(.+)$/)
+  if (!kind || !validApplicationDraftId(draftId)) {
+    return NextResponse.json({ error: 'Please restart the application and upload the document again.' }, { status: 400 })
+  }
   if (!m || image.length > 12_000_000) {
     return NextResponse.json({ error: 'Please attach a clear photo (JPG/PNG, under ~9MB).' }, { status: 400 })
   }
@@ -72,7 +77,11 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
       })
       // Hand back the pathname, never a URL — nothing in an applicant's browser or
       // in the saved record should be a link to their Social Security card.
-      return NextResponse.json({ ok: true, url: pathname })
+      return NextResponse.json({
+        ok: true,
+        url: pathname,
+        receipt: createApplicantDocumentReceipt({ draftId, kind, path: pathname }),
+      })
     }
 
     const blob = await put(driverDocBlobPath(kind, crypto.randomUUID(), ext, false), buf, {
@@ -80,7 +89,11 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
       contentType: m[1],
       addRandomSuffix: false,
     })
-    return NextResponse.json({ ok: true, url: blob.url })
+    return NextResponse.json({
+      ok: true,
+      url: blob.url,
+      receipt: createApplicantDocumentReceipt({ draftId, kind, path: blob.url }),
+    })
   } catch (e) {
     console.error('[careers-upload]', e)
     return NextResponse.json({ error: 'Upload failed — please try again.' }, { status: 500 })

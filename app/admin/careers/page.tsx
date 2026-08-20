@@ -51,6 +51,8 @@ function CareersInner() {
   const [tab, setTab] = useState('active')
   const [selId, setSelId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [canDecide, setCanDecide] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -59,7 +61,8 @@ function CareersInner() {
       if (res.status === 401) return
       const j = await res.json()
       setList(Array.isArray(j.applicants) ? j.applicants : [])
-    } catch { /* ignore */ }
+      setCanDecide(j.permissions?.canDecide === true)
+    } catch { setError('Applicants could not be loaded. Try refreshing the page.') }
     finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
@@ -70,17 +73,14 @@ function CareersInner() {
   async function act(action: string, value?: unknown) {
     if (!sel) return
     setBusy(true)
+    setError('')
     try {
       const res = await fetch('/api/admin/careers', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: sel.id, action, value }) })
       const j = await res.json()
-      if (res.ok && j.applicant) setList(prev => prev.map(a => a.id === sel.id ? j.applicant : a))
-    } catch { /* ignore */ }
-    setBusy(false)
-  }
-  async function remove() {
-    if (!sel || !confirm(`Delete ${sel.name}'s application? This can't be undone.`)) return
-    await fetch(`/api/admin/careers?id=${sel.id}`, { method: 'DELETE' })
-    setList(prev => prev.filter(a => a.id !== sel.id)); setSelId(null)
+      if (!res.ok) throw new Error(j.error || 'The applicant could not be updated.')
+      if (j.applicant) setList(prev => prev.map(a => a.id === sel.id ? j.applicant : a))
+    } catch (e) { setError(e instanceof Error ? e.message : 'The applicant could not be updated.') }
+    finally { setBusy(false) }
   }
 
   const chip = (active: boolean): React.CSSProperties => ({ padding: '6px 12px', borderRadius: 99, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: `1px solid ${active ? 'var(--red)' : 'var(--line)'}`, background: active ? 'var(--red)' : 'rgba(255,255,255,.04)', color: active ? '#fff' : 'var(--muted)' })
@@ -95,6 +95,7 @@ function CareersInner() {
           <h1 className="text-2xl font-black text-white" style={{ letterSpacing: '-0.03em' }}>Applicants</h1>
           <span className="text-sm" style={{ color: 'var(--muted)' }}>{list.length} applicant{list.length === 1 ? '' : 's'}</span>
         </div>
+        {error && <p role="alert" className="text-sm mb-4" style={{ color: '#f87171' }}>{error}</p>}
         <div className="flex flex-wrap gap-2 mb-5">
           {STATUS_TABS.map(t => <button key={t.key} onClick={() => setTab(t.key)} style={chip(tab === t.key)}>{t.label}</button>)}
         </div>
@@ -125,7 +126,7 @@ function CareersInner() {
           {/* detail — manager review */}
           <div style={{ flex: 1 }}>
             {!sel ? <div className="glass-card p-10 text-center" style={{ borderRadius: 16 }}><p className="text-sm" style={{ color: 'var(--muted)' }}>Select an applicant to review.</p></div>
-              : <Review key={sel.id} a={sel} act={act} remove={remove} busy={busy} onBack={() => setSelId(null)} />}
+              : <Review key={sel.id} a={sel} act={act} busy={busy} canDecide={canDecide} onBack={() => setSelId(null)} />}
           </div>
         </div>
       </div>
@@ -142,8 +143,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
-function Review({ a, act, remove, busy, onBack }: {
-  a: Applicant; act: (action: string, value?: unknown) => void; remove: () => void; busy: boolean; onBack: () => void
+function Review({ a, act, busy, canDecide, onBack }: {
+  a: Applicant; act: (action: string, value?: unknown) => void; busy: boolean; canDecide: boolean; onBack: () => void
 }) {
   const [notes, setNotes] = useState(a.managerNotes || '')
   const reqKinds = requiredDocKinds(a.position)
@@ -280,21 +281,24 @@ function Review({ a, act, remove, busy, onBack }: {
 
       {/* recommendation + status */}
       <Section title="Decision">
+        {(a.duplicateApplicantNumbers?.length ?? 0) > 0 && <p className="text-xs mb-3" style={{ color: '#fbbf24' }}>Possible prior application: {a.duplicateApplicantNumbers?.join(', ')}</p>}
+        {a.informationRequest && <p className="text-xs mb-2" style={{ color: 'var(--muted)' }}>Requested: {a.informationRequest.message}</p>}
+        {a.informationResponse && <p className="text-sm mb-3" style={{ color: '#34d399' }}>Applicant response: {a.informationResponse.message}</p>}
         <p className="text-xs mb-2" style={{ color: 'var(--muted)' }}>Recommendation {a.recommendation ? `· currently: ${RECOMMENDATION_LABEL[a.recommendation]}` : ''}</p>
         <div className="flex flex-wrap gap-2 mb-4">
-          <button onClick={() => act('hire')} style={btn('#059669')}>✓ Approve → Crew</button>
-          <button onClick={() => act('recommendation', 'second_interview' as Recommendation)} style={btn('#2563eb')}>Interview</button>
-          <button onClick={() => { const w = prompt('What information do you need from the applicant?'); if (w != null) act('request_info', w) }} style={btn('#7c3aed')}>Request info</button>
-          <button onClick={() => act('recommendation', 'waitlist' as Recommendation)} style={btn('#d97706')}>Waitlist</button>
-          <button onClick={() => act('recommendation', 'reject' as Recommendation)} style={btn('#b91c1c')}>Deny</button>
+          {canDecide && <button disabled={busy} onClick={() => act('hire')} style={btn('#059669')}>✓ Approve → Crew</button>}
+          <button disabled={busy} onClick={() => act('status', 'interview')} style={btn('#2563eb')}>Interview</button>
+          <button disabled={busy} onClick={() => { const w = prompt('What information do you need from the applicant?'); if (w != null) act('request_info', w) }} style={btn('#7c3aed')}>Request info</button>
+          <button disabled={busy} onClick={() => act('status', 'waitlist')} style={btn('#d97706')}>Waitlist</button>
+          {canDecide && <button disabled={busy} onClick={() => act('recommendation', 'reject' as Recommendation)} style={btn('#b91c1c')}>Deny</button>}
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <label className="text-xs" style={{ color: 'var(--muted)' }}>Status</label>
-          <select value={a.status} onChange={e => act('status', e.target.value as ApplicantStatus)} style={{ padding: '8px 12px', background: 'rgba(255,255,255,.04)', border: '1px solid var(--line)', borderRadius: 10, color: '#f3f4f6', fontSize: 13, cursor: 'pointer', colorScheme: 'dark' }}>
-            {(Object.keys(APPLICANT_STATUS_LABEL) as ApplicantStatus[]).map(st => <option key={st} value={st}>{APPLICANT_STATUS_LABEL[st]}</option>)}
+          <select disabled={busy} value={a.status} onChange={e => act('status', e.target.value as ApplicantStatus)} style={{ padding: '8px 12px', background: 'rgba(255,255,255,.04)', border: '1px solid var(--line)', borderRadius: 10, color: '#f3f4f6', fontSize: 13, cursor: 'pointer', colorScheme: 'dark' }}>
+            {(Object.keys(APPLICANT_STATUS_LABEL) as ApplicantStatus[]).filter(st => st === a.status || (st !== 'hired' && (canDecide || st !== 'rejected'))).map(st => <option key={st} value={st}>{APPLICANT_STATUS_LABEL[st]}</option>)}
           </select>
-          <button onClick={() => act('rescore')} className="btn-ghost" style={{ padding: '8px 12px', fontSize: 12 }}>Re-score</button>
-          <button onClick={remove} style={{ padding: '8px 12px', fontSize: 12, background: 'transparent', border: '1px solid rgba(248,113,113,.4)', color: '#f87171', borderRadius: 10, cursor: 'pointer', marginLeft: 'auto' }}>Delete</button>
+          <button disabled={busy} onClick={() => act('rescore')} className="btn-ghost" style={{ padding: '8px 12px', fontSize: 12 }}>Re-score</button>
+          {canDecide && <button disabled={busy} onClick={() => act('status', 'archived')} style={{ padding: '8px 12px', fontSize: 12, background: 'transparent', border: '1px solid rgba(248,113,113,.4)', color: '#f87171', borderRadius: 10, cursor: 'pointer', marginLeft: 'auto' }}>Archive</button>}
         </div>
         {a.promotedStaffId && (
           <p className="text-xs mt-3" style={{ color: '#34d399' }}>
