@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomInt } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { put } from '@vercel/blob'
 import { PDFDocument, rgb } from 'pdf-lib'
 import { redis } from './redis'
@@ -142,7 +142,10 @@ const require = createRequire(import.meta.url)
 // Load the CommonJS fontkit bundle directly. Static transpilation of its generated
 // tables is needlessly expensive in the test runner and does not change its API.
 const fontkit = require('@pdf-lib/fontkit') as Parameters<PDFDocument['registerFontkit']>[0]
-const FONT_PACKAGE_DIR = dirname(require.resolve('dejavu-fonts-ttf/package.json'))
+// Do not use require.resolve() here. Turbopack rewrites asset resolution to a
+// numeric module id during page-data collection, which is not a filesystem path.
+// next.config.ts explicitly traces these runtime font files into the server output.
+const FONT_PACKAGE_DIR = join(process.cwd(), 'node_modules', 'dejavu-fonts-ttf')
 const REGULAR_FONT_PATH = join(FONT_PACKAGE_DIR, 'ttf', 'DejaVuSans.ttf')
 const BOLD_FONT_PATH = join(FONT_PACKAGE_DIR, 'ttf', 'DejaVuSans-Bold.ttf')
 let signatureFonts: Promise<[Buffer, Buffer]> | undefined
