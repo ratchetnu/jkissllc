@@ -143,6 +143,17 @@ export type ResolveOptions = {
    * offers, so introducing the model cannot retroactively take a capability away.
    */
   plan?: Tier | null
+  /**
+   * The capability set to resolve against. Defaults to the live registry.
+   *
+   * Injectable for the same reason `validateCapabilityRegistry` is: some rules can
+   * only be exercised by data the shipped registry does not currently contain. Every
+   * capability today declares all three tiers, so plan enforcement is inert in
+   * production — and a test that could only assert against that data would be
+   * asserting nothing. Overriding the set lets the RULE be tested now, so it is
+   * already proven on the day somebody first restricts a tier.
+   */
+  capabilities?: readonly Capability[]
 }
 
 // ── Reading a stored record ──────────────────────────────────────────────────
@@ -213,11 +224,18 @@ export function parseStoredProfile(tenantId: string, raw: string | null | undefi
     }
   }
 
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined)
   return {
     profile: {
       version: CAPABILITY_PROFILE_VERSION,
       tenantId,
       entries,
+      // Carried through explicitly. Losing it would silently put an already-migrated
+      // tenant back on the legacy credential fallback — which is worse than never
+      // having migrated, because the record would say one thing and the runtime
+      // another.
+      initializedAt: num(o.initializedAt),
+      initializedBy: typeof o.initializedBy === 'string' ? o.initializedBy.slice(0, 120) : undefined,
       updatedAt: typeof o.updatedAt === 'number' && Number.isFinite(o.updatedAt) ? o.updatedAt : 0,
       updatedBy: typeof o.updatedBy === 'string' ? o.updatedBy.slice(0, 120) : 'unknown',
     },
@@ -304,8 +322,9 @@ export function resolveCapabilityProfile(
 
   // Pass 1: per-capability facts, independent of other capabilities.
   const initialized = typeof profile.initializedAt === 'number' && profile.initializedAt > 0
+  const registry = opts.capabilities ?? allCapabilities()
   const selections = new Map<CapabilityId, CapabilitySelection>()
-  for (const c of allCapabilities()) {
+  for (const c of registry) {
     const onPlan = planIncludes(c, opts.plan)
     const resolved = resolveSelection(c, profile.entries[c.id], opts.env, { initialized })
     // A plan that does not include a capability overrides the selection outright:
@@ -337,7 +356,7 @@ export function resolveCapabilityProfile(
   }
 
   // Pass 2: derive state, which needs the other capabilities' selections.
-  for (const c of allCapabilities()) {
+  for (const c of registry) {
     const r = out[c.id]
     const blockedBy = c.dependencies.filter((d) => selections.get(d) === 'disabled')
 
@@ -355,7 +374,11 @@ export function resolveCapabilityProfile(
     r.code = CAPABILITY_STATE_CODES[state]
     r.blockedBy = blockedBy
     r.operational = state === 'ready'
-    if (state !== 'setup_required') r.missingVars = state === 'ready' || state === 'degraded' ? [] : r.missingVars
+    // `missingVars` is the answer to "what do you still need from me?", so it is
+    // meaningful ONLY when the tenant has asked for the capability and it cannot yet
+    // run. A disabled capability needs nothing: listing variables beside it invites
+    // somebody to go and set them, which is precisely the wrong action.
+    if (state !== 'setup_required') r.missingVars = []
   }
 
   return out

@@ -211,6 +211,25 @@ test('a mandatory capability reports itself as mandatory and is never inferred o
 
 // ── Stored-record safety ─────────────────────────────────────────────────────
 
+// Caught by a functional test, and pinned here because the failure mode is silent:
+// the stored record says "migrated", the runtime behaves as if it never was, and the
+// credential inference this work exists to remove quietly comes back on every read.
+test('initializedAt SURVIVES a round trip — a migrated tenant stays migrated', () => {
+  const written = JSON.stringify({
+    version: CAPABILITY_PROFILE_VERSION, tenantId: 'jkiss', entries: {},
+    initializedAt: 1_700_000_000_000, initializedBy: 'op', updatedAt: 1, updatedBy: 'op',
+  })
+  const read = parseStoredProfile('jkiss', written)
+  assert.equal(read.profile.initializedAt, 1_700_000_000_000)
+  assert.equal(read.profile.initializedBy, 'op')
+  // …and the resolution regime follows it: no legacy inference for a migrated tenant.
+  const resolved = resolveCapabilityProfile(read.profile, { env: JKISS_ENV })
+  assert.equal(resolved['sms-delivery'].selectionSource, 'registry-default')
+  assert.equal(resolved['sms-delivery'].state, 'disabled')
+  // A zero or a negative is not a timestamp, and must not count as initialized.
+  assert.equal(parseStoredProfile('jkiss', JSON.stringify({ version: 1, entries: {}, initializedAt: 0 })).profile.initializedAt, undefined)
+})
+
 test('a FUTURE-version record is never reinterpreted — defaults, loudly', () => {
   const r = parseStoredProfile('jkiss', JSON.stringify({ version: CAPABILITY_PROFILE_VERSION + 1, entries: { 'sms-delivery': { selection: 'enabled' } } }))
   assert.equal(r.fellBackToDefaults, true)
