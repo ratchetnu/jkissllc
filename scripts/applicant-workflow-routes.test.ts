@@ -98,18 +98,26 @@ import { createUserSessionToken } from '../app/api/admin/_lib/session'
 import { PATCH as careersPATCH, DELETE as careersDELETE } from '../app/api/admin/careers/route'
 import { POST as applyPOST } from '../app/api/careers/apply/route'
 import { POST as updatePOST } from '../app/api/careers/update/route'
+import { POST as usersPOST } from '../app/api/admin/users/route'
 import { getApplicant, listApplicants, saveApplicant, type Applicant } from '../app/lib/applicants'
-import { createApplicantDocumentReceipt, createApplicantInformationToken } from '../app/lib/applicant-workflow'
-import type { DocKind } from '../app/lib/ats-config'
+import { createApplicantInformationToken } from '../app/lib/applicant-workflow'
+import { getStaff } from '../app/lib/staff'
+import { getUserByStaffId } from '../app/lib/users'
 
 const CTX = { params: Promise.resolve({} as Record<string, string>) }
-const DOC_KINDS: DocKind[] = ['drivers_license', 'id', 'ss_card', 'headshot']
 let adminCookie = '', managerCookie = ''
 let clientIp = 1
 
 const patch = (body: unknown, cookie: string) => careersPATCH(new NextRequest('http://localhost/api/admin/careers', {
   method: 'PATCH', headers: { 'content-type': 'application/json', cookie: `jk_admin_session=${cookie}` },
   body: JSON.stringify(body),
+}), CTX)
+const createCrewLogin = (staffId: string) => usersPOST(new NextRequest('http://localhost/api/admin/users', {
+  method: 'POST', headers: { 'content-type': 'application/json', cookie: `jk_admin_session=${adminCookie}` },
+  body: JSON.stringify({
+    email: 'pat.crew@example.test', name: 'Pat Contractor', role: 'crew', staffId,
+    password: 'StrongPass123!',
+  }),
 }), CTX)
 
 // Public routes are rate limited per IP; each call gets its own so the limiter never
@@ -120,18 +128,12 @@ const publicPost = (handler: typeof applyPOST, path: string, body: unknown) => h
 }), CTX)
 
 const draftId = () => `draft-${crypto.randomUUID()}`
-const sealedPath = (kind: DocKind) => `driver-docs/${kind}/${crypto.randomUUID()}.jpg.enc`
-
 function application(submissionKey: string, over: Record<string, unknown> = {}) {
-  const documents = DOC_KINDS.map(kind => {
-    const url = sealedPath(kind)
-    return { kind, url, receipt: createApplicantDocumentReceipt({ draftId: submissionKey, kind, path: url }) }
-  })
   return {
     submissionKey, position: 'helper', name: 'Pat Applicant', email: 'pat@example.test', phone: '2145550101',
     age21plus: true, reliableTransport: true, canLiftHeavy: true, smartphone: true,
     availableStart: 'ASAP', availableDays: ['Mon'], experienceSummary: 'Warehouse work.',
-    skills: {}, scenarios: [], documents, ...over,
+    skills: {}, scenarios: [], ...over,
   }
 }
 
@@ -139,6 +141,17 @@ async function reset() {
   kv.clear(); zsets.clear()
   adminCookie = await createUserSessionToken({ id: 'u_admin', role: 'admin' })
   managerCookie = await createUserSessionToken({ id: 'u_manager', role: 'manager' })
+  // Approval will not issue an onboarding request without a published,
+  // counsel-approved agreement, so every fixture starts with one on file.
+  // scripts/contractor-lifecycle.test.ts covers the unpublished case directly.
+  kv.set('contractoragreement:v:1', { value: JSON.stringify({
+    version: 1, filename: 'agreement-v1.pdf', contentType: 'application/pdf', size: 12,
+    sha256: 'x'.repeat(64), blobUrl: 'http://agreement-blob.test/v1.pdf.enc',
+    blobPath: 'contractor-agreements/v1/a.pdf.enc', sealed: false,
+    publishedBy: 'u_admin', publishedAt: 1,
+  }) })
+  kv.set('contractoragreement:counter', { value: '1' })
+  kv.set('contractoragreement:current', { value: '1' })
 }
 
 async function submit(over: Record<string, unknown> = {}): Promise<Response> {
@@ -173,33 +186,77 @@ test('recommendation can never be the path that hires an applicant', async () =>
   const a = await seed()
   const res = await patch({ id: a.id, action: 'recommendation', value: 'hire' }, adminCookie)
   assert.equal(res.status, 400)
-  assert.match((await res.json()).error, /Approve → Crew/)
+  assert.match((await res.json()).error, /Approve → Contractor\/Crew/)
   assert.equal((await getApplicant(a.id))?.status, 'new', 'no hire leaked through the recommendation path')
 })
 
-test('a document without a valid signed receipt never reaches the application', async () => {
+test('approval links a blocked crew record; verification activates it; ending and reopening stay coherent', async () => {
   await reset()
-  const key = draftId()
-  const unsigned = DOC_KINDS.map(kind => ({ kind, url: sealedPath(kind) }))
-  assert.equal((await publicPost(applyPOST, '/api/careers/apply', application(key, { documents: unsigned }))).status, 400)
+  const a = await seed()
+  const approved = await patch({ id: a.id, action: 'hire' }, adminCookie)
+  assert.equal(approved.status, 200)
+  const hired = (await approved.json()).applicant as Applicant
+  assert.ok(hired.promotedStaffId)
 
-  const foreignDraft = DOC_KINDS.map(kind => {
-    const url = sealedPath(kind)
-    return { kind, url, receipt: createApplicantDocumentReceipt({ draftId: draftId(), kind, path: url }) }
-  })
-  assert.equal((await publicPost(applyPOST, '/api/careers/apply', application(key, { documents: foreignDraft }))).status, 400)
+  const pending = await getStaff(hired.promotedStaffId!)
+  assert.equal(pending?.active, false)
+  assert.equal(pending?.onboarding, true)
+  assert.equal(pending?.contractorStatus, 'pending_onboarding')
+  assert.equal((await createCrewLogin(hired.promotedStaffId!)).status, 409, 'portal access waits for verification')
 
-  const wrongKind = DOC_KINDS.map(kind => {
-    const url = sealedPath(kind)
-    return { kind, url, receipt: createApplicantDocumentReceipt({ draftId: key, kind: kind === 'ss_card' ? 'headshot' : kind, path: url }) }
-  })
-  assert.equal((await publicPost(applyPOST, '/api/careers/apply', application(key, { documents: wrongKind }))).status, 400)
+  // Verification refuses an incomplete file, so stand in a COMPLETE submission:
+  // the pinned agreement plus the executed agreement, W-9, licence, and badge photo.
+  const record = (await getApplicant(a.id))!
+  record.contractorOnboarding = {
+    ...(record.contractorOnboarding ?? { requestedAt: Date.now(), delivery: 'sent' }),
+    agreementVersion: record.contractorOnboarding?.agreementVersion ?? 1,
+    submittedAt: Date.now(),
+    electronicSignature: {
+      consentVersion: '2026-08-20-v1', consentedAt: Date.now(),
+      contractor: {
+        name: record.name, email: record.email, signedAt: Date.now(), sourceIp: '127.0.0.1', userAgent: 'test',
+        agreementVersion: record.contractorOnboarding?.agreementVersion ?? 1,
+        agreementSha256: 'a'.repeat(64), requestedAt: record.contractorOnboarding?.requestedAt ?? Date.now(),
+      },
+      company: {
+        name: 'Test Admin', title: 'Authorized Representative', actorId: 'u_admin',
+        signedAt: Date.now(), sourceIp: '127.0.0.1', userAgent: 'test',
+      },
+      certificateId: 'esign_fixture', executedSha256: 'b'.repeat(64),
+    },
+  }
+  record.documents = (['w9', 'contractor_agreement', 'drivers_license', 'headshot'] as const)
+    .map(kind => ({ kind, url: `contractor-docs/${kind}/${crypto.randomUUID()}.pdf.enc`, uploadedAt: Date.now() }))
+  await saveApplicant(record)
+  const verified = await patch({ id: a.id, action: 'verify_onboarding' }, adminCookie)
+  assert.equal(verified.status, 200)
+  const ready = await getStaff(hired.promotedStaffId!)
+  assert.equal(ready?.active, true)
+  assert.equal(ready?.onboarding, false)
+  assert.equal(ready?.contractorStatus, 'ready')
+  assert.equal(ready?.w9?.status, 'verified')
+  assert.equal((await createCrewLogin(hired.promotedStaffId!)).status, 200)
+  assert.equal((await getUserByStaffId(hired.promotedStaffId!))?.active, true)
 
-  const forgedUrl = DOC_KINDS.map(kind => ({ kind, url: 'https://evil.test/harvest.jpg' }))
-  assert.equal((await publicPost(applyPOST, '/api/careers/apply', application(key, { documents: forgedUrl }))).status, 400)
+  assert.equal((await patch({ id: a.id, action: 'end_contract' }, adminCookie)).status, 200)
+  const ended = await getStaff(hired.promotedStaffId!)
+  assert.equal(ended?.active, false)
+  assert.equal(ended?.contractorStatus, 'ended')
+  assert.equal((await getUserByStaffId(hired.promotedStaffId!))?.active, false, 'ending suspends portal access')
 
-  assert.equal((await listApplicants()).length, 0, 'no forged submission was stored')
-  assert.equal((await submit()).status, 200, 'a properly receipted submission still succeeds')
+  assert.equal((await patch({ id: a.id, action: 'reopen_contract' }, adminCookie)).status, 200)
+  const reopened = await getStaff(hired.promotedStaffId!)
+  assert.equal(reopened?.active, true)
+  assert.equal(reopened?.contractorStatus, 'ready')
+  assert.equal((await getUserByStaffId(hired.promotedStaffId!))?.active, true, 'verified reopen restores portal access')
+})
+
+test('pre-approval document fields are never persisted, even when forged', async () => {
+  await reset()
+  const res = await submit({ documents: [{ kind: 'ss_card', url: 'https://evil.test/harvest.jpg' }] })
+  assert.equal(res.status, 200)
+  const stored = (await listApplicants())[0]
+  assert.deepEqual(stored.documents, [], 'the public application cannot place a document into the record')
 })
 
 test('committing an application writes the applicant-number reverse index', async () => {

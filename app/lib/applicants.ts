@@ -43,7 +43,7 @@ export function pushApplicantEvent(a: Applicant, actor: string, action: string, 
 export type Recommendation = 'hire' | 'second_interview' | 'waitlist' | 'reject'
 
 export const RECOMMENDATION_LABEL: Record<Recommendation, string> = {
-  hire: 'Hire',
+  hire: 'Approve',
   second_interview: 'Second Interview',
   waitlist: 'Waitlist',
   reject: 'Reject',
@@ -52,6 +52,53 @@ export const RECOMMENDATION_LABEL: Record<Recommendation, string> = {
 export type SkillRating = { level: ExperienceLevel; confidence: number }
 export type ApplicantDoc = { kind: DocKind; url: string; uploadedAt: number; approved?: boolean }
 export type ScenarioResponse = { key: string; answer: string }
+export type ContractorOnboarding = {
+  requestedAt: number
+  delivery: 'sent' | 'failed'
+  deliveryAttemptedAt?: number
+  deliveryError?: string
+  // The counsel-approved template version this request pinned. Replacing the
+  // published template later mints a NEW version and must never change what an
+  // outstanding request asked its contractor to sign.
+  agreementVersion?: number
+  agreementDownloadedAt?: number
+  electronicSignature?: {
+    consentVersion: string
+    consentedAt: number
+    contractor: {
+      name: string
+      email: string
+      signedAt: number
+      sourceIp: string
+      userAgent: string
+      agreementVersion: number
+      agreementSha256: string
+      requestedAt: number
+    }
+    company?: {
+      name: string
+      title: string
+      actorId: string
+      signedAt: number
+      sourceIp: string
+      userAgent: string
+    }
+    certificateId?: string
+    executedSha256?: string
+  }
+  submittedAt?: number
+  verifiedAt?: number
+  verifiedBy?: string
+  legalName?: string
+  businessName?: string
+  taxClassification?: 'individual' | 'business'
+  tinLast4?: string
+  signatureName?: string
+  agreementAcceptedAt?: number
+  drivingAuthorized?: boolean
+  usesPersonalVehicle?: boolean
+  documentKinds?: DocKind[]
+}
 
 export type Applicant = {
   id: string
@@ -90,8 +137,19 @@ export type Applicant = {
   events?: ApplicantEvent[] // activity timeline
   informationRequest?: { message: string; requestedAt: number; delivery: 'sent' | 'failed' }
   informationResponse?: { message: string; submittedAt: number }
+  contractorOnboarding?: ContractorOnboarding
   duplicateApplicantNumbers?: string[]
   archivedAt?: number
+  // The start of the CURRENT rejection episode. It is immutable while rejected,
+  // but cleared when review reopens so a later rejection receives a fresh clock.
+  // Append-only status events retain the complete rejection history.
+  rejectedAt?: number
+  // An approval matched an EXISTING active crew record that is not W-9 verified.
+  // Linking it would pull a working person off the roster, so approval stops and
+  // waits for an explicit admin decision instead of doing it silently.
+  pendingCrewLink?: { staffId: string; staffName: string; detectedAt: number }
+  contractEndedAt?: number
+  legalHold?: { active: boolean; placedAt: number; placedBy: string; reason: string; releasedAt?: number; releasedBy?: string }
   // meta
   source?: string
   createdAt: number
@@ -296,6 +354,15 @@ export async function listApplicants(limit?: number): Promise<Applicant[]> {
     .filter((a): a is Applicant => a !== null)
 }
 
+// Retention-only hard deletion. UI/API deletes remain prohibited. Callers must
+// first enforce the legal-hold and age policy and delete linked blobs.
+export async function purgeApplicantAfterRetention(a: Pick<Applicant, 'id' | 'applicantNumber'>): Promise<void> {
+  await redis.del(`${KEY_PREFIX}${a.id}`)
+  await redis.del(`${KEY_NUM}${a.applicantNumber.toUpperCase()}`)
+  await redis.zrem(KEY_INDEX, a.id)
+  await redis.del(PROMOTION_KEY(a.id))
+}
+
 // Backfill defaults so older records never crash newer code.
 function normalize(a: Applicant): Applicant {
   a.skills = a.skills && typeof a.skills === 'object' ? a.skills : {}
@@ -304,7 +371,17 @@ function normalize(a: Applicant): Applicant {
   a.events = Array.isArray(a.events) ? a.events : []
   a.status = a.status || 'new'
   if (!a.score || typeof a.score.score !== 'number') a.score = scoreApplicant(toScoreInput(a))
+  // Legacy rejection clocks are persisted by the retention pass. Do not synthesize
+  // the field here: doing so only in memory would make a test look backfilled while
+  // leaving the stored record unchanged.
   return a
+}
+
+/** The timestamp of the event that put this applicant into `rejected`, if recorded. */
+export function rejectionEventAt(a: Pick<Applicant, 'events'>): number | undefined {
+  return [...(a.events ?? [])]
+    .reverse()
+    .find(event => /denied|rejected/i.test(`${event.action} ${event.note ?? ''}`))?.at
 }
 
 const norm = (s: string | undefined) => (s || '').trim().toLowerCase()

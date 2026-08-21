@@ -66,6 +66,11 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   const id = typeof body.id === 'string' && body.id ? body.id : crypto.randomUUID()
   const now = Date.now()
   const existing = body.id ? (await listStaff()).find(s => s.id === body.id) : undefined
+  if (existing?.contractorStatus && typeof body.active === 'boolean' && body.active !== existing.active) {
+    return NextResponse.json({
+      error: 'Use the linked applicant workflow to activate, end, or reopen this contractor relationship.',
+    }, { status: 409 })
+  }
 
   let address = existing?.address
   if (body.address !== undefined) {
@@ -135,7 +140,9 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     role: typeof body.role === 'string' ? body.role.trim().slice(0, 60) || undefined : existing?.role,
     photoUrl: typeof body.photoUrl === 'string' ? body.photoUrl.trim().slice(0, 600) || undefined : existing?.photoUrl,
     address,
-    active: body.active !== false && body.active !== 'false',
+    active: existing
+      ? (typeof body.active === 'boolean' ? body.active : existing.active)
+      : body.active !== false && body.active !== 'false',
     // Absent in the request = leave as-is; present = the toggle's new value.
     usesTimeclock: typeof body.usesTimeclock === 'boolean' ? body.usesTimeclock : existing?.usesTimeclock,
     payKind,
@@ -148,6 +155,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     // Preserve fields the edit form doesn't carry (were silently dropped before).
     email: existing?.email,
     applicantId: existing?.applicantId,
+    contractorStatus: existing?.contractorStatus,
     onboarding: existing?.onboarding,
     w9: body.address !== undefined
       ? { ...(parseW9(body.w9, existing?.w9) ?? { status: 'not_collected' as const }), addressComplete: !!address }

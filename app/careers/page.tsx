@@ -1,11 +1,11 @@
 import Link from 'next/link'
 import { COMPANY, CREDENTIALS_DOT } from '../lib/company';
 import type { Metadata } from 'next'
-import { POSITIONS, REQUIREMENTS, REQUIRED_DOCS, HEADSHOT_GUIDELINES, PAY_NOTICE, type Position } from '../lib/ats-config'
+import { POSITIONS, REQUIREMENTS, PAY_NOTICE, type Position } from '../lib/ats-config'
 
 export const metadata: Metadata = {
-  title: `Careers — Drivers & Helpers | ${COMPANY.legalName}`,
-  description: `${COMPANY.legalName} is hiring Drivers ($175/day starting) and Driver Helpers ($150/day starting) for box-truck delivery, moving, appliance installation, and junk removal across DFW. Apply online in minutes.`,
+  title: `Contractor Opportunities — Drivers & Helpers | ${COMPANY.legalName}`,
+  description: `${COMPANY.legalName} is accepting independent-contractor applications for Drivers and Driver Helpers serving box-truck delivery, moving, appliance installation, and junk removal across DFW.`,
   alternates: { canonical: `${COMPANY.siteUrl}/careers` },
 }
 
@@ -30,15 +30,15 @@ export default function CareersPage() {
       {/* Hero */}
       <section className="pt-32 pb-16 px-6">
         <div className="max-w-4xl mx-auto text-center">
-          <div className="label mb-6" style={{ display: 'inline-block' }}>We&apos;re Hiring in DFW</div>
+          <div className="label mb-6" style={{ display: 'inline-block' }}>Contractor Opportunities in DFW</div>
           <h1 className="text-4xl md:text-6xl font-black text-white mb-5" style={{ letterSpacing: '-0.045em', lineHeight: 1.04, fontFamily: 'var(--font-display)' }}>
             Get Paid to Move,<br /><span style={{ color: 'var(--red)' }}>Deliver &amp; Install.</span>
           </h1>
           <p className="text-lg md:text-xl mb-8 max-w-2xl mx-auto" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>
-            {COMPANY.legalName}{' '}runs box-truck delivery, moving, appliance installations, and junk-removal crews across Dallas–Fort Worth. If you work hard, show up, and take care of the customer, there&apos;s a spot and a paycheck for you.
+            {COMPANY.legalName}{' '}works with independent contractors on box-truck delivery, moving, appliance installation, and junk-removal projects across Dallas–Fort Worth.
           </p>
           <Link href="/careers/apply" className="btn" style={{ padding: '16px 40px', fontSize: 16 }}>Start Your Application →</Link>
-          <p className="text-xs mt-4" style={{ color: 'rgba(255,255,255,.4)' }}>Takes about 10–15 minutes · You&apos;ll need a photo ID, Social Security card, and a headshot ready</p>
+          <p className="text-xs mt-4" style={{ color: 'rgba(255,255,255,.4)' }}>Takes about 10–15 minutes · No identity or tax documents are collected before approval</p>
         </div>
       </section>
 
@@ -95,35 +95,21 @@ export default function CareersPage() {
         </div>
       </section>
 
-      {/* Required documents + headshot */}
+      {/* Privacy-first approval + onboarding */}
       <section className="pb-16 px-6">
         <div className="max-w-5xl mx-auto">
           <div className="grid md:grid-cols-2 gap-5">
             <div className="glass-card p-7" style={{ borderRadius: 18 }}>
-              <div className="label mb-4" style={{ display: 'inline-block' }}>Have These Ready</div>
-              <h3 className="text-lg font-black text-white mb-2">Documents You&apos;ll Upload</h3>
-              <p className="text-xs mb-4" style={{ color: 'var(--muted)' }}>You can&apos;t submit until every required document is attached. Clear phone photos are fine.</p>
-              <div className="space-y-3">
-                {(['driver', 'helper'] as Position[]).map(pos => (
-                  <div key={pos}>
-                    <p className="text-xs font-bold uppercase tracking-widest mb-1.5" style={{ color: 'var(--red)' }}>{POSITIONS[pos].title}</p>
-                    <ul className="space-y-1.5">
-                      {REQUIRED_DOCS[pos].map(d => (
-                        <li key={d.kind} className="flex items-start gap-2 text-sm" style={{ color: 'var(--text)' }}>
-                          <span style={{ color: 'var(--muted)' }}>📎</span><span style={{ lineHeight: 1.5 }}>{d.label}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </div>
+              <div className="label mb-4" style={{ display: 'inline-block' }}>Application Stage</div>
+              <h3 className="text-lg font-black text-white mb-2">Apply Without Sensitive Documents</h3>
+              <p className="text-sm" style={{ color: 'var(--text)', lineHeight: 1.65 }}>The application asks about contact information, availability, experience, and job scenarios. It does not request a Social Security card, W-9, license image, insurance file, or headshot.</p>
             </div>
             <div className="glass-card p-7" style={{ borderRadius: 18 }}>
-              <div className="label mb-4" style={{ display: 'inline-block' }}>Badge Photo</div>
-              <h3 className="text-lg font-black text-white mb-2">Headshot Requirements</h3>
-              <p className="text-xs mb-4" style={{ color: 'var(--muted)' }}>Your approved photo becomes your crew ID badge — treat it like a passport photo.</p>
+              <div className="label mb-4" style={{ display: 'inline-block' }}>After Approval</div>
+              <h3 className="text-lg font-black text-white mb-2">Secure Contractor Onboarding</h3>
+              <p className="text-xs mb-4" style={{ color: 'var(--muted)' }}>Approved contractors receive a time-limited secure link. A W-9 is required before the first payment.</p>
               <ul className="space-y-2">
-                {HEADSHOT_GUIDELINES.map((g, i) => (
+                {['Completed Form W-9 (SSN or EIN may be used on the form)', 'Signed independent-contractor agreement', 'Driver license and driving authorization when the role requires driving', 'Insurance certificate when using a personal vehicle', 'Crew badge photo'].map((g, i) => (
                   <li key={i} className="flex items-start gap-2.5 text-sm" style={{ color: 'var(--text)' }}>
                     <span style={{ color: '#34d399', fontWeight: 800 }}>•</span><span style={{ lineHeight: 1.5 }}>{g}</span>
                   </li>
@@ -143,7 +129,7 @@ export default function CareersPage() {
               ['1', 'Your info', 'Position, contact, and eligibility'],
               ['2', 'Experience', 'Rate your delivery, appliance, moving & driving skills'],
               ['3', 'Scenarios', 'A few real-world job situations'],
-              ['4', 'Documents', 'ID, SS card, and badge headshot'],
+              ['4', 'Admin review', 'Documents are requested only after approval'],
             ].map(([n, t, d]) => (
               <div key={n}>
                 <div className="mx-auto mb-3 flex items-center justify-center" style={{ width: 40, height: 40, borderRadius: 999, background: 'rgba(224,0,42,.12)', border: '1px solid rgba(224,0,42,.3)', color: 'var(--red)', fontWeight: 800 }}>{n}</div>
@@ -159,7 +145,7 @@ export default function CareersPage() {
       </section>
 
       <footer className="py-10 px-6 text-center text-xs" style={{ borderTop: '1px solid var(--line)', color: 'rgba(255,255,255,.3)' }}>
-        © {new Date().getFullYear()} {COMPANY.legalName} · {CREDENTIALS_DOT} · Equal-opportunity employer
+        © {new Date().getFullYear()} {COMPANY.legalName} · {CREDENTIALS_DOT} · Independent-contractor opportunities
       </footer>
     </main>
   )

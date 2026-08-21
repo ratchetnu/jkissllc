@@ -31,7 +31,7 @@ import { applyPunch, type ClockAction, type Gps, type PunchResult } from './crew
 import { fmtCents, resolveCrewPay } from './finance'
 import { getEquipment } from './equipment'
 import { isEnabled } from './platform/flags'
-import { getStaff } from './staff'
+import { getStaff, staffCanAcceptAssignments } from './staff'
 import { withSingleOpenPunchPolicy } from './timeclock/punch-policy'
 import { policyBlockToPunchError } from './timeclock/punch-errors'
 import { syncAssigneePunchIndex, clearPunchFromIndex } from './timeclock/punch-index-sync'
@@ -80,7 +80,7 @@ export async function assignCrewToBooking(
 
   const staff = await getStaff(staffId)
   if (!staff) return { ok: false, error: 'unknown_staff' }
-  if (staff.active === false) return { ok: false, error: 'inactive_staff' }
+  if (!staffCanAcceptAssignments(staff)) return { ok: false, error: 'inactive_staff' }
 
   // Resolve the rate BEFORE the CAS loop: it's a pure read of roster data, and the
   // mutate callback may re-run on a version conflict. Re-resolving inside would be

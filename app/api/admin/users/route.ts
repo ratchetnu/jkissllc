@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission } from '../_lib/session'
 import { createUser, listUsers, toSafeUser } from '../../../lib/users'
-import { getStaff } from '../../../lib/staff'
+import { getStaff, staffCanAcceptAssignments } from '../../../lib/staff'
 import { isRole } from '../../../lib/rbac'
 import { passwordPolicyError } from '../../../lib/password'
 import { auditAdmin } from '../../../lib/audit'
@@ -43,6 +43,9 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     if (!staffId) return NextResponse.json({ ok: false, error: 'Select the crew member this login belongs to.' }, { status: 400 })
     const staff = await getStaff(staffId)
     if (!staff) return NextResponse.json({ ok: false, error: 'That crew member no longer exists.' }, { status: 400 })
+    if (!staffCanAcceptAssignments(staff)) {
+      return NextResponse.json({ ok: false, error: 'Verify contractor onboarding before creating portal access.' }, { status: 409 })
+    }
   }
 
   try {

@@ -1,6 +1,6 @@
 # Operion — Current State & Engineering Handoff
 
-**Audited:** 2026-07-22 · **Auditor:** automated engineering agent · **Purpose:** allow another AI engineering agent to take over Operion development with no prior context.
+**Original audit:** 2026-07-22 · **Latest reconciliation:** 2026-08-20 (§0.4) · **Auditor:** automated engineering agent · **Purpose:** allow another AI engineering agent to take over Operion development with no prior context.
 
 **Scope of this document:** the Operion platform as it runs for two real businesses — **J KISS LLC** (source of truth) and **Supercharged** (target). Enterprise/multi-tenant SaaS expansion is explicitly *deferred*; everything below is oriented to daily internal operations.
 
@@ -19,6 +19,251 @@
 > deploying normally through its **own Vercel Git integration** (a push to `main` builds and
 > promotes, as it always has); that path is independent of Operion release automation. See
 > §7 and §9.
+
+---
+
+## 0.4 RECONCILIATION — repository and Production truth-up through 2026-08-20 — read this first
+
+This file's last committed update was **2026-07-31** (`254f41a`). The repository then changed
+substantially through **2026-08-20**. This section records the material shipped and local work that
+the older handoff does not contain. Where this section conflicts with §0.3, §0.2, §0.1, §0, or
+§1–§13, **this section wins on repository, capability, test, deployment, and blocker status**.
+Section 0.3 remains the detailed source for the local electronic-signature design.
+
+### Current snapshot
+
+| Item | Verified state |
+|---|---|
+| Repository | Contractor release commits `9d17958` + `4be1353` on `codex/contractor-lifecycle-esign`; `main` and `origin/main` were still `7f48a95` at this reconciliation checkpoint |
+| Verified release artifact | Vercel Preview `dpl_EE2vQrhvCrWpYTb9SGt6iWpnHH5p` built commit `4be1353` successfully on Node 24.x; unrelated `docs/architecture/` is not part of the release |
+| Production | Vercel target `production`, deployment `dpl_tz9LncN78q8akFEhHZyPZVn2ugn5`, state **Ready**, created 2026-08-20 15:04 CDT |
+| Live health | `https://www.jkissllc.com/api/health` returned `status: healthy` and the same build ID at 2026-08-21T02:46:12Z |
+| Framework | Next.js 16.2.2 · React 19.2.4 · Vercel function runtime Node 24.x |
+| Current local scale | 231 API route handlers · 69 admin pages · 12 crew portal pages · 411 audited library files · 299 test files |
+| Capability registry | 41 entries: 32 `full`, 4 `partial`, 5 `planned` |
+| Current working-tree verification | 3,846/3,846 tests on Node 26 and Node 24 · TypeScript clean · 40/40 focused contractor-lifecycle tests on both Node versions · Vercel Preview build passed on Node 24.x · 0 lint errors / 2 unrelated warnings · diff check clean |
+
+The live deployment is verified by build ID and Vercel target/state. The deployment inspection did
+not independently expose a trustworthy source tree hash, so this document does **not** infer exact
+deployed source contents merely from a green `Ready` label. Continue comparing the live health build
+after every merge, as required by `AGENTS.md`.
+
+The 41 registry entries and the 39 marketed capabilities audited in `OPERION_SYSTEM_STATUS.md` are
+different populations and must not be compared as if they were one count. The registry's current
+partial entries are `leads`, `quotes`, `jobs`, and `automations`; its planned, disabled-for-J-KISS
+entries are `organizations`, `memberships`, `customers`, `expenses`, and `approvals`. Registry state
+is a claim about the product, not proof of implementation; route/API/UI/test verification remains
+the evidence standard.
+
+### Material capabilities and corrections missing from the older handoff
+
+| Area | Current state |
+|---|---|
+| Tenant isolation | Second-tenant boundaries were hardened across authentication, public token routes, direct browser uploads, tenant-owned Blob paths, Redis access, and user role switching. The tenant audit now classifies 228 of 231 handlers; only the same three diagnostics routes remain unclassified. This is hosting/data-boundary work, not self-service SaaS organizations or memberships, which remain planned. |
+| Booking assignment and crew portal | `BOOKING_ASSIGNMENT_ENABLED` was independently verified **ON in Production on 2026-07-29**. Booking jobs, contractor acceptance, equipment/crew assignment, clocking, weak-network retries, completion-photo idempotency, crew activity, route/public contractor connections, and dispatch readiness are implemented. Do not repeat older statements that the flag is absent or off. |
+| Route and contract shutdown | Expired business contracts end through fail-closed completeness checks; ended contractors are inactive and non-dispatchable. Route completion closes an open contractor punch, and punch-overlap/time-correction evidence is available to operations. |
+| Customer operations | First-class customer records and a customer timeline shipped after the original audit. The registry still has a separate planned `customers` platform abstraction; that planned entry must not be used to deny the existence of the live J KISS customer implementation. |
+| Booking idempotency | Intake persistence now uses a claim-before-write atomic boundary. A committed claim is terminal, a booking cannot be stolen after lease expiry, and recovery proves non-commit by record absence—not elapsed time. `POST /api/book` and quote-request persistence share the mechanism. Read `AGENTS.md` and `app/lib/booking-idempotency.ts` before changing it. |
+| Punch engine | One punch engine, single-open-punch policy, open-punch index, dry-run backfill plan, reconciliation, and real-contention tests have shipped. The contention gap recorded in the 2026-08-09 handoff was closed by `a3e2873`. `SINGLE_OPEN_PUNCH_ENABLED` and `OPEN_PUNCH_INDEX_ENABLED` still default off; do not enable them until Production dry-run/backfill/reconciliation, Preview evidence, observation, and rollback criteria are satisfied in the documented order. |
+| Photo estimating | Junk-family photo analysis is supported. The moving lane, canonical compact estimator specification, catalog normalization, duplicate-photo reconciliation, benchmark/curation tooling, and latency controls were built, but live moving analysis still depends on `AI_PHOTO_ESTIMATE_MOVING`, whose code default is off. Benchmark and curation infrastructure must not be described as a live customer capability by itself. |
+| AI provider and health | Operion gained an `AI_PROVIDER` seam for direct Anthropic transport, an honest provider health path, token-budget-derived timeouts, and explicit handling for truncated junk analyses. The default model is now `anthropic/claude-sonnet-5`. The 2026-08 cost table corrects Opus 4.8 from the former 3× overstatement ($15/$75 per million tokens) to $5/$25; historical cost sheets remain immutable. |
+| AI latency and scheduling cost | Interactive photo estimating now starts earlier and has explicit runtime budgets; durable analysis attempts are bounded to fit the job deadline. Scheduled workload was reduced and due-job indexing removed the final high-frequency full-booking scan. |
+| Historical contractor pay | Admins can issue prior-pay statements without recreating jobs, routes, bookings, or punches. The engine validates day/week/full-month/custom periods, integer-cent arithmetic, overlap, immutable void/reissue correction flow, exact uncapped YTD, tenant-scoped batched hydration, and crew privacy. Staff and business addresses are supported. |
+| Pay statement presentation | Statements follow the weekly Friday pay schedule; a current week is unavailable until Friday. Contractor mailing address and the admin-managed J Kiss business address appear on the statement. Earnings describe applicable weekday periods instead of exposing a bare quantity multiplication. Print/PDF output is guarded as a one-page document without the Operion menu/navigation chrome. |
+| Applicant workflow | Merged applicant hardening (`c56964c`, merged by `7f48a95`) enforces decision-level hiring, prevents managers from denying/archiving/hiring, forces hiring through Approve → Crew, serializes concurrent updates, atomically creates one application/number/index entry, binds uploads to signed tenant-scoped receipts, preserves records instead of destructive DELETE, flags duplicates, and hydrates applicant lists uncapped in one batch. |
+| Contractor lifecycle and signing | Release commits `9d17958` + `4be1353` extend approved applicants into inactive pending contractors, W-9/role-document verification, agreement-version pinning, two-party electronic signing, sealed executed agreements, Crew Documents publication, portal suspension/reactivation, end/reopen rules, dispatch exclusion, and report-only retention. See §0.3 for the exact flow and controls. |
+| Print verification CI | Poppler is installed in CI so the one-page pay-statement print gate actually runs rather than existing as an unexercised local-only check. |
+
+### Contractor lifecycle additions beyond §0.3
+
+The current local contractor work includes several protections that are broader than electronic
+signing:
+
+- Approval creates or links exactly one crew record in `pending_onboarding`, inactive and not
+  assignable. A duplicate active crew identity requires explicit admin confirmation; it is never
+  silently deactivated or overwritten.
+- Onboarding requests pin an immutable agreement version. Publishing a newer template does not
+  alter an issued request; an authorized resend supersedes the old token and deliberately re-pins
+  the current version only before contractor submission.
+- Verification requires the pinned agreement, contractor signature, company countersignature,
+  executed agreement, W-9, and all role documents. Only verification transitions the contractor to
+  `ready`, activates their portal account, and permits assignment/dispatch.
+- Ended, pending, and unverified contractors are excluded from route/booking assignment, recurring
+  templates, reminders, morning messages, no-response penalties, and portal access. Final or
+  historical pay remains permitted after relationship end.
+- Daily route automation was extracted into a directly testable helper. Tests now prove that
+  pending and ended contractors receive no reminders or penalties; ready contractors follow the
+  normal path.
+- Applicant retention is report-only unless `APPLICANT_RETENTION_DELETE_ENABLED=true`, and an
+  explicit cron dry-run still overrides that setting. Legal holds always prevent destructive
+  cleanup. The cron-facing wrapper is now directly tested, closing the previously reported wiring
+  mutation gap.
+- Sensitive applicant documents and abandoned pending uploads have explicit retention rules.
+  Executed agreements are copied to the verified contractor's owner-scoped Crew Documents.
+- Signature-code issue and consumption are atomic Redis operations. Expiry, request binding,
+  single use, and the five-attempt ceiling are enforced under concurrency; a stale browser request
+  cannot invalidate a newer code.
+- Published templates are structurally parsed as PDFs before acceptance. Executed PDFs use an
+  embedded Unicode font so signer names are preserved exactly, and every storage path—including
+  injected storage seams—receives sealed ciphertext rather than plaintext.
+- Crew Documents ownership is derived from the applicant's promoted crew record; callers cannot
+  nominate another crew member as the executed agreement's owner.
+- Delivery failures are persisted and visible with an admin resend action; onboarding never becomes
+  active because an email failed silently.
+
+### Current blockers, decisions, and operational cautions
+
+1. **Release artifact is verified; live status must still be checked.** The lifecycle, agreement
+   publication, retention, cron wiring, electronic signing, tests, and handoff are contained in
+   commits `9d17958` + `4be1353`. Preview `dpl_EE2vQrhvCrWpYTb9SGt6iWpnHH5p` passed on Node 24.x.
+   Treat the release as live only after `main` contains those commits and `/api/health` reports the
+   resulting Production build ID.
+2. **Agreement approved; publication still required.** On August 21, 2026, the owner approved the
+   exact repository agreement for use and authorized removal of the draft-review banner. The DOCX
+   and PDF are the approved v1.0 artifacts. Merely storing them under `docs/legal/` does not publish
+   the agreement to Operion; an administrator must still publish the approved PDF in the agreement
+   settings before onboarding links can be issued.
+3. **Onboarding remains blocked until a template is published.** This is intentional fail-closed
+   behavior: approval returns `agreement_not_published` and no onboarding link is issued.
+4. **Signing prerequisites:** Production needs `DOC_ENCRYPTION_KEY` (or the supported
+   `ADMIN_SESSION_SECRET` fallback) and working email delivery. One-time signature codes cannot be
+   delivered without email, and sensitive uploads fail closed without encryption key material.
+5. **Retention deletion stays off.** Keep `APPLICANT_RETENTION_DELETE_ENABLED` unset until an owner
+   reviews a real dry-run report and explicitly authorizes destructive cleanup.
+6. **Punch activation is still operationally gated.** Local contention proof is complete, but do not
+   infer that the Production index is populated or authoritative. Follow the punch handoff's ordered
+   backfill/reconcile/observe/enable procedure.
+7. **Moving photo AI is not generally live.** Do not market it as enabled while
+   `AI_PHOTO_ESTIMATE_MOVING` is off in the resolved target environment.
+8. **Tenant certification still has three blockers:**
+   `app/api/diagnostics/ai-provider/route.ts`,
+   `app/api/diagnostics/analysis/[analysisId]/route.ts`, and
+   `app/api/diagnostics/curate/route.ts`. They predate the contractor release; the new contractor
+   agreement and signature-code routes are tenant-wrapped.
+9. **Shared working tree caution:** unrelated sessions have written to this checkout before. Never
+   use a blanket `git add .`; review the exact staged file list. In particular, do not include the
+   unrelated untracked `docs/architecture/` directory.
+
+### Next safe release sequence
+
+1. Use the approved v1.0 PDF regenerated on August 21, 2026; its draft-review banner has been
+   removed. Do not substitute a different file when publishing the version-pinned template.
+2. Review the complete local diff by file; keep unrelated work out of the commit.
+3. Re-run TypeScript, focused contractor tests, the full suite, lint, build, diff check, and tenant
+   audit after any review fix.
+4. Commit the contractor lifecycle/signature release and documentation as an intentional file set.
+5. Merge and push only when a Production deployment is intended; pushing `main` is the Production
+   trigger for this repository.
+6. Verify the new live build ID at `/api/health`; never assume a green merge deployed.
+7. Confirm encryption and email readiness, then publish the approved agreement from the authorized
+   admin surface.
+8. Run one controlled end-to-end onboarding: approval → agreement download → contractor signature
+   code → admin countersign → verification → Crew Documents → assignment eligibility.
+9. Keep applicant retention report-only until a separate dry-run review and owner decision.
+
+---
+
+## 0.3 RECONCILIATION — 1099 contractor onboarding and native electronic signing implemented locally (2026-08-20) — read this first
+
+The contractor lifecycle and two-party electronic-signature workflow are contained in release
+commits `9d17958` + `4be1353`. This section records the intended system behavior and verification
+evidence. Commit presence alone does **not** prove that Production deployed or that an agreement
+template has been published in Operion; verify both separately.
+
+### End-to-end contractor workflow
+
+```text
+application submitted
+  → admin approval creates or links one inactive contractor record
+  → onboarding request pins the current published agreement version
+  → contractor downloads and reviews that exact agreement
+  → contractor accepts the electronic-record disclosure
+  → contractor types their legal name and confirms intent to sign
+  → Operion emails a one-time verification code to the applicant email
+  → valid code records the contractor signature and submits onboarding
+  → authorized admin enters legal name/title and confirms authority to countersign
+  → Operion appends an execution certificate to the pinned PDF and seals it
+  → admin verification checks both signatures, the W-9, and role-required documents
+  → contractor becomes ready, active, portal-enabled, and eligible for assignments
+  → executed agreement is copied into the contractor's Crew Documents
+```
+
+The W-9 remains a separate sensitive upload. It is not combined with the contractor-agreement
+signature flow.
+
+### Electronic-signature evidence and controls
+
+- The contractor must download the pinned agreement before signing.
+- Consent to electronic records, intent to sign, typed legal name, and a separate information-
+  accuracy certification are required.
+- The six-digit email code expires after 10 minutes, is single-use, permits at most five failed
+  attempts, and is stored only as an HMAC-protected value in tenant-scoped Redis. Issuance and
+  consumption use atomic Redis scripts so those guarantees also hold for parallel requests; stale
+  requests do not revoke a newer code.
+- The contractor signature records the verified applicant email, agreement version, original PDF
+  SHA-256, request timestamp, signing timestamp, IP address, and user agent.
+- Countersigning is restricted to users with applicant decision authority. The company signature
+  records the administrator account, typed legal name and title, timestamp, IP address, and user
+  agent.
+- Operion verifies the original PDF hash before generating the executed copy. The final PDF retains
+  the original agreement pages and adds an execution certificate containing both parties' evidence,
+  a unique certificate ID, and the final document hash.
+- Agreement publication rejects structurally invalid PDFs before they can become a pinned template.
+  The execution certificate embeds a Unicode TTF subset so accented and non-ASCII legal names remain
+  exact in both the rendered and extracted PDF text.
+- Contractors cannot upload their own file as the final executed agreement. Operion generates and
+  seals the authoritative copy after the authorized countersignature. Storage seams receive the
+  sealed bytes, and Crew Documents ownership is derived from the promoted crew link rather than a
+  caller-supplied staff identifier.
+- Resending or superseding an onboarding request is blocked after contractor submission, preventing
+  a signed agreement from being silently replaced.
+- Final onboarding verification fails closed until the pinned agreement, contractor signature,
+  company countersignature, executed PDF, W-9, and role-specific documents are present.
+- Agreement signing and countersigning create dedicated audit events:
+  `contractor.agreement_signed` and `contractor.agreement_countersigned`.
+
+### Main implementation surfaces
+
+| Surface | Responsibility |
+|---|---|
+| `app/careers/onboarding/page.tsx` | contractor disclosure, download, typed signature, code request, submission, and document uploads |
+| `app/api/careers/onboarding/signature-code/route.ts` | token validation, rate/bot controls, one-time-code issuance, and email delivery |
+| `app/api/careers/onboarding/route.ts` | consent/signature validation, code consumption, contractor evidence, and submission |
+| `app/admin/careers/page.tsx` | signature status, admin name/title/authority confirmation, countersign, and verification controls |
+| `app/api/admin/careers/route.ts` | decision-level countersign authorization, executed-document generation, sealing, audit, and verification gates |
+| `app/lib/contractor-electronic-signature.ts` | code lifecycle, evidence capture, PDF integrity verification, execution certificate, and sealed storage |
+| `app/lib/contractor-agreement.ts` | tenant-scoped, versioned, sealed agreement-template publication and retrieval |
+| `app/lib/contractor-onboarding-documents.ts` | verification requirements and executed-agreement publication to Crew Documents |
+
+### Verification recorded for this working tree
+
+| Gate | Result |
+|---|---|
+| TypeScript | passed |
+| Full test suite | **3,846 / 3,846**, 0 failures on Node 26; exit 0 on Production Node 24.19.0 |
+| Focused contractor lifecycle file | **40 / 40** on Node 26 and Node 24.19.0 |
+| Production build | passed on Vercel Preview `dpl_EE2vQrhvCrWpYTb9SGt6iWpnHH5p` using Node 24.x |
+| Diff whitespace check | clean |
+| Tenant readiness audit | still fails only on the same three pre-existing `app/api/diagnostics/*` routes; the new signing route is tenant-wrapped |
+
+Adversarial coverage includes invalid-code rejection, replay, expiration, stale-request binding,
+parallel attempt lockout, forged client email/version/hash/evidence, forged final-agreement uploads,
+missing consent or intent, unsigned verification, manager countersign denial, ended-relationship
+countersigning, resend after signature, agreement-version/hash mismatch, wrong-owner publication,
+malformed published PDFs, sealed storage seams, exact Unicode signer names, and preservation of the
+original PDF in the executed copy.
+
+### Activation prerequisites and present status
+
+- The approved v1.0 PDF must be published through the admin contractor-agreement workflow before an
+  onboarding request can be issued. The files under `docs/legal/` are repository artifacts; their
+  presence alone does not publish an agreement in Operion.
+- `DOC_ENCRYPTION_KEY` (or the supported `ADMIN_SESSION_SECRET` fallback) and working email delivery
+  must be configured in the target environment. Sensitive upload and signing paths fail closed when
+  these controls are unavailable.
+- The implementation is committed in the release branch. Production changes only after the
+  reviewed tree is merged and pushed, and contractor onboarding remains blocked until an
+  administrator publishes the approved agreement version.
 
 ---
 

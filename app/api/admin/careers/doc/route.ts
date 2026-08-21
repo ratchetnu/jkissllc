@@ -20,7 +20,7 @@ export const runtime = 'nodejs'
 // Only ever serve from the applicant-document prefix, and never let a caller walk
 // out of it. `p` is untrusted input. Trailing `.enc` marks a sealed object.
 const MEDIA: Record<string, string> = {
-  jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', heif: 'image/heif',
+  jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', heif: 'image/heif', pdf: 'application/pdf',
 }
 
 export const GET = withTenantRoute(async (req: NextRequest) => {

@@ -1,5 +1,5 @@
 // ── Careers / ATS configuration — the single source of truth ──────────────────
-// Positions, pay, requirements, required document uploads, the skills assessment,
+// Positions, pay, requirements, post-approval onboarding documents, the skills assessment,
 // the scenario questions, and the readiness-score bands. Both the public
 // application UI and the scoring engine import from here so they never drift.
 
@@ -40,7 +40,7 @@ export const PAY_NOTICE = 'Starting pay is a floor, not a ceiling. Pay increases
 // ── Position requirements (display) ───────────────────────────────────────────
 export const REQUIREMENTS: Record<Position, string[]> = {
   driver: [
-    "Valid Driver's License (mandatory upload)",
+    "Valid Driver's License (verified after approval)",
     'Must be at least 21 years old (per company policy)',
     'Must have reliable transportation',
     "Must be able to safely operate a 26' box truck",
@@ -57,9 +57,15 @@ export const REQUIREMENTS: Record<Position, string[]> = {
   ],
 }
 
-// ── Required document uploads ─────────────────────────────────────────────────
-// Applicants cannot submit until every required doc for their position is present.
-export type DocKind = 'drivers_license' | 'id' | 'ss_card' | 'headshot'
+// ── Contractor documents ──────────────────────────────────────────────────────
+// The public contractor application intentionally requires NO document uploads.
+// Identity, tax, agreement, insurance, and badge documents are collected only
+// after an administrator approves the contractor and sends a signed onboarding link.
+// `ss_card` remains in the type only so legacy records can still be read/redacted;
+// new upload routes never accept it. A Social Security card image is never required.
+export type DocKind =
+  | 'drivers_license' | 'id' | 'ss_card' | 'headshot'
+  | 'w9' | 'contractor_agreement' | 'insurance'
 
 export type RequiredDoc = { kind: DocKind; label: string; help: string }
 
@@ -75,21 +81,27 @@ export type RequiredDoc = { kind: DocKind; label: string; help: string }
  *
  * If you add a DocKind that photographs a government document, add it here too.
  */
-export const SENSITIVE_DOC_KINDS: readonly DocKind[] = ['drivers_license', 'id', 'ss_card']
+export const SENSITIVE_DOC_KINDS: readonly DocKind[] = [
+  'drivers_license', 'id', 'ss_card', 'w9', 'contractor_agreement', 'insurance',
+]
 
 export const isSensitiveDoc = (kind: string): kind is DocKind =>
   (SENSITIVE_DOC_KINDS as readonly string[]).includes(kind)
 
 export const REQUIRED_DOCS: Record<Position, RequiredDoc[]> = {
+  driver: [],
+  helper: [],
+}
+
+export const CONTRACTOR_ONBOARDING_DOCS: Record<Position, RequiredDoc[]> = {
   driver: [
-    { kind: 'drivers_license', label: "Driver's License", help: 'Clear photo of the front. Must be valid and unexpired.' },
-    { kind: 'ss_card', label: 'Social Security Card', help: 'Used for onboarding and payroll if hired.' },
-    { kind: 'headshot', label: 'Professional Headshot (white background)', help: 'Used for your crew badge — see the photo rules.' },
+    { kind: 'w9', label: 'Completed Form W-9', help: 'Upload the signed W-9 provided to J Kiss LLC. Do not upload a Social Security card.' },
+    { kind: 'drivers_license', label: "Driver's License", help: 'Clear image of a valid, unexpired license.' },
+    { kind: 'headshot', label: 'Crew Badge Photo', help: 'A clear, front-facing photo used after approval.' },
   ],
   helper: [
-    { kind: 'id', label: "State ID or Driver's License", help: 'Clear photo of the front of a valid, unexpired ID.' },
-    { kind: 'ss_card', label: 'Social Security Card', help: 'Used for onboarding and payroll if hired.' },
-    { kind: 'headshot', label: 'Professional Headshot (white background)', help: 'Used for your crew badge — see the photo rules.' },
+    { kind: 'w9', label: 'Completed Form W-9', help: 'Upload the signed W-9 provided to J Kiss LLC. Do not upload a Social Security card.' },
+    { kind: 'headshot', label: 'Crew Badge Photo', help: 'A clear, front-facing photo used after approval.' },
   ],
 }
 

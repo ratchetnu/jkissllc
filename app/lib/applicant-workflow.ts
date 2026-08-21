@@ -4,7 +4,7 @@ import type { DocKind } from './ats-config'
 
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60_000
 const DRAFT_RE = /^[a-zA-Z0-9-]{16,100}$/
-const SEALED_DOCUMENT_PATH = /^(?:tenants\/([a-z0-9][a-z0-9-]{0,63})\/)?driver-docs\/[a-z_]+\/[a-zA-Z0-9-]+\.(jpg|png|webp|heic|heif)\.enc$/
+const SEALED_DOCUMENT_PATH = /^(?:tenants\/([a-z0-9][a-z0-9-]{0,63})\/)?(?:driver-docs|contractor-docs)\/[a-z0-9_]+\/[a-zA-Z0-9-]+\.(jpg|png|webp|heic|heif|pdf)\.enc$/
 
 export const APPLICANT_TERMINAL_STATUSES = new Set<ApplicantStatus>(['hired', 'rejected', 'withdrawn', 'archived'])
 
@@ -41,7 +41,7 @@ export function transitionApplicantStatus(
   to: ApplicantStatus,
   opts: { canDecide: boolean; viaHireAction?: boolean },
 ): { ok: true } | { ok: false; error: string } {
-  if (to === 'hired' && !opts.viaHireAction) return { ok: false, error: 'Use Approve → Crew to hire an applicant.' }
+  if (to === 'hired' && !opts.viaHireAction) return { ok: false, error: 'Use Approve → Contractor/Crew.' }
   if ((to === 'rejected' || to === 'hired') && !opts.canDecide) return { ok: false, error: 'You do not have permission to make that decision.' }
   if (!canTransitionApplicant(from, to)) return { ok: false, error: `Invalid applicant transition: ${from} → ${to}.` }
   return { ok: true }
@@ -59,6 +59,23 @@ type InformationRequestClaims = {
   v: 1
   applicantId: string
   email: string
+  requestedAt: number
+  expiresAt: number
+}
+
+type ContractorOnboardingClaims = {
+  v: 1
+  applicantId: string
+  email: string
+  requestedAt: number
+  expiresAt: number
+}
+
+type OnboardingDocumentReceipt = {
+  v: 1
+  applicantId: string
+  kind: DocKind
+  path: string
   requestedAt: number
   expiresAt: number
 }
@@ -149,4 +166,64 @@ export function verifyApplicantInformationToken(token: string, now = Date.now())
   if (claims?.v !== 1 || !claims.applicantId || !claims.email || !Number.isFinite(claims.requestedAt)
       || !Number.isFinite(claims.expiresAt) || claims.expiresAt < now) return null
   return claims
+}
+
+export function createContractorOnboardingToken(input: {
+  applicantId: string
+  email: string
+  requestedAt: number
+  now?: number
+}): string {
+  const now = input.now ?? Date.now()
+  return createToken('contractor-onboarding', {
+    v: 1,
+    applicantId: input.applicantId,
+    email: input.email.trim().toLowerCase(),
+    requestedAt: input.requestedAt,
+    expiresAt: now + TOKEN_TTL_MS,
+  } satisfies ContractorOnboardingClaims)
+}
+
+export function verifyContractorOnboardingToken(token: string, now = Date.now()): ContractorOnboardingClaims | null {
+  const claims = verifyToken<ContractorOnboardingClaims>('contractor-onboarding', token)
+  if (claims?.v !== 1 || !claims.applicantId || !claims.email || !Number.isFinite(claims.requestedAt)
+      || !Number.isFinite(claims.expiresAt) || claims.expiresAt < now) return null
+  return claims
+}
+
+export function createOnboardingDocumentReceipt(input: {
+  applicantId: string
+  kind: DocKind
+  path: string
+  requestedAt: number
+  now?: number
+}): string {
+  const now = input.now ?? Date.now()
+  return createToken('contractor-document', {
+    v: 1,
+    applicantId: input.applicantId,
+    kind: input.kind,
+    path: input.path,
+    requestedAt: input.requestedAt,
+    expiresAt: now + TOKEN_TTL_MS,
+  } satisfies OnboardingDocumentReceipt)
+}
+
+export function verifyOnboardingDocumentReceipt(input: {
+  receipt: string
+  applicantId: string
+  kind: DocKind
+  path: string
+  requestedAt: number
+  now?: number
+}): boolean {
+  const claims = verifyToken<OnboardingDocumentReceipt>('contractor-document', input.receipt)
+  const now = input.now ?? Date.now()
+  return claims?.v === 1
+    && claims.applicantId === input.applicantId
+    && claims.kind === input.kind
+    && claims.path === input.path
+    && claims.requestedAt === input.requestedAt
+    && Number.isFinite(claims.expiresAt)
+    && claims.expiresAt >= now
 }

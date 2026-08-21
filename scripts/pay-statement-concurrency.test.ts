@@ -927,6 +927,19 @@ test('historical import is admin-only but accepts inactive former crew', async (
   assert.equal(statement.staffName, 'Dana')
 })
 
+test('pay issuance is blocked while contractor onboarding awaits verification', async () => {
+  await reset()
+  await saveStaff({
+    id: 'pending-pay', name: 'Pending Pay', active: false,
+    contractorStatus: 'pending_verification', onboarding: true,
+    createdAt: 1, updatedAt: 2,
+  })
+  const res = await historical({ staffId: 'pending-pay' })
+  assert.equal(res.status, 409)
+  assert.match((await res.json() as { error: string }).error, /until onboarding is verified/)
+  assert.equal((await listStatements()).length, 0)
+})
+
 test('recorded YTD includes historical and generated statements once and excludes later periods', async () => {
   await reset()
   await historical({ periodUnit: 'month', periodStart: '2026-01-01', periodEnd: '2026-01-31', paymentDate: '2026-02-06', lines: [{ kind: 'fixed', amount: '500' }] })
