@@ -17,10 +17,27 @@ leaves the building is optional.
 
 | State | What it means | What to do |
 |---|---|---|
-| **Not in use** | This business does not run the channel. | Nothing. It is a decision, not a fault: health stays green and updates keep arriving. |
+| **Not in use** | This business does not run it. | Nothing. It is a decision, not a fault: health stays green and updates keep arriving. |
 | **Setup needed** | Switched ON, credentials missing. | Set the variables the panel names, in the hosting environment. Only this capability is affected. |
 | **On** | Enabled and credentialed. | Nothing. Presence only — a real call is the only proof of reachability. |
 | **Problem** | Configured, and the last real call failed. | Treat as an outage for that channel. |
+| **Not on your plan** | Offered, but your plan does not include it. | Nothing here. (Not enforced today — no capability restricts tiers yet.) |
+| **Needs another feature first** | A prerequisite is switched off. | Turn the named prerequisite on. |
+
+Beyond the three delivery channels, the same switchboard now covers **online booking**
+(the public Book Now form, separate from the booking record everything else is built
+on), **photo estimates**, **contractor pay**, **damage claims**, **careers and
+onboarding**, **GPS verification**, **compliance photos**, **crew reliability**,
+**equipment** and **fleet**. Each one states, in the panel, what stops working before
+you switch it off — and every one keeps its existing records when you do.
+
+### Before anything is decided: the backfill
+
+A business that has never recorded its choices is still being read from its
+credentials — the panel says so, in amber. `backfillCapabilityProfile(tenantId,
+{ dryRun: false })` records what is true today as real decisions and changes nothing.
+It is idempotent, only ever adds, never removes a credential reference or an existing
+choice, and a dry run (the default) writes nothing at all — not even the marker.
 
 ### Turning one on or off
 

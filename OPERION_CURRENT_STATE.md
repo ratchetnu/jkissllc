@@ -1,6 +1,6 @@
 # Operion — Current State & Engineering Handoff
 
-**Original audit:** 2026-07-22 · **Latest reconciliation:** 2026-08-20 (§0.4) · **Auditor:** automated engineering agent · **Purpose:** allow another AI engineering agent to take over Operion development with no prior context.
+**Original audit:** 2026-07-22 · **Latest reconciliation:** 2026-08-21 (§0.6) · **Auditor:** automated engineering agent · **Purpose:** allow another AI engineering agent to take over Operion development with no prior context.
 
 **Scope of this document:** the Operion platform as it runs for two real businesses — **J KISS LLC** (source of truth) and **Supercharged** (target). Enterprise/multi-tenant SaaS expansion is explicitly *deferred*; everything below is oriented to daily internal operations.
 
@@ -19,6 +19,118 @@
 > deploying normally through its **own Vercel Git integration** (a push to `main` builds and
 > promotes, as it always has); that path is independent of Operion release automation. See
 > §7 and §9.
+
+---
+
+## 0.6 RECONCILIATION — capability independence, round two, 2026-08-21 — read this first
+
+Same branches as §0.5, extended: `codex/tenant-capability-independence` (J KISS) and
+`codex/operion-capability-contract` (Supercharged). **Still not merged, not pushed, not
+deployed. No environment variable and no Production flag was changed; `TENANCY_ENABLED`
+remains off in Production.** Where this conflicts with §0.5, this section wins.
+
+### The root cause §0.5 did not go far enough on
+
+§0.5 removed the *consequences* of treating a credential as a decision, but kept the
+inference itself: an adapter with no stored choice was "in use if its key exists". That
+is wrong as a steady state. The presence of a key is evidence that somebody once
+configured something, not that this business wants the feature on — and it means a new
+tenant's features are decided by whatever happens to be in the deployment's environment.
+
+**Enablement is no longer inferred.** Resolution is `mandatory → explicit choice →
+registry default → (legacy)`. `TenantCapabilityProfile.initializedAt` switches the two
+regimes: until the backfill records a tenant's choices, provider adapters still fall back
+to credential inference and report `legacy-uninitialized` everywhere — a transitional
+state somebody has to close, never a choice anybody made. After it runs, the environment
+decides only whether a switched-on capability is CONFIGURED.
+
+Every paid or customer-contacting capability now defaults to **disabled**, enforced by
+the registry validator. Verified: with J KISS's environment and no profile, all four
+paid channels still resolve `ready`; with a bare environment they resolve `disabled`
+(healthy, not degraded) and every core module stays `ready`.
+
+### Coverage, past the three adapters
+
+`booking-intake` (the public Book Now form, split from the booking RECORD, which stays
+mandatory because scheduling, invoicing, dispatch, time tracking and pay are all built
+on it) · `photo-estimation` (paid vision calls, split from the governed `ai-intelligence`
+chokepoint) · `claims` · `contractor-compensation` · `hiring` · `gps-verification` ·
+`compliance-photos` · `crew-reliability` · `equipment` · `fleet` — all switchable, each
+required by the validator to state in plain language what stops working when it is off.
+Every mandatory capability must say why it is mandatory.
+
+A PLAN axis exists (`unavailable_on_plan`). It is **implemented and tested but inert**:
+every capability declares all three tiers, so nothing is withheld today. Absent plan
+means NOT ENFORCED — a tenant that predates plans is on no tier, and treating "unknown"
+as "free" would have removed working features from every existing business.
+
+### Four readiness questions, and one verdict
+
+`platform/readiness.ts` separates platform health · release compatibility · capability
+readiness · provider health, and states the rules: a provider failing degrades the
+capabilities that use it and nothing else; a `disabled` capability is not a failure of
+anything; only a critical dependency may take the platform down.
+
+Preflight returns `ready` · `ready_optional_unavailable` · `manual_review` ·
+`blocked_by_platform`, with exact reasons and affected capabilities. `manual_review` is
+separate from `blocked_by_platform` because a decision waiting on you and an outage
+waiting on somebody else have different fixes.
+
+### Release identity
+
+`release/source-artifact.ts` accepts a commit SHA and nothing else. A branch resolves,
+and resolves to something else an hour later; a working tree cannot be diffed or rolled
+back to a known point because there is no known point. Moving and local refs are refused
+by name as well as shape, and a record marked dirty is refused outright.
+`release/target-owned-paths.ts` is a STANDING policy — a curated exclusion list is only
+as good as whoever remembered to curate it.
+
+### Verified gates (all re-run 2026-08-21)
+
+| Gate | J KISS | Supercharged |
+|---|---|---|
+| `npx tsc --noEmit` | clean | clean |
+| `npm test` | **4,015 / 4,015** | **757 / 757** |
+| `npx eslint .` | 0 errors, 2 warnings (baseline) | 38 findings (baseline), none in a changed file |
+| `npm run build` | **exit 0** | **exit 0** |
+| `npm run tenant:certify` | exit 1 — **identical** to baseline: same 3 unclassified diagnostics routes. Handlers 231 → 235, request-wrapped 206 → 210, so every new route is wrapped. | n/a |
+| `git diff --check` | clean | clean |
+
+**Correction to §0.5.** That section recorded `npm run build` as failing on
+`next/font/google`. It was re-checked properly this round against a clean detached
+worktree of `main`: that build also succeeds, so the earlier failure was a transient
+sandbox network condition, not a baseline. §0.5's table has been corrected in place.
+
+### Mutations
+
+19 run across both repositories, 19 caught. Two were NOT caught first time and were
+fixed rather than excused: plan override had no test at all, and the backfill's
+apply-time clobber guard was only reachable through a plan computed before a choice was
+made — now tested as the race it exists for.
+
+### Bugs found while doing this
+
+- `initializedAt` was dropped by the profile parser (both repos), silently returning a
+  migrated tenant to credential inference on every read.
+- The daily cron stamped its ONE-SHOT reminder markers regardless of outcome, so a
+  business with neither channel configured silently consumed every reminder it would
+  ever have sent — and enabling a channel later would not bring them back.
+- The four reminder `notify*` helpers reported `email: true` whenever an address and a
+  key existed, discarding the provider result.
+- `missingVars` was listed beside DISABLED capabilities, inviting somebody to configure
+  a feature nobody asked for.
+- Supercharged's `ai_provider` health accepted bare `VERCEL` — set on every Vercel
+  runtime, so the check could never go red. The existing test's title already said
+  "OIDC" while its assertion used `VERCEL`.
+
+### Still outstanding
+
+Everything in §0.5's GA list, unchanged, plus:
+
+1. **Run the capability backfill.** `backfillCapabilityProfile(tenantId, { dryRun: false })`
+   for each tenant. Until then both deployments are on the legacy fallback. It is
+   idempotent, non-destructive, and a dry run (the default) writes nothing.
+2. Plans are modelled but unpopulated — a product decision, not an engineering one.
 
 ---
 
@@ -85,7 +197,7 @@ capability registry, optional-integration health, or multi-tenant GA status, **t
 | J KISS `npm test` | **3,974/3,974** pass, twice (baseline before this work: 3,856/3,856) |
 | J KISS `npx eslint .` | 0 errors, 2 warnings — unchanged from the pre-existing baseline |
 | J KISS `npm run tenant:certify` | **FAILS, exactly as it did before this work** — same 3 unclassified diagnostics routes, same derived-key families. All 3 new routes are `withTenantRoute`-wrapped (request-wrapped 206 → 209). |
-| J KISS `npm run build` | **fails locally**, pre-existing: `next/font/google` cannot reach `fonts.gstatic.com` from this sandbox. Clean `main` fails identically. Build evidence must come from Vercel. |
+| J KISS `npm run build` | **PASSES** (exit 0). An earlier note in this section recorded it as failing on `next/font/google`; that was a transient network condition in the sandbox, not a permanent baseline. Re-verified 2026-08-21 against a clean detached worktree of `main` (also exit 0) and against the branch. |
 | J KISS `git diff --check` | clean |
 
 One unrelated test was repaired along the way. `scripts/operion-rehearsal.test.ts` pinned real
@@ -97,7 +209,7 @@ particular filename.
 | Supercharged `npx tsc --noEmit` | clean |
 | Supercharged `npm test` | **754/754** pass (worktree baseline: 726) |
 | Supercharged `npx eslint .` | 38 findings (27 errors, 11 warnings) — unchanged, and none in any changed file |
-| Supercharged `npm run build` | fails locally on the same font limitation, documented in `SUPERCHARGED_HANDOFF.md` |
+| Supercharged `npm run build` | **PASSES** (exit 0), re-verified 2026-08-21. The font failure recorded previously was a transient sandbox network condition. |
 
 ### Multi-tenant GA — the honest answer
 
