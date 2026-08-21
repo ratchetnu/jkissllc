@@ -19,6 +19,8 @@ import type { V2ShadowJob } from '../../lib/estimation/shadow-types'
 import { LOAD_TIERS } from '../../lib/estimation/load-tier'
 import type { StoredAiEstimate } from '../../lib/ai/estimate-store'
 import { guidedApprovalState } from '../../lib/ai/guided-approval'
+import NewClaim from '../operations/claims/NewClaim'
+import { useClaims } from '../operations/claims/useClaims'
 
 // ── Local label maps + helpers (avoid bundling server lib runtime) ───────────
 const SERVICE_LABELS: Record<string, string> = {
@@ -40,6 +42,7 @@ const STATUS_OPTIONS: [string, string][] = [
   ['continued', 'Continued / Return Needed'], ['completed', 'Completed'], ['partially_completed', 'Partially Completed'],
   ['could_not_complete', 'Could Not Complete'], ['cancelled', 'Cancelled'], ['refunded', 'Refunded'],
 ]
+const CLAIMABLE_BOOKING_STATUSES = new Set(['completed', 'partially_completed', 'could_not_complete'])
 const usd = (c: number) => ((c || 0) / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 const fmtTs = (ts?: number) => ts ? new Date(ts).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '—'
 // Net invoice = gross minus any discount/promo (mirrors lib/bookings.netInvoiceCents).
@@ -1279,6 +1282,10 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
   const [disposalActual, setDisposalActual] = useState('')   // controlled so it survives tab switches
   useEffect(() => { setDisposalActual(b.disposalActualCents ? (b.disposalActualCents / 100).toFixed(2) : '') }, [b.token, b.disposalActualCents])
   const [lightbox, setLightbox] = useState<number | null>(null)   // open photo index, or null
+  const [claiming, setClaiming] = useState(false)
+  const { claims, reload: reloadClaims } = useClaims()
+  const bookingClaims = useMemo(() => claims.filter(c => c.bookingToken === b.token), [claims, b.token])
+  const canOpenClaim = CLAIMABLE_BOOKING_STATUSES.has(b.status)
   const [msgReload, setMsgReload] = useState(0)
   const [staffNames, setStaffNames] = useState<string[]>([])
   useEffect(() => {
@@ -1577,6 +1584,39 @@ function BookingDetail({ b, onBack, onEdit, onChanged, onDuplicate, isOwner }: {
         {b.description && <p className="text-sm mt-3" style={{ color: 'var(--muted)' }}>{b.description}</p>}
         {b.items.length > 0 && <ul className="text-sm mt-2 space-y-0.5" style={{ color: 'var(--muted)' }}>{b.items.map((i, n) => <li key={n}>• {i}</li>)}</ul>}
       </div>
+      )}
+
+      {tabKey === 'overview' && (canOpenClaim || bookingClaims.length > 0) && (
+        <div className="glass-card p-5 mb-4" style={{ borderRadius: '16px' }}>
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Claims &amp; crew deductions</p>
+              <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>Crew responsibility is assigned separately. Opening a claim never deducts pay by itself.</p>
+            </div>
+            {canOpenClaim && <button type="button" onClick={() => setClaiming(true)} className="btn-ghost shrink-0" style={{ padding: '8px 12px', fontSize: 12.5 }}>+ New claim</button>}
+          </div>
+          {bookingClaims.length === 0
+            ? <p className="text-sm mt-3" style={{ color: 'var(--muted)' }}>No claims recorded for this booking.</p>
+            : <div className="space-y-2 mt-3">
+                {bookingClaims.map(c => (
+                  <a key={c.id} href={`/admin/operations/claims/${c.id}`} className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.1)', color: 'inherit', textDecoration: 'none' }}>
+                    <span className="text-[11px] font-mono" style={{ color: 'var(--muted)' }}>{c.claimNumber}</span>
+                    <span className="text-sm flex-1 truncate">{c.description}</span>
+                    <span className="text-sm font-black tabular-nums">{usd(c.totalCents)}</span>
+                    <span className="text-[11px] font-bold" style={{ color: c.status === 'closed' || c.status === 'waived' ? '#86efac' : '#fbbf24' }}>{c.status.replace(/_/g, ' ')}</span>
+                  </a>
+                ))}
+              </div>}
+        </div>
+      )}
+
+      {claiming && (
+        <NewClaim
+          bookingToken={b.token}
+          bookingLabel={`${b.bookingNumber} · ${b.customerName}`}
+          onClose={() => setClaiming(false)}
+          onCreated={reloadClaims}
+        />
       )}
 
       {/* ── PHOTOS ── */}

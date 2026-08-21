@@ -9,6 +9,7 @@ import test from 'node:test'
 
 process.env.KV_REST_API_URL = 'http://fake-upstash.local'
 process.env.KV_REST_API_TOKEN = 'test-token'
+process.env.BOOKING_ASSIGNMENT_ENABLED = 'true'
 
 // ── in-memory Upstash ────────────────────────────────────────────────────────
 const kv = new Map<string, string>()
@@ -22,6 +23,7 @@ globalThis.fetch = (async (_url: string, init: { body: string }) => {
 
   switch (cmd.toUpperCase()) {
     case 'GET': result = kv.get(key) ?? null; break
+    case 'MGET': result = args.map(k => kv.get(k) ?? null); break
     case 'SET': kv.set(key, args[1]); result = 'OK'; break
     case 'DEL': kv.delete(key); result = 1; break
     case 'INCR': { const n = Number(kv.get(key) ?? 0) + 1; kv.set(key, String(n)); result = n; break }
@@ -48,12 +50,13 @@ globalThis.fetch = (async (_url: string, init: { body: string }) => {
 // place by the time any Redis command runs.
 import {
   saveClaim, getClaim, listClaims, generateClaimId, nextClaimNumber, setResponsibility,
-  startDeduction, remainingCents, recoveredCents, snapshotFromRoute, type ClaimRecord,
+  startDeduction, remainingCents, recoveredCents, snapshotFromRoute, snapshotFromBooking, type ClaimRecord,
 } from '../app/lib/claims'
 import { accrueAllClaims } from '../app/lib/claim-accrual'
 import { computePay } from '../app/lib/route-pay'
 import { saveRoute, generateToken, listRoutes, type RouteRecord, type Assignee } from '../app/lib/routes'
 import { saveStaff } from '../app/lib/staff'
+import { saveBooking, type Booking } from '../app/lib/bookings'
 import { addDaysStr } from '../app/lib/dates'
 
 const MON = '2026-07-06'                                  // Monday
@@ -90,6 +93,32 @@ async function seed() {
   return { claim, route }
 }
 
+async function seedBookingClaim() {
+  kv.clear(); zsets.clear()
+  await saveStaff({ id: 'marcus', name: 'Marcus', phone: '+15550001', role: 'Driver', active: true, createdAt: 1, updatedAt: 1 })
+  const booking = {
+    token: 'b'.repeat(64), bookingNumber: 'JK-B-2201', status: 'completed', serviceType: 'moving',
+    customerName: 'Pat Customer', selectedDate: '2026-07-08', jobCompletedAt: Date.now(), jobCompletedBy: 'admin',
+    completionNote: 'Completed and reviewed', invoiceAmountCents: 50000, discountCents: 0,
+    amountPaidCents: 50000, depositAmountCents: 0, items: [], payments: [], availableDates: [], availableWindows: [],
+    assignees: [{ staffId: 'marcus', name: 'Marcus', role: 'Driver', token: 'a'.repeat(64), payCents: 17500, pay: '$175.00' }],
+    createdAt: 1, updatedAt: 1,
+  } as unknown as Booking
+  await saveBooking(booking)
+  const claim: ClaimRecord = {
+    id: generateClaimId(), claimNumber: await nextClaimNumber(), status: 'approved', claimType: 'property_damage',
+    businessKey: `booking:${booking.token}`, businessName: booking.customerName,
+    bookingToken: booking.token, bookingNumber: booking.bookingNumber,
+    claimDate: '2026-07-08', reportedDate: '2026-07-08', description: 'Wall damage', totalCents: 20000,
+    attachments: [], assignments: [], audit: [], snapshot: snapshotFromBooking(booking),
+    createdAt: Date.now(), updatedAt: Date.now(),
+  }
+  setResponsibility(claim, [{ staffId: 'marcus', name: 'Marcus' }], 'dollar', [{ staffId: 'marcus', value: 20000 }])
+  startDeduction(claim, 'marcus', { weeklyCents: 5000, startDate: MON })
+  await saveClaim(claim)
+  return { booking, claim }
+}
+
 test('a claim round-trips through Redis with its ledger and snapshot intact', async () => {
   const { claim, route } = await seed()
 
@@ -112,6 +141,24 @@ test('claim numbers increment', async () => {
   const b = await nextClaimNumber()
   assert.notEqual(a, b)
   assert.match(a, /^JK-C-\d+$/)
+})
+
+test('booking work and its booking-backed claim flow through the same pay statement', async () => {
+  const { booking, claim } = await seedBookingClaim()
+  const before = await computePay(MON, SUN)
+  const gross = before.contractors.find(c => c.staffId === 'marcus')!
+  assert.equal(gross.grossCents, 17500)
+  assert.equal(gross.routes[0].source, 'booking')
+  assert.equal(gross.routes[0].routeNumber, booking.bookingNumber)
+
+  assert.equal((await accrueAllClaims(NEXT_TUE)).posted.length, 1)
+  const after = await computePay(MON, SUN)
+  const paid = after.contractors.find(c => c.staffId === 'marcus')!
+  assert.equal(paid.grossCents, 17500)
+  assert.equal(paid.deductionCents, 5000)
+  assert.equal(paid.netCents, 12500)
+  assert.equal(paid.deductions[0].claimNumber, claim.claimNumber)
+  assert.equal(paid.deductions[0].businessName, 'Pat Customer')
 })
 
 // The whole point of the module: a deduction posted by the cron shows up on the

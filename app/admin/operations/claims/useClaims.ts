@@ -31,9 +31,13 @@ export type ClaimAttachment = {
 
 export type ClaimSnapshot = {
   at: number
+  workSource?: 'route' | 'booking' | 'business'
   businessName: string; businessContactName?: string; businessContactPhone?: string
   businessPriceCents?: number; priceSource?: string
-  routeToken?: string; routeNumber?: string; routeDate?: string; reportAddress?: string
+  routeToken?: string; routeNumber?: string; routeDate?: string
+  bookingToken?: string; bookingNumber?: string; serviceDate?: string
+  customerName?: string; customerPhone?: string; customerEmail?: string
+  reportAddress?: string
   routePayoutCents?: number; routeProfitCents?: number | null
   crew: { staffId: string; name: string; role?: string; payCents?: number }[]
 }
@@ -42,6 +46,7 @@ export type ClaimListItem = {
   id: string; claimNumber: string; status: string; claimType: string
   businessKey: string; businessName: string
   routeToken?: string; routeNumber?: string
+  bookingToken?: string; bookingNumber?: string
   claimDate: string; reportedDate: string
   reportedBy?: string; responseDeadline?: string
   description: string; totalCents: number
