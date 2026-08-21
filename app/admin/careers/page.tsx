@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import {
+  ChevronLeft, ChevronRight, Search, AlertTriangle, CheckCircle2, Mail,
+  ShieldCheck, FileText, Users, X,
+} from 'lucide-react'
 import AdminGate from '../AdminGate'
+import { Avatar } from '../operations/ui'
 import type { Applicant, ApplicantStatus, Recommendation } from '../../lib/applicants'
 import { APPLICANT_STATUS_LABEL, RECOMMENDATION_LABEL, APPLICANT_INACTIVE } from '../../lib/applicants'
 import {
@@ -19,6 +24,13 @@ const SCENARIO_PROMPT: Record<string, string> = Object.fromEntries(SCENARIOS.map
 const fmtTs = (at: number): string =>
   new Date(at).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 
+// Searching "jose" must find "José", and "Nunez" must find "Ñuñez". Stripping
+// combining marks is the difference between a usable roster search and one that
+// quietly fails on a large share of a DFW workforce's names.
+const norm = (v: string): string => v.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
+const haystack = (a: Applicant): string =>
+  norm(`${a.name} ${a.email} ${a.phone} ${a.applicantNumber} ${POSITIONS[a.position].title}`)
+
 const STATUS_TABS: { key: string; label: string; match: (a: Applicant) => boolean }[] = [
   { key: 'active', label: 'Active', match: a => !APPLICANT_INACTIVE.includes(a.status) },
   { key: 'new', label: 'New', match: a => a.status === 'new' },
@@ -34,12 +46,99 @@ export default function CareersAdminPage() {
   return <AdminGate title="Careers"><CareersInner /></AdminGate>
 }
 
-function BandChip({ band, score }: { band: ScoreBand; score: number }) {
+// ── Presentation layer ───────────────────────────────────────────────────────
+// Scoped to .ap-* so nothing here can leak into the rest of the OS. Hover and
+// pressed states live in CSS because inline styles cannot express them, and the
+// difference between "a button" and "a control that answers you" is exactly
+// those states.
+const CSS = `
+.ap-seg { display:flex; flex-wrap:wrap; gap:2px; padding:3px; border-radius:13px; background:rgba(255,255,255,.05); border:1px solid var(--line); }
+.ap-seg button { flex:0 0 auto; display:inline-flex; align-items:center; gap:7px; padding:7px 13px; border-radius:10px; border:none; background:transparent; color:var(--muted); font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap; transition:background .18s var(--os-ease), color .18s var(--os-ease); }
+.ap-seg button[aria-pressed="true"] { background:color-mix(in srgb, #fff 10%, var(--card)); color:var(--text); font-weight:700; box-shadow:0 1px 2px rgba(0,0,0,.4); }
+@media (hover:hover) { .ap-seg button:not([aria-pressed="true"]):hover { color:var(--text); background:rgba(255,255,255,.05); } }
+.ap-badge { font-size:11px; font-weight:700; padding:1px 6px; border-radius:99px; background:rgba(255,255,255,.08); color:var(--muted); font-variant-numeric:tabular-nums; }
+.ap-seg button[aria-pressed="true"] .ap-badge { background:rgba(255,255,255,.15); color:var(--text); }
+
+.ap-row { display:flex; align-items:center; gap:12px; width:100%; text-align:left; padding:11px 14px; background:transparent; border:none; border-top:1px solid var(--line); cursor:pointer; color:var(--text); transition:background .16s var(--os-ease); }
+.ap-row:first-child { border-top:none; }
+@media (hover:hover) { .ap-row:hover { background:rgba(255,255,255,.045); } }
+.ap-row[aria-current="true"] { background:color-mix(in srgb, #fff 8%, var(--card)); }
+.ap-row:active { background:rgba(255,255,255,.075); }
+
+@media (min-width:1024px) { .ap-list { position:sticky; top:106px; max-height:calc(100svh - 128px); overflow-y:auto; overscroll-behavior:contain; } }
+
+.ap-btn { display:inline-flex; align-items:center; justify-content:center; gap:7px; padding:9px 15px; border-radius:11px; font-size:13.5px; font-weight:650; cursor:pointer; border:1px solid transparent; transition:background .16s var(--os-ease), border-color .16s var(--os-ease), transform .12s var(--os-ease); }
+.ap-btn:active { transform:scale(.97); }
+.ap-btn:disabled { opacity:.45; cursor:not-allowed; transform:none; }
+.ap-btn-primary { background:var(--red); color:#fff; }
+@media (hover:hover) { .ap-btn-primary:not(:disabled):hover { background:var(--red-600); } }
+.ap-btn-go { background:rgba(52,211,153,.13); color:#6ee7b7; border-color:rgba(52,211,153,.32); }
+@media (hover:hover) { .ap-btn-go:not(:disabled):hover { background:rgba(52,211,153,.2); } }
+.ap-btn-tinted { background:rgba(255,255,255,.06); color:var(--text); border-color:var(--line); }
+@media (hover:hover) { .ap-btn-tinted:not(:disabled):hover { background:rgba(255,255,255,.1); } }
+.ap-btn-plain { background:transparent; color:var(--muted); }
+@media (hover:hover) { .ap-btn-plain:not(:disabled):hover { color:var(--text); background:rgba(255,255,255,.05); } }
+.ap-btn-danger { background:transparent; color:#f87171; border-color:rgba(248,113,113,.35); }
+@media (hover:hover) { .ap-btn-danger:not(:disabled):hover { background:rgba(248,113,113,.1); } }
+
+.ap-hair { border-top:1px solid var(--line); }
+.ap-ring-arc { transition:stroke-dashoffset .7s var(--os-ease); }
+.ap-disclose { display:inline-flex; align-items:center; gap:6px; padding:4px 0; background:none; border:none; color:var(--muted); font-size:12.5px; font-weight:650; cursor:pointer; transition:color .16s var(--os-ease); }
+@media (hover:hover) { .ap-disclose:hover { color:var(--text); } }
+.ap-disclose .ap-chev-open { transform:rotate(90deg); }
+.ap-disclose svg { transition:transform .28s var(--os-ease); }
+.ap-field { width:100%; padding:10px 13px; border-radius:11px; border:1px solid var(--line); background:color-mix(in srgb, var(--card) 90%, transparent); color:var(--text); font-size:14.5px; outline:none; transition:border-color .16s var(--os-ease); }
+.ap-field:focus { border-color:color-mix(in srgb, var(--red) 55%, var(--line)); }
+.ap-field[type="search"]::-webkit-search-cancel-button { -webkit-appearance:none; appearance:none; }
+@media (prefers-reduced-motion:reduce) { .ap-seg button, .ap-row, .ap-btn, .ap-field, .ap-ring-arc, .ap-disclose, .ap-disclose svg { transition:none !important; } .ap-btn:active { transform:none; } }
+`
+
+type BtnKind = 'primary' | 'go' | 'tinted' | 'plain' | 'danger'
+function Btn({ kind = 'tinted', children, ...rest }: { kind?: BtnKind } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return <button {...rest} className={`ap-btn ap-btn-${kind}${rest.className ? ` ${rest.className}` : ''}`}>{children}</button>
+}
+
+/** Readiness score as a value, not a decoration: a tone dot and the number. */
+function Score({ band, score, size = 'md' }: { band: ScoreBand; score: number; size?: 'sm' | 'md' }) {
   const m = BAND_META[band]
+  const sm = size === 'sm'
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 800, background: `${m.tone}22`, color: m.tone, border: `1px solid ${m.tone}55` }}>
-      {m.emoji} {score}<span style={{ fontWeight: 600, opacity: .8 }}>/100</span>
+    <span title={m.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: sm ? '2px 8px' : '3px 10px', borderRadius: 99, fontSize: sm ? 11.5 : 12.5, fontWeight: 700, background: `${m.tone}1a`, color: m.tone, border: `1px solid ${m.tone}3d`, whiteSpace: 'nowrap' }}>
+      <span aria-hidden style={{ width: 6, height: 6, borderRadius: 99, background: m.tone, flexShrink: 0 }} />
+      <span className="tabular-nums">{score}</span>
+      {!sm && <span style={{ fontWeight: 500, opacity: .7 }}>/100</span>}
     </span>
+  )
+}
+
+/** Grouped card — the OS's inset panel, with an optional sentence-case title. */
+function Card({ title, note, children, tone }: { title?: string; note?: string; children: React.ReactNode; tone?: string }) {
+  return (
+    <section className="os-card" style={{ padding: 18, marginBottom: 14, borderColor: tone }}>
+      {title && (
+        <header style={{ marginBottom: 12 }}>
+          <h3 style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text)', letterSpacing: '-.01em' }}>{title}</h3>
+          {note && <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3, lineHeight: 1.5 }}>{note}</p>}
+        </header>
+      )}
+      {children}
+    </section>
+  )
+}
+
+/** Inline banner. Never a native dialog — those block the page and read to a
+ *  screen reader as nothing at all. */
+function Banner({ tone, icon: Icon, title, children, role = 'status' }: {
+  tone: string; icon: React.ComponentType<{ size?: number }>; title: string; children?: React.ReactNode; role?: 'status' | 'alert'
+}) {
+  return (
+    <div role={role} style={{ display: 'flex', gap: 11, padding: '13px 15px', borderRadius: 14, background: `${tone}14`, border: `1px solid ${tone}44`, marginBottom: 14 }}>
+      <span style={{ color: tone, flexShrink: 0, marginTop: 1 }}><Icon size={17} /></span>
+      <div style={{ minWidth: 0 }}>
+        <p style={{ fontSize: 13.5, fontWeight: 700, color: tone }}>{title}</p>
+        {children && <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 4, lineHeight: 1.55 }}>{children}</div>}
+      </div>
+    </div>
   )
 }
 
@@ -47,6 +146,7 @@ function CareersInner() {
   const [list, setList] = useState<Applicant[]>([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('active')
+  const [query, setQuery] = useState('')
   const [selId, setSelId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -73,7 +173,20 @@ function CareersInner() {
       .catch(() => {})
   }, [])
 
-  const filtered = useMemo(() => list.filter(STATUS_TABS.find(t => t.key === tab)!.match), [list, tab])
+  const counts = useMemo(() => {
+    const out: Record<string, number> = {}
+    for (const t of STATUS_TABS) out[t.key] = list.filter(t.match).length
+    return out
+  }, [list])
+
+  const q = norm(query.trim())
+  const filtered = useMemo(() => {
+    const inTab = list.filter(STATUS_TABS.find(t => t.key === tab)!.match)
+    return q ? inTab.filter(a => haystack(a).includes(q)) : inTab
+  }, [list, tab, q])
+  // A search that misses inside the current filter is a dead end unless we say how
+  // many it WOULD have found everywhere — and offer the one click that gets there.
+  const matchesAnywhere = useMemo(() => q ? list.filter(a => haystack(a).includes(q)).length : 0, [list, q])
   const sel = useMemo(() => list.find(a => a.id === selId) || null, [list, selId])
 
   async function act(action: string, value?: unknown) {
@@ -107,73 +220,140 @@ function CareersInner() {
     finally { setBusy(false) }
   }
 
-  const chip = (active: boolean): React.CSSProperties => ({ padding: '6px 12px', borderRadius: 99, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: `1px solid ${active ? 'var(--red)' : 'var(--line)'}`, background: active ? 'var(--red)' : 'rgba(255,255,255,.04)', color: active ? '#fff' : 'var(--muted)' })
+  const inReview = counts.active ?? 0
+  const approved = counts.approved ?? 0
 
   return (
-    <main className="min-h-screen pt-16" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
-      <div className="max-w-6xl mx-auto px-3 sm:px-5 py-5">
-        <div className="mb-2">
-          <Link href="/admin/operations/employees" className="text-sm" style={{ color: 'var(--muted)', textDecoration: 'none' }}>← Crew directory</Link>
-        </div>
-        <div className="flex items-center justify-between gap-3 mb-4">
-          <h1 className="text-2xl font-black text-white" style={{ letterSpacing: '-0.03em' }}>Applicants</h1>
-          <span className="text-sm" style={{ color: 'var(--muted)' }}>{list.length} applicant{list.length === 1 ? '' : 's'}</span>
-        </div>
-        {error && <p role="alert" className="text-sm mb-4" style={{ color: '#f87171' }}>{error}</p>}
-        {notice && <p role="status" className="text-sm mb-4" style={{ color: '#34d399' }}>{notice}</p>}
-        {agreement && !agreement.configured && (
-          <div role="alert" className="rounded-xl p-4 mb-4" style={{ background: 'rgba(251,191,36,.08)', border: '1px solid rgba(251,191,36,.4)' }}>
-            <p className="text-sm font-bold" style={{ color: '#fcd34d' }}>No contractor agreement is published</p>
-            <p className="text-xs mt-1" style={{ color: 'var(--muted)', lineHeight: 1.55 }}>
-              {agreement.blocking} Approvals still create a blocked crew record, but no onboarding link can be sent until an
-              administrator uploads the counsel-approved PDF.
+    <>
+      <style>{CSS}</style>
+      <div className="os-rise">
+        <Link href="/admin/operations/employees" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: -4, fontSize: 13, fontWeight: 600, color: 'var(--muted)', textDecoration: 'none' }}>
+          <ChevronLeft size={15} /> Crew directory
+        </Link>
+
+        <header style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', margin: '10px 0 18px' }}>
+          <div>
+            <h1 className="jkos-h" style={{ fontSize: 'clamp(28px, 5vw, 36px)' }}>Applicants</h1>
+            <p style={{ fontSize: 13.5, color: 'var(--muted)', marginTop: 5 }}>
+              {loading ? 'Loading…'
+                : list.length === 0 ? 'No applications have been received yet.'
+                  : `${inReview} in review · ${approved} approved contractor${approved === 1 ? '' : 's'} · ${list.length} total`}
             </p>
           </div>
+          {agreement?.configured && agreement.current && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--muted)' }}>
+              <ShieldCheck size={14} /> Agreement v{agreement.current.version} published
+            </span>
+          )}
+        </header>
+
+        {error && <Banner role="alert" tone="#f87171" icon={AlertTriangle} title="Something needs your attention">{error}</Banner>}
+        {notice && <Banner tone="#34d399" icon={CheckCircle2} title={notice} />}
+        {agreement && !agreement.configured && (
+          <Banner role="alert" tone="#fbbf24" icon={AlertTriangle} title="No contractor agreement is published">
+            {agreement.blocking} Approvals still create a blocked crew record, but no onboarding link can be sent until an
+            administrator uploads the counsel-approved PDF.
+          </Banner>
         )}
-        <div className="flex flex-wrap gap-2 mb-5">
-          {STATUS_TABS.map(t => <button key={t.key} onClick={() => setTab(t.key)} style={chip(tab === t.key)}>{t.label}</button>)}
+
+        {/* Search + segmented filter. The segments carry their own counts so the
+            queue's shape is legible before you click anything. */}
+        <div style={{ position: 'relative', marginBottom: 10 }}>
+          <span aria-hidden style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)', display: 'flex' }}><Search size={16} /></span>
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            type="search"
+            aria-label="Search applicants by name, email, phone, or number"
+            placeholder="Search applicants"
+            className="ap-field"
+            style={{ paddingLeft: 38, paddingRight: query ? 38 : 13 }}
+          />
+          {query && (
+            <button onClick={() => setQuery('')} aria-label="Clear search" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', display: 'flex', padding: 5, borderRadius: 99, border: 'none', background: 'transparent', color: 'var(--muted)', cursor: 'pointer' }}><X size={14} /></button>
+          )}
+        </div>
+        <div className="ap-seg" role="group" aria-label="Filter applicants by status" style={{ marginBottom: 16 }}>
+          {STATUS_TABS.map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)} aria-pressed={tab === t.key}>
+              {t.label}<span className="ap-badge">{counts[t.key] ?? 0}</span>
+            </button>
+          ))}
         </div>
 
-        <div className="flex flex-col lg:flex-row gap-5">
-          {/* list */}
-          <div style={{ flex: '0 0 340px' }} className={sel ? 'hidden lg:block' : ''}>
-            {loading ? <p className="text-sm" style={{ color: 'var(--muted)' }}>Loading…</p>
-              : filtered.length === 0 ? <p className="text-sm" style={{ color: 'var(--muted)' }}>No applicants here yet.</p>
-                : (
-                  <div className="space-y-2">
-                    {filtered.map(a => (
-                      <button key={a.id} onClick={() => setSelId(a.id)} className="glass-card w-full text-left p-3.5" style={{ borderRadius: 12, border: `1px solid ${selId === a.id ? 'var(--red)' : 'var(--line)'}` }}>
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <span className="font-bold text-white text-sm">{a.name}</span>
-                          <BandChip band={a.score.band} score={a.score.score} />
-                        </div>
-                        <div className="flex items-center justify-between gap-2 text-xs" style={{ color: 'var(--muted)' }}>
-                          <span>{POSITIONS[a.position].title} · {a.applicantNumber}</span>
-                          <span>{APPLICANT_STATUS_LABEL[a.status]}</span>
-                        </div>
-                      </button>
-                    ))}
+        <div className="flex flex-col lg:flex-row" style={{ gap: 16, alignItems: 'flex-start' }}>
+          {/* Inset grouped list */}
+          <div className={`ap-list${sel ? ' hidden lg:block' : ''}`} style={{ flex: '0 0 336px', width: '100%', maxWidth: '100%' }}>
+            {loading ? (
+              <div className="os-card" style={{ padding: 18 }}>
+                {[0, 1, 2].map(i => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', opacity: 1 - i * 0.25 }}>
+                    <div style={{ width: 38, height: 38, borderRadius: 99, background: 'rgba(255,255,255,.06)' }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ height: 10, width: '55%', borderRadius: 5, background: 'rgba(255,255,255,.06)' }} />
+                      <div style={{ height: 8, width: '38%', borderRadius: 5, background: 'rgba(255,255,255,.045)', marginTop: 7 }} />
+                    </div>
+                  </div>
+                ))}
+                <p className="sr-only">Loading applicants…</p>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="os-card" role="status" style={{ padding: '34px 22px', textAlign: 'center' }}>
+                <span style={{ display: 'inline-grid', placeItems: 'center', width: 46, height: 46, borderRadius: 99, background: 'rgba(255,255,255,.05)', color: 'var(--muted)', marginBottom: 12 }}><Users size={21} /></span>
+                <p style={{ fontSize: 14, fontWeight: 700 }}>{query ? 'No matches' : 'Nothing here'}</p>
+                <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 5, lineHeight: 1.5 }}>
+                  {query
+                    ? <>Nothing in <b style={{ color: 'var(--text)' }}>{STATUS_TABS.find(t => t.key === tab)!.label}</b> matches “{query}”.</>
+                    : <>No applicants are in <b style={{ color: 'var(--text)' }}>{STATUS_TABS.find(t => t.key === tab)!.label}</b> right now.</>}
+                </p>
+                {query && tab !== 'all' && matchesAnywhere > 0 && (
+                  <div style={{ marginTop: 12 }}>
+                    <Btn kind="tinted" onClick={() => setTab('all')}>
+                      <Search size={14} /> {matchesAnywhere} match{matchesAnywhere === 1 ? '' : 'es'} in All
+                    </Btn>
                   </div>
                 )}
+              </div>
+            ) : (
+              <div className="os-card" style={{ overflow: 'hidden', padding: 0 }}>
+                {filtered.map(a => {
+                  const active = selId === a.id
+                  const photo = a.badgeHeadshotUrl || undefined
+                  return (
+                    <button key={a.id} onClick={() => setSelId(a.id)} className="ap-row" aria-current={active ? 'true' : undefined}>
+                      <Avatar name={a.name} photoUrl={photo} size={38} />
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
+                          <span style={{ fontSize: 14, fontWeight: 650, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
+                          <Score band={a.score.band} score={a.score.score} size="sm" />
+                        </span>
+                        <span style={{ display: 'block', fontSize: 12, color: 'var(--muted)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {APPLICANT_STATUS_LABEL[a.status]} · {POSITIONS[a.position].title} · {a.applicantNumber}
+                        </span>
+                      </span>
+                      <span aria-hidden style={{ color: 'var(--muted)', opacity: active ? 1 : .5, display: 'flex' }}><ChevronRight size={16} /></span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
-          {/* detail — manager review */}
-          <div style={{ flex: 1 }}>
-            {!sel ? <div className="glass-card p-10 text-center" style={{ borderRadius: 16 }}><p className="text-sm" style={{ color: 'var(--muted)' }}>Select an applicant to review.</p></div>
-              : <Review key={sel.id} a={sel} act={act} busy={busy} canDecide={canDecide} onBack={() => setSelId(null)} />}
+          {/* Detail — manager review */}
+          <div style={{ flex: 1, minWidth: 0, width: '100%' }}>
+            {!sel ? (
+              <div className="os-card" role="status" style={{ padding: '58px 24px', textAlign: 'center' }}>
+                <span style={{ display: 'inline-grid', placeItems: 'center', width: 52, height: 52, borderRadius: 99, background: 'rgba(255,255,255,.05)', color: 'var(--muted)', marginBottom: 14 }}><FileText size={23} /></span>
+                <p style={{ fontSize: 15, fontWeight: 700 }}>Select an applicant to review</p>
+                <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 6, maxWidth: 340, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.55 }}>
+                  Their readiness score, scenario answers, onboarding documents, and decision controls all open here.
+                </p>
+              </div>
+            ) : <Review key={sel.id} a={sel} act={act} busy={busy} canDecide={canDecide} onBack={() => setSelId(null)} />}
           </div>
         </div>
       </div>
-    </main>
-  )
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="glass-card p-5 mb-4" style={{ borderRadius: 14 }}>
-      <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: 'var(--muted)' }}>{title}</p>
-      {children}
-    </div>
+    </>
   )
 }
 
@@ -184,6 +364,11 @@ function Review({ a, act, busy, canDecide, onBack }: {
   const [counterSignatureName, setCounterSignatureName] = useState('')
   const [counterSignatureTitle, setCounterSignatureTitle] = useState('Authorized Representative')
   const [counterSignatureIntent, setCounterSignatureIntent] = useState(false)
+  // Progressive disclosure replaces window.prompt/confirm: every question is asked
+  // inline, in the page, where it can be labelled, cancelled, and read aloud.
+  const [confirmLink, setConfirmLink] = useState(false)
+  const [infoRequest, setInfoRequest] = useState<string | null>(null)
+  const [holdReason, setHoldReason] = useState<string | null>(null)
   const reqKinds = CONTRACTOR_ONBOARDING_DOCS[a.position].map(d => d.kind)
   reqKinds.push('contractor_agreement')
   if (a.contractorOnboarding?.usesPersonalVehicle) reqKinds.push('insurance')
@@ -198,254 +383,449 @@ function Review({ a, act, busy, canDecide, onBack }: {
     v.startsWith('http') ? v : `/api/admin/careers/doc?p=${encodeURIComponent(v)}`
   const s = a.score
 
-  const btn = (bg: string): React.CSSProperties => ({ padding: '9px 14px', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', border: 'none', background: bg, color: '#fff', opacity: busy ? 0.6 : 1 })
-  const signInput: React.CSSProperties = { width: '100%', padding: '10px 12px', borderRadius: 9, border: '1px solid var(--line)', background: 'rgba(255,255,255,.04)', color: 'var(--text)' }
+  const counterReady = counterSignatureIntent && counterSignatureName.trim().length >= 2 && counterSignatureTitle.trim().length >= 2
+  const rowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '9px 0', fontSize: 13.5 }
 
   return (
     <div>
-      <button onClick={onBack} className="btn-ghost lg:hidden mb-3" style={{ padding: '8px 14px', fontSize: 13 }}>← List</button>
-
-      {/* header */}
-      <div className="glass-card p-5 mb-4" style={{ borderRadius: 14 }}>
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div>
-            <h2 className="text-xl font-black text-white">{a.name}</h2>
-            <p className="text-sm" style={{ color: 'var(--muted)' }}>{POSITIONS[a.position].title} · ${POSITIONS[a.position].payPerDay}/day · {a.applicantNumber}</p>
-            <p className="text-sm mt-1" style={{ color: 'var(--text)' }}>{a.email} · {a.phone}</p>
-          </div>
-          <div className="text-right">
-            <BandChip band={s.band} score={s.score} />
-            <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>{BAND_META[s.band].label}</p>
-          </div>
-        </div>
-        {a.promotedStaffId && <p className="text-xs mt-3" style={{ color: a.contractorOnboarding?.verifiedAt && !a.contractEndedAt ? '#34d399' : '#fbbf24' }}>
-          {a.contractEndedAt
-            ? 'Relationship ended — not available for new work'
-            : a.contractorOnboarding?.verifiedAt
-              ? '✓ Onboarding verified — ready for work'
-              : a.contractorOnboarding?.submittedAt
-                ? 'Crew record linked — work blocked until admin verification'
-                : 'Crew record linked — work blocked until onboarding is completed'}
-        </p>}
+      <div className="lg:hidden" style={{ marginBottom: 10 }}>
+        <Btn kind="plain" onClick={onBack} style={{ paddingLeft: 8 }}><ChevronLeft size={15} /> All applicants</Btn>
       </div>
 
-      {/* score breakdown */}
-      <Section title="Readiness score breakdown">
-        <div className="space-y-2">
-          {s.components.map(c => (
-            <div key={c.key}>
-              <div className="flex justify-between text-xs mb-1"><span style={{ color: 'var(--text)' }}>{c.label}</span><span className="tabular-nums" style={{ color: 'var(--muted)' }}>{c.points}/{c.max}</span></div>
-              <div style={{ height: 6, borderRadius: 6, background: 'rgba(255,255,255,.08)' }}><div style={{ height: 6, borderRadius: 6, width: `${c.max ? (c.points / c.max) * 100 : 0}%`, background: 'var(--red)' }} /></div>
-            </div>
-          ))}
+      {/* Identity header */}
+      <div className="os-card" style={{ padding: 18, marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap' }}>
+          <Avatar name={a.name} photoUrl={a.badgeHeadshotUrl || undefined} size={54} />
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <h2 className="jkos-h" style={{ fontSize: 21 }}>{a.name}</h2>
+            <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 3 }}>
+              {POSITIONS[a.position].title} · ${POSITIONS[a.position].payPerDay}/day · {a.applicantNumber}
+            </p>
+            <p style={{ fontSize: 13, color: 'var(--text)', marginTop: 5 }}>{a.email} · {a.phone}</p>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <Score band={s.band} score={s.score} />
+            <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 5 }}>{BAND_META[s.band].label}</p>
+          </div>
         </div>
-      </Section>
+        {a.promotedStaffId && (
+          <p className="ap-hair" style={{ marginTop: 14, paddingTop: 12, fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 7, color: a.contractorOnboarding?.verifiedAt && !a.contractEndedAt ? '#34d399' : '#fbbf24' }}>
+            {a.contractEndedAt
+              ? 'Relationship ended — not available for new work'
+              : a.contractorOnboarding?.verifiedAt
+                ? <><CheckCircle2 size={14} /> Onboarding verified — ready for work</>
+                : a.contractorOnboarding?.submittedAt
+                  ? 'Crew record linked — work blocked until admin verification'
+                  : 'Crew record linked — work blocked until onboarding is completed'}
+          </p>
+        )}
+      </div>
+
+      <ReadinessCard score={s} />
 
       {a.pendingCrewLink && canDecide && (
-        <Section title="Existing crew member found">
-          <div role="alert" className="rounded-xl p-4" style={{ background: 'rgba(251,191,36,.08)', border: '1px solid rgba(251,191,36,.45)' }}>
-            <p className="text-sm font-bold" style={{ color: '#fcd34d' }}>{a.pendingCrewLink.staffName} is already active on the roster</p>
-            <p className="text-xs mt-2" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>
-              Their W-9 is not verified. Linking this application pauses them for contractor onboarding: they become
-              unavailable for assignments, dispatch, portal activation, and ordinary pay until an administrator verifies
-              their documents. Nothing has changed yet — the roster and this application are untouched.
-            </p>
-            <div className="flex flex-wrap gap-2 mt-3">
-              <button disabled={busy} onClick={() => { if (confirm(`Link ${a.pendingCrewLink!.staffName} and pause them for onboarding?`)) void act('confirm_crew_link') }} style={btn('#b45309')}>
-                Link existing crew and pause for onboarding
-              </button>
+        <Card title="Existing crew member found" tone="rgba(251,191,36,.4)">
+          <Banner role="alert" tone="#fbbf24" icon={AlertTriangle} title={`${a.pendingCrewLink.staffName} is already active on the roster`}>
+            Their W-9 is not verified. Linking this application pauses them for contractor onboarding: they become
+            unavailable for assignments, dispatch, portal activation, and ordinary pay until an administrator verifies
+            their documents. Nothing has changed yet — the roster and this application are untouched.
+          </Banner>
+          {!confirmLink ? (
+            <Btn kind="tinted" disabled={busy} onClick={() => setConfirmLink(true)}>Link existing crew and pause for onboarding…</Btn>
+          ) : (
+            <div className="ap-hair" style={{ paddingTop: 12 }}>
+              <p style={{ fontSize: 13, color: 'var(--text)', marginBottom: 10 }}>
+                Link <b>{a.pendingCrewLink.staffName}</b> and pause them for onboarding?
+              </p>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <Btn kind="primary" disabled={busy} onClick={() => { setConfirmLink(false); void act('confirm_crew_link') }}>Link and pause</Btn>
+                <Btn kind="plain" disabled={busy} onClick={() => setConfirmLink(false)}>Cancel</Btn>
+              </div>
             </div>
-          </div>
-        </Section>
+          )}
+        </Card>
       )}
 
       {/* Post-approval contractor onboarding. No sensitive document is collected at application time. */}
-      {a.status === 'hired' && <Section title="1099 contractor onboarding">
-        <div className="flex flex-wrap gap-2 mb-3 items-center">
-          <span className="text-sm" style={{ color: a.contractorOnboarding?.verifiedAt ? '#34d399' : 'var(--text)' }}>
-            {a.contractorOnboarding?.verifiedAt ? '✓ Verified' : a.contractorOnboarding?.submittedAt ? 'Submitted — awaiting admin verification' : a.contractorOnboarding?.delivery === 'sent' ? 'Secure link sent' : 'Onboarding link not delivered'}
-          </span>
-          {a.contractorOnboarding?.submittedAt && <span className="text-xs" style={{ color: 'var(--muted)' }}>· submitted {fmtTs(a.contractorOnboarding.submittedAt)}</span>}
-          {a.contractorOnboarding?.agreementVersion && <span className="text-xs" style={{ color: 'var(--muted)' }}>· agreement v{a.contractorOnboarding.agreementVersion}</span>}
-          {a.contractorOnboarding?.electronicSignature?.contractor && <span className="text-xs" style={{ color: '#93c5fd' }}>· contractor signed</span>}
-          {a.contractorOnboarding?.electronicSignature?.company && <span className="text-xs" style={{ color: '#34d399' }}>· company countersigned</span>}
-        </div>
-        {/* A failed send is the difference between "approved" and "can actually start". */}
-        {a.contractorOnboarding?.delivery === 'failed' && (
-          <div role="alert" className="rounded-xl p-3 mb-3" style={{ background: 'rgba(248,113,113,.08)', border: '1px solid rgba(248,113,113,.45)' }}>
-            <p className="text-sm font-bold" style={{ color: '#fca5a5' }}>Onboarding email failed to send</p>
-            <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>
+      {a.status === 'hired' && (
+        <Card title="1099 contractor onboarding">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+            <span style={{ fontSize: 13.5, fontWeight: 650, color: a.contractorOnboarding?.verifiedAt ? '#34d399' : 'var(--text)' }}>
+              {a.contractorOnboarding?.verifiedAt ? 'Verified' : a.contractorOnboarding?.submittedAt ? 'Submitted — awaiting admin verification' : a.contractorOnboarding?.delivery === 'sent' ? 'Secure link sent' : 'Onboarding link not delivered'}
+            </span>
+            {a.contractorOnboarding?.submittedAt && <span className="ap-badge">submitted {fmtTs(a.contractorOnboarding.submittedAt)}</span>}
+            {a.contractorOnboarding?.agreementVersion && <span className="ap-badge">agreement v{a.contractorOnboarding.agreementVersion}</span>}
+            {a.contractorOnboarding?.electronicSignature?.contractor && <span className="ap-badge" style={{ color: '#93c5fd' }}>contractor signed</span>}
+            {a.contractorOnboarding?.electronicSignature?.company && <span className="ap-badge" style={{ color: '#6ee7b7' }}>company countersigned</span>}
+          </div>
+
+          {/* A failed send is the difference between "approved" and "can actually start". */}
+          {a.contractorOnboarding?.delivery === 'failed' && (
+            <Banner role="alert" tone="#f87171" icon={Mail} title="Onboarding email failed to send">
               This contractor has never received their link and cannot start. Last attempt{' '}
               {a.contractorOnboarding.deliveryAttemptedAt ? fmtTs(a.contractorOnboarding.deliveryAttemptedAt) : 'unknown'}
               {a.contractorOnboarding.deliveryError ? ` — ${a.contractorOnboarding.deliveryError}` : ''}.
+              <div style={{ marginTop: 10 }}><Btn kind="primary" disabled={busy} onClick={() => act('resend_onboarding')}>Resend now</Btn></div>
+            </Banner>
+          )}
+          {a.contractorOnboarding?.delivery === 'sent' && !a.contractorOnboarding.verifiedAt && (
+            <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>
+              Last delivery attempt {a.contractorOnboarding.deliveryAttemptedAt ? fmtTs(a.contractorOnboarding.deliveryAttemptedAt) : '—'} · delivered
             </p>
-            <button disabled={busy} onClick={() => act('resend_onboarding')} style={{ ...btn('#b91c1c'), marginTop: 8 }}>Resend now</button>
+          )}
+
+          <div>
+            {reqKinds.map((k, i) => {
+              const u = docUrl(k)
+              return (
+                <div key={k} className={i ? 'ap-hair' : undefined} style={rowStyle}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: has(k) ? 'var(--text)' : '#f87171', minWidth: 0 }}>
+                    <span aria-hidden style={{ width: 6, height: 6, borderRadius: 99, background: has(k) ? '#34d399' : '#f87171', flexShrink: 0 }} />
+                    {DOC_LABEL[k]}
+                  </span>
+                  {u
+                    ? <a href={docHref(u)} target="_blank" rel="noreferrer" style={{ fontSize: 12.5, fontWeight: 650, color: 'var(--red)', textDecoration: 'none', flexShrink: 0 }}>View</a>
+                    : <span style={{ fontSize: 12.5, color: '#f87171', flexShrink: 0 }}>Missing</span>}
+                </div>
+              )
+            })}
           </div>
-        )}
-        {a.contractorOnboarding?.delivery === 'sent' && !a.contractorOnboarding.verifiedAt && (
-          <p className="text-xs mb-3" style={{ color: 'var(--muted)' }}>
-            Last delivery attempt {a.contractorOnboarding.deliveryAttemptedAt ? fmtTs(a.contractorOnboarding.deliveryAttemptedAt) : '—'} · delivered
-          </p>
-        )}
-        <div className="space-y-2">
-          {reqKinds.map(k => (
-            <div key={k} className="flex items-center justify-between gap-2 text-sm">
-              <span style={{ color: has(k) ? 'var(--text)' : '#f87171' }}>{has(k) ? '✓' : '✗'} {DOC_LABEL[k]}</span>
-              {(() => { const u = docUrl(k); return u
-                ? <a href={docHref(u)} target="_blank" rel="noreferrer" className="text-xs underline" style={{ color: 'var(--red)' }}>View</a>
-                : <span className="text-xs" style={{ color: '#f87171' }}>Missing</span> })()}
-            </div>
-          ))}
-        </div>
-        {s.missingDocs.length > 0 && <p className="text-xs mt-2" style={{ color: '#f87171' }}>Missing: {s.missingDocs.map(k => DOC_LABEL[k]).join(', ')}</p>}
-        <div className="flex flex-wrap gap-2 mt-4">
-          {!a.contractorOnboarding?.submittedAt && <button disabled={busy} onClick={() => act('resend_onboarding')} style={btn('#2563eb')}>{a.contractorOnboarding?.requestedAt ? 'Resend secure link' : 'Send secure link'}</button>}
-          {a.contractorOnboarding?.submittedAt && a.contractorOnboarding.electronicSignature?.company && !a.contractorOnboarding.verifiedAt && <button disabled={busy} onClick={() => act('verify_onboarding')} style={btn('#059669')}>Verify and activate</button>}
-        </div>
-        {a.contractorOnboarding?.submittedAt && a.contractorOnboarding.electronicSignature?.contractor && !a.contractorOnboarding.electronicSignature?.company && canDecide && (
-          <div className="rounded-xl p-4 mt-4 space-y-3" style={{ border: '1px solid rgba(167,139,250,.5)', background: 'rgba(124,58,237,.08)' }}>
-            <p className="text-sm font-bold text-white">J Kiss LLC countersignature</p>
-            <p className="text-xs" style={{ color: 'var(--muted)', lineHeight: 1.55 }}>Review the uploaded documents and the contractor’s signature evidence. Your name, account, timestamp, IP address, and this exact agreement version will be recorded in the execution certificate.</p>
-            <div className="grid sm:grid-cols-2 gap-3">
-              <div><label htmlFor={`counter-name-${a.id}`} className="text-xs font-bold block mb-1" style={{ color: 'var(--muted)' }}>Your full legal name</label><input id={`counter-name-${a.id}`} value={counterSignatureName} onChange={e => setCounterSignatureName(e.target.value)} autoComplete="name" style={signInput} /></div>
-              <div><label htmlFor={`counter-title-${a.id}`} className="text-xs font-bold block mb-1" style={{ color: 'var(--muted)' }}>Signing title</label><input id={`counter-title-${a.id}`} value={counterSignatureTitle} onChange={e => setCounterSignatureTitle(e.target.value)} autoComplete="organization-title" style={signInput} /></div>
-            </div>
-            <label className="flex gap-3 items-start text-sm"><input type="checkbox" checked={counterSignatureIntent} onChange={e => setCounterSignatureIntent(e.target.checked)} style={{ width: 18, height: 18, marginTop: 2 }} /><span>I am authorized to bind J Kiss LLC and intend this electronic signature to countersign agreement v{a.contractorOnboarding.agreementVersion}.</span></label>
-            <button disabled={busy || !counterSignatureIntent || counterSignatureName.trim().length < 2 || counterSignatureTitle.trim().length < 2} onClick={() => void act('countersign_onboarding', { intent: counterSignatureIntent, signatureName: counterSignatureName, title: counterSignatureTitle })} style={{ ...btn('#7c3aed'), opacity: busy || !counterSignatureIntent || counterSignatureName.trim().length < 2 || counterSignatureTitle.trim().length < 2 ? .55 : 1 }}>Countersign and seal agreement</button>
+          {s.missingDocs.length > 0 && <p style={{ fontSize: 12, color: '#f87171', marginTop: 10 }}>Missing: {s.missingDocs.map(k => DOC_LABEL[k]).join(', ')}</p>}
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
+            {!a.contractorOnboarding?.submittedAt && <Btn kind="primary" disabled={busy} onClick={() => act('resend_onboarding')}><Mail size={15} />{a.contractorOnboarding?.requestedAt ? 'Resend secure link' : 'Send secure link'}</Btn>}
+            {a.contractorOnboarding?.submittedAt && a.contractorOnboarding.electronicSignature?.company && !a.contractorOnboarding.verifiedAt && <Btn kind="go" disabled={busy} onClick={() => act('verify_onboarding')}><CheckCircle2 size={15} /> Verify and activate</Btn>}
           </div>
-        )}
-      </Section>}
+
+          {a.contractorOnboarding?.submittedAt && a.contractorOnboarding.electronicSignature?.contractor && !a.contractorOnboarding.electronicSignature?.company && canDecide && (
+            <div style={{ marginTop: 16, padding: 16, borderRadius: 14, border: '1px solid rgba(167,139,250,.4)', background: 'rgba(124,58,237,.07)' }}>
+              <p style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text)' }}>J Kiss LLC countersignature</p>
+              <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 5, lineHeight: 1.55 }}>
+                Review the uploaded documents and the contractor’s signature evidence. Your name, account, timestamp, IP address, and this exact agreement version will be recorded in the execution certificate.
+              </p>
+              <div className="grid sm:grid-cols-2" style={{ gap: 12, marginTop: 13 }}>
+                <div>
+                  <label htmlFor={`counter-name-${a.id}`} style={{ display: 'block', fontSize: 12, fontWeight: 650, color: 'var(--muted)', marginBottom: 5 }}>Your full legal name</label>
+                  <input id={`counter-name-${a.id}`} value={counterSignatureName} onChange={e => setCounterSignatureName(e.target.value)} autoComplete="name" className="ap-field" />
+                </div>
+                <div>
+                  <label htmlFor={`counter-title-${a.id}`} style={{ display: 'block', fontSize: 12, fontWeight: 650, color: 'var(--muted)', marginBottom: 5 }}>Signing title</label>
+                  <input id={`counter-title-${a.id}`} value={counterSignatureTitle} onChange={e => setCounterSignatureTitle(e.target.value)} autoComplete="organization-title" className="ap-field" />
+                </div>
+              </div>
+              <label style={{ display: 'flex', gap: 11, alignItems: 'flex-start', fontSize: 13, lineHeight: 1.5, margin: '13px 0' }}>
+                <input type="checkbox" checked={counterSignatureIntent} onChange={e => setCounterSignatureIntent(e.target.checked)} style={{ width: 18, height: 18, marginTop: 1, flexShrink: 0, accentColor: 'var(--red)' }} />
+                <span>I am authorized to bind J Kiss LLC and intend this electronic signature to countersign agreement v{a.contractorOnboarding.agreementVersion}.</span>
+              </label>
+              <Btn kind="primary" disabled={busy || !counterReady} onClick={() => void act('countersign_onboarding', { intent: counterSignatureIntent, signatureName: counterSignatureName, title: counterSignatureTitle })}>
+                <ShieldCheck size={15} /> Countersign and seal agreement
+              </Btn>
+            </div>
+          )}
+        </Card>
+      )}
 
       {/* badge headshot */}
       {headshot && (
-        <Section title="Crew badge headshot">
-          <div className="flex items-center gap-4 flex-wrap">
+        <Card title="Crew badge headshot">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={headshot.url} alt="" style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 10, border: `2px solid ${a.badgeHeadshotUrl ? '#34d399' : 'var(--line)'}` }} />
+            <img src={headshot.url} alt="" style={{ width: 92, height: 92, objectFit: 'cover', borderRadius: 14, border: `1px solid ${a.badgeHeadshotUrl ? 'rgba(52,211,153,.5)' : 'var(--line)'}` }} />
             <div>
-              <p className="text-sm mb-2" style={{ color: a.badgeHeadshotUrl ? '#34d399' : 'var(--muted)' }}>{a.badgeHeadshotUrl ? '✓ Approved for badge' : 'Not yet approved'}</p>
+              <p style={{ fontSize: 13.5, marginBottom: 10, color: a.badgeHeadshotUrl ? '#6ee7b7' : 'var(--muted)' }}>{a.badgeHeadshotUrl ? 'Approved for badge' : 'Not yet approved'}</p>
               {a.badgeHeadshotUrl
-                ? <button onClick={() => act('unapprove_headshot')} style={btn('#6b7280')}>Unapprove</button>
-                : <button onClick={() => act('approve_headshot')} style={btn('#059669')}>Approve for badge</button>}
+                ? <Btn kind="tinted" disabled={busy} onClick={() => act('unapprove_headshot')}>Unapprove</Btn>
+                : <Btn kind="go" disabled={busy} onClick={() => act('approve_headshot')}>Approve for badge</Btn>}
             </div>
           </div>
-        </Section>
+        </Card>
       )}
 
-      {/* strengths / weaknesses / risk */}
-      <div className="grid md:grid-cols-3 gap-4 mb-4">
-        <MiniList title="Strengths" items={s.strengths} tone="#34d399" empty="None flagged" />
-        <MiniList title="Weaknesses" items={s.weaknesses} tone="#fbbf24" empty="None flagged" />
-        <MiniList title="Risk factors" items={s.riskFactors} tone="#f87171" empty="None flagged" />
-      </div>
+      <Signals score={s} />
 
-      {/* experience summary */}
-      {a.experienceSummary && <Section title="Experience summary (applicant)"><p className="text-sm" style={{ color: 'var(--text)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{a.experienceSummary}</p></Section>}
+      {a.experienceSummary && (
+        <Card title="Experience summary" note="In the applicant’s own words.">
+          <p style={{ fontSize: 13.5, color: 'var(--text)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{a.experienceSummary}</p>
+        </Card>
+      )}
 
-      {/* availability */}
-      <Section title="Availability">
-        <p className="text-sm" style={{ color: 'var(--text)' }}>Start: {a.availableStart || '—'} · Days: {(a.availableDays || []).join(', ') || '—'}{a.availabilityNotes ? ` · ${a.availabilityNotes}` : ''}</p>
-      </Section>
+      <Card title="Availability">
+        <div style={rowStyle}><span style={{ color: 'var(--muted)' }}>Start</span><span>{a.availableStart || '—'}</span></div>
+        <div className="ap-hair" style={rowStyle}><span style={{ color: 'var(--muted)' }}>Days</span><span style={{ textAlign: 'right' }}>{(a.availableDays || []).join(', ') || '—'}</span></div>
+        {a.availabilityNotes && <div className="ap-hair" style={rowStyle}><span style={{ color: 'var(--muted)' }}>Notes</span><span style={{ textAlign: 'right' }}>{a.availabilityNotes}</span></div>}
+      </Card>
 
-      {/* scenario rubric */}
-      <Section title="Scenario rubric (auto-scored)">
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          {RUBRIC_DIMENSIONS.map(d => (
-            <div key={d} className="text-center">
-              <div className="text-lg font-black tabular-nums text-white">{Math.round(s.scenarioRubric[d] * 100)}<span className="text-xs" style={{ color: 'var(--muted)' }}>%</span></div>
-              <div className="text-xs" style={{ color: 'var(--muted)' }}>{RUBRIC_LABELS[d]}</div>
-            </div>
-          ))}
+      {/* Same row grammar as the readiness card, so the two assessment panels read
+          as one language. Deliberately NOT tinted: a rubric percentage is relative
+          across the five dimensions, not a pass mark — even a strong candidate sits
+          near 50, so borrowing the shortfall thresholds would cry wolf on everyone. */}
+      <Card title="Scenario rubric" note="Auto-scored from the answers below. Compare the five against each other, not against 100.">
+        <div style={{ display: 'grid', gap: 12 }}>
+          {RUBRIC_DIMENSIONS.map(d => {
+            const pct = Math.max(0, Math.min(1, s.scenarioRubric[d]))
+            return (
+              <div key={d}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12.5, marginBottom: 6 }}>
+                  <span style={{ color: 'var(--text)' }}>{RUBRIC_LABELS[d]}</span>
+                  <span className="tabular-nums" style={{ color: 'var(--muted)', flexShrink: 0 }}>{Math.round(pct * 100)}%</span>
+                </div>
+                <div style={{ height: 3, borderRadius: 99, background: 'rgba(255,255,255,.06)', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', borderRadius: 99, width: `${pct * 100}%`, background: 'rgba(255,255,255,.26)' }} />
+                </div>
+              </div>
+            )
+          })}
         </div>
-      </Section>
+      </Card>
 
-      {/* scenario answers */}
-      <Section title="Scenario answers">
-        <div className="space-y-3">
-          {a.scenarios.filter(sc => sc.answer.trim()).length === 0 && <p className="text-sm" style={{ color: '#f87171' }}>No scenario answers provided.</p>}
-          {a.scenarios.filter(sc => sc.answer.trim()).map(sc => (
-            <div key={sc.key}>
-              <p className="text-xs font-semibold" style={{ color: 'var(--muted)' }}>{SCENARIO_PROMPT[sc.key]}</p>
-              <p className="text-sm" style={{ color: 'var(--text)', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{sc.answer}</p>
-            </div>
-          ))}
-        </div>
-      </Section>
+      <Card title="Scenario answers">
+        {a.scenarios.filter(sc => sc.answer.trim()).length === 0 && <p style={{ fontSize: 13.5, color: '#f87171' }}>No scenario answers provided.</p>}
+        {a.scenarios.filter(sc => sc.answer.trim()).map((sc, i) => (
+          <div key={sc.key} className={i ? 'ap-hair' : undefined} style={{ paddingTop: i ? 12 : 0, marginTop: i ? 12 : 0 }}>
+            <p style={{ fontSize: 12, fontWeight: 650, color: 'var(--muted)', lineHeight: 1.5 }}>{SCENARIO_PROMPT[sc.key]}</p>
+            <p style={{ fontSize: 13.5, color: 'var(--text)', lineHeight: 1.6, whiteSpace: 'pre-wrap', marginTop: 5 }}>{sc.answer}</p>
+          </div>
+        ))}
+      </Card>
 
-      {/* suggested interview questions */}
       {s.suggestedQuestions.length > 0 && (
-        <Section title="Recommended interview questions">
-          <ul className="space-y-2">
-            {s.suggestedQuestions.map((q, i) => <li key={i} className="text-sm flex items-start gap-2" style={{ color: 'var(--text)' }}><span style={{ color: 'var(--red)' }}>Q</span>{q}</li>)}
+        <Card title="Recommended interview questions">
+          <ul style={{ display: 'grid', gap: 9 }}>
+            {s.suggestedQuestions.map((q, i) => (
+              <li key={i} style={{ fontSize: 13.5, display: 'flex', gap: 9, color: 'var(--text)', lineHeight: 1.55 }}>
+                <span aria-hidden style={{ color: 'var(--red)', fontWeight: 800, flexShrink: 0 }}>{i + 1}</span>{q}
+              </li>
+            ))}
           </ul>
-        </Section>
+        </Card>
       )}
 
-      {/* manager notes */}
-      <Section title="Manager notes">
-        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} placeholder="Notes from your review / interview…" style={{ width: '100%', padding: '10px 12px', background: 'rgba(255,255,255,.04)', border: '1px solid var(--line)', borderRadius: 10, color: '#f3f4f6', fontSize: 14, resize: 'vertical' }} />
-        <button onClick={() => act('notes', notes)} className="btn-ghost mt-2" style={{ padding: '8px 14px', fontSize: 13 }}>Save notes</button>
-      </Section>
+      <Card title="Manager notes">
+        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} placeholder="Notes from your review / interview…" className="ap-field" style={{ resize: 'vertical', lineHeight: 1.55 }} aria-label="Manager notes" />
+        <div style={{ marginTop: 10 }}><Btn kind="tinted" disabled={busy} onClick={() => act('notes', notes)}>Save notes</Btn></div>
+      </Card>
 
       {/* recommendation + status */}
-      <Section title="Decision">
-        {(a.duplicateApplicantNumbers?.length ?? 0) > 0 && <p className="text-xs mb-3" style={{ color: '#fbbf24' }}>Possible prior application: {a.duplicateApplicantNumbers?.join(', ')}</p>}
-        {a.informationRequest && <p className="text-xs mb-2" style={{ color: 'var(--muted)' }}>Requested: {a.informationRequest.message}</p>}
-        {a.informationResponse && <p className="text-sm mb-3" style={{ color: '#34d399' }}>Applicant response: {a.informationResponse.message}</p>}
-        <p className="text-xs mb-2" style={{ color: 'var(--muted)' }}>Recommendation {a.recommendation ? `· currently: ${RECOMMENDATION_LABEL[a.recommendation]}` : ''}</p>
-        <div className="flex flex-wrap gap-2 mb-4">
-          {canDecide && <button disabled={busy} onClick={() => act('hire')} style={btn('#059669')}>✓ Approve → Contractor/Crew</button>}
-          <button disabled={busy} onClick={() => act('status', 'interview')} style={btn('#2563eb')}>Interview</button>
-          <button disabled={busy} onClick={() => { const w = prompt('What information do you need from the applicant?'); if (w != null) act('request_info', w) }} style={btn('#7c3aed')}>Request info</button>
-          <button disabled={busy} onClick={() => act('status', 'waitlist')} style={btn('#d97706')}>Waitlist</button>
-          {canDecide && <button disabled={busy} onClick={() => act('recommendation', 'reject' as Recommendation)} style={btn('#b91c1c')}>Deny</button>}
+      <Card title="Decision">
+        {(a.duplicateApplicantNumbers?.length ?? 0) > 0 && <p style={{ fontSize: 12, color: '#fbbf24', marginBottom: 11 }}>Possible prior application: {a.duplicateApplicantNumbers?.join(', ')}</p>}
+        {a.informationRequest && <p style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 7 }}>Requested: {a.informationRequest.message}</p>}
+        {a.informationResponse && <p style={{ fontSize: 13, color: '#6ee7b7', marginBottom: 11 }}>Applicant response: {a.informationResponse.message}</p>}
+        <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 9 }}>
+          Recommendation{a.recommendation ? ` · currently: ${RECOMMENDATION_LABEL[a.recommendation]}` : ''}
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {canDecide && <Btn kind="go" disabled={busy} onClick={() => act('hire')}><CheckCircle2 size={15} /> Approve → Contractor/Crew</Btn>}
+          <Btn kind="tinted" disabled={busy} onClick={() => act('status', 'interview')}>Interview</Btn>
+          <Btn kind="tinted" disabled={busy} onClick={() => setInfoRequest(infoRequest === null ? '' : null)} aria-expanded={infoRequest !== null}>Request info</Btn>
+          <Btn kind="tinted" disabled={busy} onClick={() => act('status', 'waitlist')}>Waitlist</Btn>
+          {canDecide && <Btn kind="danger" disabled={busy} onClick={() => act('recommendation', 'reject' as Recommendation)}>Deny</Btn>}
         </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <label className="text-xs" style={{ color: 'var(--muted)' }}>Status</label>
-          <select disabled={busy} value={a.status} onChange={e => act('status', e.target.value as ApplicantStatus)} style={{ padding: '8px 12px', background: 'rgba(255,255,255,.04)', border: '1px solid var(--line)', borderRadius: 10, color: '#f3f4f6', fontSize: 13, cursor: 'pointer', colorScheme: 'dark' }}>
+
+        {infoRequest !== null && (
+          <div className="ap-hair" style={{ marginTop: 13, paddingTop: 13 }}>
+            <label htmlFor={`info-${a.id}`} style={{ display: 'block', fontSize: 12, fontWeight: 650, color: 'var(--muted)', marginBottom: 6 }}>What information do you need from the applicant?</label>
+            <textarea id={`info-${a.id}`} value={infoRequest} onChange={e => setInfoRequest(e.target.value)} rows={2} className="ap-field" style={{ resize: 'vertical' }} />
+            <div style={{ display: 'flex', gap: 8, marginTop: 9 }}>
+              <Btn kind="primary" disabled={busy || infoRequest.trim().length === 0} onClick={() => { act('request_info', infoRequest); setInfoRequest(null) }}>Send request</Btn>
+              <Btn kind="plain" disabled={busy} onClick={() => setInfoRequest(null)}>Cancel</Btn>
+            </div>
+          </div>
+        )}
+
+        <div className="ap-hair" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 13, paddingTop: 13 }}>
+          <label htmlFor={`status-${a.id}`} style={{ fontSize: 12, color: 'var(--muted)' }}>Status</label>
+          <select id={`status-${a.id}`} disabled={busy} value={a.status} onChange={e => act('status', e.target.value as ApplicantStatus)} className="ap-field" style={{ width: 'auto', padding: '8px 12px', fontSize: 13, cursor: 'pointer', colorScheme: 'dark' }}>
             {(Object.keys(APPLICANT_STATUS_LABEL) as ApplicantStatus[]).filter(st => st === a.status || (st !== 'hired' && (canDecide || st !== 'rejected'))).map(st => <option key={st} value={st}>{APPLICANT_STATUS_LABEL[st]}</option>)}
           </select>
-          <button disabled={busy} onClick={() => act('rescore')} className="btn-ghost" style={{ padding: '8px 12px', fontSize: 12 }}>Re-score</button>
-          {canDecide && <button disabled={busy} onClick={() => act('status', 'archived')} style={{ padding: '8px 12px', fontSize: 12, background: 'transparent', border: '1px solid rgba(248,113,113,.4)', color: '#f87171', borderRadius: 10, cursor: 'pointer', marginLeft: 'auto' }}>Archive</button>}
+          <Btn kind="plain" disabled={busy} onClick={() => act('rescore')}>Re-score</Btn>
+          {canDecide && <Btn kind="danger" disabled={busy} onClick={() => act('status', 'archived')} style={{ marginLeft: 'auto' }}>Archive</Btn>}
         </div>
-        {canDecide && <div className="mt-3 pt-3 flex items-center justify-between gap-3" style={{ borderTop: '1px solid var(--line)' }}>
-          <p className="text-xs" style={{ color: a.legalHold?.active ? '#fbbf24' : 'var(--muted)' }}>{a.legalHold?.active ? `Legal hold: ${a.legalHold.reason}` : 'No legal hold'}</p>
-          <button disabled={busy} onClick={() => { if (a.legalHold?.active) act('legal_hold', { active: false }); else { const reason = prompt('Reason for legal hold'); if (reason) act('legal_hold', { active: true, reason }) } }} className="btn-ghost" style={{ padding: '7px 10px', fontSize: 12 }}>{a.legalHold?.active ? 'Release hold' : 'Place legal hold'}</button>
-        </div>}
-        {canDecide && a.status === 'hired' && <div className="mt-3 pt-3 flex items-center justify-between gap-3" style={{ borderTop: '1px solid var(--line)' }}>
-          <p className="text-xs" style={{ color: a.contractEndedAt ? '#fbbf24' : 'var(--muted)' }}>{a.contractEndedAt ? `Contract ended ${fmtTs(a.contractEndedAt)}; retention clocks are running.` : 'Contractor relationship active'}</p>
-          <button disabled={busy} onClick={() => act(a.contractEndedAt ? 'reopen_contract' : 'end_contract')} style={{ padding: '7px 10px', fontSize: 12, background: 'transparent', border: '1px solid var(--line)', color: 'var(--text)', borderRadius: 10 }}>{a.contractEndedAt ? 'Reopen relationship' : 'End relationship'}</button>
-        </div>}
+
+        {canDecide && (
+          <div className="ap-hair" style={{ marginTop: 13, paddingTop: 13 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <p style={{ fontSize: 12.5, color: a.legalHold?.active ? '#fbbf24' : 'var(--muted)' }}>{a.legalHold?.active ? `Legal hold: ${a.legalHold.reason}` : 'No legal hold'}</p>
+              <Btn kind="plain" disabled={busy} onClick={() => { if (a.legalHold?.active) { setHoldReason(null); act('legal_hold', { active: false }) } else setHoldReason(holdReason === null ? '' : null) }} aria-expanded={holdReason !== null}>
+                {a.legalHold?.active ? 'Release hold' : 'Place legal hold'}
+              </Btn>
+            </div>
+            {holdReason !== null && !a.legalHold?.active && (
+              <div style={{ marginTop: 10 }}>
+                <label htmlFor={`hold-${a.id}`} style={{ display: 'block', fontSize: 12, fontWeight: 650, color: 'var(--muted)', marginBottom: 6 }}>Reason for the legal hold</label>
+                <input id={`hold-${a.id}`} value={holdReason} onChange={e => setHoldReason(e.target.value)} className="ap-field" />
+                <div style={{ display: 'flex', gap: 8, marginTop: 9 }}>
+                  <Btn kind="primary" disabled={busy || holdReason.trim().length === 0} onClick={() => { act('legal_hold', { active: true, reason: holdReason }); setHoldReason(null) }}>Place hold</Btn>
+                  <Btn kind="plain" disabled={busy} onClick={() => setHoldReason(null)}>Cancel</Btn>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {canDecide && a.status === 'hired' && (
+          <div className="ap-hair" style={{ marginTop: 13, paddingTop: 13, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <p style={{ fontSize: 12.5, color: a.contractEndedAt ? '#fbbf24' : 'var(--muted)' }}>{a.contractEndedAt ? `Contract ended ${fmtTs(a.contractEndedAt)}; retention clocks are running.` : 'Contractor relationship active'}</p>
+            <Btn kind="plain" disabled={busy} onClick={() => act(a.contractEndedAt ? 'reopen_contract' : 'end_contract')}>{a.contractEndedAt ? 'Reopen relationship' : 'End relationship'}</Btn>
+          </div>
+        )}
+
         {a.promotedStaffId && (
-          <p className="text-xs mt-3" style={{ color: '#34d399' }}>
-            ✓ Linked to crew record · <Link href="/admin/operations/employees" style={{ color: 'var(--red)', textDecoration: 'none' }}>view in Crew →</Link>
+          <p className="ap-hair" style={{ marginTop: 13, paddingTop: 13, fontSize: 12.5, color: '#6ee7b7', display: 'flex', alignItems: 'center', gap: 7 }}>
+            <CheckCircle2 size={14} /> Linked to crew record ·{' '}
+            <Link href="/admin/operations/employees" style={{ color: 'var(--red)', textDecoration: 'none', fontWeight: 650 }}>view in Crew →</Link>
           </p>
         )}
-      </Section>
+      </Card>
 
       {/* Activity timeline — the applicant lifecycle (submitted → decisions → crew). */}
       {Array.isArray(a.events) && a.events.length > 0 && (
-        <Section title="Activity">
-          <div className="space-y-2">
-            {[...a.events].reverse().map((e, i) => (
-              <div key={i} className="flex gap-3 text-sm" style={{ color: 'var(--text)' }}>
-                <span className="tabular-nums shrink-0" style={{ color: 'var(--muted)', minWidth: 128, fontSize: 12 }}>{fmtTs(e.at)}</span>
-                <span>{e.action}{e.note ? <span style={{ color: 'var(--muted)' }}> — {e.note}</span> : null}</span>
-              </div>
-            ))}
-          </div>
-        </Section>
+        <Card title="Activity">
+          {[...a.events].reverse().map((e, i) => (
+            <div key={i} className={i ? 'ap-hair' : undefined} style={{ display: 'flex', gap: 12, fontSize: 13, color: 'var(--text)', padding: '8px 0', lineHeight: 1.5 }}>
+              <span className="tabular-nums" style={{ color: 'var(--muted)', minWidth: 118, flexShrink: 0, fontSize: 12 }}>{fmtTs(e.at)}</span>
+              <span>{e.action}{e.note ? <span style={{ color: 'var(--muted)' }}> — {e.note}</span> : null}</span>
+            </div>
+          ))}
+        </Card>
       )}
     </div>
   )
 }
 
-function MiniList({ title, items, tone, empty }: { title: string; items: string[]; tone: string; empty: string }) {
+/**
+ * Readiness, summary first.
+ *
+ * A flat list of nine components gave every row the same weight, so the score you
+ * already knew was restated nine times and the one deficit that decides the hire
+ * was indistinguishable from the eight that are fine. This leads with the number,
+ * names only what falls short, and keeps the passing components one tap away —
+ * the OS's own "calm, progressive-disclosure" rule, applied.
+ */
+function ReadinessCard({ score }: { score: Applicant['score'] }) {
+  const [showAll, setShowAll] = useState(false)
+  const pctOf = (c: { points: number; max: number }) => c.max ? Math.max(0, Math.min(1, c.points / c.max)) : 0
+  const short = score.components.filter(c => pctOf(c) < 0.85)
+  const met = score.components.filter(c => pctOf(c) >= 0.85)
+  const tone = BAND_META[score.band].tone
+
+  const R = 30, CIRC = 2 * Math.PI * R
+  // Draw the arc in after mount so the ring reads as a measurement being taken,
+  // not a static graphic. Reduced-motion users get it already drawn.
+  const [drawn, setDrawn] = useState(false)
+  useEffect(() => { const t = setTimeout(() => setDrawn(true), 40); return () => clearTimeout(t) }, [])
+
+  const row = (c: { key: string; label: string; points: number; max: number }, i: number) => {
+    const pct = pctOf(c)
+    const fill = pct < 0.5 ? 'rgba(248,113,113,.72)' : pct < 0.85 ? 'rgba(251,191,36,.62)' : 'rgba(255,255,255,.26)'
+    const lit = pct < 0.85
+    return (
+      <div key={c.key} style={{ marginTop: i ? 12 : 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12.5, marginBottom: 6 }}>
+          <span style={{ color: lit ? 'var(--text)' : 'var(--muted)' }}>{c.label}</span>
+          <span className="tabular-nums" style={{ color: lit ? 'var(--text)' : 'var(--muted)', flexShrink: 0 }}>{c.points}/{c.max}</span>
+        </div>
+        <div style={{ height: 3, borderRadius: 99, background: 'rgba(255,255,255,.06)', overflow: 'hidden' }}>
+          <div style={{ height: '100%', borderRadius: 99, width: `${pct * 100}%`, background: fill }} />
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="glass-card p-4" style={{ borderRadius: 12 }}>
-      <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: tone }}>{title}</p>
-      {items.length === 0 ? <p className="text-xs" style={{ color: 'var(--muted)' }}>{empty}</p>
-        : <ul className="space-y-1.5">{items.map((it, i) => <li key={i} className="text-sm flex items-start gap-2" style={{ color: 'var(--text)' }}><span style={{ color: tone }}>•</span>{it}</li>)}</ul>}
-    </div>
+    <section className="os-card" style={{ padding: 18, marginBottom: 14 }}>
+      {/* Hero: the score itself, once, at the size its importance deserves. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <div style={{ position: 'relative', width: 76, height: 76, flexShrink: 0 }}>
+          <svg width="76" height="76" viewBox="0 0 76 76" role="img"
+            aria-label={`Readiness score ${score.score} out of 100 — ${BAND_META[score.band].label}`}>
+            <circle cx="38" cy="38" r={R} fill="none" stroke="rgba(255,255,255,.07)" strokeWidth="6" />
+            <circle className="ap-ring-arc" cx="38" cy="38" r={R} fill="none" stroke={tone} strokeWidth="6" strokeLinecap="round"
+              strokeDasharray={CIRC} strokeDashoffset={drawn ? CIRC * (1 - score.score / 100) : CIRC}
+              transform="rotate(-90 38 38)" />
+          </svg>
+          <div aria-hidden style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center' }}>
+            <span className="tabular-nums" style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.03em', color: 'var(--text)' }}>{score.score}</span>
+          </div>
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <p style={{ fontSize: 15, fontWeight: 700, color: tone, letterSpacing: '-.01em' }}>{BAND_META[score.band].label}</p>
+          <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 4, lineHeight: 1.5 }}>
+            {short.length === 0
+              ? `All ${score.components.length} components at target.`
+              : `${short.length} of ${score.components.length} component${score.components.length === 1 ? '' : 's'} below target.`}
+          </p>
+        </div>
+      </div>
+
+      {/* Only what needs a decision. */}
+      {short.length > 0 && (
+        <div className="ap-hair" style={{ marginTop: 16, paddingTop: 14 }}>
+          <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 11 }}>Needs attention</p>
+          {short.map(row)}
+        </div>
+      )}
+
+      {/* Everything that is fine, one tap away rather than nine rows of noise. */}
+      {met.length > 0 && (
+        <div className="ap-hair" style={{ marginTop: 14, paddingTop: 12 }}>
+          <button onClick={() => setShowAll(v => !v)} aria-expanded={showAll} className="ap-disclose">
+            <ChevronRight size={14} className={showAll ? 'ap-chev-open' : undefined} />
+            {met.length} at target
+          </button>
+          <div className={`os-expand${showAll ? ' open' : ''}`}>
+            <div><div style={{ paddingTop: 12 }}>{met.map(row)}</div></div>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+const groupLabel: React.CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase' }
+
+/**
+ * Assessment signals, one card instead of three columns.
+ *
+ * Three equal columns stretched every box to the tallest, so a candidate with eight
+ * strengths and nothing else wrong produced two large empty panels — and squeezed
+ * the strengths into a 200px column where every item wrapped to three lines. Full
+ * width fixes the wrapping; an empty group costs one line instead of a whole box.
+ */
+function Signals({ score }: { score: Applicant['score'] }) {
+  const groups = [
+    { key: 'strengths', label: 'Strengths', one: 'strength', many: 'strengths', items: score.strengths, tone: '#34d399' },
+    { key: 'weaknesses', label: 'Weaknesses', one: 'weakness', many: 'weaknesses', items: score.weaknesses, tone: '#fbbf24' },
+    { key: 'risks', label: 'Risk factors', one: 'risk factor', many: 'risk factors', items: score.riskFactors, tone: '#f87171' },
+  ]
+  const flagged = groups.filter(g => g.items.length > 0)
+  const note = flagged.length
+    ? flagged.map(g => `${g.items.length} ${g.items.length === 1 ? g.one : g.many}`).join(' · ')
+    : 'Nothing flagged in either direction.'
+
+  return (
+    <Card title="Assessment signals" note={note}>
+      {groups.map((g, i) => (
+        <div key={g.key} className={i ? 'ap-hair' : undefined} style={{ marginTop: i ? 12 : 0, paddingTop: i ? 12 : 0 }}>
+          {g.items.length === 0 ? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline' }}>
+              <span style={{ ...groupLabel, color: 'var(--muted)' }}>{g.label}</span>
+              <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>None flagged</span>
+            </div>
+          ) : (
+            <>
+              <p style={{ ...groupLabel, color: g.tone, marginBottom: 9 }}>{g.label}</p>
+              <ul style={{ display: 'grid', gap: 7 }}>
+                {g.items.map((it, j) => (
+                  <li key={j} style={{ fontSize: 13, display: 'flex', gap: 9, color: 'var(--text)', lineHeight: 1.5 }}>
+                    <span aria-hidden style={{ width: 5, height: 5, borderRadius: 99, background: g.tone, flexShrink: 0, marginTop: 6 }} />
+                    {it}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      ))}
+    </Card>
   )
 }
