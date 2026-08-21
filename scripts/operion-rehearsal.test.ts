@@ -25,14 +25,30 @@ const HAS_SC = scAvailable()
 const scTree = HAS_SC ? treePaths(SC, REV) : new Set<string>()
 const jkTree = HAS_SC ? treePaths(JK, REV) : new Set<string>()
 
-const MISSING_BRACKETED = 'app/api/portal/documents/[id]/route.ts'   // absent on SC 52d50b7
-const PRESENT_BRACKETED = 'app/api/booking/[token]/route.ts'         // present on SC
-const PRESENT_PLAIN = 'app/lib/company.ts'
-const MISSING_PLAIN = 'app/lib/crew-documents.ts'                    // absent on SC
+// ── Fixtures are DERIVED, not hardcoded ─────────────────────────────────────
+//
+// These pinned real paths on the sibling repo's `origin/main`, which is a MOVING
+// ref: `app/lib/crew-documents.ts` was chosen because it was absent on Supercharged,
+// and it stopped being absent the moment that repo caught up — turning a green suite
+// red for a reason that had nothing to do with the code under test. The FACT being
+// tested is "a path that is missing on the target", not any particular filename, so
+// the fixtures are now found in the live trees. If a category cannot be found (the
+// repos have fully converged), that assertion skips with a reason rather than
+// asserting something untrue.
+const bracketed = (p: string) => p.includes('[')
+function pick(predicate: (p: string) => boolean): string | null {
+  for (const p of [...jkTree].sort()) if (predicate(p)) return p
+  return null
+}
+
+const MISSING_BRACKETED = pick(p => bracketed(p) && !scTree.has(p))
+const PRESENT_BRACKETED = pick(p => bracketed(p) && scTree.has(p))
+const PRESENT_PLAIN = pick(p => !bracketed(p) && scTree.has(p))
+const MISSING_PLAIN = pick(p => !bracketed(p) && !scTree.has(p))
 
 // ── The bug, pinned so nobody reintroduces the naive check ───────────────────
 
-test('B-13: raw `git show` exits 0 with empty output for a MISSING bracketed path', { skip: !HAS_SC }, () => {
+test('B-13: raw `git show` exits 0 with empty output for a MISSING bracketed path', { skip: !HAS_SC || !MISSING_BRACKETED }, () => {
   let code = 0
   let out = Buffer.alloc(0)
   try { out = execFileSync('git', ['-C', SC, 'show', `${REV}:${MISSING_BRACKETED}`], { maxBuffer: 1 << 29 }) }
@@ -41,7 +57,7 @@ test('B-13: raw `git show` exits 0 with empty output for a MISSING bracketed pat
   assert.equal(out.length, 0, 'returning empty output for a file that does not exist')
 })
 
-test('B-13: a missing PLAIN path fails loudly — which is why the bug hid', { skip: !HAS_SC }, () => {
+test('B-13: a missing PLAIN path fails loudly — which is why the bug hid', { skip: !HAS_SC || !MISSING_PLAIN }, () => {
   let code = 0
   try { execFileSync('git', ['-C', SC, 'show', `${REV}:${MISSING_PLAIN}`], { maxBuffer: 1 << 29, stdio: 'pipe' }) }
   catch (e) { code = (e as { status: number }).status }
@@ -50,25 +66,25 @@ test('B-13: a missing PLAIN path fails loudly — which is why the bug hid', { s
 
 // ── The three states ─────────────────────────────────────────────────────────
 
-test('missing bracketed path → MISSING, never empty', { skip: !HAS_SC }, () => {
-  assert.equal(pathExists(MISSING_BRACKETED, scTree), false)
-  assert.deepEqual(pathState(SC, REV, MISSING_BRACKETED, scTree), { state: 'missing' })
+test('missing bracketed path → MISSING, never empty', { skip: !HAS_SC || !MISSING_BRACKETED }, () => {
+  assert.equal(pathExists(MISSING_BRACKETED!, scTree), false)
+  assert.deepEqual(pathState(SC, REV, MISSING_BRACKETED!, scTree), { state: 'missing' })
 })
 
-test('missing plain path → MISSING', { skip: !HAS_SC }, () => {
-  assert.equal(pathExists(MISSING_PLAIN, scTree), false)
-  assert.deepEqual(pathState(SC, REV, MISSING_PLAIN, scTree), { state: 'missing' })
+test('missing plain path → MISSING', { skip: !HAS_SC || !MISSING_PLAIN }, () => {
+  assert.equal(pathExists(MISSING_PLAIN!, scTree), false)
+  assert.deepEqual(pathState(SC, REV, MISSING_PLAIN!, scTree), { state: 'missing' })
 })
 
-test('existing bracketed path → PRESENT with real bytes', { skip: !HAS_SC }, () => {
-  assert.equal(pathExists(PRESENT_BRACKETED, scTree), true)
-  const s = pathState(SC, REV, PRESENT_BRACKETED, scTree)
+test('existing bracketed path → PRESENT with real bytes', { skip: !HAS_SC || !PRESENT_BRACKETED }, () => {
+  assert.equal(pathExists(PRESENT_BRACKETED!, scTree), true)
+  const s = pathState(SC, REV, PRESENT_BRACKETED!, scTree)
   assert.equal(s.state, 'present')
   assert.ok(s.state === 'present' && s.bytes > 0 && s.content.length === s.bytes)
 })
 
-test('existing plain path → PRESENT with real bytes', { skip: !HAS_SC }, () => {
-  const s = pathState(SC, REV, PRESENT_PLAIN, scTree)
+test('existing plain path → PRESENT with real bytes', { skip: !HAS_SC || !PRESENT_PLAIN }, () => {
+  const s = pathState(SC, REV, PRESENT_PLAIN!, scTree)
   assert.equal(s.state, 'present')
   assert.ok(s.state === 'present' && s.bytes > 0)
 })

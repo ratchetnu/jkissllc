@@ -21,7 +21,7 @@ booleans only, never the underlying env value.
 | `TENANCY_DARK_LAUNCH` | OFF | Shadow-read the tenant-scoped key alongside legacy + report mismatches; no live change. Preview only. |
 | `TENANCY_DUAL_WRITE` | OFF | Mirror writes to tenant-scoped keys. Never on in prod without an approved rollout. |
 | `AI_WORKFORCE_ENABLED` | OFF | AI workforce subsystem eligibility. |
-| `CAPABILITY_REGISTRY_ENABLED` | **ON** | Registry is inert data nothing live reads — enabling it alters no behavior (the sole default-ON flag). |
+| `CAPABILITY_REGISTRY_ENABLED` | **ON** | Gates the CATALOG queries only (role visibility, AI-tool eligibility, registry defaults) — inert data, so enabling it alters no behavior (the sole default-ON flag). It deliberately does **not** gate capability ENFORCEMENT: `capabilities/guard.ts` resolves from the tenant profile directly and fails closed, because a kill switch that turns a security check into a no-op is not a kill switch. |
 | `APPROVAL_QUEUE_ENABLED` | OFF | Approval-queue subsystem. |
 | `INDUSTRY_PACKS_ENABLED` | OFF | Industry module packs. |
 | `INSIGHTS_UI_ENABLED` | OFF | Insights UI. |

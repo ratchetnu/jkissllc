@@ -17,13 +17,17 @@ export type TwilioEnv = Record<string, string | undefined>
  * health report "ok" for a Twilio that could not deliver anything.
  */
 export function twilioConfigured(env: TwilioEnv): boolean {
-  const auth = !!(
-    (env.TWILIO_API_KEY_SID && env.TWILIO_API_KEY_SECRET) ||
-    (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN)
-  )
+  // Trim-aware presence. A variable that EXISTS but is blank is ABSENT: copying
+  // `.env.example` leaves every Twilio name defined with an empty value, and raw
+  // truthiness treated a whitespace-only string as a real credential — so a fresh
+  // deployment read as "SMS configured" and would have handed Twilio a blank
+  // account SID. The readiness layer trims, and this is the predicate it shares.
+  const set = (v: string | undefined) => typeof v === 'string' && v.trim().length > 0
+  const auth = (set(env.TWILIO_API_KEY_SID) && set(env.TWILIO_API_KEY_SECRET))
+    || (set(env.TWILIO_ACCOUNT_SID) && set(env.TWILIO_AUTH_TOKEN))
   return !!(
-    env.TWILIO_ACCOUNT_SID &&
+    set(env.TWILIO_ACCOUNT_SID) &&
     auth &&
-    (env.TWILIO_FROM || env.TWILIO_MESSAGING_SERVICE_SID)
+    (set(env.TWILIO_FROM) || set(env.TWILIO_MESSAGING_SERVICE_SID))
   )
 }

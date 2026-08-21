@@ -108,6 +108,20 @@ test('twilioConfigured is the SAME predicate the send path uses (cannot drift)',
   assert.equal(twilioConfigured({ TWILIO_ACCOUNT_SID: 'ACx' }), false)
 })
 
+// A variable that EXISTS but is blank is ABSENT. Copying `.env.example` defines
+// every Twilio name with an empty value, and the previous raw-truthiness check read
+// a whitespace-only string as a real credential — so a fresh deployment reported
+// "Twilio configured" and would have handed Twilio a blank account SID.
+test('a blank or whitespace-only credential is NOT configured', () => {
+  const blanks = Object.fromEntries(Object.keys(FULL_ENV).map(k => [k, '']))
+  assert.equal(twilioConfigured(blanks), false)
+  const spaces = Object.fromEntries(Object.keys(FULL_ENV).map(k => [k, '   ']))
+  assert.equal(twilioConfigured(spaces), false)
+  assert.equal(configChecks(spaces).find(c => c.name === 'sms')?.status, 'degraded')
+  // One blank field is enough to disqualify — a partial Twilio cannot send.
+  assert.equal(twilioConfigured({ ...FULL_ENV, TWILIO_AUTH_TOKEN: '  ' }), false)
+})
+
 test('completion_uploads is its own capability: a Blob token with no store binding is NOT ok', () => {
   const noStore = configChecks({ ...FULL_ENV, BLOB_STORE_ID: undefined })
   // The Blob token is still there, so plain storage stays ok…

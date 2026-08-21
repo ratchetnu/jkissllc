@@ -13,6 +13,9 @@ import { validateTargetEvidence, evaluateCapabilityImpact } from '../app/lib/pla
 import { evaluatePreflight, APPROVED_STATUSES } from '../app/lib/platform/automation/preflight'
 import { validateCallbackPayload, verifyCallback, signCallback, callbackMatchesJob } from '../app/lib/platform/automation/callback'
 import type { PlatformUpdate, PlatformBusiness, TargetDeploymentEvidence } from '../app/lib/platform/updates/types'
+import { CAPABILITY_STATE_CODES, CAPABILITY_PROFILE_VERSION } from '../app/lib/platform/capabilities/tenant-profile'
+import { PROVIDER_IDS } from '../app/lib/platform/capabilities/types'
+import { allCapabilities } from '../app/lib/platform/capabilities/registry'
 import type { UpdateAutomationJob } from '../app/lib/platform/automation/types'
 
 const NOW = 1_800_000_000_000
@@ -55,6 +58,55 @@ const business = (over: Partial<PlatformBusiness> = {}): PlatformBusiness => ({
   createdAt: 0, updatedAt: 0,
   ...over,
 } as PlatformBusiness)
+
+// ── The cross-repository contract ────────────────────────────────────────────
+//
+// J KISS and Supercharged have UNRELATED git histories, so nothing may ever be
+// merged or cherry-picked between them — parity is content-based. That makes these
+// constants duplicated by design, and pinned on BOTH sides, so an accidental
+// one-sided edit fails a test instead of producing two deployments that silently
+// disagree about what a state code means. The mirror of this test lives in
+// supercharged/scripts/capability-contract.test.ts.
+
+test('the state codes a target reports are pinned — changing one is a two-repository change', () => {
+  assert.deepEqual(CAPABILITY_STATE_CODES, {
+    not_installed: 'capability_not_installed',
+    not_in_pack: 'capability_not_in_pack',
+    disabled: 'capability_disabled',
+    blocked: 'capability_prerequisite_disabled',
+    setup_required: 'capability_setup_required',
+    ready: 'capability_ready',
+    degraded: 'capability_degraded',
+  })
+  // The four a TARGET may report are a strict subset: the other three describe
+  // facts only the control plane's own registry can know (code presence, pack
+  // membership, prerequisite closure), and a target claiming one would be
+  // asserting something it cannot observe.
+  const REPORTABLE = ['capability_disabled', 'capability_setup_required', 'capability_ready', 'capability_degraded']
+  for (const code of REPORTABLE) assert.ok(Object.values(CAPABILITY_STATE_CODES).includes(code as never))
+})
+
+test('the adapter capability ids are pinned on both sides', () => {
+  assert.deepEqual(
+    allCapabilities().filter(c => c.provider).map(c => c.id).sort(),
+    ['email-delivery', 'payments-stripe', 'sms-delivery'],
+  )
+  assert.deepEqual([...PROVIDER_IDS], ['stripe', 'twilio', 'resend'])
+  assert.equal(CAPABILITY_PROFILE_VERSION, 1)
+})
+
+test('evidence carrying only the four target-reportable codes validates cleanly', () => {
+  const r = validateTargetEvidence({
+    capabilities: [
+      { capability: 'payments-stripe', state: 'capability_disabled', enabled: false, configured: false },
+      { capability: 'sms-delivery', state: 'capability_setup_required', enabled: true, configured: false, missingVars: ['TWILIO_ACCOUNT_SID'] },
+      { capability: 'email-delivery', state: 'capability_ready', enabled: true, configured: true },
+    ],
+  }, NOW)
+  assert.equal(r.ok, true)
+  assert.equal(r.ok && r.value.capabilities.length, 3)
+  assert.deepEqual(r.ok ? r.warnings : ['unexpected'], [])
+})
 
 // ── E. A core update installs regardless of optional integrations ────────────
 

@@ -22,6 +22,112 @@
 
 ---
 
+## 0.5 RECONCILIATION — optional capabilities and update distribution, 2026-08-21 — read this first
+
+Branch `codex/tenant-capability-independence` (J KISS) and `codex/operion-capability-contract`
+(Supercharged). **Not merged, not pushed, not deployed. No Production flag was changed and
+`TENANCY_ENABLED` remains off in Production.** Where this section conflicts with §0.4 on the
+capability registry, optional-integration health, or multi-tenant GA status, **this section wins**;
+§0.4 remains the source for everything else.
+
+### What was wrong
+
+| Problem | Evidence |
+|---|---|
+| Payments, SMS and email were modelled as **core** capabilities | A business that runs none of them reported `/api/health` `degraded` permanently. A signal that can never be green is one everybody learns to ignore. |
+| `invoicing` declared `payments` a **hard** dependency | The one machine-readable place that answers the question said a business cannot bill anyone without a card processor. `reporting` had the same defect: a revenue report needed Stripe merely to load. |
+| Per-tenant enablement did not exist | `enabledForJkiss` answered for tenant zero and returned `false` for every other tenant, so a second business could not be configured at all. |
+| Nothing distinguished "off on purpose" from "broken" | Health, `sms.ts` and Supercharged's `integrations.ts` each read the environment their own way, so a deployment could report `payments: ok` while no charge could be made. |
+| An update record could not say what it meant for optional features | The only available vocabulary was `not_applicable`, which **removes a target from a rollout** — so a shared-library security fix would silently skip the business that had switched its integrations off, leaving no visible gap. |
+
+### What is now true
+
+- **Five axes are separated** in `app/lib/platform/capabilities/types.ts`: code installed →
+  offered by the product/industry pack → enabled by the tenant → provider configured →
+  operational. Installing code and activating a capability are different events.
+- **A typed, versioned, audited tenant capability profile** lives at the tenant-owned Redis key
+  `settings:capabilities`, so it passes through the existing chokepoint. Writes require active
+  membership plus `settings:manage`; dependency closure and mandatory capabilities are validated
+  before persistence. **No credential value is storable** — a reference must be a name or path, and
+  a pasted value is refused rather than truncated. A record written by a newer build is never
+  reinterpreted.
+- **Provider adapters are optional and independently selectable**: `payments-stripe`,
+  `sms-delivery`, `email-delivery`. The records they deliver (payments, messaging, notifications)
+  stay core. With no explicit owner choice an adapter is in use if and only if its credentials are
+  present, which is exactly the pre-existing effective behavior — so J KISS is unchanged and a
+  credential-free target reads **healthy "not in use"** instead of permanently degraded.
+- **One value-free readiness source** (`capabilities/provider-readiness.ts`) feeds health, the
+  settings surface, the runtime guards and the deployment evidence, so they cannot disagree.
+- **Server-side enforcement**, not UI-only: `sendSmsDetailed`, the Resend send, and Stripe checkout
+  creation all resolve through the guard and fail closed with stable, non-secret codes. The tenant
+  is server-resolved, so a forged client claim cannot reach the decision.
+- **Webhook policy is written down and enforced.** After signature verification: a verified event
+  for an intentionally disabled capability is acknowledged (200) and discarded rather than 5xx'd
+  into an hours-long retry storm; enabled-but-unconfigured still refuses 503, because that retry is
+  wanted. One documented carve-out — a Stripe checkout confirmation is always recorded, because the
+  money has already moved and dropping it only loses our record of it.
+- **Optional providers can never gate a deployment.** `preflight.ts` documents the invariant at its
+  input type, and a test greps the rendered gate set for `stripe`/`twilio`/`resend` and fails if any
+  appears. The one capability fact that MAY block is missing capability **code** on the target — the
+  same class of blocker as `requiredModules`, because it would not compile.
+- **A disabled capability makes an update DORMANT, never `not_applicable`.** A `platform_core` or
+  `shared_module` update is never dormant at all.
+- **The guided owner workflow** (`/admin/operations/platform`) presents one stage, one headline and
+  one action, derived entirely from server-held records so it survives a refresh or a logout. Every
+  action it names is an existing, separately-authorized endpoint — it is not a second executor.
+  `window.confirm` is gone from this workflow.
+
+### Verified gates on this work
+
+| Gate | Result |
+|---|---|
+| J KISS `npx tsc --noEmit` | clean |
+| J KISS `npm test` | **3,974/3,974** pass, twice (baseline before this work: 3,856/3,856) |
+| J KISS `npx eslint .` | 0 errors, 2 warnings — unchanged from the pre-existing baseline |
+| J KISS `npm run tenant:certify` | **FAILS, exactly as it did before this work** — same 3 unclassified diagnostics routes, same derived-key families. All 3 new routes are `withTenantRoute`-wrapped (request-wrapped 206 → 209). |
+| J KISS `npm run build` | **fails locally**, pre-existing: `next/font/google` cannot reach `fonts.gstatic.com` from this sandbox. Clean `main` fails identically. Build evidence must come from Vercel. |
+| J KISS `git diff --check` | clean |
+
+One unrelated test was repaired along the way. `scripts/operion-rehearsal.test.ts` pinned real
+filenames on the sibling repo's `origin/main` — a MOVING ref — to assert "this path is missing on
+the target". `app/lib/crew-documents.ts` stopped being missing the moment Supercharged caught up,
+turning the suite red for a reason unrelated to the code under test. The fixtures are now DERIVED
+from the live trees, since the fact under test is "a path missing on the target", not any
+particular filename.
+| Supercharged `npx tsc --noEmit` | clean |
+| Supercharged `npm test` | **754/754** pass (worktree baseline: 726) |
+| Supercharged `npx eslint .` | 38 findings (27 errors, 11 warnings) — unchanged, and none in any changed file |
+| Supercharged `npm run build` | fails locally on the same font limitation, documented in `SUPERCHARGED_HANDOFF.md` |
+
+### Multi-tenant GA — the honest answer
+
+`GET /api/admin/platform/ga-readiness` (owner-only, read-only) reports **thirteen independent
+dimensions** with three verdicts: `proven` (evidence exists in this deployment), `built`
+(implemented, and nothing here has ever exercised it) and `gap`. `gaReady` requires every
+dimension. `tenancyEnablementSafe` is narrower still and is **never satisfied by `built`**, because
+"the code is right" is exactly the claim that has to be tested before the flag that makes it
+load-bearing goes on.
+
+**This deployment is not multi-tenant GA, and update distribution working does not make it so.**
+The remaining actions the projection reports today:
+
+1. `npm run tenant:certify` still fails — classify the 3 diagnostics route handlers and migrate the
+   externally-derived key families (`cust:email:{email}`, `msg:phone:{e164}`, `biz:{name}`, …). A
+   Redis prefix cannot make a phone number a safe tenant boundary.
+2. Run `runWave6Backfill({ dryRun: false })` — the user directory has never been copied into
+   per-tenant memberships in a real run.
+3. Run `backfillTokenBindings(tenantId, { dryRun: false })` for every tenant, so existing bookings,
+   routes, invoices, portals and pay statements carry a token binding.
+4. Enable `TENANCY_DARK_LAUNCH` in Preview and confirm a clean shadow-mismatch summary.
+5. Register a second real tenant. Until one exists, nothing has ever had to be told apart.
+
+Both backfills now record a platform-global completion marker on a real (non-dry-run) execution —
+a backfill that leaves no trace is indistinguishable from one that never ran. A dry run records
+nothing, and unresolved token conflicts are carried into the marker so it can never read as a clean
+completion.
+
+---
+
 ## 0.4 RECONCILIATION — repository and Production truth-up through 2026-08-20 — read this first
 
 This file's last committed update was **2026-07-31** (`254f41a`). The repository then changed
