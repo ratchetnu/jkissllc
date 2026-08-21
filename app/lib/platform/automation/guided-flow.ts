@@ -26,7 +26,7 @@
 // which existing, separately-authorized endpoint to point the owner at. The
 // simplification is in the NARRATION, not the gates.
 
-import type { PreflightGate, PreflightResult } from './preflight'
+import type { PreflightGate, PreflightResult, PreflightVerdict } from './preflight'
 import type { UpdateAutomationJob } from './types'
 import type { UpdateApplicability } from './target-evidence'
 
@@ -76,6 +76,16 @@ export type GuidedState = {
   blocker?: GuidedBlocker
   /** What an optional-feature-free target gains. Never a reason to withhold an update. */
   capabilityNote?: string
+  /**
+   * The preflight verdict, in the vocabulary an operator can act on. Carried
+   * separately from `stage` because they answer different questions: the stage is
+   * where the work has got to, the verdict is whether it may proceed at all.
+   */
+  verdict?: PreflightVerdict
+  /** Exact reasons behind the verdict. Never a bare count. */
+  verdictReasons: string[]
+  /** Capabilities this update touches on this target. */
+  affectedCapabilities: string[]
   /**
    * Internal vocabulary, for the Advanced disclosure ONLY. The normal path never
    * renders these — that was the whole problem.
@@ -176,12 +186,15 @@ export function deriveGuidedState(input: GuidedInput): GuidedState {
   const capabilityNote = input.capabilityImpact
     ? input.capabilityImpact.rationale
     : undefined
+  const verdict = input.preflight?.verdict
+  const verdictReasons = input.preflight?.reasons ?? []
+  const affectedCapabilities = input.preflight?.affectedCapabilities ?? input.capabilityImpact?.affectedCapabilities ?? []
 
   const at = (stage: GuidedStage, headline: string, detail: string, primary: GuidedAction | null, blocker?: GuidedBlocker): GuidedState => ({
     stage,
     stepIndex: STEP_OF[stage] ?? STEP_OF[input.job ? 'previewing' : 'choose'] ?? 1,
     totalSteps: GUIDED_TOTAL_STEPS,
-    headline, detail, primary, blocker, capabilityNote, advanced,
+    headline, detail, primary, blocker, capabilityNote, verdict, verdictReasons, affectedCapabilities, advanced,
   })
 
   if (!input.update || !input.business) {
@@ -232,13 +245,22 @@ export function deriveGuidedState(input: GuidedInput): GuidedState {
     if (!input.preflight) return at('checking', 'Checking compatibility', `Operion is checking whether this update can go to ${target}.`, null)
     const gate = firstBlockingGate(input.preflight)
     if (gate) {
-      return at('blocked', `This update can’t go to ${target} yet`, plainFor(gate), null, {
+      // `manual_review` and `blocked_by_platform` are different problems with
+      // different fixes, and telling an owner "blocked" for both is how a decision
+      // waiting on them gets mistaken for an outage waiting on somebody else.
+      const headline = input.preflight.verdict === 'manual_review'
+        ? `This update needs a decision before it can go to ${target}`
+        : `This update can’t go to ${target} yet`
+      return at('blocked', headline, plainFor(gate), null, {
         code: gate.id,
         plain: plainFor(gate),
         recovery: refresh,
       })
     }
-    return at('ready_to_send', `Ready to send to ${target}`, `Operion will copy the approved files to a ${target} branch, run its tests and build, and open a Preview. Nothing goes live.`, {
+    const optionalNote = input.preflight.verdict === 'ready_optional_unavailable'
+      ? ` Some of what it ships will stay dormant on ${target} — that is expected, and not a reason to hold it.`
+      : ''
+    return at('ready_to_send', `Ready to send to ${target}`, `Operion will copy the approved files to a ${target} branch, run its tests and build, and open a Preview. Nothing goes live.${optionalNote}`, {
       id: 'send_preview', label: `Send to ${target} Preview`,
       endpoint: '/api/admin/platform/automation', method: 'POST',
       body: { updateKey: input.update.key, businessId: input.business.id },

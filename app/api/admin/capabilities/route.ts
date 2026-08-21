@@ -48,6 +48,9 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
     tenantId,
     // A record this build could not trust is reported, not silently applied.
     usingDefaults: resolved.fellBackToDefaults,
+    // False while this tenant is still on the legacy credential-inference fallback.
+    // Surfaced rather than hidden: it is a transitional state somebody has to close.
+    initialized: resolved.initialized,
     warnings: resolved.warnings,
     capabilities: Object.values(resolved.capabilities).map((c) => ({
       id: c.id,
@@ -63,6 +66,12 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
       blockedBy: c.blockedBy,
       missingVars: c.missingVars,          // NAMES only
       configurable: CAPABILITY_REGISTRY[c.id].tenantConfigurable,
+      // Plain language, straight from the registry, so the screen never has to
+      // invent a description of what switching something off costs you.
+      description: CAPABILITY_REGISTRY[c.id].description,
+      disabledConsequence: CAPABILITY_REGISTRY[c.id].disabledConsequence,
+      mandatoryReason: CAPABILITY_REGISTRY[c.id].mandatoryReason,
+      domain: CAPABILITY_REGISTRY[c.id].domain,
     })),
     providers: readiness.map((r) => ({
       provider: r.provider, capability: r.capability, label: r.label,

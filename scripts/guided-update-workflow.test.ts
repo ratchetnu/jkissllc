@@ -21,12 +21,16 @@ import {
   deriveGuidedState, typedConfirmationSatisfied, firstBlockingGate, GUIDED_TOTAL_STEPS,
   type GuidedInput,
 } from '../app/lib/platform/automation/guided-flow'
-import type { PreflightResult } from '../app/lib/platform/automation/preflight'
+import { classifyPreflight, type PreflightGate, type PreflightResult } from '../app/lib/platform/automation/preflight'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const read = (...p: string[]) => readFileSync(join(here, '..', ...p), 'utf8')
 
-const OK_PREFLIGHT: PreflightResult = { ok: true, gates: [{ id: 'automation_enabled', label: 'Automation enabled', ok: true, blocking: true }] }
+// Fixtures go through the real classifier rather than hand-asserting a verdict, so a
+// test can never describe a gate set the production code would read differently.
+const preflight = (gates: PreflightGate[]): PreflightResult =>
+  ({ ok: gates.every(g => g.ok || !g.blocking), gates, ...classifyPreflight(gates) })
+const OK_PREFLIGHT: PreflightResult = preflight([{ id: 'automation_enabled', label: 'Automation enabled', ok: true, blocking: true, gateClass: 'platform' }])
 const base = (over: Partial<GuidedInput> = {}): GuidedInput => ({
   update: { key: 'UPD-9001', title: 'Security fix' },
   business: { id: 'supercharged', name: 'Supercharged', slug: 'supercharged' },
@@ -102,15 +106,12 @@ test('"Live" is never claimed from an unconfirmed promotion', () => {
 // ── One blocker, one recovery ────────────────────────────────────────────────
 
 test('a blocking gate becomes ONE plain sentence with no internal vocabulary', () => {
-  const preflight: PreflightResult = {
-    ok: false,
-    gates: [
-      { id: 'automation_enabled', label: 'Automation enabled', ok: true, blocking: true },
-      { id: 'target_configured', label: 'Target automation configured', ok: false, blocking: true, reason: 'target GitHub App install / repo / workflow not configured (status must be "ready")' },
-      { id: 'preview_provider', label: 'Preview provider configured', ok: false, blocking: true },
-    ],
-  }
-  const s = deriveGuidedState(base({ preflight }))
+  const failing = preflight([
+    { id: 'automation_enabled', label: 'Automation enabled', ok: true, blocking: true, gateClass: 'platform' },
+    { id: 'target_configured', label: 'Target automation configured', ok: false, blocking: true, reason: 'target GitHub App install / repo / workflow not configured (status must be "ready")', gateClass: 'platform' },
+    { id: 'preview_provider', label: 'Preview provider configured', ok: false, blocking: true, gateClass: 'platform' },
+  ])
+  const s = deriveGuidedState(base({ preflight: failing }))
   assert.equal(s.stage, 'blocked')
   assert.ok(s.blocker)
   // The plain text must not leak gate ids, env var names, or status enums.
@@ -185,15 +186,12 @@ test('the typed phrase is compared exactly — case and spacing forgiven, words 
 })
 
 test('firstBlockingGate ignores advisory gates', () => {
-  const preflight: PreflightResult = {
-    ok: true,
-    gates: [
-      { id: 'capability_activation', label: 'Optional features', ok: false, blocking: false, reason: 'dormant' },
-      { id: 'rollback_documented', label: 'Rollback path documented', ok: false, blocking: false },
-    ],
-  }
-  assert.equal(firstBlockingGate(preflight), null)
-  assert.equal(deriveGuidedState(base({ preflight })).stage, 'ready_to_send')
+  const advisoryOnly = preflight([
+    { id: 'capability_activation', label: 'Optional features', ok: false, blocking: false, reason: 'dormant', gateClass: 'capability' },
+    { id: 'rollback_documented', label: 'Rollback path documented', ok: false, blocking: false, gateClass: 'documentation' },
+  ])
+  assert.equal(firstBlockingGate(advisoryOnly), null)
+  assert.equal(deriveGuidedState(base({ preflight: advisoryOnly })).stage, 'ready_to_send')
 })
 
 test('a dormant optional feature is SURFACED but never blocks the send', () => {

@@ -42,7 +42,7 @@ const update = (over: Partial<PlatformUpdate> = {}): PlatformUpdate => ({
   type: 'security', scope: 'platform_core', severity: 'critical', priority: 'urgent', status: 'approved',
   breakingChange: false, migrationRequired: false, environmentChangeRequired: false,
   secretRequired: false, featureFlagRequired: false, manualPortRequired: false, rollbackSupported: true,
-  sourceCommit: 'deadbeef',
+  sourceRepo: 'ratchetnu/jkissllc', sourceCommit: 'deadbeef',
   validation: { typecheck: 'passed', lint: 'passed', tests: 'passed', build: 'passed', securityReview: 'passed', accessibilityReview: 'not_applicable', e2e: 'not_applicable', smokeTest: 'passed', ownerVerification: 'passed' },
   createdAt: 0, updatedAt: 0,
   ...over,

@@ -139,6 +139,14 @@ export type PlatformUpdate = {
   sourceBranch?: string
   sourceCommit?: string
   sourceDeploymentId?: string
+  /**
+   * True when the checkout that produced this record had uncommitted changes.
+   *
+   * Absent on every record written before this field existed, and absence is
+   * deliberately NOT read as "clean": it is read as "this record has no opinion",
+   * which is exactly what those records have. Only an explicit `true` refuses.
+   */
+  sourceWorktreeDirty?: boolean
   pullRequest?: string
   // Technical requirements
   breakingChange: boolean

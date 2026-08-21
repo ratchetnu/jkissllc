@@ -9,6 +9,12 @@ import { getActiveApprovalFor } from '../../../../lib/platform/release/approval-
 import { deriveApprovalState } from '../../../../lib/platform/release/approval'
 import { getLatestPublishFor } from '../../../../lib/platform/release/publish-store'
 import { publishUxState, publishPhrase } from '../../../../lib/platform/release/publish'
+import { resolveSourceArtifact, describeSourceArtifact } from '../../../../lib/platform/release/source-artifact'
+import { buildReleaseComparison } from '../../../../lib/platform/release/release-comparison'
+import { getTransferEvidence } from '../../../../lib/platform/automation/store'
+import { resolveTenantCapabilities } from '../../../../lib/platform/capabilities/tenant-profile-store'
+import { resolveAllProviderReadiness } from '../../../../lib/platform/capabilities/provider-readiness'
+import { capabilityReadiness, providerHealth, releaseCompatibility } from '../../../../lib/platform/readiness'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -79,9 +85,53 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
     capabilityImpact,
   })
 
+  // ── The comparison, assembled from records that already exist ──
+  //
+  // The operator should never have to gather a commit, a file list and a target
+  // build id by hand — the system knows all three. Fail-soft throughout: a missing
+  // piece narrows the comparison, it never fails the page.
+  const artifact = resolveSourceArtifact({
+    updateKey: update.key,
+    sourceRepo: update.sourceRepo,
+    sourceCommit: update.sourceCommit,
+    sourceWorktreeDirty: update.sourceWorktreeDirty,
+  })
+  const evidence = await getTransferEvidence(job?.id ?? '').catch(() => null)
+  const comparison = artifact.ok
+    ? buildReleaseComparison({
+        artifact: artifact.artifact,
+        update,
+        business: { id: business.id, name: business.name },
+        changedPaths: evidence?.manifestPaths,
+        excludedPaths: evidence?.excludedPaths,
+        capabilityImpact,
+        targetEvidence: job?.targetEvidence ?? null,
+      })
+    : null
+
+  // ── The four readiness questions, answered separately ──
+  const resolved = await resolveTenantCapabilities(businessId).catch(() => null)
+
   return NextResponse.json({
     ok: true,
     state,
+    // The exact artifact, so nobody has to look one up or type one in.
+    artifact: artifact.ok
+      ? { ...artifact.artifact, display: describeSourceArtifact(artifact.artifact) }
+      : { refused: true, code: artifact.code, reason: artifact.reason },
+    comparison,
+    readiness: {
+      // Platform health is deliberately NOT included here: it is a property of a
+      // deployment, not of an update × target pair, and answering it in this
+      // response would invite exactly the conflation this work exists to remove.
+      release: preflight ? releaseCompatibility(preflight) : null,
+      capability: resolved ? capabilityReadiness(resolved.capabilities) : null,
+      provider: resolved
+        ? providerHealth(resolveAllProviderReadiness({ enabled: resolved.providers, env: process.env }))
+        : null,
+      /** False while a tenant is still on the legacy credential-inference fallback. */
+      capabilityProfileInitialized: resolved?.initialized ?? false,
+    },
     preview: job ? { url: job.previewUrl, deploymentId: job.previewDeploymentId, pullRequestUrl: job.pullRequestUrl } : null,
     // The value-free snapshot the target itself reported, so the review screen can
     // show optional-feature impact without Operion guessing.
