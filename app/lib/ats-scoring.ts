@@ -57,6 +57,12 @@ const LEVEL_WEIGHT: Record<ExperienceLevel, number> = Object.fromEntries(
 ) as Record<ExperienceLevel, number>
 
 const CATEGORY_TITLE: Record<string, string> = Object.fromEntries(ASSESSMENT.map(c => [c.key, c.title]))
+// Several category titles already END in "Experience" ("Moving Experience",
+// "Driving Experience"), so appending the word again produced admin-facing text
+// like "Strong moving experience experience". Strip it once, here, so every
+// caller composing a phrase from a category title reads correctly.
+const categoryPhrase = (key: string): string =>
+  (CATEGORY_TITLE[key] ?? key).toLowerCase().replace(/\s+experience$/, '')
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function clamp01(n: number): number { return Math.max(0, Math.min(1, n)) }
@@ -227,7 +233,7 @@ function analyze(
 
   // strengths — strong categories + standout skills
   for (const key of ['appliance', 'furniture', 'moving', 'junk', ...(meta.isDriver ? ['driving'] : [])]) {
-    if (cat[key] >= 0.7) strengths.push(`Strong ${CATEGORY_TITLE[key].toLowerCase()} experience`)
+    if (cat[key] >= 0.7) strengths.push(`Strong ${categoryPhrase(key)} experience`)
   }
   if (lvl('appliance', 'washer') === '3plus' || lvl('appliance', 'washer') === '1to3yr') strengths.push('Experienced with washer installations')
   if (meta.isDriver && (lvl('driving', 'box_truck_26') === '3plus' || lvl('driving', 'box_truck_26') === '1to3yr')) strengths.push("Experienced 26' box-truck driver")
@@ -236,8 +242,8 @@ function analyze(
 
   // weaknesses — thin categories + adjacency gaps (drives interview questions)
   for (const key of ['appliance', 'furniture', 'moving', 'junk', ...(meta.isDriver ? ['driving'] : [])]) {
-    if (cat[key] > 0 && cat[key] < 0.35) weaknesses.push(`Limited ${CATEGORY_TITLE[key].toLowerCase()} experience`)
-    if (cat[key] === 0) weaknesses.push(`No ${CATEGORY_TITLE[key].toLowerCase()} experience`)
+    if (cat[key] > 0 && cat[key] < 0.35) weaknesses.push(`Limited ${categoryPhrase(key)} experience`)
+    if (cat[key] === 0) weaknesses.push(`No ${categoryPhrase(key)} experience`)
   }
   // appliance adjacency: has appliance experience but a specific install is missing
   if (cat.appliance >= 0.3) {
