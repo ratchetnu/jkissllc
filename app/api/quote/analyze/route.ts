@@ -14,7 +14,8 @@ import { buildMovingEstimate, customerMovingEstimateView, type StoredMovingEstim
 import type { MovingJobFacts } from '../../../lib/pricing/moving-quote'
 import { isEnabled } from '../../../lib/platform/flags'
 import { interactiveBudget, INTERACTIVE_ROUTE_CEILING_MS } from '../../../lib/ai/interactive-policy'
-import { analysisFingerprint, claimAnalysis, completeAnalysis, releaseAnalysis } from '../../../lib/ai/quote-analysis-idempotency'
+import { analysisFingerprint } from '../../../lib/ai/quote-analysis-idempotency'
+import { runAnalysisLifecycle } from '../../../lib/ai/quote-analysis-lifecycle'
 
 export const runtime = 'nodejs'
 // The interactive latency budget is sized against THIS number. They are declared in
@@ -167,49 +168,50 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   // ── Don't pay twice for the same question ──────────────────────────────────
   // A vision analysis is a paid call. `ai/pre-analysis` already dedupes within one
   // browser controller, but a refresh, a second tab or an impatient double click
-  // creates a NEW controller and sails past it. The claim below is the server-side
-  // half: only the request that wins it may reach the provider.
+  // creates a NEW controller and sails past it. `runAnalysisLifecycle` is the
+  // server-side half: it decides who may spend, and the ORDER in which the shared
+  // marker moves. It lives in its own module so that order is executable in a test —
+  // inlined here it could only be grepped, and source text cannot distinguish
+  // "saves the draft before publishing" from "publishes before saving".
   const fingerprint = analysisFingerprint({ photoUrls: photos, service: serviceType, debris })
-  const claim = await claimAnalysis(fingerprint, analysisId)
+  const budget = interactiveBudget(Date.now())
+  const estate = serviceType === 'estate-cleanout' || serviceType === 'garage-cleanout' || serviceType === 'eviction'
 
-  if (claim.state === 'done') {
-    // This exact photo set already has a finished draft. Serve it — same answer, no
-    // second charge. If the draft has aged out from under the pointer we fall through
-    // and analyse again rather than hand back nothing.
-    const prior = await getDraftEstimate(claim.analysisId).catch(() => null)
-    if (prior) {
-      await recordFunnelEvent('ai_analysis_deduped', nowIso)
-      return NextResponse.json({
-        ok: true, outcome: 'analysis_complete', reused: true,
-        estimate: customerEstimateView(prior),
-        followUps: selectFollowUpQuestions({
-          serviceFamily: serviceFamily(serviceType), analysis: prior.analysis,
-          estate: serviceType === 'estate-cleanout' || serviceType === 'garage-cleanout' || serviceType === 'eviction',
-        }),
-        analyzed: { ok: prior.status !== 'failed', degraded: null },
+  const lifecycle = await runAnalysisLifecycle({ fingerprint, analysisId }, {
+    loadDraft: id => getDraftEstimate(id).catch(() => null),
+    saveDraft: saveDraftEstimate,
+    analyze: async () => {
+      const r = await buildPhotoEstimate({
+        analysisId, bookingId: 'draft', photoUrls: photos, serviceType, debris, budget,
       })
-    }
-  } else if (claim.state === 'pending') {
-    // Another request is mid-analysis on these same photos. Returning a stable
-    // `analysis_pending` is strictly better than starting a duplicate: the customer
-    // is told the answer is coming, and we do not buy the same answer twice.
+      return { stored: r.stored, analyzedOk: r.analyzedOk, degraded: r.degraded }
+    },
+  })
+
+  // A duplicate that reached a finished draft: same answer, no second charge.
+  if (lifecycle.kind === 'reused') {
     await recordFunnelEvent('ai_analysis_deduped', nowIso)
     return NextResponse.json({
-      ok: true, outcome: 'analysis_pending', analysisId: claim.analysisId,
+      ok: true, outcome: 'analysis_complete', reused: true,
+      estimate: customerEstimateView(lifecycle.stored),
+      followUps: selectFollowUpQuestions({
+        serviceFamily: serviceFamily(serviceType), analysis: lifecycle.stored.analysis, estate,
+      }),
+      analyzed: { ok: lifecycle.stored.status !== 'failed', degraded: null },
+    })
+  }
+
+  // Another request owns this question — it is mid-analysis, or repairing a stale
+  // marker. No provider call was made here, and none will be.
+  if (lifecycle.kind === 'pending') {
+    await recordFunnelEvent('ai_analysis_deduped', nowIso)
+    return NextResponse.json({
+      ok: true, outcome: 'analysis_pending', analysisId: lifecycle.analysisId,
       estimate: null, followUps: [], analyzed: { ok: false, degraded: null },
     })
   }
 
-  const budget = interactiveBudget(Date.now())
-  const { stored, analyzedOk, degraded } = await buildPhotoEstimate({
-    analysisId, bookingId: 'draft', photoUrls: photos, serviceType, debris, budget,
-  })
-
-  // A completed read becomes reusable; a failed one RELEASES the claim so the
-  // customer's own retry is allowed to try again. Caching a failure would turn one
-  // bad minute into a bad day.
-  if (analyzedOk) await completeAnalysis(fingerprint, analysisId)
-  else await releaseAnalysis(fingerprint)
+  const { stored, analyzedOk, degraded } = lifecycle
 
   await recordFunnelEvent(analyzedOk ? 'ai_analysis_completed' : 'ai_analysis_failed', nowIso)
   // A budget overrun is its own funnel outcome. Before the interactive policy this
@@ -222,8 +224,9 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     nowIso,
   )
 
-  // Persist the draft estimate so /api/quote can attach it on submit.
-  try { await saveDraftEstimate(stored) } catch (e) { console.error('[quote/analyze] save draft', e) }
+  // NOTE: the draft is persisted inside runAnalysisLifecycle, BEFORE the reusable
+  // `done` marker is published — that ordering is the fix, so it lives with the
+  // transition it protects rather than trailing the response builder down here.
 
   // Evaluation telemetry (Preview only, flag OFF by default). Records the
   // estimate-side facts the customer-safe response omits, so a benchmark can
@@ -243,7 +246,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   })
 
   // Governed follow-up question selection (server-side; the client only renders).
-  const estate = serviceType === 'estate-cleanout' || serviceType === 'garage-cleanout' || serviceType === 'eviction'
+  // `estate` is resolved once above, where the reuse branch also needs it.
   const followUps = selectFollowUpQuestions({ serviceFamily: serviceFamily(serviceType), analysis: stored.analysis, estate })
 
   // `analyzed` is the structured outcome the client needs to distinguish "the model
@@ -255,8 +258,15 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   // be distinguishable from `manual_review`: the first means we never read the
   // photos and a durable retry is owed, the second means we read them and chose a
   // human. Before this they were the same response with different numbers in it.
+  //
+  // `budget_exhausted` is reported separately from `primary_timeout`: the first means
+  // the slice was too thin to even attempt a read (no provider call was made, nothing
+  // was spent), the second means we attempted one and ran out of clock. They call for
+  // different operational responses, so they must not collapse into one code.
   const outcome = !analyzedOk
-    ? (degraded ? 'analysis_timeout' : 'analysis_failed')
+    ? (degraded === 'budget_exhausted' ? 'analysis_budget_exhausted'
+      : degraded ? 'analysis_timeout'
+        : 'analysis_failed')
     : stored.decision === 'manual_review' ? 'manual_review'
       : 'analysis_complete'
 

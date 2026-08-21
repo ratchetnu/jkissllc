@@ -84,6 +84,7 @@ async function main() {
   for (const n of [1, 2, 4, 8]) {
     const cap = analysisOutputTokenBudget(n)
     const asked = outputTokensForSlice(B.primaryMaxMs, cap)
+    if (asked == null) { console.log(`${n} | ${cap} | SKIP (slice cannot afford the minimum response)`); continue }
     const gen = Math.round((asked / TOK_PER_SEC) * 1000)
     const total = gen + B.fixedOverheadMs
     console.log(`${n} | ${cap} | ${asked} | ~${gen} | ~${total} | ${total <= B.primaryMaxMs ? 'YES' : 'no'}`)

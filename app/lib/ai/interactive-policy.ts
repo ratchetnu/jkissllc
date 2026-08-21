@@ -41,8 +41,8 @@ export type StageBudget = {
   /** Model-call attempts for this stage. Interactive is always single-shot. */
   attempts: number
   /**
-   * Output-token ceiling for this stage, or 0 for "no override" (the analyzer's own
-   * photo-count-scaled budget applies — the durable behaviour).
+   * Output-token ceiling for this stage. `undefined` ⇒ NO OVERRIDE: the analyzer's
+   * own photo-count-scaled budget applies (the durable behaviour). Never 0.
    *
    * ── WHY THIS FIELD EXISTS ────────────────────────────────────────────────────
    * junk-analysis derives its wall-clock allowance FROM its output-token budget and
@@ -58,8 +58,25 @@ export type StageBudget = {
    * single photo and 64s for eight, against a 32s slice — so an interactive analysis
    * that actually used its output allowance could never finish, and every one timed
    * out. Pinning the slice without pinning the ask is what made the failure total.
+   *
+   * ── WHY `undefined` AND NOT `0` ──────────────────────────────────────────────
+   * This field briefly used 0 for "no override" while `outputTokensForSlice`
+   * returned 0 for "cannot afford a response". Those are OPPOSITE instructions
+   * sharing one value, and the analyzer resolves a falsy override to its full
+   * photo-count-scaled budget — so a slice too thin to afford anything asked for
+   * the largest budget available, which is precisely the request this policy
+   * exists to prevent. `undefined` now means no-override and nothing else;
+   * "cannot afford" is carried by `skipProvider`.
    */
-  maxOutputTokens: number
+  maxOutputTokens?: number
+  /**
+   * True ⇒ do NOT call the provider at all for this stage.
+   *
+   * A doomed call is strictly worse than no call: it spends money, holds the
+   * customer, and returns either nothing or a truncated JSON that discards the
+   * whole read. The caller must produce its structured unpriced fallback instead.
+   */
+  skipProvider: boolean
 }
 
 export type InteractiveBudgetConfig = {
@@ -138,18 +155,22 @@ export function resolveInteractiveBudget(env: EnvLike = process.env): Interactiv
  *
  * `cap` is the analyzer's own photo-count-scaled budget. We never RAISE it (a small
  * job should not be handed a large job's allowance); we only lower it to what the
- * clock can afford. Returns 0 when even the floor cannot fit, which the caller must
- * read as "do not start this call" rather than "ask for zero tokens".
+ * clock can afford.
+ *
+ * Returns **null** — not 0 — when even the floor cannot fit. 0 was ambiguous in the
+ * worst possible direction: the analyzer reads a falsy override as "use the full
+ * photo-count-scaled budget", so "cannot afford anything" resolved to "ask for the
+ * most we ever ask for". null cannot be misread as a quantity.
  */
 export function outputTokensForSlice(
   sliceMs: number,
   cap: number,
   cfg: InteractiveBudgetConfig = resolveInteractiveBudget(),
-): number {
+): number | null {
   const generationMs = sliceMs - cfg.fixedOverheadMs
-  if (generationMs <= 0) return 0
+  if (generationMs <= 0) return null
   const affordable = Math.floor((generationMs / 1000) * cfg.outputTokensPerSec)
-  if (affordable < cfg.minOutputTokens) return 0
+  if (affordable < cfg.minOutputTokens) return null
   return Math.min(cap, affordable)
 }
 
@@ -192,23 +213,42 @@ export function interactiveBudget(startedAt: number, config?: Partial<Interactiv
     config: cfg,
     deadlineAt,
     remainingMs,
-    primary(now: number, cap = 0): StageBudget {
+    primary(now: number, cap?: number): StageBudget {
       // The primary read is the whole point of the request: give it everything
-      // available up to its cap. If even a second isn't left, 0 ⇒ skip to fallback.
+      // available up to its cap.
       const timeoutMs = Math.min(cfg.primaryMaxMs, remainingMs(now))
-      // ...and ask the model for only as much as that slice can pay for. Asking for
-      // the durable budget inside an interactive slice is what made every one of
-      // these calls time out; see the StageBudget.maxOutputTokens note.
-      return { timeoutMs, attempts: 1, maxOutputTokens: outputTokensForSlice(timeoutMs, cap, cfg) }
+
+      // No analyzer cap supplied — the moving lane, which carries its own constant
+      // output budget and never consulted this field. It keeps today's behaviour
+      // exactly: no override, and the only reason to skip is having no time at all.
+      if (cap == null) {
+        return { timeoutMs, attempts: 1, maxOutputTokens: undefined, skipProvider: timeoutMs <= 0 }
+      }
+
+      // Ask the model for only as much as this slice can pay for. Asking for the
+      // durable budget inside an interactive slice is what made every one of these
+      // calls time out; see the StageBudget.maxOutputTokens note.
+      const affordable = outputTokensForSlice(timeoutMs, cap, cfg)
+
+      // Cannot afford even the minimum honest response. Say SKIP explicitly rather
+      // than passing a falsy ceiling the analyzer would resolve back to its full
+      // budget — that resolution is what let an exhausted slice launch the largest
+      // request in the system.
+      if (affordable == null) {
+        return { timeoutMs, attempts: 1, maxOutputTokens: undefined, skipProvider: true }
+      }
+      return { timeoutMs, attempts: 1, maxOutputTokens: affordable, skipProvider: false }
     },
     critic(now: number): StageBudget {
       // The critic is a verification luxury. It runs only if a MEANINGFUL slice
       // survives the primary call — a critic that times out is pure latency for no
       // verdict. Below criticMinMs we skip it deliberately and record the skip.
       const left = Math.min(cfg.criticMaxMs, remainingMs(now))
-      // The critic keeps the analyzer's own allowance (0 = no override): it is a
-      // small verdict object, not a full read, so it was never the stage at risk.
-      return { timeoutMs: left >= cfg.criticMinMs ? left : 0, attempts: 1, maxOutputTokens: 0 }
+      const timeoutMs = left >= cfg.criticMinMs ? left : 0
+      // The critic keeps the analyzer's own allowance (undefined = no override): it
+      // returns a small verdict object, not a full read, so it was never the stage
+      // at risk of outrunning its slice.
+      return { timeoutMs, attempts: 1, maxOutputTokens: undefined, skipProvider: timeoutMs <= 0 }
     },
   }
 }
@@ -247,8 +287,8 @@ export function durableBudget(): InteractiveBudget {
     // maxOutputTokens 0 = no override, so the durable worker keeps the analyzer's
     // full photo-count-scaled budget. Its 150s deadline can afford it; the 32s
     // interactive slice never could, which is the whole point of the split.
-    primary: () => ({ timeoutMs: 0, attempts: 1, maxOutputTokens: 0 }),
-    critic: () => ({ timeoutMs: 0, attempts: 1, maxOutputTokens: 0 }),
+    primary: () => ({ timeoutMs: 0, attempts: 1, maxOutputTokens: undefined, skipProvider: false }),
+    critic: () => ({ timeoutMs: 0, attempts: 1, maxOutputTokens: undefined, skipProvider: false }),
   }
 }
 

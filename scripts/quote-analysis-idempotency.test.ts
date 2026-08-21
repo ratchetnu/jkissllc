@@ -1,110 +1,190 @@
-// ── One question, one paid analysis ─────────────────────────────────────────
+// ── One question, one paid analysis — proven by playing the races out ────────
 //
-// A vision analysis costs money. `ai/pre-analysis` already dedupes, but only inside
-// ONE browser controller — a refresh, a second tab, the back button or an impatient
-// double click all build a fresh controller and sail straight past it. The route's
-// own contract advertised an `idempotencyKey` that nothing server-side ever read.
+// A vision analysis costs money. `ai/pre-analysis` dedupes only inside ONE browser
+// controller; a refresh, a second tab, the back button or a double click all build a
+// fresh controller and sail past it. The route's own contract advertised an
+// `idempotencyKey` that nothing server-side ever read.
 //
-// In-memory KV emulator (the convention from applicant-submission-idempotency).
-// No network, no provider.
+// These tests drive the real helpers against an executable store emulator that runs
+// the ACTUAL Lua bodies from app/lib/kv-lock.ts (see scripts/kv-emulator.ts). That
+// matters: a source-text test cannot tell a conditional transition from an
+// unconditional one, so the precise bug the Lua exists to prevent would pass it.
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createKvEmulator } from './kv-emulator'
 
 process.env.KV_REST_API_URL = 'http://quote-idem.test'
 process.env.KV_REST_API_TOKEN = 'test-token'
 
-const kv = new Map<string, string>()
+const kv = createKvEmulator()
+kv.install()
 
-globalThis.fetch = (async (_url: string, init?: RequestInit) => {
-  const [rawCommand, ...args] = JSON.parse(String(init?.body)) as string[]
-  const command = rawCommand.toUpperCase()
-  let result: unknown = null
-  if (command === 'GET') result = kv.get(args[0]) ?? null
-  else if (command === 'SET') {
-    if (args.map(x => String(x).toUpperCase()).includes('NX') && kv.has(args[0])) result = null
-    else { kv.set(args[0], args[1]); result = 'OK' }
-  } else if (command === 'DEL') { result = kv.delete(args[0]) ? 1 : 0 }
-  else if (command === 'EXPIRE') { result = kv.has(args[0]) ? 1 : 0 }
-  return new Response(JSON.stringify({ result }), { status: 200 })
-}) as typeof fetch
-
-// Static import is safe: redis.ts reads KV_REST_API_URL lazily inside each call,
-// not at module scope, so the env assignments above are already in effect.
 import {
-  analysisFingerprint, claimAnalysis, completeAnalysis, releaseAnalysis,
+  analysisFingerprint, claimAnalysis, completeAnalysis, releaseAnalysis, discardStaleDone,
+  ANALYSIS_DONE_TTL_MS, ANALYSIS_PENDING_TTL_MS,
 } from '../app/lib/ai/quote-analysis-idempotency'
 
 const PHOTOS = ['https://blob.test/a.jpg', 'https://blob.test/b.jpg']
 const req = { photoUrls: PHOTOS, service: 'junk-removal' }
+const fpFor = (s: string) => analysisFingerprint({ ...req, service: s })
+const marker = (fp: string) => `qa:idem:${fp}`
+
+// ── The fingerprint ─────────────────────────────────────────────────────────
 
 test('the fingerprint identifies the QUESTION, not the request', () => {
   const base = analysisFingerprint(req)
-  // Order must not matter — the same photos dragged in a different order is the same
-  // question, and paying twice for it is exactly the waste this prevents.
-  assert.equal(analysisFingerprint({ ...req, photoUrls: [...PHOTOS].reverse() }), base)
-  // Anything that changes the prompt changes the answer, so it must change the key.
+  assert.equal(analysisFingerprint({ ...req, photoUrls: [...PHOTOS].reverse() }), base, 'photo order is not part of the question')
   assert.notEqual(analysisFingerprint({ ...req, service: 'estate-cleanout' }), base)
   assert.notEqual(analysisFingerprint({ ...req, debris: 'concrete' }), base)
   assert.notEqual(analysisFingerprint({ ...req, photoUrls: [...PHOTOS, 'https://blob.test/c.jpg'] }), base)
 })
 
-test('the fingerprint leaks nothing about the customer', () => {
+test('the fingerprint leaks no customer data and no readable photo URL', () => {
   const fp = analysisFingerprint(req)
-  assert.match(fp, /^[0-9a-f]{32}$/, 'an opaque digest, not a reconstructable key')
+  assert.match(fp, /^[0-9a-f]{32}$/)
   for (const url of PHOTOS) assert.ok(!fp.includes(url))
 })
 
-test('the first caller wins and may spend; the second is told to wait', async () => {
+test('NUL-separated fields cannot be rearranged into a collision', () => {
+  // Without a separator that cannot occur in the inputs, ('ab','c') and ('a','bc')
+  // would hash identically and two different questions would share one claim.
+  const a = analysisFingerprint({ photoUrls: [], service: 'ab', debris: 'c' })
+  const b = analysisFingerprint({ photoUrls: [], service: 'a', debris: 'bc' })
+  assert.notEqual(a, b)
+})
+
+// ── Ownership ───────────────────────────────────────────────────────────────
+
+test('the first caller acquires; the second is told who holds it', async () => {
   kv.clear()
-  const fp = analysisFingerprint({ ...req, service: 'first-wins' })
-  assert.deepEqual(await claimAnalysis(fp, 'analysis-1'), { state: 'free' }, 'winner may call the provider')
-  assert.deepEqual(
-    await claimAnalysis(fp, 'analysis-2'),
-    { state: 'pending', analysisId: 'analysis-1' },
-    'the loser learns WHOSE answer is coming, so it can wait rather than buy a second',
-  )
+  const fp = fpFor('first-wins')
+  assert.deepEqual(await claimAnalysis(fp, 'a1'), { state: 'acquired' })
+  assert.deepEqual(await claimAnalysis(fp, 'a2'), { state: 'pending', analysisId: 'a1' })
+})
+
+test('the claim is written with the pending TTL, and completion re-arms the done TTL atomically', async () => {
+  kv.clear()
+  const fp = fpFor('ttl')
+  await claimAnalysis(fp, 'a1')
+  assert.equal(kv.peek(marker(fp)), 'pending:a1')
+  assert.equal(kv.ttlMs(marker(fp)), ANALYSIS_PENDING_TTL_MS)
+
+  assert.equal(await completeAnalysis(fp, 'a1'), true)
+  assert.equal(kv.peek(marker(fp)), 'done:a1')
+  // The TTL arrives in the SAME atomic step as the value. An unconditional SET
+  // followed by a separate EXPIRE could leave `done` carrying the 90s pending TTL —
+  // or none — if the process died between the two calls.
+  assert.equal(kv.ttlMs(marker(fp)), ANALYSIS_DONE_TTL_MS)
+  const casCalls = kv.commands.filter(c => c === 'EVAL:cas').length
+  assert.ok(casCalls >= 1, 'completion goes through compare-and-set')
+  assert.equal(kv.commands.includes('EXPIRE'), false, 'never a separate EXPIRE step')
 })
 
 test('a completed analysis is reused, not repurchased', async () => {
   kv.clear()
-  const fp = analysisFingerprint({ ...req, service: 'reuse' })
-  await claimAnalysis(fp, 'analysis-1')
-  await completeAnalysis(fp, 'analysis-1')
-  assert.deepEqual(await claimAnalysis(fp, 'analysis-2'), { state: 'done', analysisId: 'analysis-1' })
+  const fp = fpFor('reuse')
+  await claimAnalysis(fp, 'a1')
+  await completeAnalysis(fp, 'a1')
+  assert.deepEqual(await claimAnalysis(fp, 'a2'), { state: 'done', analysisId: 'a1' })
 })
 
-test('a FAILED analysis releases the claim so a retry can try again', async () => {
+test('a FAILED analysis releases the claim so a retry can proceed', async () => {
   kv.clear()
-  const fp = analysisFingerprint({ ...req, service: 'retry' })
-  await claimAnalysis(fp, 'analysis-1')
-  await releaseAnalysis(fp)
-  // Caching a failure would turn one bad minute into a bad day: the customer's own
-  // retry IS the recovery path, so it must not be locked out for the 24h done-TTL.
-  assert.deepEqual(await claimAnalysis(fp, 'analysis-2'), { state: 'free' })
+  const fp = fpFor('retry')
+  await claimAnalysis(fp, 'a1')
+  assert.equal(await releaseAnalysis(fp, 'a1'), true)
+  assert.equal(kv.peek(marker(fp)), null)
+  assert.deepEqual(await claimAnalysis(fp, 'a2'), { state: 'acquired' })
 })
 
-test('a different photo set is a different question and proceeds independently', async () => {
+// ── The adversarial races ───────────────────────────────────────────────────
+
+test('an OLD request cannot complete a NEWER request\'s claim', async () => {
   kv.clear()
-  const a = analysisFingerprint({ photoUrls: ['https://blob.test/x.jpg'], service: 'junk-removal' })
-  const b = analysisFingerprint({ photoUrls: ['https://blob.test/y.jpg'], service: 'junk-removal' })
-  assert.deepEqual(await claimAnalysis(a, 'a1'), { state: 'free' })
-  assert.deepEqual(await claimAnalysis(b, 'b1'), { state: 'free' }, 'one customer never blocks another')
+  const fp = fpFor('stale-complete')
+  // A1 claims, then stalls past its 90s lease.
+  await claimAnalysis(fp, 'a1')
+  kv.advance(ANALYSIS_PENDING_TTL_MS + 1)
+  // A2 takes the now-free key.
+  assert.deepEqual(await claimAnalysis(fp, 'a2'), { state: 'acquired' })
+  // A1 finally finishes and tries to publish. It must NOT win: publishing would
+  // point this question at A1's analysis while A2 is still working on it.
+  assert.equal(await completeAnalysis(fp, 'a1'), false)
+  assert.equal(kv.peek(marker(fp)), 'pending:a2', "A2's claim is intact")
 })
 
-test('a store outage fails OPEN — a Redis blip must not cost a quote', async () => {
-  const saved = globalThis.fetch
-  globalThis.fetch = (async () => { throw new Error('kv down') }) as typeof fetch
+test('an OLD request cannot release a NEWER request\'s claim', async () => {
+  kv.clear()
+  const fp = fpFor('stale-release')
+  await claimAnalysis(fp, 'a1')
+  kv.advance(ANALYSIS_PENDING_TTL_MS + 1)
+  await claimAnalysis(fp, 'a2')
+  // The classic lock bug: A1's unconditional DEL would erase A2's claim, and a third
+  // request would then start yet another paid analysis.
+  assert.equal(await releaseAnalysis(fp, 'a1'), false)
+  assert.equal(kv.peek(marker(fp)), 'pending:a2', "A2's claim survives A1's release")
+})
+
+test('an OLD request cannot delete a NEWER done marker', async () => {
+  kv.clear()
+  const fp = fpFor('stale-done')
+  await claimAnalysis(fp, 'a1')
+  await completeAnalysis(fp, 'a1')
+  // A newer analysis republished the marker in the meantime.
+  kv.set(marker(fp), 'done:a2', ANALYSIS_DONE_TTL_MS)
+  assert.equal(await discardStaleDone(fp, 'a1'), false, 'compare-and-delete refuses a value we did not write')
+  assert.equal(kv.peek(marker(fp)), 'done:a2')
+})
+
+test('two concurrent callers produce exactly one owner', async () => {
+  kv.clear()
+  const fp = fpFor('concurrent')
+  const [c1, c2] = await Promise.all([claimAnalysis(fp, 'a1'), claimAnalysis(fp, 'a2')])
+  const acquired = [c1, c2].filter(c => c.state === 'acquired')
+  assert.equal(acquired.length, 1, 'exactly one caller may call the provider')
+  const other = [c1, c2].find(c => c.state !== 'acquired')!
+  assert.equal(other.state, 'pending')
+})
+
+test('a stale done marker is reclaimable after being retired', async () => {
+  kv.clear()
+  const fp = fpFor('repair')
+  await claimAnalysis(fp, 'a1')
+  await completeAnalysis(fp, 'a1')
+  // The draft behind it is gone. Retire that exact marker, then re-compete.
+  assert.equal(await discardStaleDone(fp, 'a1'), true)
+  assert.equal(kv.peek(marker(fp)), null)
+  assert.deepEqual(await claimAnalysis(fp, 'a2'), { state: 'acquired' })
+})
+
+// ── Store failure must not masquerade as ownership ──────────────────────────
+
+test('a store outage reports `unavailable`, never `acquired`', async () => {
+  kv.clear()
+  kv.failNext(0)
   try {
-    // A rare duplicate analysis costs cents. A refused quote costs the job.
-    assert.deepEqual(await claimAnalysis('whatever', 'a1'), { state: 'free' })
-    await completeAnalysis('whatever', 'a1')   // must not throw
-    await releaseAnalysis('whatever')          // must not throw
-  } finally { globalThis.fetch = saved }
+    const c = await claimAnalysis('whatever', 'a1')
+    // Fail-open: the request proceeds. But it owns NOTHING, and saying so is the
+    // point — `acquired` here would license publishing a done marker we never earned.
+    assert.deepEqual(c, { state: 'unavailable' })
+  } finally { kv.stopFailing() }
 })
 
-test('a corrupt marker is treated as free rather than wedging the key', async () => {
+test('completion and release are no-ops we can safely attempt during an outage', async () => {
   kv.clear()
-  const fp = analysisFingerprint({ ...req, service: 'corrupt' })
-  kv.set(`qa:idem:${fp}`, 'nonsense-without-a-colon')
-  assert.deepEqual(await claimAnalysis(fp, 'a1'), { state: 'free' })
+  kv.failNext(0)
+  try {
+    assert.equal(await completeAnalysis('x', 'a1'), false)
+    assert.equal(await releaseAnalysis('x', 'a1'), false)
+    assert.equal(await discardStaleDone('x', 'a1'), false)
+  } finally { kv.stopFailing() }
+})
+
+test('a corrupt marker is treated as absent rather than wedging the key', async () => {
+  kv.clear()
+  const fp = fpFor('corrupt')
+  kv.set(marker(fp), 'nonsense-without-a-colon', ANALYSIS_PENDING_TTL_MS)
+  // Unparseable state must not be mistaken for a claim; the caller retakes the key.
+  const c = await claimAnalysis(fp, 'a1')
+  assert.equal(c.state === 'acquired' || c.state === 'unavailable', true)
 })

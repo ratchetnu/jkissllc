@@ -51,9 +51,11 @@ test('the OLD pairing was unsatisfiable at every photo count', () => {
 test('the derived ask now fits the slice at every photo count', () => {
   for (const n of [1, 2, 4, 6, 8]) {
     const cap = analysisOutputTokenBudget(n)
-    const asked = interactiveBudget(T0).primary(T0, cap).maxOutputTokens
-    assert.ok(asked > 0, `n=${n}: a workable ask exists`)
-    const needMs = (asked / B.outputTokensPerSec) * 1000 + B.fixedOverheadMs
+    const plan = interactiveBudget(T0).primary(T0, cap)
+    assert.equal(plan.skipProvider, false, `n=${n}: a normal slice is not a skip`)
+    const asked = plan.maxOutputTokens
+    assert.ok(asked != null && asked > 0, `n=${n}: a workable ask exists`)
+    const needMs = (asked! / B.outputTokensPerSec) * 1000 + B.fixedOverheadMs
     assert.ok(needMs <= B.primaryMaxMs, `n=${n}: ~${Math.round(needMs)}ms must fit ${B.primaryMaxMs}ms`)
   }
 })
@@ -63,16 +65,18 @@ test('the ask is LOWERED to fit, never raised beyond the analyzer cap', () => {
   // could afford it — the cap is still the analyzer's to set.
   const cap = analysisOutputTokenBudget(1)
   assert.equal(outputTokensForSlice(600_000, cap), cap, 'abundant time still respects the cap')
-  assert.ok(outputTokensForSlice(B.primaryMaxMs, analysisOutputTokenBudget(8)) < analysisOutputTokenBudget(8))
+  assert.ok(outputTokensForSlice(B.primaryMaxMs, analysisOutputTokenBudget(8))! < analysisOutputTokenBudget(8))
 })
 
 test('a slice too thin for an honest answer asks for nothing rather than a truncated one', () => {
   // Truncated JSON discards the WHOLE read (the JK-B-1022 failure), so a doomed call
   // is worse than no call: it costs money and returns nothing usable.
-  assert.equal(outputTokensForSlice(B.fixedOverheadMs, 8000), 0, 'no time left after overhead')
-  assert.equal(outputTokensForSlice(B.fixedOverheadMs + 1_000, 8000), 0, 'below the honest-answer floor')
-  assert.equal(outputTokensForSlice(0, 8000), 0)
-  assert.equal(outputTokensForSlice(-5_000, 8000), 0, 'a negative slice never yields tokens')
+  // null, never 0 — 0 was read by the analyzer as "use the full budget", turning
+  // "cannot afford anything" into "ask for the most we ever ask for".
+  assert.equal(outputTokensForSlice(B.fixedOverheadMs, 8000), null, 'no time left after overhead')
+  assert.equal(outputTokensForSlice(B.fixedOverheadMs + 1_000, 8000), null, 'below the honest-answer floor')
+  assert.equal(outputTokensForSlice(0, 8000), null)
+  assert.equal(outputTokensForSlice(-5_000, 8000), null, 'a negative slice never yields tokens')
 })
 
 test('the two directions stay inverse — neither end can drift from the other', () => {
@@ -145,7 +149,7 @@ test('the interactive path pins a token ceiling alongside its timeout', async ()
   await buildPhotoEstimate({ ...input, budget: interactiveBudget(T0), now: () => T0 }, h.deps)
   const call = h.seen[0]
   assert.equal(call.timeoutMs, B.primaryMaxMs)
-  assert.ok(call.maxOutputTokens! > 0, 'a ceiling is pinned — leaving it unset is the bug')
+  assert.ok(call.maxOutputTokens != null && call.maxOutputTokens > 0, 'a ceiling is pinned — leaving it unset is the bug')
   const needMs = (call.maxOutputTokens! / B.outputTokensPerSec) * 1000 + B.fixedOverheadMs
   assert.ok(needMs <= call.timeoutMs!, 'what we ask for fits what we allow')
 })
@@ -153,7 +157,7 @@ test('the interactive path pins a token ceiling alongside its timeout', async ()
 test('the durable worker is untouched — full budget, no override', async () => {
   const h = harness()
   await buildPhotoEstimate({ ...input, budget: durableBudget(), now: () => T0 }, h.deps)
-  assert.equal(h.seen[0].maxOutputTokens, 0, '0 = no override; the analyzer keeps its scaled budget')
+  assert.equal(h.seen[0].maxOutputTokens, undefined, 'undefined = no override; the analyzer keeps its scaled budget')
   assert.equal(h.seen[0].timeoutMs, 0)
 })
 
@@ -263,4 +267,82 @@ test('a successful estimate IS valid, so the worker does not redo paid work', as
     true,
     'a real read must not be re-analysed — that would pay twice for the same answer',
   )
+})
+
+// ── 5. A slice that cannot afford a response makes ZERO provider calls ───────
+//
+// The defect: `outputTokensForSlice` returned 0 for "cannot afford", and the analyzer
+// resolves a falsy `maxOutputTokens` to its FULL photo-count-scaled budget. So the
+// thinnest possible slice asked for the largest request in the system — the exact
+// call the policy exists to prevent. `undefined` now means no-override and nothing
+// else; "cannot afford" is carried by `skipProvider`.
+
+test('an EXHAUSTED interactive budget makes no provider call and is never priced', async () => {
+  const h = harness()
+  // 60s into a 54s deadline: nothing remains.
+  const res = await buildPhotoEstimate(
+    { ...input, budget: interactiveBudget(T0), now: () => T0 + 60_000 }, h.deps,
+  )
+  assert.equal(h.seen.length, 0, 'the provider was never called')
+  assert.equal(res.analyzedOk, false)
+  assert.equal(res.degraded, 'budget_exhausted')
+  assert.equal(res.stored.pricing.priced, false)
+  assert.equal(res.stored.pricing.recommendedUsd, 0)
+  assert.equal(res.stored.inputPhotoUrls.length, input.photoUrls.length, 'the photos are preserved')
+})
+
+test('a slice BELOW the minimum-output floor makes no provider call', async () => {
+  const h = harness()
+  // Leave slightly more than the fixed overhead — enough time to "start", far too
+  // little to produce an honest response. Previously this launched the full budget.
+  const cfg = { ...B }
+  const thin = cfg.responseMarginMs + cfg.fixedOverheadMs + 1_000
+  const at = T0 + (cfg.routeCeilingMs - thin)
+  const res = await buildPhotoEstimate({ ...input, budget: interactiveBudget(T0), now: () => at }, h.deps)
+  assert.equal(h.seen.length, 0, 'a doomed call is not attempted')
+  assert.equal(res.stored.pricing.priced, false)
+})
+
+test('a NORMAL interactive slice still gets an affordable positive ceiling', async () => {
+  const h = harness()
+  await buildPhotoEstimate({ ...input, budget: interactiveBudget(T0), now: () => T0 }, h.deps)
+  assert.equal(h.seen.length, 1, 'the provider IS called on a healthy slice')
+  const asked = h.seen[0].maxOutputTokens
+  assert.ok(asked != null && asked > 0)
+})
+
+test('the skipped analysis is still INVALID, so the durable worker redoes it once', async () => {
+  const h = harness()
+  const res = await buildPhotoEstimate(
+    { ...input, budget: interactiveBudget(T0), now: () => T0 + 60_000 }, h.deps,
+  )
+  assert.equal(res.stored.status, 'failed')
+  assert.equal(
+    hasValidEstimate({ aiEstimate: res.stored as never, invoicePhotos: ctx.photoUrls.map(url => ({ url })) }),
+    false,
+    'a skipped read must not satisfy hasValidEstimate, or the durable retry never runs',
+  )
+})
+
+test('zero is never used as a token ceiling in either direction', () => {
+  // The ambiguity itself is the bug, so assert the value can never reappear.
+  const b = interactiveBudget(T0)
+  for (const at of [T0, T0 + 30_000, T0 + 60_000]) {
+    const plan = b.primary(at, analysisOutputTokenBudget(4))
+    assert.notEqual(plan.maxOutputTokens, 0, 'never 0 — that meant BOTH "no override" and "cannot afford"')
+    if (plan.skipProvider) assert.equal(plan.maxOutputTokens, undefined)
+    else assert.ok(plan.maxOutputTokens! > 0)
+  }
+  assert.equal(durableBudget().primary(T0).maxOutputTokens, undefined, 'durable = no override')
+  assert.equal(durableBudget().primary(T0).skipProvider, false, 'durable never skips')
+})
+
+test('the moving lane is unaffected: no cap supplied means no override', () => {
+  // buildMovingEstimate calls primary(now) with no cap and reads only timeoutMs and
+  // attempts. It must keep exactly today's plan.
+  const plan = interactiveBudget(T0).primary(T0)
+  assert.equal(plan.timeoutMs, B.primaryMaxMs)
+  assert.equal(plan.attempts, 1)
+  assert.equal(plan.maxOutputTokens, undefined)
+  assert.equal(plan.skipProvider, false)
 })

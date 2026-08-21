@@ -1,4 +1,5 @@
 import { analyzeJunkPhotos, analysisOutputTokenBudget } from './junk-analysis'
+import { reviewFallbackAnalysis } from './analysis-schema'
 import { monitorAnalysis, applyMonitor } from './analysis-monitor'
 import { reviewJunkAnalysis, reconcileWithCritic, criticEnabled, criticModeFor, type CriticVerdict } from './junk-critic'
 import { decideQuote, type QuoteDecisionResult } from '../pricing/quote-decision'
@@ -106,19 +107,39 @@ export async function buildPhotoEstimate(
   // the analyzer's own scaled cap so the budget can only ever lower it, never raise a
   // small job to a large job's allowance.
   const primary = budget.primary(startedAt, analysisOutputTokenBudget(input.photoUrls.length))
-  const analyzed = await timeStage('ai', () => analyze({
-    analysisId: input.analysisId, bookingId: input.bookingId, photoUrls: input.photoUrls, serviceLabel, nowIso,
-    timeoutMs: primary.timeoutMs, attempts: primary.attempts, maxOutputTokens: primary.maxOutputTokens,
-  }))
+
+  // A slice that cannot afford the minimum honest response does not get to try. The
+  // provider is never called: a doomed call spends money, holds the customer for the
+  // whole slice, and comes back either empty or truncated — and truncated JSON
+  // discards the entire read anyway. We go straight to the structured, unpriced
+  // fallback, which is the same answer the doomed call would have produced minus the
+  // wait and the bill.
+  const analyzed = primary.skipProvider
+    ? {
+      analysis: reviewFallbackAnalysis(
+        {
+          analysisId: input.analysisId, bookingId: input.bookingId, photoUrls: input.photoUrls,
+          modelProvider: 'none', modelName: 'skipped', analyzedAt: nowIso,
+        },
+        ['There was not enough time left to read your photos automatically.'],
+      ),
+      ok: false as const,
+      outcome: 'budget_exhausted',
+    }
+    : await timeStage('ai', () => analyze({
+      analysisId: input.analysisId, bookingId: input.bookingId, photoUrls: input.photoUrls, serviceLabel, nowIso,
+      timeoutMs: primary.timeoutMs, attempts: primary.attempts, maxOutputTokens: primary.maxOutputTokens,
+    }))
 
   // Did the interactive budget — rather than the provider — end this read? A timeout
   // or abort surfaces as errorClass 'network'; with a single attempt and a slice we
   // chose ourselves, that IS the budget expiring. Recorded, never a platform 504.
   const degraded: InteractiveDegradeReason | undefined = !interactive || analyzed.ok
     ? undefined
-    : analyzed.errorClass === 'network' ? 'primary_timeout'
-      : primary.timeoutMs <= 0 ? 'budget_exhausted'
-        : undefined
+    : primary.skipProvider ? 'budget_exhausted'
+      : analyzed.errorClass === 'network' ? 'primary_timeout'
+        : primary.timeoutMs <= 0 ? 'budget_exhausted'
+          : undefined
 
   // 1b)+2)+3)+1c) The deterministic pricing phase: consistency monitor, disposal
   // settings/calibration fetch, pricing decision, and an optional second-opinion critic
