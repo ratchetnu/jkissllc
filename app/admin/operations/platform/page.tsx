@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import OperationsShell from '../OperationsShell'
+import ConfirmDialog from './ConfirmDialog'
+import GuidedDeploy from './GuidedDeploy'
 import { fmtTs } from '../ui'
 import { parseRepoName } from '../../../lib/platform/automation/repo-identity'
 import { businessReadiness, businessNextStep, groupUpdates, BUCKET_ORDER } from '../../../lib/platform/updates/business-view'
@@ -26,6 +28,16 @@ const lab: React.CSSProperties = { display: 'block', fontSize: 10.5, fontWeight:
 const SEV: Record<string, string> = { high: '#f87171', med: '#fbbf24', info: '#93c5fd' }
 const CHECK_COLORS: Record<CheckStatus, string> = { passed: '#34d399', failed: '#f87171', unknown: 'var(--muted)', skipped: '#93c5fd', not_applicable: 'var(--muted)' }
 const nice = (s: string) => s.replace(/_/g, ' ')
+
+// What each job action actually does, in the dialog body. `window.confirm` could
+// only ever show one unstyled line, which is how "Cancel job" and "Reject" ended up
+// indistinguishable from each other at the moment of decision.
+const ACT_DETAIL: Record<string, string> = {
+  'request-changes': 'The preview stays available and nothing is published. The update goes back to you for edits.',
+  cancel: 'This stops the run. Nothing already published is undone, and the target is untouched.',
+  retry: 'Runs the same update against the target again. Nothing goes live.',
+  'complete-preview': 'Re-checks the target for the pull request and preview this run should have produced.',
+}
 
 async function pf(url: string, opts: RequestInit = {}) {
   const res = await fetch(url, { credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, ...opts })
@@ -105,6 +117,12 @@ function OverviewView({ data, onOpenUpdate, onOpenBusiness, onSeeded }: { data: 
           </div>
         </div>
       )}
+
+      {/* The guided path. Everything below it stays available for the work this one
+          flow deliberately does not cover — assessing compatibility, editing a
+          target, recording a deployment by hand — but the normal "ship an update to
+          Supercharged" job now has one place and one button. */}
+      {businesses.length > 0 && <GuidedDeploy businesses={businesses} updates={updates} onChanged={onSeeded} />}
 
       {/* Businesses */}
       <div style={{ ...card, marginBottom: 14 }}>
@@ -369,10 +387,21 @@ function AutomationPanel({ updateKey, businesses, requiresEnv = false, requiresM
       }
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') } finally { setBusy(false) }
   }
-  const act = async (action: string, confirmMsg?: string) => {
-    if (!job) return; if (confirmMsg && !confirm(confirmMsg)) return
+  // `window.confirm` blocked the JS thread, so the live job poller stopped dead
+  // behind it and a mis-click had no visible pending state. `pendingAct` routes the
+  // same actions through the in-app dialog: focus-managed, Escape-cancellable,
+  // errors announced, and the confirm button disabled while the request is in
+  // flight so a double-click cannot produce two transitions.
+  const [pendingAct, setPendingAct] = useState<{ action: string; title: string; body: string } | null>(null)
+  const runAct = async (action: string) => {
+    if (!job) return
     setBusy(true); setErr('')
-    try { const j = await pf(`/api/admin/platform/automation/${job.id}`, { method: 'POST', body: JSON.stringify({ action }) }); if (j.job) setJob(j.job) } catch (e) { setErr(e instanceof Error ? e.message : 'Failed') } finally { setBusy(false) }
+    try { const j = await pf(`/api/admin/platform/automation/${job.id}`, { method: 'POST', body: JSON.stringify({ action }) }); if (j.job) setJob(j.job) } catch (e) { setErr(e instanceof Error ? e.message : 'Failed'); throw e } finally { setBusy(false) }
+  }
+  const act = async (action: string, confirmMsg?: string) => {
+    if (!job) return
+    if (confirmMsg) { setPendingAct({ action, title: confirmMsg, body: ACT_DETAIL[action] ?? '' }); return }
+    await runAct(action)
   }
 
   const passCount = gates ? gates.filter(g => g.ok).length : 0
@@ -566,6 +595,17 @@ function AutomationPanel({ updateKey, businesses, requiresEnv = false, requiresM
           </details>
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!pendingAct}
+        title={pendingAct?.title ?? ''}
+        confirmLabel="Yes, do it"
+        destructive={pendingAct?.action === 'cancel'}
+        onCancel={() => setPendingAct(null)}
+        onConfirm={async () => { const a = pendingAct!; await runAct(a.action); setPendingAct(null) }}
+      >
+        {pendingAct?.body}
+      </ConfirmDialog>
     </div>
   )
 }
@@ -649,13 +689,19 @@ function BusinessDetail({ id, onChanged, onOpenUpdate }: { id: string; onChanged
   useEffect(() => { load() }, [load])
   // Save persists ALL fields (same PATCH contract + confirm + read-back + audit). Returns success.
   const save = async (): Promise<boolean> => {
-    if (!confirm('Save changes to this business?')) return false
     setBusy(true); setMsg('')
     try { await pf(`/api/admin/platform/businesses/${id}`, { method: 'PATCH', body: JSON.stringify({ fields: f }) }); setMsg('Saved.'); await load(); onChanged(); return true }
     catch (e) { setMsg(e instanceof Error ? e.message : 'Failed.'); return false }
     finally { setBusy(false) }
   }
-  const cancelEdit = async () => { if (!confirm('Discard unsaved changes?')) return; await load(); setEditBiz(false); setEditAuto(false); setMsg('') }
+  // Both confirmations moved out of window.confirm and into the in-app dialog, so
+  // the page keeps rendering behind them and the discard warning can actually say
+  // what is being discarded.
+  const [pendingSave, setPendingSave] = useState<null | ((ok: boolean) => void)>(null)
+  const [pendingDiscard, setPendingDiscard] = useState(false)
+  const confirmSave = (): Promise<boolean> => new Promise<boolean>(resolve => setPendingSave(() => resolve))
+  const cancelEdit = () => setPendingDiscard(true)
+  const discardNow = async () => { await load(); setEditBiz(false); setEditAuto(false); setMsg(''); setPendingDiscard(false) }
   const [conn, setConn] = useState<{ ok: boolean; checks: { name: string; ok: boolean; detail?: string }[] } | null>(null)
   const [connBusy, setConnBusy] = useState(false)
   const validateConn = async () => { setConnBusy(true); setConn(null); try { const j = await pf(`/api/admin/platform/automation/validate`, { method: 'POST', body: JSON.stringify({ businessId: id }) }); setConn(j); await load() } catch (e) { setConn({ ok: false, checks: [{ name: 'Request', ok: false, detail: e instanceof Error ? e.message : 'failed' }] }) } finally { setConnBusy(false) } }
@@ -812,7 +858,7 @@ function BusinessDetail({ id, onChanged, onOpenUpdate }: { id: string; onChanged
               <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>{Chk('allowAutomatedMerge', 'Allow automated merge', true)}{Chk('allowProductionPromotion', 'Allow production promotion', true)}</div>
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button style={btn('primary')} disabled={busy} onClick={async () => { if (await save()) setEditAuto(false) }}>{busy ? 'Saving…' : 'Save (confirmed + audited)'}</button>
+              <button style={btn('primary')} disabled={busy} onClick={async () => { if (await confirmSave() && await save()) setEditAuto(false) }}>{busy ? 'Saving…' : 'Save (confirmed + audited)'}</button>
               <button style={btn()} disabled={busy} onClick={cancelEdit}>Cancel</button>
             </div>
           </div>
@@ -849,7 +895,7 @@ function BusinessDetail({ id, onChanged, onOpenUpdate }: { id: string; onChanged
               <div style={{ display: 'flex', gap: 16, marginTop: 8, flexWrap: 'wrap' }}>{Chk('updatesPaused', 'Updates paused')}{Chk('manualApprovalRequired', 'Manual approval required')}</div></div>
             <div><p style={{ ...lab, marginBottom: 6 }}>Notes</p><input style={field} value={String(f.notes ?? '')} onChange={e => set('notes', e.target.value)} /></div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button style={btn('primary')} disabled={busy} onClick={async () => { if (await save()) setEditBiz(false) }}>{busy ? 'Saving…' : 'Save (confirmed + audited)'}</button>
+              <button style={btn('primary')} disabled={busy} onClick={async () => { if (await confirmSave() && await save()) setEditBiz(false) }}>{busy ? 'Saving…' : 'Save (confirmed + audited)'}</button>
               <button style={btn()} disabled={busy} onClick={cancelEdit}>Cancel</button>
             </div>
           </div>
@@ -889,6 +935,28 @@ function BusinessDetail({ id, onChanged, onOpenUpdate }: { id: string; onChanged
           </div>
         ))}
       </div>
+
+      <ConfirmDialog
+        open={!!pendingSave}
+        title={`Save changes to ${b.name}?`}
+        confirmLabel="Save"
+        onCancel={() => { pendingSave?.(false); setPendingSave(null) }}
+        onConfirm={() => { pendingSave?.(true); setPendingSave(null) }}
+      >
+        These settings control how updates reach {b.name}. The change is recorded in the audit log with your name on it.
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={pendingDiscard}
+        title="Discard your edits?"
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
+        destructive
+        onCancel={() => setPendingDiscard(false)}
+        onConfirm={discardNow}
+      >
+        The form goes back to what is saved on the server. Nothing you typed is kept.
+      </ConfirmDialog>
     </div>
   )
 }
