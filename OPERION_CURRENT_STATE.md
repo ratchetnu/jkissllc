@@ -34,14 +34,14 @@ Section 0.3 remains the detailed source for the local electronic-signature desig
 
 | Item | Verified state |
 |---|---|
-| Repository | `main` = `7f48a95`; `origin/main` = `7f48a95`; no committed branch divergence |
-| Local tree | intentionally dirty with the uncommitted contractor lifecycle/e-signature release and this documentation update; unrelated `docs/architecture/` remains untracked and out of scope |
+| Repository | Contractor release commits `9d17958` + `4be1353` on `codex/contractor-lifecycle-esign`; `main` and `origin/main` were still `7f48a95` at this reconciliation checkpoint |
+| Verified release artifact | Vercel Preview `dpl_EE2vQrhvCrWpYTb9SGt6iWpnHH5p` built commit `4be1353` successfully on Node 24.x; unrelated `docs/architecture/` is not part of the release |
 | Production | Vercel target `production`, deployment `dpl_tz9LncN78q8akFEhHZyPZVn2ugn5`, state **Ready**, created 2026-08-20 15:04 CDT |
 | Live health | `https://www.jkissllc.com/api/health` returned `status: healthy` and the same build ID at 2026-08-21T02:46:12Z |
 | Framework | Next.js 16.2.2 · React 19.2.4 · Vercel function runtime Node 24.x |
 | Current local scale | 231 API route handlers · 69 admin pages · 12 crew portal pages · 411 audited library files · 299 test files |
 | Capability registry | 41 entries: 32 `full`, 4 `partial`, 5 `planned` |
-| Current working-tree verification | 3,846/3,846 tests on Node 26 and Node 24 · TypeScript clean · 40/40 focused contractor-lifecycle tests on both Node versions · 0 lint errors / 2 unrelated warnings · diff check clean; the latest local build attempt reached compilation but could not fetch the existing Google-hosted fonts from `fonts.gstatic.com` |
+| Current working-tree verification | 3,846/3,846 tests on Node 26 and Node 24 · TypeScript clean · 40/40 focused contractor-lifecycle tests on both Node versions · Vercel Preview build passed on Node 24.x · 0 lint errors / 2 unrelated warnings · diff check clean |
 
 The live deployment is verified by build ID and Vercel target/state. The deployment inspection did
 not independently expose a trustworthy source tree hash, so this document does **not** infer exact
@@ -71,7 +71,7 @@ the evidence standard.
 | Historical contractor pay | Admins can issue prior-pay statements without recreating jobs, routes, bookings, or punches. The engine validates day/week/full-month/custom periods, integer-cent arithmetic, overlap, immutable void/reissue correction flow, exact uncapped YTD, tenant-scoped batched hydration, and crew privacy. Staff and business addresses are supported. |
 | Pay statement presentation | Statements follow the weekly Friday pay schedule; a current week is unavailable until Friday. Contractor mailing address and the admin-managed J Kiss business address appear on the statement. Earnings describe applicable weekday periods instead of exposing a bare quantity multiplication. Print/PDF output is guarded as a one-page document without the Operion menu/navigation chrome. |
 | Applicant workflow | Merged applicant hardening (`c56964c`, merged by `7f48a95`) enforces decision-level hiring, prevents managers from denying/archiving/hiring, forces hiring through Approve → Crew, serializes concurrent updates, atomically creates one application/number/index entry, binds uploads to signed tenant-scoped receipts, preserves records instead of destructive DELETE, flags duplicates, and hydrates applicant lists uncapped in one batch. |
-| Contractor lifecycle and signing | The local uncommitted release extends approved applicants into inactive pending contractors, W-9/role-document verification, agreement-version pinning, two-party electronic signing, sealed executed agreements, Crew Documents publication, portal suspension/reactivation, end/reopen rules, dispatch exclusion, and report-only retention. See §0.3 for the exact flow and controls. |
+| Contractor lifecycle and signing | Release commits `9d17958` + `4be1353` extend approved applicants into inactive pending contractors, W-9/role-document verification, agreement-version pinning, two-party electronic signing, sealed executed agreements, Crew Documents publication, portal suspension/reactivation, end/reopen rules, dispatch exclusion, and report-only retention. See §0.3 for the exact flow and controls. |
 | Print verification CI | Poppler is installed in CI so the one-page pay-statement print gate actually runs rather than existing as an unexercised local-only check. |
 
 ### Contractor lifecycle additions beyond §0.3
@@ -113,9 +113,11 @@ signing:
 
 ### Current blockers, decisions, and operational cautions
 
-1. **Contractor release is not landed.** The lifecycle, agreement publication, retention, cron
-   wiring, electronic signing, tests, and this handoff update are local and uncommitted. They are not
-   part of the verified Production deployment above.
+1. **Release artifact is verified; live status must still be checked.** The lifecycle, agreement
+   publication, retention, cron wiring, electronic signing, tests, and handoff are contained in
+   commits `9d17958` + `4be1353`. Preview `dpl_EE2vQrhvCrWpYTb9SGt6iWpnHH5p` passed on Node 24.x.
+   Treat the release as live only after `main` contains those commits and `/api/health` reports the
+   resulting Production build ID.
 2. **Agreement approved; publication still required.** On August 21, 2026, the owner approved the
    exact repository agreement for use and authorized removal of the draft-review banner. The DOCX
    and PDF are the approved v1.0 artifacts. Merely storing them under `docs/legal/` does not publish
@@ -163,10 +165,10 @@ signing:
 
 ## 0.3 RECONCILIATION — 1099 contractor onboarding and native electronic signing implemented locally (2026-08-20) — read this first
 
-The contractor lifecycle and two-party electronic-signature workflow have been implemented in the
-current **uncommitted working tree**. This section records the intended system behavior and the
-verification evidence. It does **not** mean the work has been committed, merged, deployed, or that an
-agreement template has been published in Operion.
+The contractor lifecycle and two-party electronic-signature workflow are contained in release
+commits `9d17958` + `4be1353`. This section records the intended system behavior and verification
+evidence. Commit presence alone does **not** prove that Production deployed or that an agreement
+template has been published in Operion; verify both separately.
 
 ### End-to-end contractor workflow
 
@@ -240,7 +242,7 @@ signature flow.
 | TypeScript | passed |
 | Full test suite | **3,846 / 3,846**, 0 failures on Node 26; exit 0 on Production Node 24.19.0 |
 | Focused contractor lifecycle file | **40 / 40** on Node 26 and Node 24.19.0 |
-| Production build | signing-font packaging compiles correctly; the latest local attempt is blocked only by the existing `next/font/google` fetch to `fonts.gstatic.com` |
+| Production build | passed on Vercel Preview `dpl_EE2vQrhvCrWpYTb9SGt6iWpnHH5p` using Node 24.x |
 | Diff whitespace check | clean |
 | Tenant readiness audit | still fails only on the same three pre-existing `app/api/diagnostics/*` routes; the new signing route is tenant-wrapped |
 
@@ -259,9 +261,9 @@ original PDF in the executed copy.
 - `DOC_ENCRYPTION_KEY` (or the supported `ADMIN_SESSION_SECRET` fallback) and working email delivery
   must be configured in the target environment. Sensitive upload and signing paths fail closed when
   these controls are unavailable.
-- The implementation and this documentation update remain local and uncommitted. Production is
-  unchanged until the reviewed tree is deliberately committed, merged, deployed, and the approved
-  agreement version is published by an administrator.
+- The implementation is committed in the release branch. Production changes only after the
+  reviewed tree is merged and pushed, and contractor onboarding remains blocked until an
+  administrator publishes the approved agreement version.
 
 ---
 
