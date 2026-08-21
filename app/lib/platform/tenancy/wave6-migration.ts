@@ -22,6 +22,7 @@ import { listUsers, backfillUserDirectory } from '../../users'
 import { getMembership, upsertMembership, ensureReferenceMembership } from './membership'
 import { ensureReferenceTenant } from './tenant-registry'
 import { DEFAULT_TENANT_ID } from './types'
+import { recordMigrationCompleted } from './migration-markers'
 
 export type Wave6BackfillReport = {
   directory: { scanned: number; copied: number; skipped: number }
@@ -36,7 +37,7 @@ export type Wave6BackfillReport = {
  * @param dryRun report what WOULD change without writing memberships. The directory
  *        copy is still skipped in a dry run, so a dry run is genuinely read-only.
  */
-export async function runWave6Backfill(opts: { dryRun?: boolean } = {}): Promise<Wave6BackfillReport> {
+export async function runWave6Backfill(opts: { dryRun?: boolean; actor?: string } = {}): Promise<Wave6BackfillReport> {
   const dryRun = opts.dryRun ?? false
 
   const directory = dryRun
@@ -78,11 +79,27 @@ export async function runWave6Backfill(opts: { dryRun?: boolean } = {}): Promise
     referenceTenantSeeded = true
   }
 
-  return {
+  const report: Wave6BackfillReport = {
     directory,
     memberships: { scanned: users.length, created, existing },
     ownerSeeded,
     referenceTenantSeeded,
     dryRun,
   }
+
+  // Leave evidence that this actually ran, so "has the migration been done?" is a
+  // question a program can answer. A DRY RUN records nothing — it proves nothing.
+  if (!dryRun) {
+    await recordMigrationCompleted({
+      id: 'wave6-membership-backfill',
+      completedAt: Date.now(),
+      actor: opts.actor ?? 'system',
+      counts: {
+        usersScanned: users.length, membershipsCreated: created, membershipsExisting: existing,
+        directoryScanned: directory.scanned, directoryCopied: directory.copied,
+      },
+    })
+  }
+
+  return report
 }

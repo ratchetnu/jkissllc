@@ -20,6 +20,7 @@ import { listRoutes } from '../../routes'
 import { listClientPortals } from '../../client-portal'
 import { listInvoices } from '../../route-invoices'
 import { listStatements } from '../../pay-statements'
+import { recordMigrationCompleted } from './migration-markers'
 
 export type TokenBackfillReport = {
   tenantId: string
@@ -37,7 +38,7 @@ export type TokenBackfillReport = {
  */
 export async function backfillTokenBindings(
   tenantId: string,
-  opts: { dryRun?: boolean; limit?: number } = {},
+  opts: { dryRun?: boolean; limit?: number; actor?: string } = {},
 ): Promise<TokenBackfillReport> {
   const dryRun = opts.dryRun ?? false
   const limit = opts.limit ?? 5000
@@ -101,6 +102,27 @@ export async function backfillTokenBindings(
   // completed. Binding them blindly would resurrect links for acknowledgements that
   // have already closed — the opposite of the decided lifecycle. New sends bind at
   // issue; historical ack links expire with their reminder retention.
+
+  // Evidence that the run happened, for the GA readiness projection. A DRY RUN
+  // records nothing. Unresolved CONFLICTS are carried into the marker so it can
+  // never read as a clean completion — an ambiguous token is an operator decision,
+  // and a marker that hid it would be the readiness lie this exists to prevent.
+  if (!dryRun) {
+    await recordMigrationCompleted({
+      id: 'public-token-binding-backfill',
+      tenantId,
+      completedAt: Date.now(),
+      actor: opts.actor ?? 'system',
+      counts: {
+        ...report.scanned,
+        bound: report.bound, alreadyBound: report.alreadyBound,
+        skippedInvalid: report.skippedInvalid, conflicts: report.conflicts.length,
+      },
+      unresolved: report.conflicts.length
+        ? [`${report.conflicts.length} token(s) are bound to a different tenant and need an operator decision`]
+        : undefined,
+    })
+  }
 
   return report
 }

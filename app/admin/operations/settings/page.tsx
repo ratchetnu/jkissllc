@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { MessageSquare, Mail, Star, Briefcase, CalendarCheck, Trash2, ScrollText, BarChart3, CalendarDays, LogOut, Check, ClipboardList, DollarSign, FileText, Wallet, EyeOff, ShieldCheck, Sparkles, MapPin } from 'lucide-react'
 import OperationsShell from '../OperationsShell'
+import CapabilitiesPanel from './CapabilitiesPanel'
 import { osField as field, AccessDenied, DataError } from '../ui'
 import { accessStateForStatus, type LoadState } from '../../../lib/access-state'
 
@@ -306,6 +307,8 @@ function Settings() {
           ))}
         </div>
       </div>
+
+      <CapabilitiesPanel />
 
       {/* Account */}
       <div className="os-card os-rise" style={{ padding: 22 }}>

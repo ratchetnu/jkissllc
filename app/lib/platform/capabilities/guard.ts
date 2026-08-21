@@ -132,6 +132,30 @@ export function capabilityErrorBody(err: CapabilityUnavailableError): {
   }
 }
 
+/**
+ * The entry points that ACTUALLY route through this module, named by file so the
+ * claim is checkable rather than aspirational. The GA readiness projection reports
+ * this list, and a test asserts every entry really calls a guard — otherwise
+ * "server-side enforcement" is a sentence in a document, which is the failure mode
+ * this whole line of work exists to close.
+ *
+ * Deliberately NOT here, and why:
+ *   • app/api/webhooks/stripe — a checkout confirmation reconciles a charge the
+ *     customer has already paid. Dropping it loses the record, not the money.
+ *   • app/lib/stripe.ts getStripe() — the webhook and the success-return path
+ *     legitimately need a client to verify work that already happened.
+ */
+export const GUARDED_ENTRY_POINTS = [
+  'app/lib/sms.ts',                          // sendSmsDetailed — every outbound text
+  'app/lib/booking-emails.ts',               // send() — every transactional email
+  'app/lib/stripe.ts',                       // requireCardPayments — starting a charge
+  'app/api/booking/[token]/pay/route.ts',    // customer card checkout
+  'app/api/invoice/[token]/route.ts',        // invoice card checkout
+  'app/api/book/route.ts',                   // intake checkout hand-off
+  'app/api/webhooks/twilio/sms/route.ts',    // inbound SMS disposition
+  'app/api/webhooks/email/route.ts',         // inbound email disposition
+] as const
+
 // ── Webhook policy for an intentionally disabled capability ──────────────────
 //
 // A provider that receives a 5xx retries — for hours, with backoff. That is

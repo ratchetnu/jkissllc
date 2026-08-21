@@ -160,8 +160,12 @@ export async function emailCustomerMessage(b: Booking, text: string): Promise<bo
   }
 }
 
-export async function emailConfirmationLink(b: Booking): Promise<void> {
-  if (!b.customerEmail) return
+// Returns the provider result rather than swallowing it. The caller needs to know
+// whether the link ACTUALLY went out: with email delivery switched off (or Resend
+// unconfigured) this now reports a failure instead of a silent success, which is
+// what lets the admin fall back to handing the link over manually.
+export async function emailConfirmationLink(b: Booking): Promise<EmailResult> {
+  if (!b.customerEmail) return { ok: false, error: 'no customer email on file' }
   const link = bookingLink(b.token)
   const body = `
     <p style="font-size:15px;line-height:1.6">Hi ${esc(b.customerName)}, your ${esc(SERVICE_LABELS[b.serviceType])} with ${COMPANY.legalName} is almost confirmed.</p>
@@ -171,7 +175,7 @@ export async function emailConfirmationLink(b: Booking): Promise<void> {
     </p>
     <p style="font-size:13px;color:#888">Booking ${esc(b.bookingNumber)}${b.invoiceNumber ? ` · Invoice ${esc(b.invoiceNumber)}` : ''}</p>
     ${moneyBlock(b)}`
-  await send({ to: [b.customerEmail], subject: `Confirm your ${COMPANY.legalName} booking — ${b.bookingNumber}`, html: shell("You're almost booked", body) })
+  return send({ to: [b.customerEmail], subject: `Confirm your ${COMPANY.legalName} booking — ${b.bookingNumber}`, html: shell("You're almost booked", body) })
 }
 
 export async function emailTimeVerifiedCustomer(b: Booking): Promise<void> {
