@@ -6,6 +6,7 @@ import { getBookingByToken } from '../../../lib/bookings'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
 import { activeTenantIdsFromRegistry } from '../../../lib/platform/tenancy/tenant-registry'
 import { alert } from '../../../lib/alerts'
+import { checkCapability } from '../../../lib/platform/capabilities/guard'
 import type { DueRunTelemetry } from '../../../lib/ai-due-index'
 import { runWithTrace, timeStage, markTraceOutcome, NOTIFY_FEATURE } from '../../../lib/observability/pipeline-trace'
 
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest) {
   // Per-tenant fan-out: each tenant is processed independently inside its own
   // explicit tenant context, so one tenant's failure can neither contaminate nor
   // execute under another. Results are counts only (no booking tokens).
-  const tenants: { tenant: string; processed: number; final: number; error?: string; estimatedRedisRequests?: number; fullScanPerformed?: boolean }[] = []
+  const tenants: { tenant: string; processed: number; final: number; error?: string; skipped?: string; estimatedRedisRequests?: number; fullScanPerformed?: boolean }[] = []
   let processed = 0
   let finalProcessed = 0
   let tenantIds: string[]
@@ -58,8 +59,24 @@ export async function GET(req: NextRequest) {
   for (const tenantId of tenantIds) {
     let summary: { processed: number; results: { token: string; status: string }[]; telemetry: DueRunTelemetry } = { processed: 0, results: [], telemetry: { lane: 'both' as const, source: 'index' as const, selectedFromIndex: 0, dueProcessed: 0, staleRetired: 0, missingRetired: 0, indexReadFailed: false, estimatedRedisRequests: 0, fullScanPerformed: false } }
     let finalSummary: { processed: number; results: { token: string; status: string }[]; telemetry: DueRunTelemetry } = { processed: 0, results: [], telemetry: { lane: 'both' as const, source: 'index' as const, selectedFromIndex: 0, dueProcessed: 0, staleRetired: 0, missingRetired: 0, indexReadFailed: false, estimatedRedisRequests: 0, fullScanPerformed: false } }
+    let skipped: string | undefined
     try {
       await withBackgroundTenant('cron', async () => {
+    // ── Do not spend this tenant's money on a capability it does not run ──
+    //
+    // Every job below makes REAL, BILLED vision calls. The per-call guards inside
+    // the AI layer would refuse them, but by then the worker has already selected
+    // the jobs, opened the trace and started the attempt — and a refused attempt
+    // still burns a retry. Checking once, here, is the difference between "we did
+    // not charge them" and "we tried to charge them and failed".
+    //
+    // The tenant is the one this iteration established; a decision made for one
+    // tenant can never leak into the next, because each runs in its own scope.
+    const photoEstimates = await checkCapability('photo-estimation')
+    if (photoEstimates.state !== 'ready') {
+      skipped = photoEstimates.code
+      return
+    }
     try {
       summary = await runDueAiJobs(10)
       // Owner alerts on terminal outcomes (ready / manual review / failed). Fail-soft:
@@ -89,6 +106,13 @@ export async function GET(req: NextRequest) {
       }
     } catch (e) { console.error('[cron/ai-jobs] final run', e); await alert({ type: 'cron_job_failed', severity: 'CRITICAL', route: '/api/cron/ai-jobs', worker: 'runDueFinalAiJobs', errorClass: e instanceof Error ? e.name : 'unknown' }) }
       }, tenantId)
+      if (skipped) {
+        // Not an error, and not silent: a tenant that does not run photo estimates
+        // should be visibly absent from the work, not invisibly absent.
+        console.log('[cron/ai-jobs] skipped', JSON.stringify({ tenant: tenantId, reason: skipped }))
+        tenants.push({ tenant: tenantId, processed: 0, final: 0, error: undefined, skipped })
+        continue
+      }
       processed += summary.processed
       finalProcessed += finalSummary.processed
 

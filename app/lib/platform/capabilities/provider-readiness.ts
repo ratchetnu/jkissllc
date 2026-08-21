@@ -31,8 +31,14 @@ import type { CapabilityId, ProviderId } from './types'
 
 export type { ProviderId }
 import { twilioConfigured } from '../../sms-config'
+// Dependency-free by design — importing ../../ai would pull the AI SDK into every
+// bundle that merely wants to know whether a capability is switched on.
+import { resolveAiProvider, providerCredentialPresent, credentialKeysFor } from '../../ai/provider-config'
 
 export type ProviderReadinessState = 'disabled' | 'setup_required' | 'ready' | 'degraded'
+
+/** Display labels for the AI transports, so no environment value is echoed back. */
+const AI_TRANSPORT_LABEL = { anthropic: 'Anthropic API', gateway: 'Vercel AI Gateway' } as const
 
 /** Stable, non-secret codes. Safe to return to a client and to store as evidence. */
 export const READINESS_CODES = {
@@ -109,6 +115,28 @@ export const PROVIDER_SPECS: Record<ProviderId, ProviderSpec> = {
     configured: (env) => present(env.RESEND_API_KEY),
     missing: (env) => (present(env.RESEND_API_KEY) ? [] : ['RESEND_API_KEY']),
     notes: () => [],
+  },
+  ai: {
+    id: 'ai',
+    capability: 'photo-estimation',
+    label: 'AI vision (photo estimates)',
+    // Whichever transport AI_PROVIDER selects. Both are listed because either can
+    // legitimately be the configured one, and telling an owner to set the key for a
+    // transport they are not using is worse than telling them nothing.
+    requiredVars: ['AI_PROVIDER', 'ANTHROPIC_API_KEY', 'AI_GATEWAY_API_KEY'],
+    // The SAME predicate the AI layer resolves by, so readiness cannot claim a
+    // transport is usable that the caller would then find unusable.
+    configured: (env) => providerCredentialPresent(env),
+    missing: (env) => (providerCredentialPresent(env) ? [] : credentialKeysFor(resolveAiProvider(env))),
+    // A LABEL, not the raw env value. `AI_PROVIDER` is a mode selector rather than a
+    // credential, but echoing any environment value back through a surface that also
+    // reaches deployment evidence is a habit worth not having: the rule is that
+    // nothing read from the environment is ever reflected, and a rule with an
+    // exception is a rule nobody can check.
+    notes: (env) =>
+      providerCredentialPresent(env)
+        ? [`active transport: ${AI_TRANSPORT_LABEL[resolveAiProvider(env)]} — credential presence only; reachability and credit are proven by real calls`]
+        : [],
   },
 }
 

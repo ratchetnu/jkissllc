@@ -114,8 +114,13 @@ export async function notifyJobCompleted(b: Booking): Promise<Channels> {
 
 export async function notifyBookingReminder(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
-  if (hasEmail(b)) { await emailBookingReminderCustomer(b); out.email = true }
-  if (hasSms(b)) {
+  // The provider RESULT decides, not the presence of an address. `hasEmail` only ever
+  // meant "there is an address and a key", so a send that was refused or failed still
+  // reported success — and the daily cron then stamped its one-shot marker, silently
+  // consuming a reminder the customer never received. With email and SMS now optional
+  // per business, that would have burned every reminder for every booking.
+  if (b.customerEmail) out.email = (await emailBookingReminderCustomer(b)).ok
+  if (toE164(b.customerPhone)) {
     const msg = `${COMPANY.legalName}: Hi ${b.customerName}, don't forget to confirm your booking (${b.bookingNumber}) — verify your date & window here: ${bookingLink(b.token)} Reply STOP to opt out.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
@@ -124,8 +129,13 @@ export async function notifyBookingReminder(b: Booking): Promise<Channels> {
 
 export async function notifyPaymentReminder(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
-  if (hasEmail(b)) { await emailPaymentReminderCustomer(b); out.email = true }
-  if (hasSms(b)) {
+  // The provider RESULT decides, not the presence of an address. `hasEmail` only ever
+  // meant "there is an address and a key", so a send that was refused or failed still
+  // reported success — and the daily cron then stamped its one-shot marker, silently
+  // consuming a reminder the customer never received. With email and SMS now optional
+  // per business, that would have burned every reminder for every booking.
+  if (b.customerEmail) out.email = (await emailPaymentReminderCustomer(b)).ok
+  if (toE164(b.customerPhone)) {
     const msg = `${COMPANY.legalName}: Reminder — a balance of ${fmtUSD(balanceDueCents(b))} is due on ${b.bookingNumber}. Pay or pay fee-free by Zelle (${COMPANY.zelle}): ${bookingLink(b.token)} Reply STOP to opt out.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
@@ -134,8 +144,13 @@ export async function notifyPaymentReminder(b: Booking): Promise<Channels> {
 
 export async function notifyJobTomorrow(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
-  if (hasEmail(b)) { await emailJobTomorrowCustomer(b); out.email = true }
-  if (hasSms(b)) {
+  // The provider RESULT decides, not the presence of an address. `hasEmail` only ever
+  // meant "there is an address and a key", so a send that was refused or failed still
+  // reported success — and the daily cron then stamped its one-shot marker, silently
+  // consuming a reminder the customer never received. With email and SMS now optional
+  // per business, that would have burned every reminder for every booking.
+  if (b.customerEmail) out.email = (await emailJobTomorrowCustomer(b)).ok
+  if (toE164(b.customerPhone)) {
     const msg = `${COMPANY.legalName}: Reminder — your ${SERVICE_LABELS[b.serviceType]} (${b.bookingNumber}) is tomorrow${b.selectedWindow ? `, ${b.selectedWindow}` : ''}. Please ensure clear access. Questions? ${COMPANY.phoneDisplay}.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
@@ -144,8 +159,13 @@ export async function notifyJobTomorrow(b: Booking): Promise<Channels> {
 
 export async function notifyReviewRequest(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
-  if (hasEmail(b)) { await emailReviewRequestCustomer(b); out.email = true }
-  if (hasSms(b)) {
+  // The provider RESULT decides, not the presence of an address. `hasEmail` only ever
+  // meant "there is an address and a key", so a send that was refused or failed still
+  // reported success — and the daily cron then stamped its one-shot marker, silently
+  // consuming a reminder the customer never received. With email and SMS now optional
+  // per business, that would have burned every reminder for every booking.
+  if (b.customerEmail) out.email = (await emailReviewRequestCustomer(b)).ok
+  if (toE164(b.customerPhone)) {
     const msg = `${COMPANY.legalName}: Thanks again, ${b.customerName}! How did we do? Leave a quick review here: ${receiptLink(b.token)}#review Reply STOP to opt out.`
     out.sms = await sendSms(b.customerPhone, msg)
   }

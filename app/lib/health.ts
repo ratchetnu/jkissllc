@@ -102,7 +102,7 @@ export function applyObservedAiOutcome(
  * the historical behavior exactly for any caller that does not pass it.
  */
 export type ProviderEnablement = Record<ProviderId, boolean>
-const ALL_ENABLED: ProviderEnablement = { stripe: true, twilio: true, resend: true }
+const ALL_ENABLED: ProviderEnablement = { stripe: true, twilio: true, resend: true, ai: true }
 
 export type ConfigCheckOptions = {
   providers?: ProviderEnablement

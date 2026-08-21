@@ -39,6 +39,15 @@ export type Tenant = {
     emailFromAddress?: string
   }
   industryPackId?: string
+  /**
+   * Subscription plan, when plans are being enforced for this tenant.
+   *
+   * ABSENT MEANS NOT ENFORCED, deliberately — a tenant that predates plans is not on
+   * the cheapest tier, it is on no tier, and treating "unknown" as "free" would have
+   * silently removed working features from every existing business the day the field
+   * shipped. Enforcement begins only once a plan is actually recorded here.
+   */
+  plan?: 'free' | 'starter' | 'pro'
   status: TenantStatus
   createdAt: number
 }

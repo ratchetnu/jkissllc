@@ -79,15 +79,15 @@ function cap(c: CapInput): Capability {
 
 const LIST: Capability[] = [
   // ── Identity & tenancy ──
-  cap({ tenantConfigurable: false, id: 'identity', displayName: 'Identity', description: 'Authentication and user identity.', domain: 'Identity & Tenancy', status: 'full', kind: 'core', supportedRoles: ['admin', 'manager', 'crew'] }),
+  cap({ tenantConfigurable: false, mandatoryReason: 'Signing in is how anyone reaches anything. Without it there is no admin, no crew portal and no way to grant or check access.', id: 'identity', displayName: 'Identity', description: 'Authentication and user identity.', domain: 'Identity & Tenancy', status: 'full', kind: 'core', supportedRoles: ['admin', 'manager', 'crew'] }),
   cap({ id: 'organizations', displayName: 'Organizations', description: 'Tenant/organization records.', domain: 'Identity & Tenancy', status: 'planned', kind: 'core', dependencies: ['identity'], requiredFlags: ['TENANCY_ENABLED'], defaultSelection: 'disabled' }),
   cap({ id: 'memberships', displayName: 'Memberships', description: 'User↔tenant↔role association.', domain: 'Identity & Tenancy', status: 'planned', kind: 'core', dependencies: ['identity', 'organizations', 'roles'], requiredFlags: ['TENANCY_ENABLED'], defaultSelection: 'disabled' }),
-  cap({ tenantConfigurable: false, id: 'roles', displayName: 'Roles', description: 'Role definitions (admin/manager/crew).', domain: 'Identity & Tenancy', status: 'full', kind: 'core', dependencies: ['identity'] }),
+  cap({ tenantConfigurable: false, mandatoryReason: 'Roles are how the platform decides who may do what. Removing them would not open the system up, it would leave every check without an answer.', id: 'roles', displayName: 'Roles', description: 'Role definitions (admin/manager/crew).', domain: 'Identity & Tenancy', status: 'full', kind: 'core', dependencies: ['identity'] }),
   // Wave D/E: enforcement was already full (the can() chokepoint); this adds the read-only
   // matrix VIEWER (/admin/operations/permissions, permissions:view) sourced from the SAME
   // rbac primitive so it can't drift, and role-assignment activity is now audited. The
   // matrix stays static/in-code — deliberately NOT tenant-configurable.
-  cap({ tenantConfigurable: false, id: 'permissions', displayName: 'Permissions', description: 'RBAC permission matrix + read-only viewer.', domain: 'Identity & Tenancy', status: 'full', kind: 'core', dependencies: ['roles', 'audit-logs'], requiredPermissions: ['roles:manage', 'permissions:view'] }),
+  cap({ tenantConfigurable: false, mandatoryReason: 'The permission matrix is the same check every route runs. It is defined in code, deliberately, so it cannot be edited into a state that grants more than intended.', id: 'permissions', displayName: 'Permissions', description: 'RBAC permission matrix + read-only viewer.', domain: 'Identity & Tenancy', status: 'full', kind: 'core', dependencies: ['roles', 'audit-logs'], requiredPermissions: ['roles:manage', 'permissions:view'] }),
 
   // ── CRM ──
   cap({ id: 'customers', displayName: 'Customers', description: 'First-class customer records.', domain: 'CRM', status: 'planned', kind: 'core', dependencies: ['identity'], defaultSelection: 'disabled' }),
@@ -99,11 +99,34 @@ const LIST: Capability[] = [
   cap({ id: 'leads', displayName: 'Leads', description: 'Lead intake and pipeline.', domain: 'CRM', status: 'partial', kind: 'core', dependencies: ['identity', 'bookings'] }),
 
   // ── Sales & pricing ──
+  // Paid, external vision calls — deliberately distinct from `ai-intelligence`,
+  // which is the governed runAiTask chokepoint. A tenant can want the governance and
+  // decline the spend.
+  cap({
+    id: 'photo-estimation', displayName: 'Photo estimates', description: 'Read customer photos to produce an instant estimate.',
+    domain: 'AI', status: 'full', kind: 'optional', provider: 'ai', dependencies: ['bookings', 'pricing', 'ai-intelligence'], defaultSelection: 'disabled',
+    disabledConsequence: 'Photos are still collected and stored, but no automatic estimate is produced and no AI charges are incurred. Quotes are priced by a person instead.',
+  }),
   cap({ id: 'quotes', displayName: 'Quotes', description: 'Estimates and quote lifecycle.', domain: 'Sales', status: 'partial', kind: 'core', dependencies: ['pricing', 'bookings', 'ai-intelligence'], aiActions: [{ id: 'quote.draft', level: 2 }] }),
   cap({ id: 'pricing', displayName: 'Pricing', description: 'Dynamic pricing + calibration.', domain: 'Pricing', status: 'full', kind: 'core', aiActions: [{ id: 'price.estimate', level: 0 }] }),
 
   // ── Jobs & scheduling ──
-  cap({ id: 'bookings', displayName: 'Bookings', description: 'Retail booking lifecycle.', domain: 'Sales/Booking', status: 'full', kind: 'core', dependencies: ['pricing'] }),
+  // The booking RECORD. Core and not switchable: scheduling, invoicing, dispatch,
+  // time tracking and pay all resolve through it, so a profile that turned it off
+  // would not be a product configuration, it would be a broken deployment.
+  cap({
+    tenantConfigurable: false, id: 'bookings', displayName: 'Bookings', description: 'The booking record itself.',
+    domain: 'Sales/Booking', status: 'full', kind: 'core', dependencies: ['pricing'],
+    mandatoryReason: 'Scheduling, invoicing, dispatch, time tracking and pay are all built on the booking record. It cannot be switched off; the public booking form can (see “Online booking”).',
+  }),
+  // …and the public self-service intake that CREATES one. Separate on purpose: a
+  // business that only takes contract/dispatch work can decline the retail form
+  // without losing the record model everything else depends on.
+  cap({
+    id: 'booking-intake', displayName: 'Online booking', description: 'The public Book Now form customers use to book themselves.',
+    domain: 'Sales/Booking', status: 'full', kind: 'optional', dependencies: ['bookings', 'pricing'], defaultSelection: 'enabled',
+    disabledConsequence: 'Customers cannot book themselves online. Staff can still create bookings in the admin, and every existing booking is untouched.',
+  }),
   cap({ id: 'jobs', displayName: 'Jobs', description: 'Unified job concept (target).', domain: 'Jobs', status: 'partial', kind: 'core', dependencies: ['bookings', 'routes', 'workforce', 'equipment'] }),
   cap({ id: 'routes', displayName: 'Routes', description: 'Contractor dispatch operations.', domain: 'Dispatch/Routes', status: 'full', kind: 'core', requiredPermissions: ['routes:manage'] }),
   cap({ id: 'scheduling', displayName: 'Scheduling', description: 'Capacity, blackout, availability calendar.', domain: 'Scheduling', status: 'full', kind: 'core', dependencies: ['bookings'] }),
@@ -122,26 +145,31 @@ const LIST: Capability[] = [
   // NO geocoding — missing coords → 'expected_unavailable', never a false positive), an
   // explicit accuracy policy, a tenant-safe compliance API/UI (routes:view), and a shared
   // ClockStrip badge. GPS is operational evidence, not proof of misconduct or a payroll input.
-  cap({ id: 'gps-verification', displayName: 'GPS Verification', description: 'On-site geofence verification of clock events.', domain: 'Compliance', status: 'full', kind: 'optional', dependencies: ['time-tracking', 'routes'], requiredPermissions: ['routes:view'], supportedRoles: ['admin', 'manager', 'crew'] }),
-  cap({ id: 'compliance-photos', displayName: 'Compliance Photos', description: 'Uniform + completion evidence.', domain: 'Compliance', status: 'full', kind: 'optional', dependencies: ['workforce'], supportedRoles: ['admin', 'manager', 'crew'] }),
+  cap({ disabledConsequence: 'Clock-ins are still recorded, but they are no longer checked against the job’s location, so there is no on-site evidence to review.', id: 'gps-verification', displayName: 'GPS Verification', description: 'On-site geofence verification of clock events.', domain: 'Compliance', status: 'full', kind: 'optional', dependencies: ['time-tracking', 'routes'], requiredPermissions: ['routes:view'], supportedRoles: ['admin', 'manager', 'crew'] }),
+  cap({ disabledConsequence: 'Crew are no longer asked for uniform or completion photos, and those checks disappear from the review screens. Photos already collected are kept.', id: 'compliance-photos', displayName: 'Compliance Photos', description: 'Uniform + completion evidence.', domain: 'Compliance', status: 'full', kind: 'optional', dependencies: ['workforce'], supportedRoles: ['admin', 'manager', 'crew'] }),
   // Deterministic score built from confirm / decline / no-show / completion history —
   // an internal DISPATCH SIGNAL, never shown to the crew member it describes, which is
   // why supportedRoles omits 'crew' even though workforce includes it.
   // lib/crew-score.ts (pure: buildCrewScore) · surfaced on /admin/operations/employees.
-  cap({ id: 'crew-reliability', displayName: 'Crew Reliability', description: 'Internal dispatch score from confirm/decline/no-show/completion history.', domain: 'Workforce', status: 'full', kind: 'optional', dependencies: ['workforce', 'routes'], requiredPermissions: ['crew:view'] }),
+  cap({ disabledConsequence: 'The internal dispatch score is no longer calculated or shown, so assignment decisions rely on judgement alone. Confirm, decline and no-show history is still recorded.', id: 'crew-reliability', displayName: 'Crew Reliability', description: 'Internal dispatch score from confirm/decline/no-show/completion history.', domain: 'Workforce', status: 'full', kind: 'optional', dependencies: ['workforce', 'routes'], requiredPermissions: ['crew:view'] }),
   // Careers portal → scored application → gated on required documents → approved hire
   // becomes a crew member. lib/applicants.ts + ats-scoring.ts + ats-config.ts ·
   // /careers (public) + /api/careers · admin review under applicants:review/:decide.
-  cap({ id: 'hiring', displayName: 'Hiring & Onboarding', description: 'Careers portal, applicant scoring, document-gated onboarding into the crew roster.', domain: 'Workforce', status: 'full', kind: 'optional', dependencies: ['workforce', 'documents'], requiredPermissions: ['applicants:review', 'applicants:decide'] }),
+  cap({
+    id: 'hiring', displayName: 'Careers and onboarding', description: 'Public careers page, applicant scoring, and document-gated onboarding into the crew roster.',
+    domain: 'Workforce', status: 'full', kind: 'optional', defaultSelection: 'enabled',
+    dependencies: ['workforce', 'documents'], requiredPermissions: ['applicants:review', 'applicants:decide'],
+    disabledConsequence: 'The public careers page stops accepting applications. Applicants already in the pipeline are kept and can still be reviewed and hired.',
+  }),
 
   // ── Equipment / fleet ──
-  cap({ id: 'equipment', displayName: 'Equipment', description: 'Equipment inventory.', domain: 'Equipment', status: 'full', kind: 'optional', requiredPermissions: ['equipment:manage'] }),
+  cap({ disabledConsequence: 'Equipment is no longer tracked or assigned to jobs, and conflict checks stop. Existing equipment records are kept.', id: 'equipment', displayName: 'Equipment', description: 'Equipment inventory.', domain: 'Equipment', status: 'full', kind: 'optional', requiredPermissions: ['equipment:manage'] }),
   // Wave H: additive maintenance model on Equipment + deterministic status engine +
   // authorized maintenance API/UI + route equipmentId assignment (out-of-service refused)
   // + a REAL narrow maintenance.flag executor (internal flags only, idempotent, tenant-
   // scoped, no external send — deliberately NOT a general workflow engine, so `automations`
   // stays partial).
-  cap({ id: 'fleet', displayName: 'Fleet', description: 'Vehicle/asset assignment + maintenance.', domain: 'Equipment', status: 'full', kind: 'industry-specific', dependencies: ['equipment', 'routes'], requiredPermissions: ['equipment:assign', 'equipment:view', 'fleet:maintenance'], aiActions: [{ id: 'maintenance.flag', level: 1 }] }),
+  cap({ disabledConsequence: 'Vehicles are no longer assigned to routes and maintenance status stops being tracked. Existing vehicle and maintenance records are kept.', id: 'fleet', displayName: 'Fleet', description: 'Vehicle/asset assignment + maintenance.', domain: 'Equipment', status: 'full', kind: 'industry-specific', dependencies: ['equipment', 'routes'], requiredPermissions: ['equipment:assign', 'equipment:view', 'fleet:maintenance'], aiActions: [{ id: 'maintenance.flag', level: 1 }] }),
 
   // ── Comms ──
   //
@@ -156,15 +184,27 @@ const LIST: Capability[] = [
 
   // ── Optional external provider adapters ──
   //
-  // `defaultSelection: 'auto'` = "in use if, and only if, this deployment carries the
-  // credentials, until the owner says otherwise". That is exactly today's effective
-  // behavior (an unconfigured provider already no-ops), so J KISS — which has all
-  // three — is unchanged, while a credential-free target reports a HEALTHY "not
-  // enabled" instead of a permanently degraded "unconfigured". An explicit owner
-  // choice always wins, so deliberately enabling one without credentials still shows
-  // up as setup-required.
-  cap({ id: 'sms-delivery', displayName: 'SMS Delivery', description: 'Outbound + inbound SMS via Twilio.', domain: 'Comms', status: 'full', kind: 'optional', provider: 'twilio', dependencies: ['messaging'], defaultSelection: 'auto', requiredPermissions: ['messages:send'], supportedRoles: ['admin', 'manager', 'crew'] }),
-  cap({ id: 'email-delivery', displayName: 'Email Delivery', description: 'Transactional email via Resend.', domain: 'Comms', status: 'full', kind: 'optional', provider: 'resend', dependencies: ['notifications'], defaultSelection: 'auto' }),
+  // Every one defaults to DISABLED. A tenant that has expressed no preference must
+  // never find itself spending money, texting customers or emailing them because a
+  // variable happened to be present in the environment — the presence of a key is
+  // evidence that somebody once configured something, not that this business wants
+  // the feature on.
+  //
+  // Existing tenants keep their behavior through the explicit, idempotent backfill in
+  // capabilities/capability-backfill.ts, which records today's effective state as a
+  // real choice. Until that runs for a tenant, an uninitialized profile falls back to
+  // legacy compatibility and says so.
+  cap({
+    id: 'sms-delivery', displayName: 'Text messages', description: 'Send and receive customer and crew text messages (Twilio).',
+    domain: 'Comms', status: 'full', kind: 'optional', provider: 'twilio', dependencies: ['messaging'], defaultSelection: 'disabled',
+    disabledConsequence: 'No text messages are sent or received. Reminders, confirmations and crew notices still exist as records, and links are handed over from the admin or the portal instead.',
+    requiredPermissions: ['messages:send'], supportedRoles: ['admin', 'manager', 'crew'],
+  }),
+  cap({
+    id: 'email-delivery', displayName: 'Email', description: 'Send transactional email (Resend).',
+    domain: 'Comms', status: 'full', kind: 'optional', provider: 'resend', dependencies: ['notifications'], defaultSelection: 'disabled',
+    disabledConsequence: 'No email is sent. Receipts, confirmations and reminders still exist as records; secure links are delivered by hand from the admin.',
+  }),
   cap({ id: 'documents', displayName: 'Documents', description: 'File storage + encrypted identity docs.', domain: 'Documents', status: 'full', kind: 'core' }),
 
   // ── Money ──
@@ -186,15 +226,30 @@ const LIST: Capability[] = [
   // Zelle and "paid on site" need no provider, so this is core and always on. Only
   // the card-collection leg is optional (`payments-stripe`).
   cap({ id: 'payments', displayName: 'Payments', description: 'Payment ledger: manual, offline, Zelle, cash, check (card collection is a separate adapter).', domain: 'Payments', status: 'full', kind: 'core', softDependencies: ['payments-stripe'] }),
-  cap({ id: 'payments-stripe', displayName: 'Card Payments (Stripe)', description: 'Stripe Checkout collection + webhook confirmation.', domain: 'Payments', status: 'full', kind: 'optional', provider: 'stripe', dependencies: ['payments'], defaultSelection: 'auto' }),
-  cap({ id: 'contractor-compensation', displayName: 'Contractor Compensation', description: 'Pay resolution + statements.', domain: 'Compensation', status: 'full', kind: 'core', requiredPermissions: ['pay:generate'] }),
+  cap({
+    id: 'payments-stripe', displayName: 'Card payments', description: 'Take card payments online (Stripe Checkout) and confirm them automatically.',
+    domain: 'Payments', status: 'full', kind: 'optional', provider: 'stripe', dependencies: ['payments'], defaultSelection: 'disabled',
+    disabledConsequence: 'Customers cannot pay by card online. Invoices and balances are unchanged, and cash, check, Zelle and other offline payments are still recorded normally.',
+  }),
+  // Optional: a business that pays its crew through an outside payroll service does
+  // not need pay resolution or statements here, and should not be told it does.
+  cap({
+    id: 'contractor-compensation', displayName: 'Contractor pay', description: 'Work out what each contractor is owed and issue pay statements.',
+    domain: 'Compensation', status: 'full', kind: 'optional', defaultSelection: 'enabled', requiredPermissions: ['pay:generate'],
+    disabledConsequence: 'No pay is calculated and no new pay statements are issued. Statements already issued stay exactly as they are and remain viewable.',
+  }),
   // Damage claims against the route / crew / client, with evidence, status history, and
   // crew cost recovery that schedules capped deductions into pay. Nine modules
   // (lib/claims.ts + claim-{accrual,assist,documents,mutex,notify,payroll,types}.ts,
   // claims-report.ts) · /api/admin/claims · /admin/operations/claims + claims/[id].
   // The ClaimGuard playbook (claim-assist.ts) is DETERMINISTIC — no aiActions.
   // The financial report is read via reports:view; claims:manage governs mutation.
-  cap({ id: 'claims', displayName: 'Claims', description: 'Damage claims, evidence, status history, and capped crew cost recovery into pay.', domain: 'Claims', status: 'full', kind: 'core', dependencies: ['routes', 'businesses', 'contractor-compensation', 'documents'], requiredPermissions: ['claims:create', 'claims:manage'] }),
+  cap({
+    id: 'claims', displayName: 'Damage claims', description: 'Damage claims with evidence, status history, and capped crew cost recovery into pay.',
+    domain: 'Claims', status: 'full', kind: 'optional', defaultSelection: 'enabled',
+    dependencies: ['routes', 'businesses', 'contractor-compensation', 'documents'], requiredPermissions: ['claims:create', 'claims:manage'],
+    disabledConsequence: 'No new claims can be opened and no new deductions are scheduled. Existing claims, their evidence and any deductions already posted are kept and stay viewable.',
+  }),
   cap({ id: 'expenses', displayName: 'Expenses', description: 'Expense ledger.', domain: 'Compensation', status: 'planned', kind: 'core', defaultSelection: 'disabled' }),
   // Wave G: dedicated /admin/operations/reports surface over the two live engines
   // (revenue + claims) with CSV export, plus the authz reconciliation — the claims
@@ -220,7 +275,7 @@ const LIST: Capability[] = [
   // role-change/suspend/reactivate/delete) — successes AND denied attempts — not just
   // comms; read-only viewer at /admin/operations/audit (audit:view). Legacy records
   // (no tenantId/outcome) remain readable.
-  cap({ tenantConfigurable: false, id: 'audit-logs', displayName: 'Audit Logs', description: 'Attributed, tenant-scoped audit trail + viewer.', domain: 'Governance', status: 'full', kind: 'core', dependencies: ['identity'], requiredPermissions: ['audit:view'] }),
+  cap({ tenantConfigurable: false, mandatoryReason: 'The audit trail is how a change is attributed after the fact. A business that could switch it off could also switch it off first.', id: 'audit-logs', displayName: 'Audit Logs', description: 'Attributed, tenant-scoped audit trail + viewer.', domain: 'Governance', status: 'full', kind: 'core', dependencies: ['identity'], requiredPermissions: ['audit:view'] }),
 
   // ── Surfaces ──
   cap({ id: 'customer-portal', displayName: 'Customer Portal', description: 'Booking/track/client portals.', domain: 'Surfaces', status: 'full', kind: 'core', supportedRoles: [] }),

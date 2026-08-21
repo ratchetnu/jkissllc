@@ -35,8 +35,20 @@ export function validateCapabilityRegistry(
     if (c.provider && c.kind !== 'optional') {
       errors.push(`${c.id} adapts provider "${c.provider}" but is kind "${c.kind}" — a provider adapter must be optional`)
     }
-    if (c.defaultSelection === 'auto' && !c.provider) {
-      errors.push(`${c.id} uses defaultSelection "auto" without a provider — auto means "enabled iff the provider's credentials are present"`)
+    // Nothing that costs money or contacts a customer may default ON. A tenant that
+    // has expressed no preference must never find itself spending or sending because
+    // the shipped default said so.
+    if (c.provider && c.defaultSelection !== 'disabled') {
+      errors.push(`${c.id} fronts provider "${c.provider}" and must default to "disabled" — a paid or external capability is never on by default`)
+    }
+    // A capability an owner is told about must say what happens when it is off, and
+    // one they cannot switch off must say why. An unexplained control is worse than
+    // no control: it invites a guess.
+    if (c.tenantConfigurable && c.kind !== 'core' && !c.disabledConsequence) {
+      errors.push(`${c.id} is optional and switchable but does not state what stops working when it is off`)
+    }
+    if (!c.tenantConfigurable && !c.mandatoryReason) {
+      errors.push(`${c.id} cannot be switched off but does not say why`)
     }
     if (!c.tenantConfigurable && c.defaultSelection !== 'enabled') {
       errors.push(`${c.id} is not tenant-configurable, so its default must be "enabled" (got "${c.defaultSelection}") — otherwise it can never be turned on`)

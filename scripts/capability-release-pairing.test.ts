@@ -72,26 +72,30 @@ test('the state codes a target reports are pinned — changing one is a two-repo
   assert.deepEqual(CAPABILITY_STATE_CODES, {
     not_installed: 'capability_not_installed',
     not_in_pack: 'capability_not_in_pack',
+    unavailable_on_plan: 'capability_unavailable_on_plan',
     disabled: 'capability_disabled',
     blocked: 'capability_prerequisite_disabled',
     setup_required: 'capability_setup_required',
     ready: 'capability_ready',
     degraded: 'capability_degraded',
   })
-  // The four a TARGET may report are a strict subset: the other three describe
-  // facts only the control plane's own registry can know (code presence, pack
-  // membership, prerequisite closure), and a target claiming one would be
-  // asserting something it cannot observe.
-  const REPORTABLE = ['capability_disabled', 'capability_setup_required', 'capability_ready', 'capability_degraded']
+  // The five a TARGET may report are a strict subset. The other three describe facts
+  // only the control plane's own registry can know — whether the code shipped,
+  // whether the pack offers it, and whether a prerequisite closure holds — and a
+  // target claiming one would be asserting something it cannot observe.
+  const REPORTABLE = [
+    'capability_disabled', 'capability_setup_required', 'capability_ready',
+    'capability_degraded', 'capability_unavailable_on_plan',
+  ]
   for (const code of REPORTABLE) assert.ok(Object.values(CAPABILITY_STATE_CODES).includes(code as never))
 })
 
 test('the adapter capability ids are pinned on both sides', () => {
   assert.deepEqual(
     allCapabilities().filter(c => c.provider).map(c => c.id).sort(),
-    ['email-delivery', 'payments-stripe', 'sms-delivery'],
+    ['email-delivery', 'payments-stripe', 'photo-estimation', 'sms-delivery'],
   )
-  assert.deepEqual([...PROVIDER_IDS], ['stripe', 'twilio', 'resend'])
+  assert.deepEqual([...PROVIDER_IDS], ['stripe', 'twilio', 'resend', 'ai'])
   assert.equal(CAPABILITY_PROFILE_VERSION, 1)
 })
 

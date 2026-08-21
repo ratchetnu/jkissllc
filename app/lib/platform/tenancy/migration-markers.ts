@@ -24,6 +24,9 @@ import { platformKey } from './keys'
 export const MIGRATION_IDS = [
   'wave6-membership-backfill',
   'public-token-binding-backfill',
+  // Per-tenant: records each tenant's effective capability configuration as real
+  // choices, so enablement stops being inferred from the environment.
+  'capability-profile-backfill',
 ] as const
 export type MigrationId = (typeof MIGRATION_IDS)[number]
 

@@ -24,7 +24,7 @@ import { getTenant } from '../tenancy/tenant-registry'
 import { assertMembership, TenantAccessDeniedError, type ResolveOpts } from '../tenancy/membership'
 import { recordAudit } from '../../audit'
 import { INDUSTRY_PACK_REGISTRY } from '../industry-packs/registry'
-import type { CapabilityId, ProviderId } from './types'
+import type { CapabilityId, ProviderId, Tier } from './types'
 import { CAPABILITY_REGISTRY } from './registry'
 import {
   CAPABILITY_PROFILE_VERSION, emptyProfile, parseStoredProfile, resolveCapabilityProfile,
@@ -32,6 +32,10 @@ import {
   type CapabilityProfileEntry, type CapabilitySelection, type ProfileChangeError,
   type ResolvedCapability, type TenantCapabilityProfile,
 } from './tenant-profile'
+import {
+  applyBackfillPlan, planCapabilityBackfill, type BackfillPlan,
+} from './capability-backfill'
+import { recordMigrationCompleted } from '../tenancy/migration-markers'
 
 /** The tenant-owned Redis key (scoped by the chokepoint when tenancy is on). */
 const CAPABILITY_KEY = 'settings:capabilities'
@@ -83,6 +87,13 @@ export type ResolvedCapabilityProfile = {
   capabilities: Record<CapabilityId, ResolvedCapability>
   providers: Record<ProviderId, boolean>
   fellBackToDefaults: boolean
+  /**
+   * False until `backfillCapabilityProfile` has recorded this tenant's choices.
+   * While false, provider adapters fall back to legacy credential inference — a
+   * transitional state that is surfaced everywhere rather than hidden, because
+   * somebody has to close it.
+   */
+  initialized: boolean
   warnings: string[]
 }
 
@@ -109,15 +120,100 @@ export async function resolveTenantCapabilities(
     }
   }
   const packCapabilities = await packCapabilitiesFor(tid)
-  const capabilities = resolveCapabilityProfile(read.profile, { env, packCapabilities, observedFailures: opts.observedFailures })
+  const plan = await planForTenant(tid)
+  const capabilities = resolveCapabilityProfile(read.profile, { env, packCapabilities, plan, observedFailures: opts.observedFailures })
+  const initialized = typeof read.profile.initializedAt === 'number' && read.profile.initializedAt > 0
+  const warnings = [...read.warnings]
+  if (!initialized) {
+    warnings.push('this business has not recorded its capability choices yet — payments, texts and email are still being inferred from which credentials exist. Run the capability backfill to replace that with a real record.')
+  }
   return {
     tenantId: tid,
     profile: read.profile,
     capabilities,
     providers: providerEnablement(capabilities),
     fellBackToDefaults: read.fellBackToDefaults,
-    warnings: read.warnings,
+    initialized,
+    warnings,
   }
+}
+
+/** The tenant's subscription plan, when one is recorded. Absent ⇒ not enforced. */
+async function planForTenant(tenantId: string): Promise<Tier | null> {
+  try {
+    return (await getTenant(tenantId))?.plan ?? null
+  } catch {
+    // A registry hiccup must never narrow what a tenant may use.
+    return null
+  }
+}
+
+export type BackfillResult = {
+  tenantId: string
+  dryRun: boolean
+  plan: BackfillPlan
+  /** True when the profile was already initialized and nothing was written. */
+  alreadyInitialized: boolean
+  written: boolean
+}
+
+/**
+ * Record this tenant's effective capability configuration as real choices.
+ *
+ * IDEMPOTENT: an already-initialized profile is left untouched, so a re-run cannot
+ * reset a choice somebody made afterwards. NON-DESTRUCTIVE: it only adds entries,
+ * and never removes a credential reference, a note, or an existing explicit choice.
+ * A DRY RUN writes nothing at all — not the entries and not the marker, because a
+ * plan that recorded itself would be indistinguishable from a run.
+ */
+export async function backfillCapabilityProfile(
+  tenantId: string,
+  opts: { dryRun?: boolean; actor?: string; env?: Record<string, string | undefined>; at?: number } = {},
+): Promise<BackfillResult> {
+  const tid = normalizeTenantId(tenantId)
+  const dryRun = opts.dryRun ?? true   // safe by default: an unqualified call plans, it does not write
+  const env = opts.env ?? process.env
+  const at = opts.at ?? Date.now()
+  const actor = opts.actor ?? 'system'
+
+  const current = await getCapabilityProfile(tid)
+  const plan = planCapabilityBackfill({
+    tenantId: tid,
+    profile: current.profile,
+    env,
+    packCapabilities: await packCapabilitiesFor(tid),
+    plan: await planForTenant(tid),
+  })
+
+  if (plan.alreadyInitialized || dryRun) {
+    return { tenantId: tid, dryRun, plan, alreadyInitialized: plan.alreadyInitialized, written: false }
+  }
+
+  const next = applyBackfillPlan(current.profile, plan, { at, actor })
+  await runWithTenant({ tenantId: tid }, () => redis.set(CAPABILITY_KEY, JSON.stringify(next)))
+
+  await runWithTenant({ tenantId: tid }, () => recordMigrationCompleted({
+    id: 'capability-profile-backfill',
+    tenantId: tid,
+    completedAt: at,
+    actor,
+    counts: {
+      recorded: plan.entries.length,
+      enabled: plan.entries.filter((e) => e.selection === 'enabled').length,
+      disabled: plan.entries.filter((e) => e.selection === 'disabled').length,
+      leftUnstated: plan.skipped.length,
+    },
+  }))
+
+  await runWithTenant({ tenantId: tid }, () => recordAudit({
+    tenantId: tid, actor, actorRole: 'system',
+    action: 'capability.selection_changed', entity: 'capability',
+    outcome: 'success',
+    summary: `capability profile initialized — ${plan.entries.length} choice(s) recorded, no behavior changed`,
+    meta: { recorded: plan.entries.map((e) => e.capability) },
+  }))
+
+  return { tenantId: tid, dryRun: false, plan, alreadyInitialized: false, written: true }
 }
 
 /** Read on behalf of `actor`, enforcing active membership first. */

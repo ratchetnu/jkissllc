@@ -24,7 +24,7 @@
 // from a record the operator believes is authoritative. Such a record is reported
 // as unreadable and the deployment falls back to registry defaults, loudly.
 
-import type { Capability, CapabilityId, ProviderId } from './types'
+import type { Capability, CapabilityId, ProviderId, Tier } from './types'
 import { CAPABILITY_IDS } from './types'
 import { CAPABILITY_REGISTRY, allCapabilities, getCapability } from './registry'
 import { PROVIDER_SPECS, type Env } from './provider-readiness'
@@ -51,6 +51,28 @@ export type TenantCapabilityProfile = {
   version: number
   tenantId: string
   entries: Partial<Record<CapabilityId, CapabilityProfileEntry>>
+  /**
+   * When this tenant's profile was INITIALIZED — i.e. when the backfill recorded
+   * its effective configuration as a set of real choices.
+   *
+   * This is the switch between two resolution regimes, and it exists so that
+   * removing environment inference cannot silently change a live deployment:
+   *
+   *   set    → registry defaults apply to anything unstated. Defaults are
+   *            conservative, so an unstated paid capability is OFF.
+   *   absent → LEGACY COMPATIBILITY. A provider adapter falls back to "in use iff
+   *            its credentials are present", which is exactly what the code did
+   *            before capabilities existed. Reported as `legacy-uninitialized`
+   *            everywhere it is surfaced, because it is a transitional state that
+   *            somebody has to close, not a configuration anybody chose.
+   *
+   * Inferring enablement from an environment variable is wrong as a steady state:
+   * the presence of a key is evidence that somebody once configured something, not
+   * that this business wants the feature on. It is retained ONLY to keep an
+   * un-migrated tenant working until `backfillCapabilityProfile` runs.
+   */
+  initializedAt?: number
+  initializedBy?: string
   updatedAt: number
   updatedBy: string
 }
@@ -58,24 +80,27 @@ export type TenantCapabilityProfile = {
 /** Why a capability ended up in the state it is in — shown to the owner, and
  *  recorded in deployment evidence so "it defaulted" is never mistaken for a choice. */
 export type SelectionSource =
-  | 'explicit'             // the owner chose it
-  | 'credential-inferred'  // defaultSelection 'auto' + the provider's credentials
-  | 'registry-default'     // no choice expressed
-  | 'mandatory'            // not tenant-configurable
+  | 'explicit'              // the owner chose it
+  | 'registry-default'      // no choice expressed; the shipped (conservative) default
+  | 'legacy-uninitialized'  // profile never initialized; inferred from credentials
+  | 'mandatory'             // not tenant-configurable
+  | 'plan'                  // the tenant's plan does not include it
 
 export type CapabilityState =
-  | 'not_installed'   // the code is not in this build at all
-  | 'not_in_pack'     // installed, but this product/industry pack does not offer it
-  | 'disabled'        // installed and offered; the tenant declined it
-  | 'blocked'         // enabled, but a hard prerequisite is off
-  | 'setup_required'  // enabled; its provider has no credentials here
+  | 'not_installed'         // the code is not in this build at all
+  | 'not_in_pack'           // installed, but this product/industry pack does not offer it
+  | 'unavailable_on_plan'   // offered, but the tenant's plan does not include it
+  | 'disabled'              // installed and offered; the tenant declined it
+  | 'blocked'               // enabled, but a hard prerequisite is off
+  | 'setup_required'        // enabled; its provider has no credentials here
   | 'ready'
-  | 'degraded'        // enabled + configured; the last real call failed
+  | 'degraded'              // enabled + configured; the last real call failed
 
 /** Stable, non-secret codes. Safe in an API response, a log, and signed evidence. */
 export const CAPABILITY_STATE_CODES = {
   not_installed: 'capability_not_installed',
   not_in_pack: 'capability_not_in_pack',
+  unavailable_on_plan: 'capability_unavailable_on_plan',
   disabled: 'capability_disabled',
   blocked: 'capability_prerequisite_disabled',
   setup_required: 'capability_setup_required',
@@ -91,6 +116,8 @@ export type ResolvedCapability = {
   // ── the five axes, kept separate on purpose ──
   codeInstalled: boolean
   packAvailable: boolean
+  /** False only when a plan is being enforced and does not include this capability. */
+  planAvailable: boolean
   tenantEnabled: boolean
   providerConfigured: boolean | null // null = needs no provider
   operational: boolean
@@ -110,6 +137,12 @@ export type ResolveOptions = {
   packCapabilities?: readonly CapabilityId[]
   /** Observed provider failures, by provider. Fail-soft: omit and nothing changes. */
   observedFailures?: Partial<Record<ProviderId, boolean>>
+  /**
+   * The tenant's subscription plan, when plans are being enforced. `null` or absent
+   * means NOT ENFORCED — a tenant that predates plans keeps everything its pack
+   * offers, so introducing the model cannot retroactively take a capability away.
+   */
+  plan?: Tier | null
 }
 
 // ── Reading a stored record ──────────────────────────────────────────────────
@@ -219,22 +252,43 @@ function packOffers(c: Capability, pack: readonly CapabilityId[] | undefined): b
 /**
  * The tenant's effective selection for one capability, and WHY.
  *
- * Precedence: mandatory → explicit choice → credential inference → registry default.
- * An explicit choice always beats inference, which is what keeps "the owner turned
- * SMS on and it isn't configured" visible instead of quietly re-inferring it off.
+ * Precedence: mandatory → explicit choice → registry default → legacy fallback.
+ *
+ * An explicit choice always wins, which is what keeps "the owner turned SMS on and
+ * it isn't configured" visible instead of quietly re-inferring it off.
+ *
+ * The environment is consulted in exactly ONE case: a provider adapter, on a tenant
+ * whose profile has never been initialized. That is a transitional compatibility
+ * path, not a rule — see `TenantCapabilityProfile.initializedAt`. Once the backfill
+ * has run, the environment has no bearing on whether a capability is switched on;
+ * it only decides whether a switched-on capability is CONFIGURED.
  */
 export function resolveSelection(
   c: Capability,
   entry: CapabilityProfileEntry | undefined,
   env: Env,
+  opts: { initialized?: boolean } = {},
 ): { selection: CapabilitySelection; source: SelectionSource } {
   if (!c.tenantConfigurable) return { selection: 'enabled', source: 'mandatory' }
   if (entry) return { selection: entry.selection, source: 'explicit' }
-  if (c.defaultSelection === 'auto' && c.provider) {
+  if (opts.initialized === false && c.provider) {
     const configured = PROVIDER_SPECS[c.provider].configured(env)
-    return { selection: configured ? 'enabled' : 'disabled', source: 'credential-inferred' }
+    return { selection: configured ? 'enabled' : 'disabled', source: 'legacy-uninitialized' }
   }
   return { selection: c.defaultSelection === 'enabled' ? 'enabled' : 'disabled', source: 'registry-default' }
+}
+
+/**
+ * Whether the tenant's plan includes a capability.
+ *
+ * Not enforced until a plan is actually recorded: a tenant that predates plans is
+ * not on the free tier, it is on no tier, and treating "unknown" as "the cheapest"
+ * would silently remove working features from every existing business the day the
+ * model shipped.
+ */
+export function planIncludes(c: Capability, plan: Tier | null | undefined): boolean {
+  if (!plan) return true
+  return c.tiers.includes(plan)
 }
 
 /**
@@ -249,9 +303,15 @@ export function resolveCapabilityProfile(
   const out = {} as Record<CapabilityId, ResolvedCapability>
 
   // Pass 1: per-capability facts, independent of other capabilities.
+  const initialized = typeof profile.initializedAt === 'number' && profile.initializedAt > 0
   const selections = new Map<CapabilityId, CapabilitySelection>()
   for (const c of allCapabilities()) {
-    const { selection, source } = resolveSelection(c, profile.entries[c.id], opts.env)
+    const onPlan = planIncludes(c, opts.plan)
+    const resolved = resolveSelection(c, profile.entries[c.id], opts.env, { initialized })
+    // A plan that does not include a capability overrides the selection outright:
+    // a stored "enabled" from a richer plan must not survive a downgrade.
+    const selection = onPlan ? resolved.selection : 'disabled'
+    const source = onPlan ? resolved.source : 'plan'
     selections.set(c.id, selection)
     const installed = codeInstalled(c)
     const offered = packOffers(c, opts.packCapabilities)
@@ -264,6 +324,7 @@ export function resolveCapabilityProfile(
       provider: c.provider,
       codeInstalled: installed,
       packAvailable: offered,
+      planAvailable: onPlan,
       tenantEnabled: selection === 'enabled',
       providerConfigured,
       operational: false, // filled in below
@@ -283,6 +344,7 @@ export function resolveCapabilityProfile(
     let state: CapabilityState
     if (!r.codeInstalled) state = 'not_installed'
     else if (!r.packAvailable) state = 'not_in_pack'
+    else if (!r.planAvailable) state = 'unavailable_on_plan'
     else if (!r.tenantEnabled) state = 'disabled'
     else if (blockedBy.length) state = 'blocked'
     else if (r.providerConfigured === false) state = 'setup_required'
@@ -311,10 +373,10 @@ export function resolveCapabilityProfile(
  * back to off.
  */
 export function providerEnablement(resolved: Record<CapabilityId, ResolvedCapability>): Record<ProviderId, boolean> {
-  const out = { stripe: false, twilio: false, resend: false } as Record<ProviderId, boolean>
+  const out = { stripe: false, twilio: false, resend: false, ai: false } as Record<ProviderId, boolean>
   for (const spec of Object.values(PROVIDER_SPECS)) {
     const r = resolved[spec.capability]
-    out[spec.id] = !!r && r.tenantEnabled && r.packAvailable && r.codeInstalled
+    out[spec.id] = !!r && r.tenantEnabled && r.packAvailable && r.planAvailable && r.codeInstalled
   }
   return out
 }

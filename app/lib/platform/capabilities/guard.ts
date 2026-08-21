@@ -96,7 +96,7 @@ export async function checkCapability(
     const c = getCapability(id)
     return {
       id, displayName: c.displayName, kind: c.kind, provider: c.provider,
-      codeInstalled: false, packAvailable: false, tenantEnabled: false, providerConfigured: null,
+      codeInstalled: false, packAvailable: false, planAvailable: false, tenantEnabled: false, providerConfigured: null,
       operational: false, state: 'not_installed', code: CAPABILITY_STATE_CODES.not_installed,
       selectionSource: 'registry-default', blockedBy: [], missingVars: [],
     }

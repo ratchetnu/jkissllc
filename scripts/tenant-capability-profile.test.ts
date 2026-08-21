@@ -121,8 +121,8 @@ test('two tenants, same build, different answers — and neither can see the oth
   const jk = await resolveTenantCapabilities('jkiss', { env: JKISS_ENV })
   const sc = await resolveTenantCapabilities('supercharged', { env: BARE_ENV })
 
-  assert.deepEqual(jk.providers, { stripe: true, twilio: true, resend: true })
-  assert.deepEqual(sc.providers, { stripe: false, twilio: false, resend: false })
+  assert.deepEqual(jk.providers, { stripe: true, twilio: true, resend: true, ai: true })
+  assert.deepEqual(sc.providers, { stripe: false, twilio: false, resend: false, ai: false })
   assert.equal(jk.capabilities['sms-delivery'].state, 'ready')
   assert.equal(sc.capabilities['sms-delivery'].state, 'disabled')
 
@@ -152,11 +152,54 @@ test('an explicit ENABLE beats credential inference — "on but unfinished" stay
   await setCapabilitySelections(OTHER_OWNER, 'supercharged', { 'sms-delivery': { selection: 'disabled' } }, { ...OPTS, env: BARE_ENV })
 })
 
-test('with no stored choice, an adapter infers from credentials — preserving both deployments', () => {
-  const withCreds = resolveSelection(CAPABILITY_REGISTRY['sms-delivery'], undefined, JKISS_ENV)
-  assert.deepEqual(withCreds, { selection: 'enabled', source: 'credential-inferred' })
-  const without = resolveSelection(CAPABILITY_REGISTRY['sms-delivery'], undefined, BARE_ENV)
-  assert.deepEqual(without, { selection: 'disabled', source: 'credential-inferred' })
+// THE RULE THAT REPLACED CREDENTIAL INFERENCE.
+//
+// The presence of a key is evidence that somebody once configured something, not
+// that this business wants the feature on. Once a tenant's profile is initialized,
+// the environment has no bearing on whether a capability is switched ON — only on
+// whether a switched-on capability is CONFIGURED.
+test('an initialized profile NEVER infers enablement from the environment', () => {
+  // Credentials fully present, and the answer is still "off", because nobody said on.
+  assert.deepEqual(
+    resolveSelection(CAPABILITY_REGISTRY['sms-delivery'], undefined, JKISS_ENV, { initialized: true }),
+    { selection: 'disabled', source: 'registry-default' },
+  )
+  assert.deepEqual(
+    resolveSelection(CAPABILITY_REGISTRY['payments-stripe'], undefined, JKISS_ENV, { initialized: true }),
+    { selection: 'disabled', source: 'registry-default' },
+  )
+})
+
+// …and the ONE transitional exception, which exists so removing the inference
+// cannot break a deployment that has not run the backfill yet. It is reported as
+// `legacy-uninitialized` so it can never be mistaken for a choice anybody made.
+test('an UNINITIALIZED profile falls back to legacy inference, and says so', () => {
+  assert.deepEqual(
+    resolveSelection(CAPABILITY_REGISTRY['sms-delivery'], undefined, JKISS_ENV, { initialized: false }),
+    { selection: 'enabled', source: 'legacy-uninitialized' },
+  )
+  assert.deepEqual(
+    resolveSelection(CAPABILITY_REGISTRY['sms-delivery'], undefined, BARE_ENV, { initialized: false }),
+    { selection: 'disabled', source: 'legacy-uninitialized' },
+  )
+  // The fallback is for PROVIDER adapters only. A non-provider capability takes the
+  // registry default either way — there is nothing about the environment that could
+  // sensibly answer "does this business run a careers page?".
+  assert.equal(
+    resolveSelection(CAPABILITY_REGISTRY['hiring'], undefined, JKISS_ENV, { initialized: false }).source,
+    'registry-default',
+  )
+})
+
+test('a NEW tenant gets conservative defaults — nothing paid, nothing sending', () => {
+  const fresh = resolveCapabilityProfile({ ...emptyProfile('acme'), initializedAt: 1 }, { env: JKISS_ENV })
+  for (const id of ['payments-stripe', 'sms-delivery', 'email-delivery', 'photo-estimation'] as const) {
+    assert.equal(fresh[id].state, 'disabled', `${id} must be off for a tenant that never asked for it`)
+  }
+  // …while everything it needs to actually run a business is on.
+  for (const id of ['bookings', 'booking-intake', 'routes', 'invoicing', 'payments', 'messaging'] as const) {
+    assert.equal(fresh[id].state, 'ready', `${id} must be available to a new tenant`)
+  }
 })
 
 test('a mandatory capability reports itself as mandatory and is never inferred off', () => {
@@ -222,10 +265,22 @@ test('the registry is structurally valid under the new modelling rules', () => {
   assert.deepEqual(validateCapabilityRegistry(), [])
 })
 
-test('provider adapters are optional, and only an adapter may infer its default', () => {
+test('nothing that costs money or contacts a customer is ON by default', () => {
   for (const c of Object.values(CAPABILITY_REGISTRY)) {
-    if (c.provider) assert.equal(c.kind, 'optional', `${c.id} fronts ${c.provider} and must be optional`)
-    if (c.defaultSelection === 'auto') assert.ok(c.provider, `${c.id} may not infer a default without a provider`)
+    if (!c.provider) continue
+    assert.equal(c.kind, 'optional', `${c.id} fronts ${c.provider} and must be optional`)
+    // The rule that replaced credential inference: a tenant which has expressed no
+    // preference must never find itself spending or sending because a key exists.
+    assert.equal(c.defaultSelection, 'disabled', `${c.id} fronts ${c.provider} and must default OFF`)
+  }
+})
+
+test('every switch says what it costs you, and every fixed one says why', () => {
+  for (const c of Object.values(CAPABILITY_REGISTRY)) {
+    if (c.tenantConfigurable && c.kind !== 'core') {
+      assert.ok(c.disabledConsequence, `${c.id} is switchable but never says what stops working`)
+    }
+    if (!c.tenantConfigurable) assert.ok(c.mandatoryReason, `${c.id} cannot be switched off but never says why`)
   }
 })
 
@@ -286,7 +341,7 @@ test('readiness distinguishes all four states with stable, value-free codes', ()
 test('readiness NEVER returns a credential value, in any state', () => {
   for (const enabled of [true, false]) {
     for (const env of [BARE_ENV, JKISS_ENV]) {
-      const all = resolveAllProviderReadiness({ enabled: { stripe: enabled, twilio: enabled, resend: enabled }, env })
+      const all = resolveAllProviderReadiness({ enabled: { stripe: enabled, twilio: enabled, resend: enabled, ai: enabled }, env })
       const blob = JSON.stringify(all)
       for (const value of Object.values(JKISS_ENV)) assert.ok(!blob.includes(value), `readiness leaked ${value.slice(0, 4)}…`)
     }
@@ -296,7 +351,7 @@ test('readiness NEVER returns a credential value, in any state', () => {
 test('INTENTIONALLY DISABLED providers do not degrade overall health', () => {
   const components = configChecks(
     { ...JKISS_ENV, STRIPE_SECRET_KEY: undefined, STRIPE_WEBHOOK_SECRET: undefined, TWILIO_ACCOUNT_SID: undefined, TWILIO_AUTH_TOKEN: undefined, TWILIO_FROM: undefined, RESEND_API_KEY: undefined, BLOB_READ_WRITE_TOKEN: 'b', BLOB_STORE_ID: 's', CRON_SECRET: 'c' },
-    { providers: { stripe: false, twilio: false, resend: false } },
+    { providers: { stripe: false, twilio: false, resend: false, ai: false } },
   )
   for (const name of ['payments', 'payments_webhook', 'sms', 'email']) {
     const c = components.find(x => x.name === name)!
@@ -309,7 +364,7 @@ test('INTENTIONALLY DISABLED providers do not degrade overall health', () => {
 test('ENABLED but unconfigured providers DO degrade — and say which variable is missing', () => {
   const components = configChecks(
     { BLOB_READ_WRITE_TOKEN: 'b', BLOB_STORE_ID: 's', CRON_SECRET: 'c', AI_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: 'a' },
-    { providers: { stripe: true, twilio: false, resend: false } },
+    { providers: { stripe: true, twilio: false, resend: false, ai: false } },
   )
   const payments = components.find(c => c.name === 'payments')!
   assert.equal(payments.status, 'degraded')
@@ -329,7 +384,7 @@ test('omitting the provider selection reproduces the historical behavior exactly
 })
 
 test('the health detail for a disabled channel names no variable at all', () => {
-  const c = configChecks(BARE_ENV, { providers: { stripe: false, twilio: false, resend: false } }).find(x => x.name === 'payments')!
+  const c = configChecks(BARE_ENV, { providers: { stripe: false, twilio: false, resend: false, ai: false } }).find(x => x.name === 'payments')!
   assert.ok(!/STRIPE_SECRET_KEY/.test(c.detail), 'nothing to configure means nothing to name')
 })
 
@@ -430,5 +485,5 @@ test('a pack that does not offer an optional capability reports not_in_pack, not
 test('providerEnablement is derived from the resolved profile, not from the environment', () => {
   const resolved = resolveCapabilityProfile(emptyProfile('supercharged'), { env: JKISS_ENV, packCapabilities: ['bookings'] })
   // Credentials are present, but the pack does not offer the adapters.
-  assert.deepEqual(providerEnablement(resolved), { stripe: false, twilio: false, resend: false })
+  assert.deepEqual(providerEnablement(resolved), { stripe: false, twilio: false, resend: false, ai: false })
 })
