@@ -5,7 +5,7 @@ import test from 'node:test'
 import {
   allocate, setResponsibility, startDeduction, pauseDeduction, waiveBalance, recordPayment,
   adjustBalance, closeClaim, dueDeductions, postScheduledDeduction, skipScheduledDeduction,
-  rollupClaimStatus, snapshotFromRoute, snapshotFromBusiness,
+  rollupClaimStatus, snapshotFromRoute, snapshotFromBooking, snapshotFromBusiness,
   remainingCents, recoveredCents, creditedCents, claimRemainingCents, claimRecoveredCents,
   claimWaivedCents, assignedCents, unassignedCents,
   type ClaimRecord, type ClaimAssignment,
@@ -16,6 +16,7 @@ import { computeClaimsReport, crewClaimSummary, businessClaimSummary, isOpen } f
 import { toPublicRouteFor } from '../app/lib/routes'
 import type { RouteRecord, Assignee } from '../app/lib/routes'
 import type { Business } from '../app/lib/businesses'
+import type { Booking } from '../app/lib/bookings'
 import { mondayOf, addDaysStr, centralToday } from '../app/lib/dates'
 
 // ── The clock ────────────────────────────────────────────────────────────────
@@ -154,6 +155,54 @@ test('a claim opened straight from a business carries no route money', () => {
   assert.equal(snap.routeToken, undefined)
   assert.equal(snap.routePayoutCents, undefined)
   assert.deepEqual(snap.crew, [])
+})
+
+test('a booking claim freezes customer, job money and only active crew', () => {
+  const booking = {
+    token: 'b'.repeat(64), bookingNumber: 'JK-B-2001', status: 'completed', serviceType: 'moving',
+    customerName: 'Pat Customer', customerPhone: '555-0100', customerEmail: 'pat@example.test',
+    jobSiteAddress: '100 Main St', selectedDate: '2026-07-03',
+    invoiceAmountCents: 50000, discountCents: 5000, amountPaidCents: 45000,
+    disposalActualCents: 3000, depositAmountCents: 0,
+    items: [], payments: [], availableDates: [], availableWindows: [], createdAt: 1, updatedAt: 1,
+    assignees: [
+      { staffId: 'd', name: 'Marcus', role: 'Driver', status: 'accepted', payCents: 17500 },
+      { staffId: 'h', name: 'Dee', role: 'Helper', status: 'accepted', payCents: 12500 },
+      { staffId: 'x', name: 'Declined', role: 'Helper', declinedAt: 1, payCents: 99999 },
+    ],
+  } as unknown as Booking
+
+  const snap = snapshotFromBooking(booking)
+  assert.equal(snap.workSource, 'booking')
+  assert.equal(snap.businessKey, `booking:${booking.token}`)
+  assert.equal(snap.businessName, 'Pat Customer')
+  assert.equal(snap.bookingNumber, 'JK-B-2001')
+  assert.equal(snap.serviceDate, '2026-07-03')
+  assert.equal(snap.businessPriceCents, 45000, 'discount is reflected in frozen revenue')
+  assert.equal(snap.routePayoutCents, 30000)
+  assert.equal(snap.routeProfitCents, 12000, 'revenue less crew pay and disposal')
+  assert.deepEqual(snap.crew.map(c => c.staffId), ['d', 'h'], 'declined assignees are not job crew')
+
+  booking.customerName = 'Changed later'
+  booking.assignees = []
+  booking.invoiceAmountCents = 1
+  assert.equal(snap.businessName, 'Pat Customer')
+  assert.deepEqual(snap.crew.map(c => c.staffId), ['d', 'h'])
+  assert.equal(snap.businessPriceCents, 45000)
+})
+
+test('invalid booking crew pay stays unpriced without corrupting job profit', () => {
+  const booking = {
+    token: 'c'.repeat(64), bookingNumber: 'JK-B-2002', status: 'completed', serviceType: 'moving',
+    customerName: 'Pat Customer', invoiceAmountCents: 20000, discountCents: 0,
+    amountPaidCents: 0, depositAmountCents: 0, items: [], payments: [], availableDates: [], availableWindows: [],
+    assignees: [{ staffId: 'd', name: 'Marcus', status: 'accepted', payCents: Number.NaN }],
+    createdAt: 1, updatedAt: 1,
+  } as unknown as Booking
+  const snap = snapshotFromBooking(booking)
+  assert.equal(snap.crew[0].payCents, undefined)
+  assert.equal(snap.routePayoutCents, 0)
+  assert.equal(snap.routeProfitCents, 20000)
 })
 
 // ── Deduction scheduling ─────────────────────────────────────────────────────

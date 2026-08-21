@@ -33,7 +33,7 @@ export default function ClaimDocuments({ claim }: { claim: Claim }) {
         businessName: claim.businessName,
         totalCents: claim.totalCents,
         description: claim.description,
-        routeNumber: claim.routeNumber ?? claim.snapshot?.routeNumber,
+        routeNumber: claim.routeNumber ?? claim.bookingNumber ?? claim.snapshot?.routeNumber ?? claim.snapshot?.bookingNumber,
         routeDate: claim.snapshot?.routeDate ? fmtDay(claim.snapshot.routeDate) : undefined,
         responseDeadline: claim.responseDeadline ? fmtDay(claim.responseDeadline) : undefined,
       },

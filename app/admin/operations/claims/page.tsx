@@ -29,7 +29,7 @@ function Claims() {
     const needle = q.trim().toLowerCase()
     return claims
       .filter(c => filter === 'all' ? true : filter === 'open' ? isOpen(c) : c.status === filter)
-      .filter(c => !needle || [c.claimNumber, c.businessName, c.description, c.routeNumber ?? '']
+      .filter(c => !needle || [c.claimNumber, c.businessName, c.description, c.routeNumber ?? '', c.bookingNumber ?? '']
         .some(v => v.toLowerCase().includes(needle)))
       .sort((a, b) => b.claimDate.localeCompare(a.claimDate) || b.createdAt - a.createdAt)
   }, [claims, filter, q])
@@ -121,7 +121,7 @@ function Row({ c }: { c: ClaimListItem }) {
       <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.description}</div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, fontSize: 12.5, color: 'var(--muted)', flexWrap: 'wrap' }}>
         <span>{fmtDay(c.claimDate)}</span>
-        {c.routeNumber && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5 }}>{c.routeNumber}</span>}
+        {(c.routeNumber || c.bookingNumber) && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5 }}>{c.routeNumber || c.bookingNumber}</span>}
         {crew ? <span>Crew: {crew}</span> : <span style={{ color: '#fcd34d' }}>No one assigned</span>}
         {owed > 0 && <span className="tabular-nums" style={{ marginLeft: 'auto', color: '#fca5a5', fontWeight: 700 }}>{money(owed)} owed</span>}
       </div>

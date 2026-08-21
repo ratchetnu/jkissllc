@@ -3,7 +3,7 @@ import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route
 import { requirePermission } from '../_lib/session'
 import {
   listClaims, saveClaim, getClaim, generateClaimId, nextClaimNumber,
-  snapshotFromRoute, snapshotFromBusiness, pushClaimAudit,
+  snapshotFromRoute, snapshotFromBooking, snapshotFromBusiness, pushClaimAudit,
   CLAIM_STATUS_LABEL, CLAIM_TYPE_LABEL,
   type ClaimRecord, type ClaimType, type ClaimAttachment, type AttachmentKind,
 } from '../../../lib/claims'
@@ -11,11 +11,13 @@ import { computeClaimsReport, type ClaimFilters } from '../../../lib/claims-repo
 import { parseMoneyCents } from '../../../lib/finance'
 import { getBusiness, bizKey } from '../../../lib/businesses'
 import { getRouteByToken } from '../../../lib/routes'
+import { getBookingByToken } from '../../../lib/bookings'
 import { centralToday, isDateStr } from '../../../lib/dates'
 
 const S = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 const isClaimType = (v: string): v is ClaimType => v in CLAIM_TYPE_LABEL
 const ATT_KINDS: AttachmentKind[] = ['photo', 'video', 'document']
+const BOOKING_CLAIM_STATUSES = new Set(['completed', 'partially_completed', 'could_not_complete'])
 
 // Evidence captured during intake arrives as [{ kind, url, name }] — the files were
 // already uploaded to Blob by the client (see claims/evidence.ts). Validate the same
@@ -64,6 +66,7 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
       id: c.id, claimNumber: c.claimNumber, status: c.status, claimType: c.claimType,
       businessKey: c.businessKey, businessName: c.businessName,
       routeToken: c.routeToken, routeNumber: c.routeNumber,
+      bookingToken: c.bookingToken, bookingNumber: c.bookingNumber,
       claimDate: c.claimDate, reportedDate: c.reportedDate,
       description: c.description, totalCents: c.totalCents,
       assignments: c.assignments,
@@ -106,7 +109,11 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     // Created from a completed route: everything the route already knows is copied
     // and frozen, so the owner never re-keys it. See snapshotFromRoute.
     const routeToken = S(b.routeToken, 200)
-    let snapshot, businessName: string, routeNumber: string | undefined
+    const bookingToken = S(b.bookingToken, 200)
+    if (routeToken && bookingToken) {
+      return NextResponse.json({ error: 'A claim can belong to one job only.' }, { status: 400 })
+    }
+    let snapshot, businessName: string, routeNumber: string | undefined, bookingNumber: string | undefined
 
     if (routeToken) {
       const route = await getRouteByToken(routeToken)
@@ -115,6 +122,15 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
       snapshot = snapshotFromRoute(route, biz)
       businessName = route.businessName
       routeNumber = route.routeNumber
+    } else if (bookingToken) {
+      const booking = await getBookingByToken(bookingToken)
+      if (!booking) return NextResponse.json({ error: 'That booking no longer exists.' }, { status: 404 })
+      if (!BOOKING_CLAIM_STATUSES.has(booking.status)) {
+        return NextResponse.json({ error: 'Finish the job before opening a claim against it.' }, { status: 409 })
+      }
+      snapshot = snapshotFromBooking(booking)
+      businessName = snapshot.businessName
+      bookingNumber = booking.bookingNumber
     } else {
       businessName = S(b.businessName, 200)
       if (!businessName) return NextResponse.json({ error: 'Pick the business this claim is for.' }, { status: 400 })
@@ -128,10 +144,12 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
       claimNumber: await nextClaimNumber(),
       status: 'new',
       claimType,
-      businessKey: bizKey(businessName),
+      businessKey: snapshot.businessKey,
       businessName,
       routeToken: routeToken || undefined,
       routeNumber,
+      bookingToken: bookingToken || undefined,
+      bookingNumber,
       claimDate,
       reportedDate,
       reportedBy: S(b.reportedBy, 200) || undefined,
@@ -147,7 +165,8 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
       createdAt: now,
       updatedAt: now,
     }
-    pushClaimAudit(claim, 'admin', `Claim opened for ${(totalCents / 100).toFixed(2)}`, routeNumber ? `from route ${routeNumber}` : undefined)
+    const sourceNote = routeNumber ? `from route ${routeNumber}` : bookingNumber ? `from booking ${bookingNumber}` : undefined
+    pushClaimAudit(claim, 'admin', `Claim opened for ${(totalCents / 100).toFixed(2)}`, sourceNote)
 
     await saveClaim(claim)
     return NextResponse.json({ ok: true, claim })

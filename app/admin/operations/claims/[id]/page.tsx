@@ -78,6 +78,7 @@ function Detail({ id }: { id: string }) {
   const absorbed = Math.max(0, claim.totalCents - assignedTotal(claim))
   const settled = claim.status === 'closed' || claim.status === 'waived'
   const snap = claim.snapshot
+  const fromBooking = snap.workSource === 'booking' || Boolean(snap.bookingToken || claim.bookingToken)
 
   return (
     <div style={{ maxWidth: 680, margin: '0 auto' }}>
@@ -100,6 +101,7 @@ function Detail({ id }: { id: string }) {
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><CalendarDays size={15} /> {fmtDay(claim.claimDate)}</span>
           <span>Reported {fmtDay(claim.reportedDate)}{claim.reportedBy ? ` by ${claim.reportedBy}` : ''}</span>
           {claim.routeNumber && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{claim.routeNumber}</span>}
+          {claim.bookingNumber && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{claim.bookingNumber}</span>}
           {claim.responseDeadline && <span style={{ color: '#fcd34d', fontWeight: 600 }}>Response due {fmtDay(claim.responseDeadline)}</span>}
         </div>
 
@@ -157,20 +159,25 @@ function Detail({ id }: { id: string }) {
       {/* Frozen snapshot */}
       <div className="os-card os-rise" style={{ padding: 20, marginBottom: 14 }}>
         <div style={{ ...osLabel, display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}><Building2 size={14} /> At the time of the claim</div>
-        <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>Frozen when the claim was opened. Re-pricing the client or re-crewing the route later never changes these.</p>
+        <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>Frozen when the claim was opened. Later changes to the customer price or assigned crew never change this record.</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
-          <Fig label="Route earned" value={moneyOrDash(snap.businessPriceCents)} />
+          <Fig label={fromBooking ? 'Job earned' : 'Route earned'} value={moneyOrDash(snap.businessPriceCents)} />
           <Fig label="Crew paid" value={moneyOrDash(snap.routePayoutCents)} />
-          <Fig label="Route profit" value={moneyOrDash(snap.routeProfitCents)} tone={profitColor(snap.routeProfitCents)} />
+          <Fig label={fromBooking ? 'Job profit' : 'Route profit'} value={moneyOrDash(snap.routeProfitCents)} tone={profitColor(snap.routeProfitCents)} />
         </div>
         {snap.routeToken && (
           <Link href={`/admin/operations/${snap.routeToken}`} style={{ display: 'inline-block', marginTop: 12, fontSize: 13, fontWeight: 700, color: 'var(--red)', textDecoration: 'none' }}>
             View {snap.routeNumber} →
           </Link>
         )}
+        {snap.bookingToken && (
+          <Link href={`/admin/bookings?b=${encodeURIComponent(snap.bookingNumber || claim.bookingNumber || '')}`} style={{ display: 'inline-block', marginTop: 12, fontSize: 13, fontWeight: 700, color: 'var(--red)', textDecoration: 'none' }}>
+            View {snap.bookingNumber || claim.bookingNumber || 'booking'} →
+          </Link>
+        )}
         {snap.crew.length > 0 && (
           <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
-            <div style={{ ...osLabel, marginBottom: 8 }}>Crew on the route</div>
+            <div style={{ ...osLabel, marginBottom: 8 }}>Crew on the {fromBooking ? 'job' : 'route'}</div>
             {snap.crew.map(c => (
               <div key={c.staffId} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '5px 0', fontSize: 13.5 }}>
                 <Avatar name={c.name} size={26} />

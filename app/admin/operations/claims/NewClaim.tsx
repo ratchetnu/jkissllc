@@ -7,20 +7,24 @@ import { MoneyInput, looksLikeMoney, osField, osLabel, ymd } from '../ui'
 import { invalidateClaims } from './useClaims'
 import { uploadEvidence, type EvidenceUpload } from './evidence'
 
-// One create-claim sheet, used from three places:
+// One create-claim sheet, used from four places:
 //   • the Claims hub        → pick a business
 //   • a Business page       → business is fixed
 //   • a completed Route     → routeToken is passed; the server copies the business,
 //                             route, address, crew and financial snapshot across, so
 //                             none of it is re-typed here.
+//   • a completed Booking   → bookingToken is passed; the server copies the customer,
+//                             job, address, crew and financial snapshot in the same way.
 export default function NewClaim({
-  onClose, onCreated, routeToken, businessName, routeLabel,
+  onClose, onCreated, routeToken, bookingToken, businessName, routeLabel, bookingLabel,
 }: {
   onClose: () => void
   onCreated?: () => void
   routeToken?: string
+  bookingToken?: string
   businessName?: string
   routeLabel?: string
+  bookingLabel?: string
 }) {
   const router = useRouter()
   const today = ymd(new Date())
@@ -42,6 +46,8 @@ export default function NewClaim({
   const [error, setError] = useState('')
 
   const fromRoute = Boolean(routeToken)
+  const fromBooking = Boolean(bookingToken)
+  const fromJob = fromRoute || fromBooking
 
   async function addFiles(e: React.ChangeEvent<HTMLInputElement>) {
     const picked = Array.from(e.target.files ?? [])
@@ -56,15 +62,15 @@ export default function NewClaim({
   }
 
   useEffect(() => {
-    if (fromRoute || businessName) return
+    if (fromJob || businessName) return
     fetch('/api/admin/businesses', { credentials: 'same-origin' })
       .then(r => r.json())
       .then(d => setBusinesses(Array.isArray(d.items) ? d.items : []))
       .catch(() => { /* the field falls back to free text */ })
-  }, [fromRoute, businessName])
+  }, [fromJob, businessName])
 
   const totalInvalid = total.trim() !== '' && !looksLikeMoney(total)
-  const canSave = !busy && !uploading && !totalInvalid && total.trim() !== '' && description.trim() !== '' && (fromRoute || biz.trim() !== '')
+  const canSave = !busy && !uploading && !totalInvalid && total.trim() !== '' && description.trim() !== '' && (fromJob || biz.trim() !== '')
 
   async function submit() {
     setBusy(true); setError('')
@@ -72,7 +78,7 @@ export default function NewClaim({
       const res = await fetch('/api/admin/claims', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
         body: JSON.stringify({
-          routeToken, businessName: fromRoute ? undefined : biz,
+          routeToken, bookingToken, businessName: fromJob ? undefined : biz,
           claimType, claimDate, reportedDate, reportedBy, responseDeadline, total, description, internalNotes,
           attachments: files.map(f => ({ kind: f.kind, url: f.url, name: f.name })),
         }),
@@ -96,15 +102,15 @@ export default function NewClaim({
           <button onClick={onClose} aria-label="Close" className="os-tap" style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer' }}><X size={20} /></button>
         </div>
         <p style={{ color: 'var(--muted)', fontSize: 13.5, marginBottom: 16 }}>
-          {fromRoute
-            ? `Opening against ${routeLabel || 'this route'}. The business, crew and route pricing are copied in and frozen.`
+          {fromJob
+            ? `Opening against ${routeLabel || bookingLabel || 'this job'}. The customer, crew and job pricing are copied in and frozen.`
             : 'Record what the client says was damaged, and what it costs.'}
         </p>
 
         {error && <div style={{ padding: '10px 13px', borderRadius: 10, background: 'rgba(239,68,68,.12)', border: '1px solid rgba(239,68,68,.3)', color: '#fca5a5', fontSize: 13.5, marginBottom: 14 }}>{error}</div>}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {!fromRoute && (
+          {!fromJob && (
             <div>
               <label htmlFor="nc-biz" style={{ ...osLabel, display: 'block', marginBottom: 6 }}>Business</label>
               <input id="nc-biz" list="nc-biz-list" value={biz} onChange={e => setBiz(e.target.value)} disabled={Boolean(businessName)} placeholder="Which client?" style={osField} />

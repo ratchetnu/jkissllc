@@ -19,6 +19,8 @@ import { addDaysStr, centralToday, isDateStr, mondayOf } from './dates'
 import { bizKey, type Business } from './businesses'
 import { computeRouteMoney } from './finance'
 import { generateToken, type RouteRecord } from './routes'
+import { effectiveServiceDate, netInvoiceCents, type Booking } from './bookings'
+import { activeCrew } from './job-assignment'
 
 // ── Status ───────────────────────────────────────────────────────────────────
 export type ClaimStatus =
@@ -128,6 +130,7 @@ export type ClaimAudit = {
 // that impossible rather than merely unlikely.
 export type ClaimSnapshot = {
   at: number
+  workSource?: 'route' | 'booking' | 'business'
   businessKey: string
   businessName: string
   businessContactName?: string
@@ -137,6 +140,12 @@ export type ClaimSnapshot = {
   routeToken?: string
   routeNumber?: string
   routeDate?: string
+  bookingToken?: string
+  bookingNumber?: string
+  serviceDate?: string
+  customerName?: string
+  customerPhone?: string
+  customerEmail?: string
   reportAddress?: string
   routePayoutCents?: number            // total crew pay on the route
   routeProfitCents?: number | null
@@ -153,6 +162,8 @@ export type ClaimRecord = {
   businessName: string
   routeToken?: string
   routeNumber?: string
+  bookingToken?: string
+  bookingNumber?: string
 
   claimDate: string                    // YYYY-MM-DD the damage happened
   reportedDate: string                 // YYYY-MM-DD the client told us
@@ -578,6 +589,7 @@ export function snapshotFromRoute(route: RouteRecord, biz: Business | null | und
   const money = computeRouteMoney(route)
   return {
     at: Date.now(),
+    workSource: 'route',
     businessKey: bizKey(route.businessName),
     businessName: route.businessName,
     businessContactName: biz?.contactName,
@@ -594,9 +606,56 @@ export function snapshotFromRoute(route: RouteRecord, biz: Business | null | und
   }
 }
 
+/**
+ * Freeze a customer booking exactly as it stood when the claim was opened.
+ * Declined assignees are not job crew and never enter the snapshot. Invalid pay
+ * values remain visible as unpriced crew instead of poisoning payout/profit.
+ */
+export function snapshotFromBooking(booking: Booking): ClaimSnapshot {
+  const crew = activeCrew(booking.assignees)
+  const payoutCents = crew.reduce((sum, assignee) => {
+    const cents = assignee.payCents
+    return sum + (typeof cents === 'number' && Number.isFinite(cents) && cents >= 0 ? cents : 0)
+  }, 0)
+  const revenueCents = netInvoiceCents(booking)
+  const disposalCents = booking.disposalActualCents ?? booking.disposalEstimateCents ?? 0
+  const serviceDate = effectiveServiceDate(booking) || undefined
+  const reportAddress = booking.jobSiteAddress || booking.pickupAddress || booking.dropoffAddress
+  const businessName = booking.customerName.trim() || 'Direct customer'
+
+  return {
+    at: Date.now(),
+    workSource: 'booking',
+    businessKey: `booking:${booking.token}`,
+    businessName,
+    businessContactName: businessName,
+    businessContactPhone: booking.customerPhone,
+    businessPriceCents: revenueCents,
+    priceSource: 'manual',
+    bookingToken: booking.token,
+    bookingNumber: booking.bookingNumber,
+    serviceDate,
+    customerName: businessName,
+    customerPhone: booking.customerPhone,
+    customerEmail: booking.customerEmail,
+    reportAddress,
+    routePayoutCents: payoutCents,
+    routeProfitCents: revenueCents - payoutCents - disposalCents,
+    crew: crew.map(assignee => ({
+      staffId: assignee.staffId,
+      name: assignee.name,
+      role: assignee.role,
+      payCents: typeof assignee.payCents === 'number' && Number.isFinite(assignee.payCents) && assignee.payCents >= 0
+        ? assignee.payCents
+        : undefined,
+    })),
+  }
+}
+
 export function snapshotFromBusiness(businessName: string, biz: Business | null | undefined): ClaimSnapshot {
   return {
     at: Date.now(),
+    workSource: 'business',
     businessKey: bizKey(businessName),
     businessName,
     businessContactName: biz?.contactName,
@@ -628,6 +687,11 @@ function normalize(c: ClaimRecord): ClaimRecord {
   for (const a of c.assignments) a.ledger = Array.isArray(a.ledger) ? a.ledger : []
   c.attachments = Array.isArray(c.attachments) ? c.attachments : []
   c.audit = Array.isArray(c.audit) ? c.audit : []
+  // Some early claim rows predate frozen snapshots entirely. Keep those readable;
+  // only annotate a snapshot when one actually exists.
+  if (c.snapshot) {
+    c.snapshot.workSource = c.snapshot.workSource ?? (c.bookingToken ? 'booking' : c.routeToken ? 'route' : 'business')
+  }
   return c
 }
 
@@ -672,3 +736,6 @@ export const claimsForStaff = (claims: ClaimRecord[], staffId: string): ClaimRec
 
 export const claimsForRoute = (claims: ClaimRecord[], routeToken: string): ClaimRecord[] =>
   claims.filter(c => c.routeToken === routeToken)
+
+export const claimsForBooking = (claims: ClaimRecord[], bookingToken: string): ClaimRecord[] =>
+  claims.filter(c => c.bookingToken === bookingToken)
