@@ -52,6 +52,10 @@ function CareersInner() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [agreement, setAgreement] = useState<{ configured: boolean; blocking: string | null; current?: { version: number; filename: string; publishedAt: number } | null } | null>(null)
+  const [agreementFile, setAgreementFile] = useState<File | null>(null)
+  const [agreementNote, setAgreementNote] = useState('')
+  const [agreementApproved, setAgreementApproved] = useState(false)
+  const [publishingAgreement, setPublishingAgreement] = useState(false)
   const [canDecide, setCanDecide] = useState(false)
 
   const load = useCallback(async () => {
@@ -72,6 +76,42 @@ function CareersInner() {
       .then(d => { if (d?.ok) setAgreement({ configured: d.configured, blocking: d.blocking, current: d.current }) })
       .catch(() => {})
   }, [])
+
+  async function publishAgreement() {
+    if (!agreementFile || !agreementApproved) return
+    setPublishingAgreement(true)
+    setError(''); setNotice('')
+    try {
+      if (agreementFile.type !== 'application/pdf' || agreementFile.size > 12 * 1024 * 1024) {
+        throw new Error('Choose an approved PDF under 12 MB.')
+      }
+      const file = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('The PDF could not be read.'))
+        reader.onerror = () => reject(new Error('The PDF could not be read.'))
+        reader.readAsDataURL(agreementFile)
+      })
+      const res = await fetch('/api/admin/contractor-agreement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ file, filename: agreementFile.name, note: agreementNote.trim() || undefined }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'The agreement could not be published.')
+      setAgreement({ configured: true, blocking: null, current: data.current })
+      setAgreementFile(null)
+      setAgreementNote('')
+      setAgreementApproved(false)
+      const input = document.getElementById('contractor-agreement-pdf') as HTMLInputElement | null
+      if (input) input.value = ''
+      setNotice(`Contractor agreement v${data.current.version} published. New onboarding requests can now be sent.`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The agreement could not be published.')
+    } finally {
+      setPublishingAgreement(false)
+    }
+  }
 
   const filtered = useMemo(() => list.filter(STATUS_TABS.find(t => t.key === tab)!.match), [list, tab])
   const sel = useMemo(() => list.find(a => a.id === selId) || null, [list, selId])
@@ -121,14 +161,38 @@ function CareersInner() {
         </div>
         {error && <p role="alert" className="text-sm mb-4" style={{ color: '#f87171' }}>{error}</p>}
         {notice && <p role="status" className="text-sm mb-4" style={{ color: '#34d399' }}>{notice}</p>}
-        {agreement && !agreement.configured && (
-          <div role="alert" className="rounded-xl p-4 mb-4" style={{ background: 'rgba(251,191,36,.08)', border: '1px solid rgba(251,191,36,.4)' }}>
-            <p className="text-sm font-bold" style={{ color: '#fcd34d' }}>No contractor agreement is published</p>
-            <p className="text-xs mt-1" style={{ color: 'var(--muted)', lineHeight: 1.55 }}>
-              {agreement.blocking} Approvals still create a blocked crew record, but no onboarding link can be sent until an
-              administrator uploads the counsel-approved PDF.
+        {agreement && (
+          <section className="rounded-xl p-4 mb-4" aria-labelledby="contractor-agreement-heading" style={{ background: agreement.configured ? 'rgba(52,211,153,.07)' : 'rgba(251,191,36,.08)', border: `1px solid ${agreement.configured ? 'rgba(52,211,153,.35)' : 'rgba(251,191,36,.4)'}` }}>
+            <p id="contractor-agreement-heading" className="text-sm font-bold" style={{ color: agreement.configured ? '#6ee7b7' : '#fcd34d' }}>
+              {agreement.current ? `Contractor agreement v${agreement.current.version} published` : 'No contractor agreement is published'}
             </p>
-          </div>
+            <p className="text-xs mt-1" style={{ color: 'var(--muted)', lineHeight: 1.55 }}>
+              {agreement.current
+                ? `${agreement.current.filename} · published ${fmtTs(agreement.current.publishedAt)}. Uploading another approved PDF creates a new immutable version.`
+                : `${agreement.blocking} Approvals still create a blocked crew record, but no onboarding link can be sent until an administrator uploads the approved PDF.`}
+            </p>
+            <div className="grid sm:grid-cols-2 gap-3 mt-4">
+              <div>
+                <p className="text-xs font-bold mb-1" style={{ color: 'var(--muted)' }}>Approved agreement PDF</p>
+                <label htmlFor="contractor-agreement-pdf" className="btn-ghost inline-flex" style={{ cursor: publishingAgreement ? 'wait' : 'pointer', padding: '8px 12px', fontSize: 13 }}>
+                  {agreementFile ? 'Choose a different PDF' : 'Choose PDF'}
+                </label>
+                <input id="contractor-agreement-pdf" className="file-input-a11y" type="file" aria-label="Choose approved contractor agreement PDF" accept="application/pdf,.pdf" onChange={e => { setAgreementFile(e.target.files?.[0] ?? null); setAgreementApproved(false) }} disabled={publishingAgreement} />
+                {agreementFile && <p className="text-xs mt-1" style={{ color: 'var(--text)' }}>{agreementFile.name}</p>}
+              </div>
+              <div>
+                <label htmlFor="contractor-agreement-note" className="text-xs font-bold block mb-1" style={{ color: 'var(--muted)' }}>Publication note (optional)</label>
+                <input id="contractor-agreement-note" value={agreementNote} onChange={e => setAgreementNote(e.target.value)} maxLength={500} disabled={publishingAgreement} placeholder="Example: Owner-approved final v1.0" style={{ width: '100%', padding: '9px 11px', borderRadius: 9, border: '1px solid var(--line)', background: 'rgba(255,255,255,.04)', color: 'var(--text)' }} />
+              </div>
+            </div>
+            <label className="flex gap-3 items-start text-sm mt-3">
+              <input type="checkbox" checked={agreementApproved} onChange={e => setAgreementApproved(e.target.checked)} disabled={!agreementFile || publishingAgreement} style={{ width: 18, height: 18, marginTop: 2 }} />
+              <span>I confirm this exact PDF is the approved agreement authorized for contractor use.</span>
+            </label>
+            <button type="button" disabled={!agreementFile || !agreementApproved || publishingAgreement} onClick={() => void publishAgreement()} className="mt-3" style={{ padding: '9px 14px', borderRadius: 10, fontSize: 13, fontWeight: 800, border: 'none', background: '#059669', color: '#fff', opacity: !agreementFile || !agreementApproved || publishingAgreement ? .55 : 1, cursor: publishingAgreement ? 'wait' : 'pointer' }}>
+              {publishingAgreement ? 'Publishing…' : agreement.configured ? 'Publish new version' : 'Publish approved agreement'}
+            </button>
+          </section>
         )}
         <div className="flex flex-wrap gap-2 mb-5">
           {STATUS_TABS.map(t => <button key={t.key} onClick={() => setTab(t.key)} style={chip(tab === t.key)}>{t.label}</button>)}
