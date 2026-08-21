@@ -1,7 +1,7 @@
-import { analyzeJunkPhotos } from './junk-analysis'
+import { analyzeJunkPhotos, analysisOutputTokenBudget } from './junk-analysis'
 import { monitorAnalysis, applyMonitor } from './analysis-monitor'
 import { reviewJunkAnalysis, reconcileWithCritic, criticEnabled, criticModeFor, type CriticVerdict } from './junk-critic'
-import { decideQuote } from '../pricing/quote-decision'
+import { decideQuote, type QuoteDecisionResult } from '../pricing/quote-decision'
 import { getDisposalSettings } from '../disposal'
 import { getCalibration } from '../job-learning'
 import { isEnabled } from '../platform/flags'
@@ -59,6 +59,31 @@ export type PhotoEstimateDeps = {
   loadCalibration?: typeof getCalibration
 }
 
+/** The customer-facing reason a review reads as honest rather than as a failure. */
+const UNPRICED_REASON = 'We could not finish reading your photos automatically — a team member is pricing this by hand.'
+
+/**
+ * Strip the money from a decision that was computed over a read which never
+ * happened, keeping the shape every downstream consumer expects.
+ *
+ * `priced: false` already carries exactly this meaning in QuoteDecisionResult ("no
+ * price was computed, which is NOT the same as the price is $0"), so this reuses
+ * that contract rather than inventing a second one. Zeroing WITHOUT setting the flag
+ * would be the worse bug — a real $0 job and an unpriced one would become
+ * indistinguishable.
+ */
+function unpricedDecision(d: QuoteDecisionResult): QuoteDecisionResult {
+  return {
+    ...d,
+    decision: 'manual_review',
+    recommendedUsd: 0,
+    rangeUsd: { low: 0, high: 0 },
+    priced: false,
+    breakdown: { ...d.breakdown, costLines: [] },
+    reviewReasons: Array.from(new Set([...d.reviewReasons, UNPRICED_REASON])),
+  }
+}
+
 export async function buildPhotoEstimate(
   input: PhotoEstimateInput,
   deps: PhotoEstimateDeps = {},
@@ -77,10 +102,13 @@ export async function buildPhotoEstimate(
   // 1) AI visual analysis (fail-soft — always returns an analysis object). Timed as the
   // `ai` stage (its internal preprocessing + provider round-trip are recorded as nested
   // sub-stages). Observability is a no-op when no pipeline trace is active.
-  const primary = budget.primary(startedAt)
+  // The slice AND the matching output-token ceiling are resolved together — passing
+  // the analyzer's own scaled cap so the budget can only ever lower it, never raise a
+  // small job to a large job's allowance.
+  const primary = budget.primary(startedAt, analysisOutputTokenBudget(input.photoUrls.length))
   const analyzed = await timeStage('ai', () => analyze({
     analysisId: input.analysisId, bookingId: input.bookingId, photoUrls: input.photoUrls, serviceLabel, nowIso,
-    timeoutMs: primary.timeoutMs, attempts: primary.attempts,
+    timeoutMs: primary.timeoutMs, attempts: primary.attempts, maxOutputTokens: primary.maxOutputTokens,
   }))
 
   // Did the interactive budget — rather than the provider — end this read? A timeout
@@ -102,6 +130,20 @@ export async function buildPhotoEstimate(
     // Deterministic pricing + decision. A monitor 'block' forces manual review.
     const [settings, calibration] = await Promise.all([loadSettings(), loadCalibration()])
     let decision = decideQuote({ analysis, settings, calibration, serviceType: input.serviceType, debris: input.debris, forceReview: monitor.forceReview })
+
+    // ── A read that never happened must not produce a number ────────────────────
+    // When the provider call fails, `analyzed.analysis` is reviewFallbackAnalysis:
+    // zero confidence, no items, and `estimatedTruckLoads` defaulted to 1. Those are
+    // PLACEHOLDERS, but decideQuote cannot tell them from a real read of a one-load
+    // job — so it priced them, and a timed-out analysis came back as a confident
+    // "$580–$815, priced: true". The decision said manual_review while the money said
+    // otherwise, and the customer saw the money.
+    //
+    // The moving lane already refuses to price what it could not analyse
+    // (`unpricedDecision`); this is the junk lane's equivalent. The analysis object
+    // is kept intact for the admin and the durable retry — only the PRICE is
+    // withheld, because the price is the part that was never earned.
+    if (!analyzed.ok) decision = unpricedDecision(decision)
 
     // Second-opinion critic — only when about to auto-quote. Fail-soft. The reviewer
     // inspects the structured numbers by default and spends a full second vision pass

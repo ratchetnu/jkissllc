@@ -40,6 +40,26 @@ export type StageBudget = {
   timeoutMs: number
   /** Model-call attempts for this stage. Interactive is always single-shot. */
   attempts: number
+  /**
+   * Output-token ceiling for this stage, or 0 for "no override" (the analyzer's own
+   * photo-count-scaled budget applies — the durable behaviour).
+   *
+   * ── WHY THIS FIELD EXISTS ────────────────────────────────────────────────────
+   * junk-analysis derives its wall-clock allowance FROM its output-token budget and
+   * says so plainly: the two "are coupled in reality and were independent in code,
+   * which is a bug waiting to happen and duly happened". That coupling holds inside
+   * `analysisTimeoutMs`. It did NOT hold across this boundary: the interactive
+   * caller pinned its own `timeoutMs` and left `maxOutputTokens` at the durable,
+   * photo-count-scaled value — re-opening the exact drift the coupling forbids, from
+   * the outside.
+   *
+   * The arithmetic was unsatisfiable at EVERY photo count, not just large ones. At
+   * the measured ~107 output tok/s the durable budget needs 24s of generation for a
+   * single photo and 64s for eight, against a 32s slice — so an interactive analysis
+   * that actually used its output allowance could never finish, and every one timed
+   * out. Pinning the slice without pinning the ask is what made the failure total.
+   */
+  maxOutputTokens: number
 }
 
 export type InteractiveBudgetConfig = {
@@ -53,6 +73,20 @@ export type InteractiveBudgetConfig = {
   criticMaxMs: number
   /** Below this the critic is not worth starting — skip it rather than time out. */
   criticMinMs: number
+  /**
+   * Observed output-token generation rate, tokens/sec. Sizing comes from the same
+   * measurement junk-analysis cites: a 6-photo job generating 1600 tokens completed
+   * in 25.5s, implying ~10s fixed overhead and ~107 tok/s.
+   */
+  outputTokensPerSec: number
+  /** Fixed non-generation cost of a call (image fetch + input processing), ms. */
+  fixedOverheadMs: number
+  /**
+   * Never ask for fewer than this many output tokens. Below roughly this the model
+   * cannot express even a small, honest read, and a truncated JSON is worse than a
+   * clean fallback — it discards the whole analysis (the JK-B-1022 failure).
+   */
+  minOutputTokens: number
 }
 
 // Defaults chosen against the SHIPPED route ceiling of 60s:
@@ -67,6 +101,9 @@ export const DEFAULT_INTERACTIVE_BUDGET: InteractiveBudgetConfig = {
   primaryMaxMs: 32_000,
   criticMaxMs: 15_000,
   criticMinMs: 8_000,
+  outputTokensPerSec: 107,
+  fixedOverheadMs: 10_000,
+  minOutputTokens: 1_200,
 }
 
 type EnvLike = Record<string, string | undefined>
@@ -85,7 +122,35 @@ export function resolveInteractiveBudget(env: EnvLike = process.env): Interactiv
     primaryMaxMs: envMs(env, 'QUOTE_ANALYZE_PRIMARY_MAX_MS', d.primaryMaxMs),
     criticMaxMs: envMs(env, 'QUOTE_ANALYZE_CRITIC_MAX_MS', d.criticMaxMs),
     criticMinMs: envMs(env, 'QUOTE_ANALYZE_CRITIC_MIN_MS', d.criticMinMs),
+    outputTokensPerSec: envMs(env, 'QUOTE_ANALYZE_OUTPUT_TOKENS_PER_SEC', d.outputTokensPerSec),
+    fixedOverheadMs: envMs(env, 'QUOTE_ANALYZE_FIXED_OVERHEAD_MS', d.fixedOverheadMs),
+    minOutputTokens: envMs(env, 'QUOTE_ANALYZE_MIN_OUTPUT_TOKENS', d.minOutputTokens),
   }
+}
+
+/**
+ * The output-token ceiling that actually FITS a given slice of wall clock.
+ *
+ * This is the inverse of junk-analysis's `analysisTimeoutMs`: that function turns a
+ * token budget into the time it needs, this one turns available time back into the
+ * tokens it can pay for. Keeping both makes the coupling total — whichever end is
+ * pinned, the other is derived, so the two can no longer drift apart.
+ *
+ * `cap` is the analyzer's own photo-count-scaled budget. We never RAISE it (a small
+ * job should not be handed a large job's allowance); we only lower it to what the
+ * clock can afford. Returns 0 when even the floor cannot fit, which the caller must
+ * read as "do not start this call" rather than "ask for zero tokens".
+ */
+export function outputTokensForSlice(
+  sliceMs: number,
+  cap: number,
+  cfg: InteractiveBudgetConfig = resolveInteractiveBudget(),
+): number {
+  const generationMs = sliceMs - cfg.fixedOverheadMs
+  if (generationMs <= 0) return 0
+  const affordable = Math.floor((generationMs / 1000) * cfg.outputTokensPerSec)
+  if (affordable < cfg.minOutputTokens) return 0
+  return Math.min(cap, affordable)
 }
 
 /**
@@ -103,8 +168,12 @@ export type InteractiveBudget = {
   readonly deadlineAt: number
   /** Time left before the deadline at `now`, never negative. */
   remainingMs(now: number): number
-  /** The primary vision call's slice at `now`. */
-  primary(now: number): StageBudget
+  /**
+   * The primary vision call's slice at `now`. `cap` is the analyzer's own
+   * photo-count-scaled token budget; the returned `maxOutputTokens` is that value
+   * reduced to whatever the slice can actually pay for.
+   */
+  primary(now: number, cap?: number): StageBudget
   /** The critic's slice at `now` — timeoutMs 0 ⇒ skip (not enough budget left). */
   critic(now: number): StageBudget
 }
@@ -123,17 +192,23 @@ export function interactiveBudget(startedAt: number, config?: Partial<Interactiv
     config: cfg,
     deadlineAt,
     remainingMs,
-    primary(now: number): StageBudget {
+    primary(now: number, cap = 0): StageBudget {
       // The primary read is the whole point of the request: give it everything
       // available up to its cap. If even a second isn't left, 0 ⇒ skip to fallback.
-      return { timeoutMs: Math.min(cfg.primaryMaxMs, remainingMs(now)), attempts: 1 }
+      const timeoutMs = Math.min(cfg.primaryMaxMs, remainingMs(now))
+      // ...and ask the model for only as much as that slice can pay for. Asking for
+      // the durable budget inside an interactive slice is what made every one of
+      // these calls time out; see the StageBudget.maxOutputTokens note.
+      return { timeoutMs, attempts: 1, maxOutputTokens: outputTokensForSlice(timeoutMs, cap, cfg) }
     },
     critic(now: number): StageBudget {
       // The critic is a verification luxury. It runs only if a MEANINGFUL slice
       // survives the primary call — a critic that times out is pure latency for no
       // verdict. Below criticMinMs we skip it deliberately and record the skip.
       const left = Math.min(cfg.criticMaxMs, remainingMs(now))
-      return { timeoutMs: left >= cfg.criticMinMs ? left : 0, attempts: 1 }
+      // The critic keeps the analyzer's own allowance (0 = no override): it is a
+      // small verdict object, not a full read, so it was never the stage at risk.
+      return { timeoutMs: left >= cfg.criticMinMs ? left : 0, attempts: 1, maxOutputTokens: 0 }
     },
   }
 }
@@ -169,8 +244,11 @@ export function durableBudget(): InteractiveBudget {
     // timeoutMs 0 with mode 'durable' is read by callers as "no override" — the
     // analyzer's own scaled allowance applies. attempts 1 is an explicit pin, not a
     // default: the retry lives on the booking, not inside the call.
-    primary: () => ({ timeoutMs: 0, attempts: 1 }),
-    critic: () => ({ timeoutMs: 0, attempts: 1 }),
+    // maxOutputTokens 0 = no override, so the durable worker keeps the analyzer's
+    // full photo-count-scaled budget. Its 150s deadline can afford it; the 32s
+    // interactive slice never could, which is the whole point of the split.
+    primary: () => ({ timeoutMs: 0, attempts: 1, maxOutputTokens: 0 }),
+    critic: () => ({ timeoutMs: 0, attempts: 1, maxOutputTokens: 0 }),
   }
 }
 

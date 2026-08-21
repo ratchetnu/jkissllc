@@ -4,7 +4,7 @@ import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route
 import { rateLimit } from '../../../lib/rate-limit'
 import { isBlockedBot } from '../../../lib/botcheck'
 import { buildPhotoEstimate } from '../../../lib/ai/photo-estimate'
-import { saveDraftEstimate, customerEstimateView } from '../../../lib/ai/estimate-store'
+import { saveDraftEstimate, getDraftEstimate, customerEstimateView } from '../../../lib/ai/estimate-store'
 import { selectFollowUpQuestions } from '../../../lib/ai/followup-questions'
 import { recordFunnelEvent } from '../../../lib/analytics-events'
 import { filterPhotoUrls } from '../../../lib/photo-url'
@@ -14,6 +14,7 @@ import { buildMovingEstimate, customerMovingEstimateView, type StoredMovingEstim
 import type { MovingJobFacts } from '../../../lib/pricing/moving-quote'
 import { isEnabled } from '../../../lib/platform/flags'
 import { interactiveBudget, INTERACTIVE_ROUTE_CEILING_MS } from '../../../lib/ai/interactive-policy'
+import { analysisFingerprint, claimAnalysis, completeAnalysis, releaseAnalysis } from '../../../lib/ai/quote-analysis-idempotency'
 
 export const runtime = 'nodejs'
 // The interactive latency budget is sized against THIS number. They are declared in
@@ -70,7 +71,16 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   if (await rateLimit(req, 'quoteanalyze', 10, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many estimates. Please wait a few minutes.' }, { status: 429 })
   }
-  if (await isBlockedBot()) return NextResponse.json({ error: 'Request blocked. Please try again.' }, { status: 403 })
+  // A bot rejection is RECORDED before it is returned. Silence here is what hid a
+  // five-week outage: this route bot-checked a path the client never registered with
+  // BotID, so every real browser was rejected — and because the 403 returned before
+  // any funnel write, `quote_analyze_started` simply read zero and looked like an
+  // absence of traffic rather than a total failure. The customer still learns
+  // nothing beyond "blocked"; the operator now learns the rate.
+  if (await isBlockedBot()) {
+    await recordFunnelEvent('ai_analysis_blocked', new Date().toISOString())
+    return NextResponse.json({ error: 'Request blocked. Please try again.' }, { status: 403 })
+  }
 
   const body = await req.json().catch(() => ({}))
   // Only our Vercel Blob store — never an attacker-supplied URL handed to the model.
@@ -154,10 +164,52 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   // stage is sliced against the route's own ceiling and the whole thing is single-shot.
   // The durable worker calls buildPhotoEstimate with no budget and keeps its longer,
   // patient retry policy (150s deadline, 5 attempts, exponential backoff).
+  // ── Don't pay twice for the same question ──────────────────────────────────
+  // A vision analysis is a paid call. `ai/pre-analysis` already dedupes within one
+  // browser controller, but a refresh, a second tab or an impatient double click
+  // creates a NEW controller and sails past it. The claim below is the server-side
+  // half: only the request that wins it may reach the provider.
+  const fingerprint = analysisFingerprint({ photoUrls: photos, service: serviceType, debris })
+  const claim = await claimAnalysis(fingerprint, analysisId)
+
+  if (claim.state === 'done') {
+    // This exact photo set already has a finished draft. Serve it — same answer, no
+    // second charge. If the draft has aged out from under the pointer we fall through
+    // and analyse again rather than hand back nothing.
+    const prior = await getDraftEstimate(claim.analysisId).catch(() => null)
+    if (prior) {
+      await recordFunnelEvent('ai_analysis_deduped', nowIso)
+      return NextResponse.json({
+        ok: true, outcome: 'analysis_complete', reused: true,
+        estimate: customerEstimateView(prior),
+        followUps: selectFollowUpQuestions({
+          serviceFamily: serviceFamily(serviceType), analysis: prior.analysis,
+          estate: serviceType === 'estate-cleanout' || serviceType === 'garage-cleanout' || serviceType === 'eviction',
+        }),
+        analyzed: { ok: prior.status !== 'failed', degraded: null },
+      })
+    }
+  } else if (claim.state === 'pending') {
+    // Another request is mid-analysis on these same photos. Returning a stable
+    // `analysis_pending` is strictly better than starting a duplicate: the customer
+    // is told the answer is coming, and we do not buy the same answer twice.
+    await recordFunnelEvent('ai_analysis_deduped', nowIso)
+    return NextResponse.json({
+      ok: true, outcome: 'analysis_pending', analysisId: claim.analysisId,
+      estimate: null, followUps: [], analyzed: { ok: false, degraded: null },
+    })
+  }
+
   const budget = interactiveBudget(Date.now())
   const { stored, analyzedOk, degraded } = await buildPhotoEstimate({
     analysisId, bookingId: 'draft', photoUrls: photos, serviceType, debris, budget,
   })
+
+  // A completed read becomes reusable; a failed one RELEASES the claim so the
+  // customer's own retry is allowed to try again. Caching a failure would turn one
+  // bad minute into a bad day.
+  if (analyzedOk) await completeAnalysis(fingerprint, analysisId)
+  else await releaseAnalysis(fingerprint)
 
   await recordFunnelEvent(analyzedOk ? 'ai_analysis_completed' : 'ai_analysis_failed', nowIso)
   // A budget overrun is its own funnel outcome. Before the interactive policy this
@@ -198,8 +250,19 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   // read your photos and routed you to review" from "we ran out of time". Both still
   // return 200 with a usable estimate shell — the booking is never lost, and the
   // browser never sees a killed request.
+  // ONE stable, machine-readable outcome for every exit, so a caller never has to
+  // infer state from the shape of the money. `analysis_timeout` in particular must
+  // be distinguishable from `manual_review`: the first means we never read the
+  // photos and a durable retry is owed, the second means we read them and chose a
+  // human. Before this they were the same response with different numbers in it.
+  const outcome = !analyzedOk
+    ? (degraded ? 'analysis_timeout' : 'analysis_failed')
+    : stored.decision === 'manual_review' ? 'manual_review'
+      : 'analysis_complete'
+
   return NextResponse.json({
     ok: true,
+    outcome,
     estimate: customerEstimateView(stored),
     followUps,
     analyzed: { ok: analyzedOk, degraded: degraded ?? null },

@@ -102,8 +102,11 @@ test('the durable worker is explicitly NOT on this budget', () => {
   // added no resilience and consumed the deadline: at ~102s per attempt for an 8-photo
   // set, two attempts came to ~204s against a 150s deadline, and the retry meant to
   // rescue a blip was what guaranteed the job failed.
-  assert.deepEqual(d.primary(T0), { timeoutMs: 0, attempts: 1 })
-  assert.deepEqual(d.critic(T0), { timeoutMs: 0, attempts: 1 })
+  // maxOutputTokens 0 is "no override" for the same reason timeoutMs 0 is: the
+  // durable worker keeps the analyzer's full photo-count-scaled budget, which its
+  // 150s deadline can actually afford. Only the interactive slice has to cut it down.
+  assert.deepEqual(d.primary(T0), { timeoutMs: 0, attempts: 1, maxOutputTokens: 0 })
+  assert.deepEqual(d.critic(T0), { timeoutMs: 0, attempts: 1, maxOutputTokens: 0 })
   assert.equal(isSkipped(d.critic(T0), 'durable'), false, 'a durable critic is never budget-skipped')
 })
 
@@ -196,10 +199,24 @@ test('interactive: a budget timeout is a structured outcome, not a dead request'
   assert.equal(res.degraded, 'primary_timeout')
   assert.equal(res.stored.latency?.degraded, 'primary_timeout')
   assert.equal(res.stored.latency?.mode, 'interactive')
-  // The booking-preserving contract still holds: a real, priceable record comes back.
+  // The booking-preserving contract still holds — a real, complete record comes back
+  // and nothing is lost. What changed is WHICH parts of it are real.
   assert.equal(res.stored.decision, 'manual_review')
   assert.equal(res.stored.status, 'failed')
-  assert.ok(res.stored.pricing.lowUsd > 0, 'the customer is still handed a real record')
+  assert.ok(res.stored.analysis, 'the analysis shell is preserved for the admin + the durable retry')
+  assert.equal(res.stored.inputPhotoUrls.length, input.photoUrls.length, 'the photos are preserved')
+
+  // ...but the PRICE is withheld. This assertion previously read `lowUsd > 0` and
+  // called that "a real record". It was not one: on a failed read the analysis is
+  // reviewFallbackAnalysis, whose truckLoads DEFAULT to 1 and whose confidence is 0,
+  // so that number was a placeholder priced as though it were a measurement. In
+  // production it surfaced as a confident "$580–$815, priced: true" against an
+  // analysis that never happened. Preserving the record and quoting a number are two
+  // different promises, and only the first was ever intended here.
+  assert.equal(res.stored.pricing.priced, false, 'a read that did not happen is not priced')
+  assert.equal(res.stored.pricing.lowUsd, 0)
+  assert.equal(res.stored.pricing.highUsd, 0)
+  assert.equal(res.stored.pricing.recommendedUsd, 0)
 })
 
 test('interactive: a PROVIDER rejection is not reported as our timeout', async () => {

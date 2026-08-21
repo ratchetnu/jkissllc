@@ -39,6 +39,17 @@ export type AnalyzeJunkPhotosInput = {
   // the customer's request can never outlive its function ceiling.
   timeoutMs?: number
   attempts?: number
+  /**
+   * Output-token ceiling override. Omitted or 0 ⇒ the photo-count-scaled budget
+   * below applies (the durable worker's behaviour, unchanged).
+   *
+   * A caller that pins `timeoutMs` MUST pin this too. The scaled budget and the
+   * scaled timeout are two views of ONE quantity — `analysisTimeoutMs` is literally
+   * derived from `analysisOutputTokenBudget` — so overriding only the clock asks the
+   * model for more tokens than the clock can buy, and the call can do nothing but
+   * time out. That is exactly what the interactive route did, at every photo count.
+   */
+  maxOutputTokens?: number
 }
 
 export type AnalyzeJunkPhotosResult = {
@@ -195,7 +206,11 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
     feature: 'ops.junkAnalysis',
     vars: await truckVars(),
     messages,
-    maxOutputTokens: analysisOutputTokenBudget(photos.length),
+    // Pinned by interactive callers to what their slice can actually pay for; the
+    // durable worker passes nothing and keeps the full scaled budget.
+    maxOutputTokens: input.maxOutputTokens && input.maxOutputTokens > 0
+      ? Math.min(input.maxOutputTokens, analysisOutputTokenBudget(photos.length))
+      : analysisOutputTokenBudget(photos.length),
     temperature: 0.2,
     // Interactive callers pin an explicit slice + single shot and it still wins. The
     // durable worker no longer falls back to the platform's 30s default: that default is
