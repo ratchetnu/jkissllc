@@ -14,14 +14,29 @@
 
 import { redis } from './redis'
 import { buildId } from './alerts'
-import { twilioConfigured } from './sms'
 import { completionUploadReadiness } from './job-assignment'
 import { tenancyOperatingProfile } from './platform/tenancy/operating-profile'
 // Dependency-free by design — importing ./ai would pull the AI SDK into the health bundle.
 import { resolveAiProvider, providerCredentialPresent, credentialKeysFor } from './ai/provider-config'
+import {
+  resolveProviderReadiness, type ProviderId, type ProviderReadiness,
+} from './platform/capabilities/provider-readiness'
 
 export type ComponentStatus = 'ok' | 'degraded' | 'down'
-export type HealthComponent = { name: string; status: ComponentStatus; critical: boolean; detail: string }
+export type HealthComponent = {
+  name: string
+  status: ComponentStatus
+  critical: boolean
+  detail: string
+  /**
+   * False when this business does not use the component at all. A deployment with
+   * no Stripe key and no intention of taking cards is not unwell, and reporting it
+   * as degraded forever trains everyone to ignore the signal — which is how a real
+   * outage hides. Informational: a not-applicable component reports `ok`, so the
+   * rollup in `summarize` is unchanged.
+   */
+  applicable?: boolean
+}
 export type OverallStatus = 'healthy' | 'degraded' | 'unhealthy'
 export type HealthReport = { status: OverallStatus; components: HealthComponent[]; build: string; at: string }
 
@@ -81,9 +96,39 @@ export function applyObservedAiOutcome(
   }
 }
 
-export function configChecks(env: Env): HealthComponent[] {
+/**
+ * Which optional provider channels this business has switched on. Supplied by the
+ * caller from the tenant capability profile; defaults to "all on", which reproduces
+ * the historical behavior exactly for any caller that does not pass it.
+ */
+export type ProviderEnablement = Record<ProviderId, boolean>
+const ALL_ENABLED: ProviderEnablement = { stripe: true, twilio: true, resend: true }
+
+export type ConfigCheckOptions = {
+  providers?: ProviderEnablement
+  observed?: Partial<Record<ProviderId, { ok: boolean; errorClass?: string } | null>>
+}
+
+/** Map one provider readiness verdict onto a health component. */
+function providerComponent(name: string, r: ProviderReadiness): HealthComponent {
+  return {
+    name,
+    critical: false,
+    // 'disabled' is a product decision, not a fault: it reports ok and marks itself
+    // not-applicable. Everything else keeps the previous semantics.
+    status: r.state === 'disabled' || r.state === 'ready' ? 'ok' : 'degraded',
+    detail: r.detail,
+    applicable: r.applicable,
+  }
+}
+
+export function configChecks(env: Env, opts: ConfigCheckOptions = {}): HealthComponent[] {
   const has = (...keys: string[]) => keys.some(k => !!env[k])
   const tenancy = tenancyOperatingProfile(env)
+  const providers = opts.providers ?? ALL_ENABLED
+  const readiness = (id: ProviderId) =>
+    resolveProviderReadiness({ provider: id, enabled: providers[id], env, observed: opts.observed?.[id] ?? null })
+  const stripe = readiness('stripe')
   return [
     { name: 'tenancy_profile', critical: false, status: tenancy.valid ? 'ok' : 'degraded', detail: `${tenancy.profile}: ${tenancy.detail}` },
     { name: 'storage', critical: false, status: has('BLOB_READ_WRITE_TOKEN') ? 'ok' : 'degraded', detail: has('BLOB_READ_WRITE_TOKEN') ? 'Blob configured' : 'Blob token not set — photo uploads disabled' },
@@ -110,18 +155,27 @@ export function configChecks(env: Env): HealthComponent[] {
     // answered by the observed-outcome upgrade in runHealthChecks below.
     aiProviderComponent(env),
     { name: 'scheduled_worker', critical: false, status: has('CRON_SECRET') ? 'ok' : 'degraded', detail: has('CRON_SECRET') ? 'Cron secret set' : 'CRON_SECRET not set — durable worker + cron disabled' },
-    { name: 'payments', critical: false, status: has('STRIPE_SECRET_KEY') ? 'ok' : 'degraded', detail: has('STRIPE_SECRET_KEY') ? 'Stripe configured' : 'Stripe not configured — card payments disabled' },
+    // Payments / SMS / email now derive from the ONE shared readiness source
+    // (platform/capabilities/provider-readiness.ts) that the send paths, the guards
+    // and the deployment evidence also read, so health can no longer disagree with
+    // what the app will actually do.
+    providerComponent('payments', stripe),
     // Taking a card and CONFIRMING it are separate capabilities on the same provider.
     // Stripe can be fully able to charge while STRIPE_WEBHOOK_SECRET is unset — and then
     // /api/webhooks/stripe fails closed (503), so the durable backstop that marks a paid
     // route-invoice never runs and confirmation rests solely on the success-URL return
     // path. Reported separately so a working checkout can never mask a dead backstop.
-    { name: 'payments_webhook', critical: false, status: webhookStatus(has), detail: webhookDetail(has) },
-    { name: 'email', critical: false, status: has('RESEND_API_KEY') ? 'ok' : 'degraded', detail: has('RESEND_API_KEY') ? 'Email configured' : 'Email not configured — notifications limited' },
+    // Taking a card and CONFIRMING it are separate capabilities on the same
+    // provider, so this stays its own component — but it is only meaningful when
+    // card payments are switched on at all.
+    stripe.state === 'disabled'
+      ? { name: 'payments_webhook', critical: false, status: 'ok', detail: 'Card payments are turned off — no webhook backstop is required.', applicable: false }
+      : { name: 'payments_webhook', critical: false, status: webhookStatus(has), detail: webhookDetail(has), applicable: true },
+    providerComponent('email', readiness('resend')),
     // Twilio is asserted with the SAME predicate sms.ts sends by, not a single-key
     // proxy: an account SID alone (no auth pair, or no from/messaging-service) cannot
     // send, and must not read as configured.
-    { name: 'sms', critical: false, status: twilioConfigured(env) ? 'ok' : 'degraded', detail: twilioConfigured(env) ? 'Twilio configured' : 'Twilio not fully configured — SMS disabled' },
+    providerComponent('sms', readiness('twilio')),
   ]
 }
 
@@ -147,6 +201,12 @@ export type HealthDeps = {
    *  rather than env presence alone. Optional and fail-soft — omit it and the report is
    *  exactly as before. */
   lastAiCall?: () => Promise<{ ok: boolean; outcome?: string; errorClass?: string; at?: number } | null>
+  /**
+   * Which optional provider channels this business uses, from its capability
+   * profile. Fail-soft and optional: omit it and every provider is treated as
+   * switched on, which is byte-identical to the pre-capability behavior.
+   */
+  providers?: () => Promise<ProviderEnablement | null>
 }
 
 /** Run all checks and produce the report. Injectable for tests. */
@@ -164,9 +224,17 @@ export async function runHealthChecks(deps: HealthDeps): Promise<HealthReport> {
   if (deps.lastAiCall) {
     try { lastAi = await deps.lastAiCall() } catch { lastAi = null }
   }
+  // Capability selections come from the store, so they must never be able to make
+  // the health endpoint itself fail. A throw, a null, or no resolver at all all
+  // mean "assume every channel is in use" — the historical behavior.
+  let providers: ProviderEnablement | null = null
+  if (deps.providers) {
+    try { providers = await deps.providers() } catch { providers = null }
+  }
   const components = [
     kv,
-    ...configChecks(deps.env).map(c => (c.name === 'ai_provider' ? applyObservedAiOutcome(c, lastAi) : c)),
+    ...configChecks(deps.env, providers ? { providers } : {})
+      .map(c => (c.name === 'ai_provider' ? applyObservedAiOutcome(c, lastAi) : c)),
   ]
   return {
     status: summarize(components),
@@ -191,7 +259,11 @@ export function projectHealth(report: HealthReport, opts: { detailed: boolean })
   if (!opts.detailed) return base
   return {
     ...base,
-    components: report.components.map(c => ({ name: c.name, status: c.status, critical: c.critical, detail: c.detail })),
+    components: report.components.map(c => ({
+      name: c.name, status: c.status, critical: c.critical, detail: c.detail,
+      // Only ever a boolean; never a variable value.
+      ...(c.applicable === undefined ? {} : { applicable: c.applicable }),
+    })),
   }
 }
 

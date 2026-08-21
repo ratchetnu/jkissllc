@@ -10,10 +10,18 @@ import { emailRaw } from '../app/lib/booking-emails'
 import { notifyOwnerNewSubmission } from '../app/lib/booking-notify'
 import { recordNotificationAttempt, lastNotification, type Booking } from '../app/lib/bookings'
 
-test('emailRaw returns a FAILURE result when the provider is not configured (non-silent)', async () => {
+test('emailRaw returns a FAILURE result when email delivery is unavailable (non-silent)', async () => {
   const r = await emailRaw({ to: ['owner@example.com'], subject: 's', html: 'h' })
   assert.equal(r.ok, false)          // was previously a silent success
-  assert.match(r.error ?? '', /RESEND_API_KEY|not configured/i)
+  // The refusal now comes from the capability guard rather than a bare env read, so
+  // it carries a STABLE machine-readable code instead of only prose. With no
+  // RESEND_API_KEY present and no explicit owner choice, email delivery resolves to
+  // "not in use" — the same effective outcome as before, now stated as a product
+  // fact with a manual alternative rather than as a provider misconfiguration.
+  assert.equal(r.capabilityCode, 'capability_disabled')
+  assert.match(r.error ?? '', /turned off|not configured|unavailable/i)
+  // Whatever the wording, a caller must never be told it succeeded.
+  assert.ok(!r.id)
 })
 
 test('notifyOwnerNewSubmission suppresses sandbox test records (no send, no throw)', async () => {

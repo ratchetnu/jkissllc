@@ -135,6 +135,28 @@ test('bookingToInvoiceLike produces a valid InvoiceLike (B2C lane) without mergi
 test('invoicing capability is marked full after consolidation, spanning both lanes', () => {
   const cap = CAPABILITY_REGISTRY['invoicing']
   assert.equal(cap.status, 'full')
-  for (const dep of ['bookings', 'routes', 'payments']) assert.ok(cap.dependencies.includes(dep as never), `invoicing depends on ${dep}`)
+  for (const dep of ['bookings', 'routes']) assert.ok(cap.dependencies.includes(dep as never), `invoicing depends on ${dep}`)
   assert.ok(cap.requiredPermissions.includes('invoices:manage'))
+})
+
+// Corrected: `payments` was a HARD dependency of invoicing, which asserted — in the
+// one machine-readable place that answers the question — that a business cannot bill
+// anyone without a payment lane, and by extension without a card processor. An
+// invoice is a record: it is numbered, rendered, sent, viewed at /invoice/{token} and
+// marked paid from an offline payment with no processor involved. It is now a SOFT
+// dependency, so a target with no Stripe can still receive and run the invoicing code.
+test('invoicing does NOT hard-depend on payments or Stripe — an invoice is a record', () => {
+  const cap = CAPABILITY_REGISTRY['invoicing']
+  assert.ok(!cap.dependencies.includes('payments'), 'payments must not be a hard prerequisite of invoicing')
+  assert.ok(!cap.dependencies.includes('payments-stripe'), 'card payments must never be a hard prerequisite of invoicing')
+  assert.ok(cap.softDependencies.includes('payments'), 'payments is still declared — as an enhancement')
+  assert.ok(cap.softDependencies.includes('payments-stripe'))
+})
+
+// Same correction for reporting: opening a revenue report must not require a card
+// processor. The report reads booking + invoice records.
+test('reporting does NOT hard-depend on payments', () => {
+  const cap = CAPABILITY_REGISTRY['reporting']
+  assert.ok(!cap.dependencies.includes('payments'), 'a report must not need Stripe merely to load')
+  assert.ok(cap.softDependencies.includes('payments'))
 })

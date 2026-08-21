@@ -15,13 +15,27 @@
 //               is missing. Public copy must be worded so it cannot be read as
 //               claiming the missing part.
 //   planned     Not production-ready. Never marketable. Usually paired with
-//               enabledForJkiss: false and/or a requiredFlag.
+//               defaultSelection: 'disabled' and/or a requiredFlag.
 //   backend-only  Logic exists with no user-facing surface yet.
 //   duplicated  Two implementations of one concept, pending consolidation.
 //
-// `enabledForJkiss` answers a DIFFERENT question from `status`: whether tenant #0
-// currently uses it. A capability can be `full` and disabled, or enabled and
-// `partial`. Don't read one as the other.
+// `defaultSelection` answers a DIFFERENT question from `status`: what a tenant that
+// has expressed no preference gets. A capability can be `full` and default-off, or
+// default-on and `partial`. Don't read one as the other. It is only a DEFAULT — the
+// authority is the tenant's own capability profile (capabilities/tenant-profile.ts),
+// which this field seeds and an explicit owner choice overrides.
+//
+// It replaces the former per-tenant-zero boolean, which was scaffolding: it answered
+// the question for exactly one tenant and returned "disabled" for every other tenant,
+// so a second business could not be configured at all.
+//
+// ── `dependencies` vs `softDependencies` ─────────────────────────────────────
+//
+// `dependencies` are HARD prerequisites: the profile validator refuses to enable a
+// capability while one of them is disabled. `softDependencies` enhance and never
+// require. Getting this wrong is not cosmetic — invoicing used to declare `payments`
+// a hard dependency, which said, in the only machine-readable place that answers the
+// question, that a business cannot bill anyone without a card processor.
 //
 // ── ABSENCE IS NOT EVIDENCE OF ABSENCE ───────────────────────────────────────
 //
@@ -51,11 +65,13 @@ type CapInput = Pick<Capability, 'id' | 'displayName' | 'description' | 'domain'
 function cap(c: CapInput): Capability {
   return {
     dependencies: [],
+    softDependencies: [],
     requiredPermissions: [],
     requiredFlags: [],
     supportedRoles: ['admin', 'manager'],
     aiActions: [],
-    enabledForJkiss: true,
+    defaultSelection: 'enabled',
+    tenantConfigurable: true,
     tiers: ['free', 'starter', 'pro'],
     ...c,
   }
@@ -63,18 +79,18 @@ function cap(c: CapInput): Capability {
 
 const LIST: Capability[] = [
   // ── Identity & tenancy ──
-  cap({ id: 'identity', displayName: 'Identity', description: 'Authentication and user identity.', domain: 'Identity & Tenancy', status: 'full', kind: 'core', supportedRoles: ['admin', 'manager', 'crew'] }),
-  cap({ id: 'organizations', displayName: 'Organizations', description: 'Tenant/organization records.', domain: 'Identity & Tenancy', status: 'planned', kind: 'core', dependencies: ['identity'], requiredFlags: ['TENANCY_ENABLED'], enabledForJkiss: false }),
-  cap({ id: 'memberships', displayName: 'Memberships', description: 'User↔tenant↔role association.', domain: 'Identity & Tenancy', status: 'planned', kind: 'core', dependencies: ['identity', 'organizations', 'roles'], requiredFlags: ['TENANCY_ENABLED'], enabledForJkiss: false }),
-  cap({ id: 'roles', displayName: 'Roles', description: 'Role definitions (admin/manager/crew).', domain: 'Identity & Tenancy', status: 'full', kind: 'core', dependencies: ['identity'] }),
+  cap({ tenantConfigurable: false, id: 'identity', displayName: 'Identity', description: 'Authentication and user identity.', domain: 'Identity & Tenancy', status: 'full', kind: 'core', supportedRoles: ['admin', 'manager', 'crew'] }),
+  cap({ id: 'organizations', displayName: 'Organizations', description: 'Tenant/organization records.', domain: 'Identity & Tenancy', status: 'planned', kind: 'core', dependencies: ['identity'], requiredFlags: ['TENANCY_ENABLED'], defaultSelection: 'disabled' }),
+  cap({ id: 'memberships', displayName: 'Memberships', description: 'User↔tenant↔role association.', domain: 'Identity & Tenancy', status: 'planned', kind: 'core', dependencies: ['identity', 'organizations', 'roles'], requiredFlags: ['TENANCY_ENABLED'], defaultSelection: 'disabled' }),
+  cap({ tenantConfigurable: false, id: 'roles', displayName: 'Roles', description: 'Role definitions (admin/manager/crew).', domain: 'Identity & Tenancy', status: 'full', kind: 'core', dependencies: ['identity'] }),
   // Wave D/E: enforcement was already full (the can() chokepoint); this adds the read-only
   // matrix VIEWER (/admin/operations/permissions, permissions:view) sourced from the SAME
   // rbac primitive so it can't drift, and role-assignment activity is now audited. The
   // matrix stays static/in-code — deliberately NOT tenant-configurable.
-  cap({ id: 'permissions', displayName: 'Permissions', description: 'RBAC permission matrix + read-only viewer.', domain: 'Identity & Tenancy', status: 'full', kind: 'core', dependencies: ['roles', 'audit-logs'], requiredPermissions: ['roles:manage', 'permissions:view'] }),
+  cap({ tenantConfigurable: false, id: 'permissions', displayName: 'Permissions', description: 'RBAC permission matrix + read-only viewer.', domain: 'Identity & Tenancy', status: 'full', kind: 'core', dependencies: ['roles', 'audit-logs'], requiredPermissions: ['roles:manage', 'permissions:view'] }),
 
   // ── CRM ──
-  cap({ id: 'customers', displayName: 'Customers', description: 'First-class customer records.', domain: 'CRM', status: 'planned', kind: 'core', dependencies: ['identity'], enabledForJkiss: false }),
+  cap({ id: 'customers', displayName: 'Customers', description: 'First-class customer records.', domain: 'CRM', status: 'planned', kind: 'core', dependencies: ['identity'], defaultSelection: 'disabled' }),
   // NOT the same thing as `customers` (which is planned): `businesses` is the B2B
   // CLIENT ACCOUNT — contract rates, rate history, billing terms, contract start/end.
   // It has shipped since before this registry existed and was simply never entered.
@@ -128,8 +144,27 @@ const LIST: Capability[] = [
   cap({ id: 'fleet', displayName: 'Fleet', description: 'Vehicle/asset assignment + maintenance.', domain: 'Equipment', status: 'full', kind: 'industry-specific', dependencies: ['equipment', 'routes'], requiredPermissions: ['equipment:assign', 'equipment:view', 'fleet:maintenance'], aiActions: [{ id: 'maintenance.flag', level: 1 }] }),
 
   // ── Comms ──
-  cap({ id: 'messaging', displayName: 'Messaging', description: 'Customer + crew messaging.', domain: 'Comms', status: 'full', kind: 'core', requiredPermissions: ['messages:send'], supportedRoles: ['admin', 'manager', 'crew'], aiActions: [{ id: 'message.draft', level: 2 }] }),
-  cap({ id: 'notifications', displayName: 'Notifications', description: 'Email/SMS/in-app delivery.', domain: 'Comms', status: 'full', kind: 'core' }),
+  //
+  // The RECORD is core; the external DELIVERY CHANNEL is an optional adapter. A
+  // message thread, a communications log entry, a crew assignment note and an
+  // admin/portal conversation all exist, are stored, are readable and are auditable
+  // with neither Twilio nor Resend configured. Only the leg that leaves the building
+  // is optional — which is why `sms-delivery` and `email-delivery` are
+  // softDependencies here rather than dependencies.
+  cap({ id: 'messaging', displayName: 'Messaging', description: 'Customer + crew messaging records and threads (in-app; external delivery is optional).', domain: 'Comms', status: 'full', kind: 'core', softDependencies: ['sms-delivery', 'email-delivery'], requiredPermissions: ['messages:send'], supportedRoles: ['admin', 'manager', 'crew'], aiActions: [{ id: 'message.draft', level: 2 }] }),
+  cap({ id: 'notifications', displayName: 'Notifications', description: 'Notification records + in-app delivery (external channels are optional adapters).', domain: 'Comms', status: 'full', kind: 'core', softDependencies: ['sms-delivery', 'email-delivery'] }),
+
+  // ── Optional external provider adapters ──
+  //
+  // `defaultSelection: 'auto'` = "in use if, and only if, this deployment carries the
+  // credentials, until the owner says otherwise". That is exactly today's effective
+  // behavior (an unconfigured provider already no-ops), so J KISS — which has all
+  // three — is unchanged, while a credential-free target reports a HEALTHY "not
+  // enabled" instead of a permanently degraded "unconfigured". An explicit owner
+  // choice always wins, so deliberately enabling one without credentials still shows
+  // up as setup-required.
+  cap({ id: 'sms-delivery', displayName: 'SMS Delivery', description: 'Outbound + inbound SMS via Twilio.', domain: 'Comms', status: 'full', kind: 'optional', provider: 'twilio', dependencies: ['messaging'], defaultSelection: 'auto', requiredPermissions: ['messages:send'], supportedRoles: ['admin', 'manager', 'crew'] }),
+  cap({ id: 'email-delivery', displayName: 'Email Delivery', description: 'Transactional email via Resend.', domain: 'Comms', status: 'full', kind: 'optional', provider: 'resend', dependencies: ['notifications'], defaultSelection: 'auto' }),
   cap({ id: 'documents', displayName: 'Documents', description: 'File storage + encrypted identity docs.', domain: 'Documents', status: 'full', kind: 'core' }),
 
   // ── Money ──
@@ -140,8 +175,18 @@ const LIST: Capability[] = [
   // `bookings` via requireStaffSession (admin+manager). requiredPermissions names the
   // invoice-native permission. Stripe recording is unified + idempotent, so a paid route
   // invoice can no longer stay unmarked (webhook backstop).
-  cap({ id: 'invoicing', displayName: 'Invoicing', description: 'Booking + route invoices.', domain: 'Invoicing', status: 'full', kind: 'core', dependencies: ['bookings', 'routes', 'payments'], requiredPermissions: ['invoices:manage'], aiActions: [{ id: 'invoice.draft', level: 3 }] }),
-  cap({ id: 'payments', displayName: 'Payments', description: 'Stripe + Zelle + manual.', domain: 'Payments', status: 'full', kind: 'core' }),
+  //
+  // `payments` moved from dependencies to softDependencies. An invoice is a RECORD:
+  // it is numbered, rendered, sent, viewed at /invoice/{token} and marked paid by an
+  // admin recording an offline payment, with no processor involved at all. Declaring
+  // the money lane a hard prerequisite of billing said the opposite in the one
+  // machine-readable place that answers the question.
+  cap({ id: 'invoicing', displayName: 'Invoicing', description: 'Booking + route invoices (card collection optional).', domain: 'Invoicing', status: 'full', kind: 'core', dependencies: ['bookings', 'routes'], softDependencies: ['payments', 'payments-stripe'], requiredPermissions: ['invoices:manage'], aiActions: [{ id: 'invoice.draft', level: 3 }] }),
+  // The payment LEDGER — recording that money arrived, by any method. Cash, check,
+  // Zelle and "paid on site" need no provider, so this is core and always on. Only
+  // the card-collection leg is optional (`payments-stripe`).
+  cap({ id: 'payments', displayName: 'Payments', description: 'Payment ledger: manual, offline, Zelle, cash, check (card collection is a separate adapter).', domain: 'Payments', status: 'full', kind: 'core', softDependencies: ['payments-stripe'] }),
+  cap({ id: 'payments-stripe', displayName: 'Card Payments (Stripe)', description: 'Stripe Checkout collection + webhook confirmation.', domain: 'Payments', status: 'full', kind: 'optional', provider: 'stripe', dependencies: ['payments'], defaultSelection: 'auto' }),
   cap({ id: 'contractor-compensation', displayName: 'Contractor Compensation', description: 'Pay resolution + statements.', domain: 'Compensation', status: 'full', kind: 'core', requiredPermissions: ['pay:generate'] }),
   // Damage claims against the route / crew / client, with evidence, status history, and
   // crew cost recovery that schedules capped deductions into pay. Nine modules
@@ -150,13 +195,16 @@ const LIST: Capability[] = [
   // The ClaimGuard playbook (claim-assist.ts) is DETERMINISTIC — no aiActions.
   // The financial report is read via reports:view; claims:manage governs mutation.
   cap({ id: 'claims', displayName: 'Claims', description: 'Damage claims, evidence, status history, and capped crew cost recovery into pay.', domain: 'Claims', status: 'full', kind: 'core', dependencies: ['routes', 'businesses', 'contractor-compensation', 'documents'], requiredPermissions: ['claims:create', 'claims:manage'] }),
-  cap({ id: 'expenses', displayName: 'Expenses', description: 'Expense ledger.', domain: 'Compensation', status: 'planned', kind: 'core', enabledForJkiss: false }),
+  cap({ id: 'expenses', displayName: 'Expenses', description: 'Expense ledger.', domain: 'Compensation', status: 'planned', kind: 'core', defaultSelection: 'disabled' }),
   // Wave G: dedicated /admin/operations/reports surface over the two live engines
   // (revenue + claims) with CSV export, plus the authz reconciliation — the claims
   // financial report is now READ via reports:view (claims:manage stays for claims
   // management, unchanged). No company P&L: net profit needs `expenses` (planned), so
   // only revenue + claims-recovery reports exist, labeled as such.
-  cap({ id: 'reporting', displayName: 'Reporting', description: 'Revenue + claims reports (read-only, CSV export).', domain: 'Analytics', status: 'full', kind: 'core', dependencies: ['bookings', 'payments', 'ai-intelligence'], requiredPermissions: ['reports:view'], aiActions: [{ id: 'insights.brief', level: 1 }] }),
+  // `payments` is a soft dependency: the revenue report reads BOOKING and INVOICE
+  // records, so it renders with an empty card-payment column rather than refusing to
+  // load. Reporting must never require a processor to open.
+  cap({ id: 'reporting', displayName: 'Reporting', description: 'Revenue + claims reports (read-only, CSV export).', domain: 'Analytics', status: 'full', kind: 'core', dependencies: ['bookings', 'ai-intelligence'], softDependencies: ['payments', 'payments-stripe'], requiredPermissions: ['reports:view'], aiActions: [{ id: 'insights.brief', level: 1 }] }),
   // Wave F: the one un-wrapped analytics route (ai/analytics) is now tenant-wrapped;
   // comms analytics has a UI; the previously WRITE-ONLY quote funnel is surfaced (reader
   // + UI). Spans several guards — reports:view (site + funnel), ai:analytics (AI Control
@@ -166,13 +214,13 @@ const LIST: Capability[] = [
   // ── Automation & AI ──
   cap({ id: 'automations', displayName: 'Automations', description: 'Reminders + workflow automation.', domain: 'Automation', status: 'partial', kind: 'core', dependencies: ['workforce', 'routes', 'notifications', 'messaging'], requiredPermissions: ['reminders:manage'], aiActions: [{ id: 'reminder.draft', level: 2 }] }),
   cap({ id: 'ai-intelligence', displayName: 'AI Intelligence', description: 'Governed AI service (runAiTask).', domain: 'AI', status: 'full', kind: 'core', requiredPermissions: ['ai:use'], aiActions: [{ id: 'ops.command', level: 0 }, { id: 'ops.insights', level: 1 }] }),
-  cap({ id: 'approvals', displayName: 'Approvals', description: 'Human-approved AI actions.', domain: 'Automation', status: 'planned', kind: 'core', dependencies: ['ai-intelligence', 'audit-logs'], requiredFlags: ['APPROVAL_QUEUE_ENABLED'], enabledForJkiss: false }),
+  cap({ id: 'approvals', displayName: 'Approvals', description: 'Human-approved AI actions.', domain: 'Automation', status: 'planned', kind: 'core', dependencies: ['ai-intelligence', 'audit-logs'], requiredFlags: ['APPROVAL_QUEUE_ENABLED'], defaultSelection: 'disabled' }),
   // Wave D/E: tenant-stamped, attributed trail (actor/role/action/target/outcome/
   // correlation) now covers administrative identity/security events (user create/update/
   // role-change/suspend/reactivate/delete) — successes AND denied attempts — not just
   // comms; read-only viewer at /admin/operations/audit (audit:view). Legacy records
   // (no tenantId/outcome) remain readable.
-  cap({ id: 'audit-logs', displayName: 'Audit Logs', description: 'Attributed, tenant-scoped audit trail + viewer.', domain: 'Governance', status: 'full', kind: 'core', dependencies: ['identity'], requiredPermissions: ['audit:view'] }),
+  cap({ tenantConfigurable: false, id: 'audit-logs', displayName: 'Audit Logs', description: 'Attributed, tenant-scoped audit trail + viewer.', domain: 'Governance', status: 'full', kind: 'core', dependencies: ['identity'], requiredPermissions: ['audit:view'] }),
 
   // ── Surfaces ──
   cap({ id: 'customer-portal', displayName: 'Customer Portal', description: 'Booking/track/client portals.', domain: 'Surfaces', status: 'full', kind: 'core', supportedRoles: [] }),

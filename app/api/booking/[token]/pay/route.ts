@@ -5,7 +5,8 @@ import {
   getBookingByToken, balanceDueCents, fmtUSD,
   SERVICE_LABELS, type PaymentType,
 } from '../../../../lib/bookings'
-import { getStripe, stripeConfigured, grossUp } from '../../../../lib/stripe'
+import { getStripe, requireCardPayments, grossUp } from '../../../../lib/stripe'
+import { CapabilityUnavailableError, capabilityErrorBody } from '../../../../lib/platform/capabilities/guard'
 import { rateLimit } from '../../../../lib/rate-limit'
 import { siteUrl } from '../../../../lib/booking-emails'
 import { tenantIdForOutboundMetadata, resolveTenantFromResource } from '../../../../lib/platform/tenancy/tenant-resolve'
@@ -19,9 +20,6 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
   const { token } = await params
   if (await rateLimit(req, 'bookingpay', 12, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many attempts. Please wait a few minutes.' }, { status: 429 })
-  }
-  if (!stripeConfigured()) {
-    return NextResponse.json({ error: 'Card payments are not available right now — please use Zelle or Apple Pay below.' }, { status: 503 })
   }
 
   const b = await getBookingByToken(token)
@@ -37,6 +35,26 @@ export const POST = withTenantRoute(async (req: NextRequest, { params }: { param
   const resolution = resolveTenantFromResource(b as { tenantId?: string | null }, { kind: 'booking', correlationId: token })
   if (!resolution) return NextResponse.json({ error: 'This booking is temporarily unavailable. Please try again shortly.' }, { status: 503 })
   return runWithTenant({ tenantId: resolution.tenantId }, async () => {
+
+  // ── Card-payment capability gate ──
+  // Inside the record's tenant scope, so the answer is THIS booking's business, not
+  // whoever happens to be calling. Replaces the bare `stripeConfigured()` env read
+  // that used to sit above: an env check cannot tell "this business does not take
+  // cards" (a permanent product fact — offer Zelle) from "Stripe is misconfigured"
+  // (an operator problem), and the customer-facing copy differs for each.
+  try {
+    await requireCardPayments()
+  } catch (err) {
+    if (err instanceof CapabilityUnavailableError) {
+      return NextResponse.json({
+        ...capabilityErrorBody(err),
+        error: err.state === 'disabled'
+          ? `${COMPANY.legalName} doesn’t take card payments here — please use Zelle or Apple Pay below.`
+          : 'Card payments are not available right now — please use Zelle or Apple Pay below.',
+      }, { status: err.httpStatus })
+    }
+    throw err
+  }
 
   const body = await req.json().catch(() => ({}))
   const kind = (['deposit', 'balance', 'full'].includes(body.kind) ? body.kind : 'balance') as 'deposit' | 'balance' | 'full'

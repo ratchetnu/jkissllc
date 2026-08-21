@@ -4,6 +4,7 @@ import {
   SERVICE_LABELS, fmtUSD, balanceDueCents, BOOKING_STATUS_LABEL, PAYMENT_METHOD_LABEL,
 } from './bookings'
 import { COMPANY, CREDENTIALS_SLASH } from './company'
+import { checkCapability } from './platform/capabilities/guard'
 
 // Tenant identity comes from lib/company.ts. Per-tenant resolution (a verified
 // Resend sending domain per tenant, etc.) is a later step —
@@ -81,9 +82,34 @@ function locationBlock(b: Booking): string {
   ])
 }
 
-export type EmailResult = { ok: boolean; id?: string; error?: string }
+export type EmailResult = {
+  ok: boolean
+  id?: string
+  error?: string
+  /**
+   * Stable, non-secret capability code when the refusal came from the tenant's
+   * capability profile rather than from Resend. Lets a caller fall back to a manual
+   * workflow (copy the link, hand it over in person) instead of reporting an outage.
+   */
+  capabilityCode?: string
+}
 
 async function send(args: { to: string[]; subject: string; html: string; replyTo?: string }): Promise<EmailResult> {
+  // ── Capability gate (server-side, tenant-resolved) ──
+  // Every transactional email in the app funnels through this one function, so the
+  // guard belongs here rather than at each of the ~20 call sites. Fail closed: any
+  // state other than `ready` sends nothing. The tenant is resolved from ambient
+  // server context, never from a caller argument.
+  const emailCapability = await checkCapability('email-delivery')
+  if (emailCapability.state !== 'ready') {
+    return {
+      ok: false,
+      error: emailCapability.state === 'disabled'
+        ? 'Email is turned off for this business — deliver the link manually from the admin.'
+        : `Email is unavailable (${emailCapability.code}).`,
+      capabilityCode: emailCapability.code,
+    }
+  }
   const client = resend()
   if (!client) {
     console.error('[booking-emails] not sent — RESEND_API_KEY missing:', args.subject)

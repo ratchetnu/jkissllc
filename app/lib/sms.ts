@@ -10,6 +10,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { redis } from './redis'
 import { statusCallbackUrl } from './twilio-webhook'
 import { bindTwilioMessageTenant } from './platform/tenancy/twilio-tenant-binding'
+import { checkCapability } from './platform/capabilities/guard'
 
 // Per-async-context kill switch for OUTBOUND texts. When a run wraps its work in
 // withSmsSuppressed(), every sendSms/sendSmsDetailed call inside that async context
@@ -28,23 +29,12 @@ export function isSmsSuppressed(): boolean {
   return smsSuppression.getStore() === true
 }
 
-type TwilioEnv = Record<string, string | undefined>
-
-// Exactly what a real Twilio send needs, as a PURE env predicate. Extracted so the
-// health readiness check can assert the same rule this module actually sends by —
-// otherwise readiness drifts from the send path and reports "ok" for a Twilio that
-// can't send. Presence only: no value is returned, logged, or compared.
-export function twilioConfigured(env: TwilioEnv): boolean {
-  const auth = !!(
-    (env.TWILIO_API_KEY_SID && env.TWILIO_API_KEY_SECRET) ||
-    (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN)
-  )
-  return !!(
-    env.TWILIO_ACCOUNT_SID &&
-    auth &&
-    (env.TWILIO_FROM || env.TWILIO_MESSAGING_SERVICE_SID)
-  )
-}
+// The env predicate lives in the dependency-free leaf lib/sms-config.ts and is
+// re-exported here, so the health check, the capability guard and this send path
+// are all literally the same function and cannot drift.
+import { twilioConfigured } from './sms-config'
+export { twilioConfigured }
+export type { TwilioEnv } from './sms-config'
 
 function authPair(): { user: string; pass: string } | null {
   if (process.env.TWILIO_API_KEY_SID && process.env.TWILIO_API_KEY_SECRET) {
@@ -76,7 +66,19 @@ export function toE164(raw: string | undefined | null): string | null {
 // initial value — usually 'queued' or 'accepted' for a Messaging Service send.
 export type SmsDetail =
   | { ok: true; sid: string; status: string }
-  | { ok: false; error: string; code?: number; httpStatus?: number }
+  | {
+      ok: false
+      error: string
+      code?: number
+      httpStatus?: number
+      /**
+       * A stable, non-secret capability code when the refusal came from the tenant's
+       * capability profile rather than from Twilio. Lets a caller distinguish "this
+       * business does not do SMS" (a product fact, show the portal link instead) from
+       * "SMS is broken" (an operator problem) without string-matching a message.
+       */
+      capabilityCode?: string
+    }
 
 // Build the Twilio Messages POST body for one outbound SMS: destination, sender
 // (Messaging Service SID when set — preserving A2P routing — else the From number),
@@ -107,6 +109,24 @@ export async function sendSmsDetailed(to: string | undefined | null, body: strin
   // Honor an active suppression context (e.g. the daily 9am cron) before anything
   // else — no Twilio call is attempted for an automated text that's been switched off.
   if (isSmsSuppressed()) return { ok: false, error: 'SMS suppressed (automated run — outbound texts disabled).' }
+
+  // ── Capability gate (server-side, tenant-resolved) ──
+  // This is the CHOKEPOINT for outbound SMS: every reminder, dispatch, admin send
+  // and crew notification in the app reaches Twilio through here, so guarding it
+  // once covers them all — no route may re-implement the check with a raw env read.
+  // Fail closed: any state other than `ready` refuses to send. The tenant comes from
+  // the ambient server-side context, never from a caller argument, so a forged
+  // client claim that "SMS is enabled for me" cannot reach this decision.
+  const smsCapability = await checkCapability('sms-delivery')
+  if (smsCapability.state !== 'ready') {
+    return {
+      ok: false,
+      error: smsCapability.state === 'disabled'
+        ? 'SMS is turned off for this business — use the admin or portal link instead.'
+        : `SMS is unavailable (${smsCapability.code}).`,
+      capabilityCode: smsCapability.code,
+    }
+  }
   if (!smsConfigured()) return { ok: false, error: 'SMS is not configured (missing Twilio credentials).' }
   const dest = toE164(to)
   if (!dest) return { ok: false, error: `Invalid phone number: ${to}` }

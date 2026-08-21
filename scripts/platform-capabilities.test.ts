@@ -6,7 +6,7 @@ import { CAPABILITY_IDS } from '../app/lib/platform/capabilities/types'
 import { CAPABILITY_REGISTRY, allCapabilities } from '../app/lib/platform/capabilities/registry'
 import { validateCapabilityRegistry } from '../app/lib/platform/capabilities/validate'
 import {
-  capabilitiesForRole, isCapabilityEnabledForTenant, aiEligibleCapabilities,
+  capabilitiesForRole, isCapabilityEnabledForTenant, isCapabilityEnabledByDefault, aiEligibleCapabilities,
 } from '../app/lib/platform/capabilities'
 
 test('registry is structurally valid (deps resolve, no cycles, keys match ids)', () => {
@@ -25,12 +25,18 @@ test('role visibility: crew sees crew surfaces but not the management workspace'
   assert.ok(!crew.includes('management-workspace'), 'crew must not see the ops workspace')
 })
 
-test('tenant enablement: jkiss uses core caps; an unknown tenant gets nothing yet', () => {
-  assert.equal(isCapabilityEnabledForTenant('routes', { id: 'jkiss' }), true)
-  assert.equal(isCapabilityEnabledForTenant('bookings', { id: 'jkiss' }), true)
-  assert.equal(isCapabilityEnabledForTenant('routes', { id: 'acme' }), false)
-  // A planned-but-absent capability is not enabled even for jkiss.
-  assert.equal(isCapabilityEnabledForTenant('expenses', { id: 'jkiss' }), false)
+// The registry DEFAULT is now tenant-independent. It used to answer `enabledForJkiss`
+// for tenant zero and `false` for everyone else, which meant a second business could
+// not be configured at all — the very thing this work exists to fix. The reference
+// tenant's answers are unchanged; a second tenant now gets the same sane defaults
+// instead of nothing, and its actual selections live in its capability profile.
+test('registry defaults are tenant-independent and preserve the reference tenant', () => {
+  assert.equal(isCapabilityEnabledByDefault('routes'), true)
+  assert.equal(isCapabilityEnabledByDefault('bookings'), true)
+  // A second tenant is no longer told "you have nothing".
+  assert.equal(isCapabilityEnabledForTenant('routes', { id: 'acme' }), true)
+  // A planned-but-absent capability still defaults off.
+  assert.equal(isCapabilityEnabledByDefault('expenses'), false)
 })
 
 test('AI-eligible capabilities each declare at least one AI action', () => {

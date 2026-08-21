@@ -49,6 +49,12 @@ export type AuditAction =
   | 'contractor.agreement_countersigned'
   | 'contractor.onboarding_verified'
   | 'contractor.crew_link_confirmed'
+  // ── Tenant capability configuration ──
+  // One line per capability whose EFFECTIVE selection moved, plus a `denied` line
+  // for every refused attempt (cross-tenant, under-privileged, or an impossible
+  // configuration). Turning a business's payments/SMS/email on or off is a
+  // material operational decision, so it is attributed like a role change.
+  | 'capability.selection_changed'
 
 export type AuditOutcome = 'success' | 'denied' | 'failure'
 

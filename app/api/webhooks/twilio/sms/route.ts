@@ -19,6 +19,7 @@ import { notifyOwnerOfReply } from '../../../../lib/owner-alerts'
 import { redis } from '../../../../lib/redis'
 import { withBackgroundTenant } from '../../../../lib/platform/tenancy/request-context'
 import { resolveTenantFromPhoneChannel } from '../../../../lib/platform/tenancy/tenant-channel-resolve'
+import { checkCapability, webhookDisposition } from '../../../../lib/platform/capabilities/guard'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -81,6 +82,26 @@ export async function POST(req: NextRequest) {
   })
   if (!tenantId) return twiml()
   return withBackgroundTenant('webhook', async () => {
+
+  // ── Capability disposition (AFTER authentication, never before) ──
+  // An inbound text is NEW work being pushed at us, not the confirmation of
+  // something we already did — so when this business does not do SMS there is
+  // nothing to reconcile and nothing to store. It is acknowledged (200 + empty
+  // TwiML) and discarded: a 5xx here would make Twilio retry for hours against a
+  // business that deliberately opted out, which is a self-inflicted retry storm.
+  // "Enabled but unconfigured" still refuses with 503, because that IS an outage
+  // and the retry is genuinely wanted. See platform/capabilities/guard.ts.
+  const smsCapability = await checkCapability('sms-delivery', { tenantId })
+  const disposition = webhookDisposition(smsCapability)
+  if (disposition.action === 'refuse') {
+    console.error('[twilio-sms] refusing:', disposition.code)
+    return new NextResponse('sms not operational', { status: disposition.status })
+  }
+  if (disposition.action === 'acknowledge') {
+    // Deliberately silent: no record, no owner alert, no auto-reply.
+    return twiml()
+  }
+
   const messageSid = params.MessageSid || params.SmsSid || ''
   const fromRaw = params.From || ''
   const from = toE164(fromRaw) || fromRaw
