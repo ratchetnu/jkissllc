@@ -5,9 +5,9 @@
 > Everything under *Verified ground truth* was established by direct inspection of the
 > repository and the live system — treat it as fact rather than re-deriving it.
 >
-> **Written:** 2026-08-09 · **Updated:** 2026-08-09 (dry-run `c1deff4`; concurrency `a3e2873`;
-> E3 Preview evidence + new blocker B6)
-> **Production:** `680d363` / `dpl_DRVCTFMZ2V8tuV3FNBGHyfK1sKSD`
+> **Written:** 2026-08-09 · **Updated:** 2026-08-21 (dry-run `c1deff4`; concurrency `a3e2873`;
+> E3 Preview evidence + new blocker B6; merge-readiness refresh)
+> **Production checked 2026-08-21:** `e202860` / `dpl_2hvvnd7SvsLGCs7aFWxSXAVjpX2p`
 >
 > **NOTHING IN THIS DOCUMENT AUTHORISES ENABLING A FLAG.** Both flags are off, and the
 > work below exists to earn the right to turn them on — not to assume it.
@@ -27,14 +27,16 @@
 | E6 rollback rehearsed with a populated index | ⬜ open |
 | **B6 orphan-handling decision (#198)** | ⬜ **OPEN — new blocker found during E3** |
 
-**Nothing has been run against Production — no backfill, no dry run, no flag change.**
+**The evidence recorded here includes no Production backfill, dry run, or flag change.**
 E3 ran against the **Preview** store (`still-colt-145891`) with flags set **in-process only**;
-no Vercel env var was changed, so no Preview deployment's behaviour was altered.
-Both flags remain `false` in code and unset in Production.
+no Vercel env var was changed, so no Preview deployment's behaviour was altered. A
+read-only Production environment review on 2026-08-21 confirmed both flags remain
+`false` in code and unset in Production.
 
-The four open items share one property: **none can be produced from a developer machine.**
-E3 needs Preview with the flag on; E4b, E5 and E6 need authorised Production access. Every
-item that *could* be closed locally now has been.
+The remaining **environment evidence** cannot be produced from a developer machine: E3
+needs Preview with the flag on; E4b, E5 and E6 need authorised Production access. B6 is
+different: its failure is reproduced, but an owner must choose the operational policy
+before the selected remediation and regression coverage can be implemented locally.
 
 ---
 
