@@ -97,6 +97,7 @@ function jobFacts(job: UpdateAutomationJob): JobFacts {
     sourceRepository: job.sourceRepository, targetRepository: job.targetRepository,
     pullRequestNumber: job.pullRequestNumber, pullRequestUrl: job.pullRequestUrl,
     approvedBy: job.approvedBy, completedAt: job.completedAt,
+    targetEvidence: job.targetEvidence,
     result: job.result ? { buildPassed: job.result.buildPassed, testsPassed: job.result.testsPassed } : null,
     traceId: job.traceId,
   }
@@ -183,6 +184,9 @@ export async function reconcileJobRecords(input: {
       deploymentId: p.deploymentId ?? existingDeployment.deploymentId,
       deploymentUrl: p.deploymentUrl ?? existingDeployment.deploymentUrl,
       targetCommit: p.targetCommit ?? existingDeployment.targetCommit,
+      // Keep the last snapshot a target actually reported rather than blanking it —
+      // a re-reconcile of a job whose evidence has aged out must not erase history.
+      targetEvidence: p.targetEvidence ?? existingDeployment.targetEvidence,
       rollbackAvailable: p.rollbackAvailable,
       verifiedBy: actor, verifiedAt: p.verifiedAt, updatedAt: now(),
     }
@@ -198,6 +202,7 @@ export async function reconcileJobRecords(input: {
       environment: 'production', status: p.status,
       buildStatus: p.buildStatus, healthCheckStatus: p.healthCheckStatus, smokeTestStatus: p.smokeTestStatus,
       verificationStatus: p.verificationStatus, rollbackAvailable: p.rollbackAvailable,
+      targetEvidence: p.targetEvidence,
       previousCommit: business.currentCommit,
       initiatedBy: job.approvedBy ?? actor, verifiedBy: actor,
       createdAt: now(), updatedAt: now(), verifiedAt: p.verifiedAt,

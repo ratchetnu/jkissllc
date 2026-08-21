@@ -150,6 +150,12 @@ export type PlatformUpdate = {
   rollbackSupported: boolean
   requiredModules?: string[]
   dependencies?: string[]
+  /**
+   * How this update relates to OPTIONAL capabilities. Purely descriptive on the
+   * deployment path: nothing in here may become a deployment prerequisite. See
+   * UpdateCapabilityImpact.
+   */
+  capabilityImpact?: UpdateCapabilityImpact
   // Evidence + narrative
   validation: ValidationChecklist
   risks?: string
@@ -162,6 +168,53 @@ export type PlatformUpdate = {
   createdAt: number
   updatedAt: number
   approvedAt?: number
+}
+
+// ── Capability impact of an update ───────────────────────────────────────────
+//
+// These four things were previously one undifferentiated blob, which is how "the
+// target has no Stripe key" could read as "this update does not apply here":
+//
+//   1. WHICH capabilities the update touches          → descriptive, never a gate
+//   2. WHAT CODE the target must already have         → a real transfer blocker
+//   3. WHAT THE OWNER MUST DO to activate it          → never a deploy blocker
+//   4. WHAT THE DEPLOYMENT needs (migration, env)     → already modelled above
+//
+// (2) and (4) can legitimately block. (1) and (3) never can. Installing code and
+// activating a capability are separate events, and an update that lands dormant has
+// still landed — which is what lets a security fix reach every target regardless of
+// which optional integrations each of them runs.
+
+/** One thing the owner must do before shipped behavior becomes live. */
+export type UpdateActivationRequirement = {
+  /** Capability id from the platform capability registry. */
+  capability: string
+  kind: 'tenant_enable' | 'provider_credential' | 'feature_flag'
+  /**
+   * A variable or flag NAME — never a value. Anything that looks like a secret is
+   * rejected by the evidence validator rather than stored.
+   */
+  reference?: string
+  detail: string
+}
+
+export type UpdateCapabilityImpact = {
+  /** Capabilities this update touches. Descriptive only. */
+  affects?: string[]
+  /**
+   * Capabilities whose CODE must already exist on the target for the transfer to
+   * compile. This is the same class of fact as `requiredModules` — a runtime/transfer
+   * dependency — and it MAY block. It is emphatically not a tenant preference.
+   */
+  requiresCapabilityCode?: string[]
+  /** What must happen for the shipped code to do anything. NEVER blocks a deploy. */
+  activationRequirements?: UpdateActivationRequirement[]
+  /**
+   * True when the update touches ONLY optional-capability code, so a target with all
+   * of them switched off gains no behavior. Even then it still installs: the code is
+   * present and dormant, and flipping the capability on later needs no redeployment.
+   */
+  optionalOnly?: boolean
 }
 
 // ── Compatibility (per update × business) ────────────────────────────────────
@@ -301,9 +354,57 @@ export type DeploymentRecord = {
   notes?: string
   initiatedBy?: string
   verifiedBy?: string
+  /**
+   * What the TARGET said about itself after Preview verification: the build it is
+   * running and which optional capabilities are live there. Absent on every record
+   * that predates this field, and on any target that did not report — no caller may
+   * assume it is present.
+   */
+  targetEvidence?: TargetDeploymentEvidence
   createdAt: number
   updatedAt: number
   verifiedAt?: number
+}
+
+// ── Value-free evidence returned BY the target ──────────────────────────────
+//
+// After Preview verification the managed target reports what it is actually
+// running and which optional channels are live there. Operion stores this as
+// deployment evidence so a review screen can say "installed, dormant, needs
+// STRIPE_SECRET_KEY" instead of guessing.
+//
+// STRICTLY VALUE-FREE. Booleans, state CODES, and variable NAMES only. The target's
+// environment values never cross the boundary, and the validator refuses a payload
+// that looks like it is carrying one — Operion and Supercharged share code and share
+// no secrets, and this is the one channel where that could silently stop being true.
+export type TargetCapabilityEvidence = {
+  /** Capability id. */
+  capability: string
+  /** A stable capability state code (capability_ready, capability_disabled, …). */
+  state: string
+  enabled: boolean
+  /** null when the capability fronts no external provider. */
+  configured: boolean | null
+  /** Variable NAMES still needed. Never values. */
+  missingVars?: string[]
+}
+
+export type TargetDeploymentEvidence = {
+  /** The commit the target reports it is running. */
+  commit?: string
+  /** The target's own build identifier (e.g. a Vercel deployment id). */
+  buildId?: string
+  /** The target's application version, when it publishes one. */
+  version?: string
+  /** Schema version of the target's capability profile record. */
+  capabilityProfileVersion?: number
+  capabilities: TargetCapabilityEvidence[]
+  /** The target's clock. Advisory — never used to decide freshness. */
+  reportedAt?: number
+  /** OUR clock, when the signed callback was accepted. Authoritative. */
+  recordedAt: number
+  /** How the report was authenticated. Signed callbacks are the only accepted path. */
+  authentication: 'hmac-sha256'
 }
 
 // ── Evidence-based baseline adoption ────────────────────────────────────────

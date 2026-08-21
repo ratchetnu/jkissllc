@@ -6,6 +6,8 @@
 import crypto from 'node:crypto'
 import type { WorkflowResult } from './types'
 import type { UpdateAutomationJob } from './types'
+import type { TargetDeploymentEvidence } from '../updates/types'
+import { validateTargetEvidence } from './target-evidence'
 
 export function signCallback(rawBody: string, timestamp: string, secret: string): string {
   return crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex')
@@ -45,6 +47,16 @@ export type CallbackPayload = {
   result?: WorkflowResult
   errorCategory?: string
   errorSummary?: string
+  /**
+   * The target's value-free capability + build snapshot. Optional: a target that
+   * predates the contract simply omits it and everything behaves as before. It is
+   * only accepted here because the whole payload is already HMAC-verified,
+   * freshness-checked, replay-guarded by deliveryId, and bound to the active job's
+   * work branch — an unsigned or replayed report never reaches this field.
+   */
+  capabilityEvidence?: TargetDeploymentEvidence
+  /** Entries the validator refused (a malformed id, a value where a NAME was due). */
+  evidenceWarnings?: string[]
 }
 
 /** Bind a callback to the exact active job branch that the server derived at dispatch.
@@ -63,7 +75,15 @@ export function previewFailureStatus(status: CallbackPayload['status']): 'build_
 const STATUSES = new Set(['tests_failed', 'build_failed', 'preview_ready', 'preview_failed', 'apply_failed', 'error'])
 const str = (v: unknown, max = 500) => (typeof v === 'string' ? v.slice(0, max) : undefined)
 
-export function validateCallbackPayload(obj: unknown): { ok: true; value: CallbackPayload } | { ok: false; reason: string } {
+/**
+ * `at` is OUR clock, not the target's. The evidence record is stamped with it so a
+ * target cannot backdate or postdate its own report; the target's `reportedAt` is
+ * carried through as advisory only.
+ */
+export function validateCallbackPayload(
+  obj: unknown,
+  opts: { at?: number } = {},
+): { ok: true; value: CallbackPayload } | { ok: false; reason: string } {
   if (!obj || typeof obj !== 'object') return { ok: false, reason: 'not an object' }
   const o = obj as Record<string, unknown>
   const deliveryId = str(o.deliveryId, 128)
@@ -74,6 +94,23 @@ export function validateCallbackPayload(obj: unknown): { ok: true; value: Callba
   if (!status || !STATUSES.has(status)) return { ok: false, reason: 'invalid status' }
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
   const r = o.result && typeof o.result === 'object' ? (o.result as Record<string, unknown>) : undefined
+
+  // Evidence is OPTIONAL and non-fatal: a target that reports a malformed snapshot
+  // still gets its preview result recorded. Rejecting the whole callback would turn
+  // a reporting bug on the target into a stuck deployment, which is a worse failure
+  // than having no evidence.
+  let capabilityEvidence: TargetDeploymentEvidence | undefined
+  let evidenceWarnings: string[] | undefined
+  if (o.capabilityEvidence !== undefined) {
+    const ev = validateTargetEvidence(o.capabilityEvidence, opts.at ?? Date.now())
+    if (ev.ok) {
+      capabilityEvidence = ev.value
+      evidenceWarnings = ev.warnings.length ? ev.warnings.slice(0, 20) : undefined
+    } else {
+      evidenceWarnings = [`capability evidence rejected: ${ev.reason}`]
+    }
+  }
+
   return {
     ok: true,
     value: {
@@ -92,6 +129,7 @@ export function validateCallbackPayload(obj: unknown): { ok: true; value: Callba
         warnings: Array.isArray(r.warnings) ? r.warnings.filter(w => typeof w === 'string').slice(0, 20) as string[] : undefined,
       } : undefined,
       errorCategory: str(o.errorCategory, 60), errorSummary: str(o.errorSummary, 2000),
+      capabilityEvidence, evidenceWarnings,
     },
   }
 }

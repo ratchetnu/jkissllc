@@ -5,6 +5,7 @@
 
 import type { PlatformUpdate, PlatformBusiness, UpdateCompatibility } from '../updates/types'
 import { businessRepoRef } from './repo-identity'
+import type { UpdateApplicability } from './target-evidence'
 
 export type PreflightGate = { id: string; label: string; ok: boolean; blocking: boolean; reason?: string }
 export type PreflightResult = { ok: boolean; gates: PreflightGate[] }
@@ -29,6 +30,23 @@ export type PreflightInput = {
    * means the transfer would not compile on the target.
    */
   transferReady?: { ok: boolean; reason?: string }
+  /**
+   * What this update means for this target's capabilities (see target-evidence.ts).
+   *
+   * ── THE INVARIANT THIS ENCODES ──
+   * An optional provider's configuration is NEVER a deployment prerequisite. There
+   * is no gate below that reads Stripe / Twilio / Resend readiness, and none may be
+   * added: a security or shared-library fix must reach a target whose owner has
+   * deliberately switched every optional integration off. Installation and
+   * activation are separate events.
+   *
+   * The ONE capability fact that may block is `missingCapabilityCode` — the target
+   * lacks the CODE a transfer depends on, which is the same class of blocker as
+   * `requiredModules` and would fail to compile. Activation requirements are
+   * reported as a SOFT gate so the owner sees the remaining step without the
+   * deployment being held hostage to it.
+   */
+  capabilityImpact?: UpdateApplicability
 }
 
 // `partially_deployed` means the approved update has reached at least one business but
@@ -105,6 +123,31 @@ export function evaluatePreflight(x: PreflightInput): PreflightResult {
     !transfer || transfer.ok,
     true,
     transfer?.reason ?? 'the transfer is missing files this business needs',
+  )
+
+  // ── Capability gates ──
+  // Blocking: the target does not have the CODE this transfer depends on. That is a
+  // compile-time fact, not a preference.
+  const cap = x.capabilityImpact
+  add(
+    'capability_code_present',
+    'Required capability code present on target',
+    !cap || cap.missingCapabilityCode.length === 0,
+    true,
+    cap && cap.missingCapabilityCode.length ? `this target is missing the code for ${cap.missingCapabilityCode.join(', ')}` : 'a required capability is not implemented on this target',
+  )
+  // NON-blocking: what the owner must do for the shipped behavior to become live.
+  // Deliberately soft — an update that lands dormant has still landed, and holding
+  // the deploy until someone configures an optional provider is exactly the failure
+  // this whole gate set exists to prevent.
+  add(
+    'capability_activation',
+    'Optional features ready to activate (informational)',
+    !cap || cap.activationRequirements.length === 0,
+    false,
+    cap && cap.activationRequirements.length
+      ? `installs now, dormant until: ${cap.activationRequirements.map(r => r.detail).join('; ')}`
+      : 'some shipped behavior stays off until the owner activates it',
   )
 
   // Owner-gated approvals for risky changes.

@@ -19,7 +19,9 @@ export async function POST(req: NextRequest) {
 
   let parsed: unknown
   try { parsed = JSON.parse(raw) } catch { return NextResponse.json({ error: 'bad json' }, { status: 400 }) }
-  const v = validateCallbackPayload(parsed)
+  const acceptedAt = Date.now()
+  // Our clock, not the target's — evidence is stamped with when WE accepted it.
+  const v = validateCallbackPayload(parsed, { at: acceptedAt })
   if (!v.ok) return NextResponse.json({ error: 'invalid payload', reason: v.reason }, { status: 400 })
   const p = v.value
 
@@ -33,8 +35,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'callback does not match active job' }, { status: 409 })
   }
 
-  const now = Date.now()
+  const now = acceptedAt
   job.heartbeatAt = now; job.workflowRunId = p.workflowRunId ?? job.workflowRunId
+  // Value-free target snapshot (build + which optional capabilities are live there).
+  // Already HMAC-verified, freshness-checked, replay-guarded and job-bound above, and
+  // re-validated field by field by target-evidence.ts before it lands on the record.
+  if (p.capabilityEvidence) job.targetEvidence = p.capabilityEvidence
+  if (p.evidenceWarnings?.length) console.warn('[automation-callback] evidence warnings:', p.evidenceWarnings.join('; '))
   if (p.branch) job.workBranch = p.branch
   if (p.commit) job.targetCommit = p.commit
   if (p.pullRequestNumber != null) job.pullRequestNumber = p.pullRequestNumber

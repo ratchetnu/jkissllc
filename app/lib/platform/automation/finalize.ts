@@ -10,7 +10,7 @@
 // the decision pure means the reconciler and the inline post-promotion path share ONE
 // source of truth for "what deployed/verified means for the records."
 
-import type { DeploymentRecord, DeploymentStatus, VerificationStatus, CheckStatus, UpdateStatus, ReleaseStatus } from '../updates/types'
+import type { DeploymentRecord, DeploymentStatus, VerificationStatus, CheckStatus, UpdateStatus, ReleaseStatus, TargetDeploymentEvidence } from '../updates/types'
 import type { PlatformAuditAction } from '../updates/audit'
 import { parseSemanticVersion } from '../release/semver-policy'
 
@@ -32,6 +32,13 @@ export type JobFacts = {
   approvedBy?: string
   completedAt?: number
   result?: { buildPassed?: boolean; testsPassed?: boolean; smokePassed?: boolean } | null
+  /**
+   * The value-free snapshot the TARGET returned through the signed callback. Carried
+   * onto the deployment record so the release history can answer "what was actually
+   * running there, and which optional channels were live" without re-querying a
+   * target Operion does not own.
+   */
+  targetEvidence?: TargetDeploymentEvidence
   traceId?: string
 }
 
@@ -167,6 +174,7 @@ const check = (b: boolean | undefined): CheckStatus => (b === true ? 'passed' : 
 
 export type DeploymentPatch = {
   status: DeploymentStatus
+  targetEvidence?: TargetDeploymentEvidence
   verificationStatus: VerificationStatus
   buildStatus: CheckStatus
   healthCheckStatus: CheckStatus
@@ -178,9 +186,10 @@ export type DeploymentPatch = {
   rollbackAvailable: boolean
 }
 
-export function deriveDeploymentPatch(facts: DeploymentFacts): DeploymentPatch {
+export function deriveDeploymentPatch(facts: DeploymentFacts, targetEvidence?: TargetDeploymentEvidence): DeploymentPatch {
   return {
     status: 'deployed',
+    targetEvidence,
     verificationStatus: 'passed',
     buildStatus: check(facts.buildPassed),
     healthCheckStatus: check(facts.healthPassed),
@@ -226,7 +235,7 @@ export function finalizationPlan(input: {
   now: number
 }): FinalizationPlan {
   const facts = deploymentFactsFromJob(input.job, input.now)
-  const deployPatch = deriveDeploymentPatch(facts)
+  const deployPatch = deriveDeploymentPatch(facts, input.job.targetEvidence)
   const business = deriveBusinessProvenance({ facts, releaseVersion: input.release?.version })
 
   const audits: AuditIntent[] = []
