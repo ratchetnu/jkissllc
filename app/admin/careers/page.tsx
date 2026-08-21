@@ -6,12 +6,13 @@ import AdminGate from '../AdminGate'
 import type { Applicant, ApplicantStatus, Recommendation } from '../../lib/applicants'
 import { APPLICANT_STATUS_LABEL, RECOMMENDATION_LABEL, APPLICANT_INACTIVE } from '../../lib/applicants'
 import {
-  BAND_META, RUBRIC_DIMENSIONS, RUBRIC_LABELS, SCENARIOS, POSITIONS, requiredDocKinds,
+  BAND_META, RUBRIC_DIMENSIONS, RUBRIC_LABELS, SCENARIOS, POSITIONS, CONTRACTOR_ONBOARDING_DOCS,
   type ScoreBand, type DocKind,
 } from '../../lib/ats-config'
 
 const DOC_LABEL: Record<DocKind, string> = {
-  drivers_license: "Driver's License", id: 'State ID / License', ss_card: 'Social Security Card', headshot: 'Headshot (badge)',
+  drivers_license: "Driver's License", id: 'State ID / License', ss_card: 'Legacy Social Security Card',
+  headshot: 'Headshot (badge)', w9: 'Form W-9', contractor_agreement: 'Contractor Agreement', insurance: 'Vehicle Insurance',
 }
 const SCENARIO_PROMPT: Record<string, string> = Object.fromEntries(SCENARIOS.map(s => [s.key, s.prompt]))
 
@@ -23,12 +24,9 @@ const STATUS_TABS: { key: string; label: string; match: (a: Applicant) => boolea
   { key: 'new', label: 'New', match: a => a.status === 'new' },
   { key: 'info', label: 'Info Requested', match: a => a.status === 'information_requested' },
   { key: 'interview', label: 'Interviewing', match: a => a.status === 'interview' || a.status === 'second_interview' },
-  { key: 'approved', label: 'Approved', match: a => a.status === 'hired' },
+  { key: 'approved', label: 'Approved Contractors', match: a => a.status === 'hired' },
   { key: 'archived', label: 'Archived', match: a => a.status === 'archived' || a.status === 'withdrawn' },
   { key: 'all', label: 'All', match: () => true },
-  { key: 'new', label: 'New', match: a => a.status === 'new' },
-  { key: 'interview', label: 'Interview', match: a => a.status === 'interview' || a.status === 'second_interview' },
-  { key: 'hired', label: 'Hired', match: a => a.status === 'hired' },
   { key: 'rejected', label: 'Rejected', match: a => a.status === 'rejected' },
 ]
 
@@ -52,6 +50,8 @@ function CareersInner() {
   const [selId, setSelId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [agreement, setAgreement] = useState<{ configured: boolean; blocking: string | null; current?: { version: number; filename: string; publishedAt: number } | null } | null>(null)
   const [canDecide, setCanDecide] = useState(false)
 
   const load = useCallback(async () => {
@@ -66,6 +66,12 @@ function CareersInner() {
     finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
+  useEffect(() => {
+    void fetch('/api/admin/contractor-agreement', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.ok) setAgreement({ configured: d.configured, blocking: d.blocking, current: d.current }) })
+      .catch(() => {})
+  }, [])
 
   const filtered = useMemo(() => list.filter(STATUS_TABS.find(t => t.key === tab)!.match), [list, tab])
   const sel = useMemo(() => list.find(a => a.id === selId) || null, [list, selId])
@@ -73,12 +79,30 @@ function CareersInner() {
   async function act(action: string, value?: unknown) {
     if (!sel) return
     setBusy(true)
-    setError('')
+    setError(''); setNotice('')
     try {
       const res = await fetch('/api/admin/careers', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: sel.id, action, value }) })
       const j = await res.json()
-      if (!res.ok) throw new Error(j.error || 'The applicant could not be updated.')
       if (j.applicant) setList(prev => prev.map(a => a.id === sel.id ? j.applicant : a))
+      if (!res.ok) {
+        // A duplicate-crew conflict is a decision to make, not a failure to retry:
+        // nothing changed, and the admin must explicitly accept the consequence.
+        if (j.reason === 'crew_link_confirmation_required') {
+          await load()
+          setError(`${j.error} ${j.consequence ?? ''}`.trim())
+          return
+        }
+        throw new Error(j.error || 'The applicant could not be updated.')
+      }
+      if (j.warning) setError(j.warning)
+      else setNotice(action === 'confirm_crew_link'
+        ? 'Crew member linked and paused for onboarding.'
+        : action === 'countersign_onboarding'
+          ? 'Agreement countersigned and sealed.'
+          : action === 'verify_onboarding'
+            ? 'Contractor verified and activated.'
+            : '')
+      if (action === 'confirm_crew_link' || action === 'hire') await load()
     } catch (e) { setError(e instanceof Error ? e.message : 'The applicant could not be updated.') }
     finally { setBusy(false) }
   }
@@ -96,6 +120,16 @@ function CareersInner() {
           <span className="text-sm" style={{ color: 'var(--muted)' }}>{list.length} applicant{list.length === 1 ? '' : 's'}</span>
         </div>
         {error && <p role="alert" className="text-sm mb-4" style={{ color: '#f87171' }}>{error}</p>}
+        {notice && <p role="status" className="text-sm mb-4" style={{ color: '#34d399' }}>{notice}</p>}
+        {agreement && !agreement.configured && (
+          <div role="alert" className="rounded-xl p-4 mb-4" style={{ background: 'rgba(251,191,36,.08)', border: '1px solid rgba(251,191,36,.4)' }}>
+            <p className="text-sm font-bold" style={{ color: '#fcd34d' }}>No contractor agreement is published</p>
+            <p className="text-xs mt-1" style={{ color: 'var(--muted)', lineHeight: 1.55 }}>
+              {agreement.blocking} Approvals still create a blocked crew record, but no onboarding link can be sent until an
+              administrator uploads the counsel-approved PDF.
+            </p>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2 mb-5">
           {STATUS_TABS.map(t => <button key={t.key} onClick={() => setTab(t.key)} style={chip(tab === t.key)}>{t.label}</button>)}
         </div>
@@ -147,7 +181,12 @@ function Review({ a, act, busy, canDecide, onBack }: {
   a: Applicant; act: (action: string, value?: unknown) => void; busy: boolean; canDecide: boolean; onBack: () => void
 }) {
   const [notes, setNotes] = useState(a.managerNotes || '')
-  const reqKinds = requiredDocKinds(a.position)
+  const [counterSignatureName, setCounterSignatureName] = useState('')
+  const [counterSignatureTitle, setCounterSignatureTitle] = useState('Authorized Representative')
+  const [counterSignatureIntent, setCounterSignatureIntent] = useState(false)
+  const reqKinds = CONTRACTOR_ONBOARDING_DOCS[a.position].map(d => d.kind)
+  reqKinds.push('contractor_agreement')
+  if (a.contractorOnboarding?.usesPersonalVehicle) reqKinds.push('insurance')
   const has = (k: DocKind) => a.documents.some(d => d.kind === k)
   const docUrl = (k: DocKind) => a.documents.find(d => d.kind === k)?.url
   const headshot = a.documents.find(d => d.kind === 'headshot')
@@ -160,6 +199,7 @@ function Review({ a, act, busy, canDecide, onBack }: {
   const s = a.score
 
   const btn = (bg: string): React.CSSProperties => ({ padding: '9px 14px', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', border: 'none', background: bg, color: '#fff', opacity: busy ? 0.6 : 1 })
+  const signInput: React.CSSProperties = { width: '100%', padding: '10px 12px', borderRadius: 9, border: '1px solid var(--line)', background: 'rgba(255,255,255,.04)', color: 'var(--text)' }
 
   return (
     <div>
@@ -178,7 +218,15 @@ function Review({ a, act, busy, canDecide, onBack }: {
             <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>{BAND_META[s.band].label}</p>
           </div>
         </div>
-        {a.promotedStaffId && <p className="text-xs mt-3" style={{ color: '#34d399' }}>✓ Added to the crew roster</p>}
+        {a.promotedStaffId && <p className="text-xs mt-3" style={{ color: a.contractorOnboarding?.verifiedAt && !a.contractEndedAt ? '#34d399' : '#fbbf24' }}>
+          {a.contractEndedAt
+            ? 'Relationship ended — not available for new work'
+            : a.contractorOnboarding?.verifiedAt
+              ? '✓ Onboarding verified — ready for work'
+              : a.contractorOnboarding?.submittedAt
+                ? 'Crew record linked — work blocked until admin verification'
+                : 'Crew record linked — work blocked until onboarding is completed'}
+        </p>}
       </div>
 
       {/* score breakdown */}
@@ -193,8 +241,52 @@ function Review({ a, act, busy, canDecide, onBack }: {
         </div>
       </Section>
 
-      {/* documents checklist */}
-      <Section title="Required documents">
+      {a.pendingCrewLink && canDecide && (
+        <Section title="Existing crew member found">
+          <div role="alert" className="rounded-xl p-4" style={{ background: 'rgba(251,191,36,.08)', border: '1px solid rgba(251,191,36,.45)' }}>
+            <p className="text-sm font-bold" style={{ color: '#fcd34d' }}>{a.pendingCrewLink.staffName} is already active on the roster</p>
+            <p className="text-xs mt-2" style={{ color: 'var(--muted)', lineHeight: 1.6 }}>
+              Their W-9 is not verified. Linking this application pauses them for contractor onboarding: they become
+              unavailable for assignments, dispatch, portal activation, and ordinary pay until an administrator verifies
+              their documents. Nothing has changed yet — the roster and this application are untouched.
+            </p>
+            <div className="flex flex-wrap gap-2 mt-3">
+              <button disabled={busy} onClick={() => { if (confirm(`Link ${a.pendingCrewLink!.staffName} and pause them for onboarding?`)) void act('confirm_crew_link') }} style={btn('#b45309')}>
+                Link existing crew and pause for onboarding
+              </button>
+            </div>
+          </div>
+        </Section>
+      )}
+
+      {/* Post-approval contractor onboarding. No sensitive document is collected at application time. */}
+      {a.status === 'hired' && <Section title="1099 contractor onboarding">
+        <div className="flex flex-wrap gap-2 mb-3 items-center">
+          <span className="text-sm" style={{ color: a.contractorOnboarding?.verifiedAt ? '#34d399' : 'var(--text)' }}>
+            {a.contractorOnboarding?.verifiedAt ? '✓ Verified' : a.contractorOnboarding?.submittedAt ? 'Submitted — awaiting admin verification' : a.contractorOnboarding?.delivery === 'sent' ? 'Secure link sent' : 'Onboarding link not delivered'}
+          </span>
+          {a.contractorOnboarding?.submittedAt && <span className="text-xs" style={{ color: 'var(--muted)' }}>· submitted {fmtTs(a.contractorOnboarding.submittedAt)}</span>}
+          {a.contractorOnboarding?.agreementVersion && <span className="text-xs" style={{ color: 'var(--muted)' }}>· agreement v{a.contractorOnboarding.agreementVersion}</span>}
+          {a.contractorOnboarding?.electronicSignature?.contractor && <span className="text-xs" style={{ color: '#93c5fd' }}>· contractor signed</span>}
+          {a.contractorOnboarding?.electronicSignature?.company && <span className="text-xs" style={{ color: '#34d399' }}>· company countersigned</span>}
+        </div>
+        {/* A failed send is the difference between "approved" and "can actually start". */}
+        {a.contractorOnboarding?.delivery === 'failed' && (
+          <div role="alert" className="rounded-xl p-3 mb-3" style={{ background: 'rgba(248,113,113,.08)', border: '1px solid rgba(248,113,113,.45)' }}>
+            <p className="text-sm font-bold" style={{ color: '#fca5a5' }}>Onboarding email failed to send</p>
+            <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>
+              This contractor has never received their link and cannot start. Last attempt{' '}
+              {a.contractorOnboarding.deliveryAttemptedAt ? fmtTs(a.contractorOnboarding.deliveryAttemptedAt) : 'unknown'}
+              {a.contractorOnboarding.deliveryError ? ` — ${a.contractorOnboarding.deliveryError}` : ''}.
+            </p>
+            <button disabled={busy} onClick={() => act('resend_onboarding')} style={{ ...btn('#b91c1c'), marginTop: 8 }}>Resend now</button>
+          </div>
+        )}
+        {a.contractorOnboarding?.delivery === 'sent' && !a.contractorOnboarding.verifiedAt && (
+          <p className="text-xs mb-3" style={{ color: 'var(--muted)' }}>
+            Last delivery attempt {a.contractorOnboarding.deliveryAttemptedAt ? fmtTs(a.contractorOnboarding.deliveryAttemptedAt) : '—'} · delivered
+          </p>
+        )}
         <div className="space-y-2">
           {reqKinds.map(k => (
             <div key={k} className="flex items-center justify-between gap-2 text-sm">
@@ -206,7 +298,23 @@ function Review({ a, act, busy, canDecide, onBack }: {
           ))}
         </div>
         {s.missingDocs.length > 0 && <p className="text-xs mt-2" style={{ color: '#f87171' }}>Missing: {s.missingDocs.map(k => DOC_LABEL[k]).join(', ')}</p>}
-      </Section>
+        <div className="flex flex-wrap gap-2 mt-4">
+          {!a.contractorOnboarding?.submittedAt && <button disabled={busy} onClick={() => act('resend_onboarding')} style={btn('#2563eb')}>{a.contractorOnboarding?.requestedAt ? 'Resend secure link' : 'Send secure link'}</button>}
+          {a.contractorOnboarding?.submittedAt && a.contractorOnboarding.electronicSignature?.company && !a.contractorOnboarding.verifiedAt && <button disabled={busy} onClick={() => act('verify_onboarding')} style={btn('#059669')}>Verify and activate</button>}
+        </div>
+        {a.contractorOnboarding?.submittedAt && a.contractorOnboarding.electronicSignature?.contractor && !a.contractorOnboarding.electronicSignature?.company && canDecide && (
+          <div className="rounded-xl p-4 mt-4 space-y-3" style={{ border: '1px solid rgba(167,139,250,.5)', background: 'rgba(124,58,237,.08)' }}>
+            <p className="text-sm font-bold text-white">J Kiss LLC countersignature</p>
+            <p className="text-xs" style={{ color: 'var(--muted)', lineHeight: 1.55 }}>Review the uploaded documents and the contractor’s signature evidence. Your name, account, timestamp, IP address, and this exact agreement version will be recorded in the execution certificate.</p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div><label htmlFor={`counter-name-${a.id}`} className="text-xs font-bold block mb-1" style={{ color: 'var(--muted)' }}>Your full legal name</label><input id={`counter-name-${a.id}`} value={counterSignatureName} onChange={e => setCounterSignatureName(e.target.value)} autoComplete="name" style={signInput} /></div>
+              <div><label htmlFor={`counter-title-${a.id}`} className="text-xs font-bold block mb-1" style={{ color: 'var(--muted)' }}>Signing title</label><input id={`counter-title-${a.id}`} value={counterSignatureTitle} onChange={e => setCounterSignatureTitle(e.target.value)} autoComplete="organization-title" style={signInput} /></div>
+            </div>
+            <label className="flex gap-3 items-start text-sm"><input type="checkbox" checked={counterSignatureIntent} onChange={e => setCounterSignatureIntent(e.target.checked)} style={{ width: 18, height: 18, marginTop: 2 }} /><span>I am authorized to bind J Kiss LLC and intend this electronic signature to countersign agreement v{a.contractorOnboarding.agreementVersion}.</span></label>
+            <button disabled={busy || !counterSignatureIntent || counterSignatureName.trim().length < 2 || counterSignatureTitle.trim().length < 2} onClick={() => void act('countersign_onboarding', { intent: counterSignatureIntent, signatureName: counterSignatureName, title: counterSignatureTitle })} style={{ ...btn('#7c3aed'), opacity: busy || !counterSignatureIntent || counterSignatureName.trim().length < 2 || counterSignatureTitle.trim().length < 2 ? .55 : 1 }}>Countersign and seal agreement</button>
+          </div>
+        )}
+      </Section>}
 
       {/* badge headshot */}
       {headshot && (
@@ -286,7 +394,7 @@ function Review({ a, act, busy, canDecide, onBack }: {
         {a.informationResponse && <p className="text-sm mb-3" style={{ color: '#34d399' }}>Applicant response: {a.informationResponse.message}</p>}
         <p className="text-xs mb-2" style={{ color: 'var(--muted)' }}>Recommendation {a.recommendation ? `· currently: ${RECOMMENDATION_LABEL[a.recommendation]}` : ''}</p>
         <div className="flex flex-wrap gap-2 mb-4">
-          {canDecide && <button disabled={busy} onClick={() => act('hire')} style={btn('#059669')}>✓ Approve → Crew</button>}
+          {canDecide && <button disabled={busy} onClick={() => act('hire')} style={btn('#059669')}>✓ Approve → Contractor/Crew</button>}
           <button disabled={busy} onClick={() => act('status', 'interview')} style={btn('#2563eb')}>Interview</button>
           <button disabled={busy} onClick={() => { const w = prompt('What information do you need from the applicant?'); if (w != null) act('request_info', w) }} style={btn('#7c3aed')}>Request info</button>
           <button disabled={busy} onClick={() => act('status', 'waitlist')} style={btn('#d97706')}>Waitlist</button>
@@ -300,9 +408,17 @@ function Review({ a, act, busy, canDecide, onBack }: {
           <button disabled={busy} onClick={() => act('rescore')} className="btn-ghost" style={{ padding: '8px 12px', fontSize: 12 }}>Re-score</button>
           {canDecide && <button disabled={busy} onClick={() => act('status', 'archived')} style={{ padding: '8px 12px', fontSize: 12, background: 'transparent', border: '1px solid rgba(248,113,113,.4)', color: '#f87171', borderRadius: 10, cursor: 'pointer', marginLeft: 'auto' }}>Archive</button>}
         </div>
+        {canDecide && <div className="mt-3 pt-3 flex items-center justify-between gap-3" style={{ borderTop: '1px solid var(--line)' }}>
+          <p className="text-xs" style={{ color: a.legalHold?.active ? '#fbbf24' : 'var(--muted)' }}>{a.legalHold?.active ? `Legal hold: ${a.legalHold.reason}` : 'No legal hold'}</p>
+          <button disabled={busy} onClick={() => { if (a.legalHold?.active) act('legal_hold', { active: false }); else { const reason = prompt('Reason for legal hold'); if (reason) act('legal_hold', { active: true, reason }) } }} className="btn-ghost" style={{ padding: '7px 10px', fontSize: 12 }}>{a.legalHold?.active ? 'Release hold' : 'Place legal hold'}</button>
+        </div>}
+        {canDecide && a.status === 'hired' && <div className="mt-3 pt-3 flex items-center justify-between gap-3" style={{ borderTop: '1px solid var(--line)' }}>
+          <p className="text-xs" style={{ color: a.contractEndedAt ? '#fbbf24' : 'var(--muted)' }}>{a.contractEndedAt ? `Contract ended ${fmtTs(a.contractEndedAt)}; retention clocks are running.` : 'Contractor relationship active'}</p>
+          <button disabled={busy} onClick={() => act(a.contractEndedAt ? 'reopen_contract' : 'end_contract')} style={{ padding: '7px 10px', fontSize: 12, background: 'transparent', border: '1px solid var(--line)', color: 'var(--text)', borderRadius: 10 }}>{a.contractEndedAt ? 'Reopen relationship' : 'End relationship'}</button>
+        </div>}
         {a.promotedStaffId && (
           <p className="text-xs mt-3" style={{ color: '#34d399' }}>
-            ✓ On the crew roster · <Link href="/admin/operations/employees" style={{ color: 'var(--red)', textDecoration: 'none' }}>view in Crew →</Link>
+            ✓ Linked to crew record · <Link href="/admin/operations/employees" style={{ color: 'var(--red)', textDecoration: 'none' }}>view in Crew →</Link>
           </p>
         )}
       </Section>

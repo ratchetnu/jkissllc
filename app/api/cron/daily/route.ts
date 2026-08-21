@@ -2,16 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { listBookings, saveBooking, balanceDueCents, paymentSummaryStatus, type Booking, type BookingStatus } from '../../../lib/bookings'
 import { notifyBookingReminder, notifyPaymentReminder, notifyJobTomorrow, notifyReviewRequest } from '../../../lib/notify'
 import { isAbandonedOnlineHold } from '../../../lib/availability'
-import { listRoutes, getRouteByToken, saveRoute, syncLead, pushAudit } from '../../../lib/routes'
-import { withRouteLock } from '../../../lib/route-mutex'
-import { reminderSms, morningOfSms, alertOwnerRouteEvent } from '../../../lib/route-notify'
 import { listTemplates, materializeTemplate } from '../../../lib/route-templates'
 import { accrueAllClaims } from '../../../lib/claim-accrual'
-import { sendSms, withSmsSuppressed } from '../../../lib/sms'
-import { getAutomationSettings } from '../../../lib/automation-settings'
+import { withSmsSuppressed } from '../../../lib/sms'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
 import { activeTenantIdsFromRegistry } from '../../../lib/platform/tenancy/tenant-registry'
 import { alert } from '../../../lib/alerts'
+import { runApplicantRetentionSweep } from '../../../lib/applicant-retention'
+import { runDailyRouteAutomation } from '../../../lib/daily-route-automation'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -120,65 +118,6 @@ async function cleanupAbandonedHolds(now: number, dryRun: boolean): Promise<{ ma
   return { matched, cancelled, dryRun }
 }
 
-// Route Dispatch automation. Daily pass (9am Central):
-//   • assigned/text_sent but unconfirmed, date today or tomorrow → confirm nudge
-//   • confirmed and happening today → morning-of reminder
-//   • assigned/text_sent but unconfirmed and the date has passed → mark No Response
-//     and alert the owner so it can be reassigned.
-// Each action carries a one-shot dedupe stamp; a send error never aborts the pass.
-async function runRoutes(now: number): Promise<Record<string, number>> {
-  const today = centralDate(now)
-  const tomorrow = addDaysStr(today, 1)
-  const counts = { routesProcessed: 0, routeReminders: 0, routeMorningOf: 0, routeNoResponse: 0, routeErrors: 0 }
-  // Owner switches for the crew reminder texts. No-response owner alerts are NOT
-  // gated — those tell the owner a route went unconfirmed, which they always want.
-  const auto = await getAutomationSettings()
-  const routes = await listRoutes(1000)
-
-  for (const r0 of routes) {
-    // Terminal / not-yet-live routes get no automation. Cheap pre-filter on the
-    // bulk-loaded copy; the actual mutation reloads fresh under the route lock.
-    if (r0.status === 'cancelled' || r0.status === 'completed' || r0.status === 'no_show' || r0.status === 'draft') continue
-    if (!(r0.assignees ?? []).length) continue
-    counts.routesProcessed++
-
-    try {
-      // Under the lock so an early-morning confirm/decline on this route can't be
-      // clobbered by the cron's flag write (and vice versa). RouteBusyError just
-      // defers this route to the next pass — the dedupe stamps make it idempotent.
-      await withRouteLock(r0.token, async () => {
-        const r = await getRouteByToken(r0.token)
-        if (!r) return
-        let changed = false
-        for (const a of r.assignees ?? []) {
-          const pending = !a.confirmedAt && !a.declinedAt
-          if (pending && r.routeDate < today) {
-            // Past its date, never confirmed → one-time owner alert per person.
-            if (!a.noResponseAlertedAt) {
-              await alertOwnerRouteEvent(r, 'no_response')
-              a.noResponseAlertedAt = now; counts.routeNoResponse++; changed = true
-            }
-          } else if (auto.confirmationReminders && pending && (r.routeDate === today || r.routeDate === tomorrow) && !a.reminderSentAt) {
-            // Imminent and still unconfirmed → nudge this crew member to confirm.
-            if (a.phone) await sendSms(a.phone, reminderSms(r, a))
-            a.reminderSentAt = now; pushAudit(r, 'system', `Confirmation reminder sent to ${a.name}`); counts.routeReminders++; changed = true
-          }
-          if (auto.morningReminders && a.confirmedAt && r.routeDate === today && !a.morningOfSentAt) {
-            // Confirmed and happening today → morning-of reminder.
-            if (a.phone) await sendSms(a.phone, morningOfSms(r, a))
-            a.morningOfSentAt = now; pushAudit(r, 'system', `Morning-of reminder sent to ${a.name}`); counts.routeMorningOf++; changed = true
-          }
-        }
-        if (changed) { syncLead(r); await saveRoute(r) }
-      })
-    } catch (e) {
-      counts.routeErrors++
-      console.error('[cron/routes]', r0.routeNumber, e)
-    }
-  }
-  return counts
-}
-
 // Materialize routes from active recurring templates for the next 14 days, so
 // standing contracts always have their routes created without manual work.
 // materializeTemplate skips dates already generated, so this is idempotent.
@@ -238,12 +177,15 @@ export async function GET(req: NextRequest) {
       console.error('[cron/templates]', e)
       return { error: 'template generation failed' }
     })
-    const routes = dryRun ? { skipped: 'routes (dry-run)' } : await runRoutes(Date.now())
+    const routes = dryRun ? { skipped: 'routes (dry-run)' } : await runDailyRouteAutomation(Date.now())
     const cleanup = await cleanupAbandonedHolds(Date.now(), dryRun)
+    // Privacy retention defaults to report-only until the Production owner
+    // explicitly enables APPLICANT_RETENTION_DELETE_ENABLED. Legal holds always win.
+    const { result: applicantRetention, dryRun: applicantRetentionDryRun } = await runApplicantRetentionSweep(Date.now(), dryRun)
     // Post any weekly claim deductions whose pay week has closed. Idempotent per
     // (contractor, week), and capped at what they actually earned.
     const claims = dryRun ? { skipped: 'claim deductions (dry-run)' } : await runClaims(Date.now())
-    return { counts, templates, routes, cleanup, claims }
+    return { counts, templates, routes, cleanup, applicantRetention, applicantRetentionDryRun, claims }
         }), tenantId)
         tenants.push({ tenant: tenantId, ...r })
       } catch (e) {

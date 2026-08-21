@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requireCrew } from '../_lib/crew'
-import { getStaff, parseStaffAddress, saveStaff } from '../../../lib/staff'
+import { contractorReadiness, getStaff, parseStaffAddress, saveStaff } from '../../../lib/staff'
 import { getUser } from '../../../lib/users'
 import { recordAudit } from '../../../lib/audit'
 
@@ -21,6 +21,7 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
     ? { at: user.previousLoginAt, device: user.previousLoginDevice ?? null }
     : null
 
+  const readiness = contractorReadiness(staff)
   return NextResponse.json({
     ok: true,
     crew: {
@@ -32,6 +33,9 @@ export const GET = withTenantRoute(async (req: NextRequest) => {
       photoUrl: staff.photoUrl ?? null,
       address: staff.address ?? null,
       onboarding: !!staff.onboarding,
+      workStatus: staff.contractorStatus ?? null,
+      readyForWork: readiness.readyForWork,
+      nextAction: readiness.nextAction ?? null,
     },
     lastLogin,
   })

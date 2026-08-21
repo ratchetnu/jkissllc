@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
 import { requirePermission, requirePrincipal } from '../_lib/session'
 import { computePay } from '../../../lib/route-pay'
-import { getStaff } from '../../../lib/staff'
+import { getStaff, staffMayReceivePay } from '../../../lib/staff'
 import {
   listStatements, listForStaff, findByPeriod, findOverlappingStatement, findStatementForCorrection, historicalYtdByStaff, issueStatement, newStatementId,
   type PayStatement, type StatementLine, type StatementDeduction,
@@ -134,6 +134,9 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   }
   const staff = await getStaff(staffId)
   if (!staff) return NextResponse.json({ ok: false, error: 'Crew member not found.' }, { status: 404 })
+  if (!staffMayReceivePay(staff)) {
+    return NextResponse.json({ ok: false, error: 'This contractor cannot receive a pay statement until onboarding is verified.' }, { status: 409 })
+  }
   const businessAddress = preview ? undefined : await getBusinessAddress()
 
   if (historical) {

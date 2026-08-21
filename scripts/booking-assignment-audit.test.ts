@@ -126,6 +126,28 @@ test('flag off writes neither assignment data nor audit history', async () => {
   }
 })
 
+test('booking assignment refuses an approved contractor until onboarding is verified', async () => {
+  await seed()
+  const now = Date.now()
+  await saveStaff({
+    id: 'crew-pending', name: 'Pending Contractor', active: false,
+    contractorStatus: 'pending_verification', onboarding: true,
+    createdAt: now + 2, updatedAt: now + 2,
+  })
+  assert.deepEqual(
+    await assignCrewToBooking(TOKEN, 'crew-pending', { actor: ADMIN }),
+    { ok: false, error: 'inactive_staff' },
+  )
+  assert.equal((await getBookingByToken(TOKEN))?.assignees, undefined, 'blocked assignment writes nothing')
+
+  await saveStaff({
+    id: 'crew-pending', name: 'Pending Contractor', active: true,
+    contractorStatus: 'ready', onboarding: false,
+    createdAt: now + 2, updatedAt: now + 3,
+  })
+  assert.equal((await assignCrewToBooking(TOKEN, 'crew-pending', { actor: ADMIN })).ok, true)
+})
+
 test('completion request IDs make an unknown-response retry exactly once', async () => {
   await seed()
   assert.equal((await assignCrewToBooking(TOKEN, 'crew-1', { actor: ADMIN })).ok, true)

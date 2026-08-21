@@ -14,9 +14,11 @@ import { computeTaxReadiness, w9StatusLabel } from '../../../lib/tax-readiness'
 import { mondayOf } from '../../../lib/dates'
 
 type PayKind = 'driver' | 'helper' | 'contractor' | 'employee'
+type ContractorStatus = 'pending_onboarding' | 'pending_verification' | 'ready' | 'ended'
 type PayHistoryEntry = { at: number; defaultPayCents?: number; payByBusiness?: Record<string, number>; effectiveDate?: string; active: boolean; notes?: string }
 type Staff = {
   id: string; name: string; phone?: string; role?: string; photoUrl?: string; active: boolean
+  applicantId?: string; onboarding?: boolean; contractorStatus?: ContractorStatus
   address?: { line1: string; line2?: string; city: string; state: string; postalCode: string }
   payKind?: PayKind; defaultPayCents?: number; payByBusiness?: Record<string, number>
   payNotes?: string; payEffectiveDate?: string; payActive?: boolean; payHistory?: PayHistoryEntry[]
@@ -112,8 +114,9 @@ function Hub() {
     return m
   }, [staff, stats, signals])
 
-  const active = staff.filter(s => s.active)
-  const inactive = staff.filter(s => !s.active)
+  const onboardingStaff = staff.filter(s => s.contractorStatus === 'pending_onboarding' || s.contractorStatus === 'pending_verification')
+  const active = staff.filter(s => s.active && !onboardingStaff.includes(s))
+  const inactive = staff.filter(s => !s.active && !onboardingStaff.includes(s))
   // Clients we've actually run routes for — the suggestions for a per-business rate.
   const businesses = useMemo(() => [...new Set(routes.map(r => r.businessName).filter(Boolean))].sort(), [routes])
 
@@ -121,7 +124,7 @@ function Hub() {
     <div>
       <div className="os-rise" style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
         <div>
-          <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)' }}>{active.length} active crew {active.length === 1 ? 'member' : 'members'}</p>
+          <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)' }}>{active.length} ready for work{onboardingStaff.length ? ` · ${onboardingStaff.length} in onboarding` : ''}</p>
           <h1 className="jkos-h" style={{ fontSize: 'clamp(28px,6vw,40px)' }}>Your crew</h1>
         </div>
         <button onClick={() => setAdding(a => !a)} className="btn os-tap" style={{ borderRadius: 999, height: 44 }}><UserPlus size={17} /> Add crew member</button>
@@ -154,6 +157,9 @@ function Hub() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {onboardingStaff.length > 0 && <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: '#fcd34d', margin: '2px 0' }}>Onboarding — not assignable</div>}
+          {onboardingStaff.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} scoreData={scores[s.id]} isAdmin={isAdmin} historicalYtdCents={historicalYtd[s.id] ?? 0} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
+          {active.length > 0 && onboardingStaff.length > 0 && <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)', margin: '14px 0 2px' }}>Ready for work</div>}
           {active.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} scoreData={scores[s.id]} isAdmin={isAdmin} historicalYtdCents={historicalYtd[s.id] ?? 0} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
           {inactive.length > 0 && <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)', margin: '14px 0 2px' }}>Inactive</div>}
           {inactive.map((s, i) => <EmployeeCard key={s.id} s={s} st={stats[s.id]} scoreData={scores[s.id]} isAdmin={isAdmin} historicalYtdCents={historicalYtd[s.id] ?? 0} businesses={businesses} upcoming={workload[s.id] || []} comp={comps[s.id]} open={openId === s.id} onToggle={() => setOpenId(o => o === s.id ? '' : s.id)} onOpen={() => setOpenId(s.id)} onChanged={load} setMsg={setMsg} delay={i} />)}
@@ -172,6 +178,12 @@ function EmployeeCard({ s, st, scoreData, isAdmin, historicalYtdCents, businesse
   // Prefer the richer client Crew Score; fall back to the server reliability score.
   const score = scoreData?.score ?? st?.score
   const completionPct = st && st.assignments > 0 ? Math.round((st.completed / st.assignments) * 100) : null
+  const workflowLabel: Record<ContractorStatus, string> = {
+    pending_onboarding: 'Onboarding required',
+    pending_verification: 'Awaiting verification',
+    ready: s.active ? 'Ready for work' : 'Inactive',
+    ended: 'Relationship ended',
+  }
 
   async function post(patch: Record<string, unknown>) {
     setBusy(true)
@@ -188,7 +200,8 @@ function EmployeeCard({ s, st, scoreData, isAdmin, historicalYtdCents, businesse
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 700, fontSize: 16 }}>{s.name}</span>
             {s.role && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{s.role}</span>}
-            {!s.active && <span style={{ fontSize: 10.5, fontWeight: 800, padding: '1px 8px', borderRadius: 99, background: 'rgba(255,255,255,.08)', color: 'var(--muted)' }}>Inactive</span>}
+            {!s.active && !s.contractorStatus && <span style={{ fontSize: 10.5, fontWeight: 800, padding: '1px 8px', borderRadius: 99, background: 'rgba(255,255,255,.08)', color: 'var(--muted)' }}>Inactive</span>}
+            {s.contractorStatus && <span style={{ fontSize: 10.5, fontWeight: 800, padding: '1px 8px', borderRadius: 99, background: s.contractorStatus === 'ready' && s.active ? 'rgba(52,211,153,.12)' : 'rgba(251,191,36,.12)', color: s.contractorStatus === 'ready' && s.active ? '#86efac' : '#fcd34d' }}>{workflowLabel[s.contractorStatus]}</span>}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 13, rowGap: 4, marginTop: 4, fontSize: 12.5, color: 'var(--muted)' }}>
             <span>Reliability <b style={{ color: scoreColor(score) }}>{score == null ? 'new' : score}</b></span>
@@ -260,7 +273,9 @@ function EmployeeCard({ s, st, scoreData, isAdmin, historicalYtdCents, businesse
 
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button onClick={() => setEditing(true)} disabled={busy} style={btnSm}><Pencil size={13} /> Edit</button>
-                <button onClick={() => post({ active: !s.active })} disabled={busy} style={btnSm}>{s.active ? 'Deactivate' : 'Reactivate'}</button>
+                {s.contractorStatus
+                  ? <Link href="/admin/careers" style={{ ...btnSm, textDecoration: 'none' }}>Manage onboarding / relationship</Link>
+                  : <button onClick={() => post({ active: !s.active })} disabled={busy} style={btnSm}>{s.active ? 'Deactivate' : 'Reactivate'}</button>}
                 <button onClick={del} disabled={busy} style={{ ...btnSm, color: '#f87171', marginLeft: 'auto' }}><Trash2 size={13} /> Remove</button>
               </div>
             </>

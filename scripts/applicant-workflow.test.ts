@@ -7,15 +7,32 @@ process.env.ADMIN_SESSION_SECRET = 'applicant-workflow-test-secret-32bytes'
 
 import {
   createApplicantDocumentReceipt, createApplicantInformationToken,
+  createContractorOnboardingToken, createOnboardingDocumentReceipt,
   transitionApplicantStatus, validSealedApplicantDocumentPath,
   verifyApplicantDocumentReceipt, verifyApplicantInformationToken,
+  verifyContractorOnboardingToken, verifyOnboardingDocumentReceipt,
 } from '../app/lib/applicant-workflow'
 
-test('hired can only be reached by a decision-maker through Approve → Crew', () => {
+test('approval can only be reached by a decision-maker through Approve → Contractor/Crew', () => {
   assert.equal(transitionApplicantStatus('interview', 'hired', { canDecide: false, viaHireAction: true }).ok, false)
   assert.equal(transitionApplicantStatus('interview', 'hired', { canDecide: true }).ok, false)
   assert.equal(transitionApplicantStatus('interview', 'hired', { canDecide: true, viaHireAction: true }).ok, true)
   assert.equal(transitionApplicantStatus('hired', 'rejected', { canDecide: true }).ok, false, 'crew and applicant state cannot diverge')
+})
+
+test('contractor onboarding tokens and upload receipts are applicant, request, kind, path, and expiry bound', () => {
+  const applicantId = 'a'.repeat(32)
+  const requestedAt = 500
+  const token = createContractorOnboardingToken({ applicantId, email: 'Person@Example.com', requestedAt, now: 1_000 })
+  assert.equal(verifyContractorOnboardingToken(token, 2_000)?.email, 'person@example.com')
+  assert.equal(verifyContractorOnboardingToken(`${token}x`, 2_000), null)
+  const path = 'contractor-docs/w9/abc.pdf.enc'
+  const receipt = createOnboardingDocumentReceipt({ applicantId, kind: 'w9', path, requestedAt, now: 1_000 })
+  assert.equal(verifyOnboardingDocumentReceipt({ receipt, applicantId, kind: 'w9', path, requestedAt, now: 2_000 }), true)
+  assert.equal(verifyOnboardingDocumentReceipt({ receipt, applicantId, kind: 'drivers_license', path, requestedAt, now: 2_000 }), false)
+  assert.equal(verifyOnboardingDocumentReceipt({ receipt, applicantId, kind: 'w9', path, requestedAt: 501, now: 2_000 }), false)
+  assert.equal(verifyOnboardingDocumentReceipt({ receipt, applicantId: 'b'.repeat(32), kind: 'w9', path, requestedAt, now: 2_000 }), false)
+  assert.equal(verifyOnboardingDocumentReceipt({ receipt, applicantId, kind: 'w9', path: 'contractor-docs/w9/other.pdf.enc', requestedAt, now: 2_000 }), false)
 })
 
 test('reviewers may move the non-terminal workflow but cannot deny', () => {
@@ -46,10 +63,12 @@ test('sealed applicant paths support tenancy without admitting another tenant', 
   assert.equal(validSealedApplicantDocumentPath('tenants/jkiss/driver-docs/ss_card/abc.jpg.enc', 'jkiss'), true)
   assert.equal(validSealedApplicantDocumentPath('tenants/acme/driver-docs/ss_card/abc.jpg.enc', 'jkiss'), false)
   assert.equal(validSealedApplicantDocumentPath('../driver-docs/ss_card/abc.jpg.enc', 'jkiss'), false)
+  assert.equal(validSealedApplicantDocumentPath('contractor-docs/w9/abc.pdf.enc', 'jkiss'), true)
+  assert.equal(validSealedApplicantDocumentPath('tenants/acme/contractor-docs/w9/abc.pdf.enc', 'jkiss'), false)
 })
 
 test('admin and applicant routes retain the workflow protections at their boundaries', () => {
-  const root = path.resolve(import.meta.dirname, '..')
+  const root = path.resolve(process.cwd())
   const admin = fs.readFileSync(path.join(root, 'app/api/admin/careers/route.ts'), 'utf8')
   const update = fs.readFileSync(path.join(root, 'app/api/careers/update/route.ts'), 'utf8')
   const apply = fs.readFileSync(path.join(root, 'app/api/careers/apply/route.ts'), 'utf8')
@@ -57,6 +76,7 @@ test('admin and applicant routes retain the workflow protections at their bounda
   assert.match(admin, /withLock\(`app:lock:/)
   assert.match(admin, /if \(!delivery\.ok\)/)
   assert.match(update, /informationRequest\?\.requestedAt !== verified\.claims\.requestedAt/)
-  assert.match(apply, /verifyApplicantDocumentReceipt/)
+  assert.doesNotMatch(apply, /verifyApplicantDocumentReceipt/)
+  assert.match(apply, /documents: \[\]/)
   assert.match(apply, /submitApplicantOnce/)
 })

@@ -4,57 +4,15 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { COMPANY } from '../../lib/company';
 import Link from 'next/link'
 import {
-  POSITIONS, REQUIRED_DOCS, HEADSHOT_GUIDELINES, EXPERIENCE_LEVELS,
-  SCENARIOS, assessmentFor, requiredDocKinds, PAY_NOTICE,
-  type Position, type DocKind,
+  POSITIONS, EXPERIENCE_LEVELS, SCENARIOS, assessmentFor, PAY_NOTICE,
+  type Position,
 } from '../../lib/ats-config'
 
 type Rating = { level: string; confidence: number }
 type Skills = Record<string, Record<string, Rating>>
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-const STEPS = ['You', 'Availability', 'Experience', 'Scenarios', 'Documents', 'Review']
-
-// Downscale an image file to a compact JPEG data URL for upload.
-async function toDataUrl(file: File, maxDim = 1600, quality = 0.82): Promise<string> {
-  try {
-    const bitmap = await createImageBitmap(file)
-    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height))
-    const w = Math.round(bitmap.width * scale), h = Math.round(bitmap.height * scale)
-    const canvas = document.createElement('canvas')
-    canvas.width = w; canvas.height = h
-    const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('no ctx')
-    ctx.drawImage(bitmap, 0, 0, w, h)
-    bitmap.close?.()
-    return canvas.toDataURL('image/jpeg', quality)
-  } catch {
-    return await new Promise((resolve, reject) => {
-      const fr = new FileReader()
-      fr.onload = () => resolve(String(fr.result))
-      fr.onerror = () => reject(new Error('read failed'))
-      fr.readAsDataURL(file)
-    })
-  }
-}
-
-// Rough "is the background white?" check for headshots — samples the four corners.
-async function looksWhiteBg(dataUrl: string): Promise<boolean> {
-  try {
-    const img = new window.Image()
-    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUrl })
-    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height
-    const ctx = c.getContext('2d'); if (!ctx) return true
-    ctx.drawImage(img, 0, 0)
-    const pts = [[4, 4], [img.width - 5, 4], [4, img.height - 5], [img.width - 5, img.height - 5]]
-    let whiteCorners = 0
-    for (const [x, y] of pts) {
-      const [r, g, b] = ctx.getImageData(x, y, 1, 1).data
-      if (r > 205 && g > 205 && b > 205) whiteCorners++
-    }
-    return whiteCorners >= 3
-  } catch { return true }
-}
+const STEPS = ['You', 'Availability', 'Experience', 'Scenarios', 'Review']
 
 export default function ApplyPage() {
   const [position, setPosition] = useState<Position>('driver')
@@ -72,32 +30,21 @@ export default function ApplyPage() {
   const [availableDays, setDays] = useState<string[]>([])
   const [availabilityNotes, setAvailNotes] = useState('')
   const [experienceSummary, setExpSummary] = useState('')
-  // assessment + scenarios + docs
+  // assessment + scenarios
   const [skills, setSkills] = useState<Skills>({})
   const [scenarios, setScenarios] = useState<Record<string, string>>({})
-  // `docs` holds the stored reference we submit: a public URL for the headshot, a
-  // private blob pathname for identity documents. A pathname is not loadable in an
-  // <img>, so previews come from `previews` — the local data URL we already read
-  // off the file. The applicant sees their photo; the bytes never round-trip.
-  const [docs, setDocs] = useState<Partial<Record<DocKind, string>>>({})
-  const [docReceipts, setDocReceipts] = useState<Partial<Record<DocKind, string>>>({})
-  const [previews, setPreviews] = useState<Partial<Record<DocKind, string>>>({})
-  const [docBusy, setDocBusy] = useState<DocKind | null>(null)
-  const [headshotWarn, setHeadshotWarn] = useState(false)
   // submit
   const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
   const [done, setDone] = useState<string | null>(null)
   const submissionKey = useRef(crypto.randomUUID())
 
   useEffect(() => {
-    const p = new URLSearchParams(window.location.search).get('position')
-    if (p === 'helper' || p === 'driver') setPosition(p)
+    const requested = new URLSearchParams(window.location.search).get('position')
+    if (requested === 'helper') queueMicrotask(() => setPosition('helper'))
   }, [])
 
   const isDriver = position === 'driver'
   const cats = useMemo(() => assessmentFor(position), [position])
-  const reqDocs = REQUIRED_DOCS[position]
-  const missingDocs = requiredDocKinds(position).filter(k => !docs[k])
 
   const inp: React.CSSProperties = { width: '100%', padding: '12px 14px', background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.10)', borderRadius: 10, color: '#f3f4f6', fontSize: 16, outline: 'none' }
   const sel: React.CSSProperties = { ...inp, cursor: 'pointer', colorScheme: 'dark', fontSize: 14 }
@@ -110,27 +57,9 @@ export default function ApplyPage() {
   }
   function toggleDay(d: string) { setDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]) }
 
-  async function uploadDoc(kind: DocKind, file: File) {
-    setDocBusy(kind); setErr('')
-    try {
-      const dataUrl = await toDataUrl(file)
-      if (kind === 'headshot') setHeadshotWarn(!(await looksWhiteBg(dataUrl)))
-      const res = await fetch('/api/careers/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl, kind, draftId: submissionKey.current }) })
-      const j = await res.json()
-      if (res.ok && j.url && j.receipt) {
-        setDocs(prev => ({ ...prev, [kind]: j.url }))
-        setDocReceipts(prev => ({ ...prev, [kind]: j.receipt }))
-        setPreviews(prev => ({ ...prev, [kind]: dataUrl }))
-      }
-      else setErr(j.error ?? 'Upload failed — please try again.')
-    } catch { setErr('That file could not be uploaded. Try a different photo.') }
-    finally { setDocBusy(null) }
-  }
-
   const contactOk = name.trim() && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && phone.trim()
 
   async function submit() {
-    if (missingDocs.length) { setStep(5); setErr('Please upload all required documents before submitting.'); return }
     setBusy(true); setErr('')
     try {
       const res = await fetch('/api/careers/apply', {
@@ -141,7 +70,6 @@ export default function ApplyPage() {
           availableStart, availableDays, availabilityNotes, experienceSummary,
           skills,
           scenarios: SCENARIOS.map(s => ({ key: s.key, answer: scenarios[s.key] || '' })),
-          documents: Object.entries(docs).map(([kind, url]) => ({ kind, url, receipt: docReceipts[kind as DocKind] })),
         }),
       })
       const j = await res.json()
@@ -182,8 +110,8 @@ export default function ApplyPage() {
       <section className="pt-28 pb-24 px-6">
         <div className="max-w-3xl mx-auto">
           <div className="label mb-4" style={{ display: 'inline-block' }}>{POSITIONS[position].title} · ${POSITIONS[position].payPerDay}/day to start</div>
-          <h1 className="text-3xl md:text-4xl font-black text-white mb-2" style={{ letterSpacing: '-0.03em' }}>Application</h1>
-          <p className="text-xs font-bold uppercase tracking-widest mb-6" style={{ color: 'var(--muted)' }}>Step {step} of 6 · {STEPS[step - 1]}</p>
+          <h1 className="text-3xl md:text-4xl font-black text-white mb-2" style={{ letterSpacing: '-0.03em' }}>Contractor Application</h1>
+          <p className="text-xs font-bold uppercase tracking-widest mb-6" style={{ color: 'var(--muted)' }}>Step {step} of 5 · {STEPS[step - 1]}</p>
 
           {/* progress bar */}
           <div className="flex gap-1.5 mb-8">
@@ -282,62 +210,27 @@ export default function ApplyPage() {
               </>
             )}
 
-            {/* STEP 5 — documents (gated) */}
+            {/* STEP 5 — review + submit. Sensitive documents are post-approval only. */}
             {step === 5 && (
               <>
-                <p className="text-sm mb-1 text-white font-semibold">Upload your documents</p>
-                <p className="text-xs mb-5" style={{ color: 'var(--muted)', lineHeight: 1.5 }}>Clear phone photos are fine. You can&apos;t submit until all three are attached.</p>
-                <div className="space-y-3">
-                  {reqDocs.map(d => (
-                    <div key={d.kind} className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,.02)', border: `1px solid ${docs[d.kind] ? 'rgba(52,211,153,.4)' : 'var(--line)'}` }}>
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-bold text-white">{d.label} {docs[d.kind] && <span style={{ color: '#34d399' }}>✓</span>}</p>
-                          <p className="text-xs" style={{ color: 'var(--muted)' }}>{d.help}</p>
-                        </div>
-                        <label className="file-label btn-ghost" style={{ padding: '9px 14px', fontSize: 13, cursor: docBusy === d.kind ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>
-                          {docBusy === d.kind ? 'Uploading…' : docs[d.kind] ? 'Replace' : '📷 Upload'}
-                          <input type="file" aria-label={`Upload ${d.label}`} accept="image/*" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) uploadDoc(d.kind, f) }} disabled={docBusy === d.kind} className="file-input-a11y" />
-                        </label>
-                      </div>
-                      {previews[d.kind] && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={previews[d.kind]} alt="" style={{ marginTop: 10, maxHeight: 120, borderRadius: 8, border: '1px solid rgba(255,255,255,.1)' }} />
-                      )}
-                      {d.kind === 'headshot' && headshotWarn && (
-                        <p className="text-xs mt-2" style={{ color: '#fbbf24' }}>⚠️ This doesn&apos;t look like a plain white background. It may be rejected for your badge — see the rules below.</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <div className="rounded-xl p-4 mt-4" style={{ background: 'rgba(224,0,42,.05)', border: '1px solid rgba(224,0,42,.2)' }}>
-                  <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--red)' }}>Headshot requirements</p>
-                  <ul className="grid sm:grid-cols-2 gap-1">
-                    {HEADSHOT_GUIDELINES.map((g, i) => <li key={i} className="text-xs flex items-start gap-1.5" style={{ color: 'var(--text)' }}><span style={{ color: '#34d399' }}>•</span>{g}</li>)}
-                  </ul>
-                </div>
-                <Nav onBack={() => setStep(4)} onNext={() => setStep(6)} nextLabel="Review →" nextDisabled={missingDocs.length > 0} />
-              </>
-            )}
-
-            {/* STEP 6 — review + submit */}
-            {step === 6 && (
-              <>
                 <div className="space-y-1.5 mb-5">
-                  {[['Position', `${POSITIONS[position].title} · $${POSITIONS[position].payPerDay}/day`], ['Name', name], ['Contact', [email, phone].filter(Boolean).join(' · ')], ['Earliest start', availableStart || '—'], ['Days', availableDays.join(', ') || '—'], ['Documents', `${requiredDocKinds(position).length - missingDocs.length}/${requiredDocKinds(position).length} uploaded`]].map(([k, v], i) => (
+                  {[['Opportunity', `${POSITIONS[position].title} · $${POSITIONS[position].payPerDay}/day`], ['Name', name], ['Contact', [email, phone].filter(Boolean).join(' · ')], ['Earliest start', availableStart || '—'], ['Days', availableDays.join(', ') || '—']].map(([k, v], i) => (
                     <div key={i} className="flex justify-between gap-3 py-1.5 text-sm" style={i > 0 ? { borderTop: '1px solid rgba(255,255,255,.06)' } : undefined}>
                       <span style={{ color: 'var(--muted)' }}>{k}</span><span className="text-white text-right">{v || '—'}</span>
                     </div>
                   ))}
                 </div>
-                {missingDocs.length > 0 && <p className="text-sm mb-3" style={{ color: '#fbbf24' }}>⚠️ You still need to upload {missingDocs.length} required document(s). <button onClick={() => setStep(5)} className="underline" style={{ color: '#fbbf24' }}>Go back</button>.</p>}
-                <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,.4)', lineHeight: 1.5 }}>By submitting, you confirm the information is accurate. {COMPANY.legalName} is an equal-opportunity employer. By providing your phone number, you agree to receive text messages about your application from {COMPANY.legalName} at the number provided. Message &amp; data rates may apply. Reply STOP to opt out, HELP for help.</p>
+                <div className="rounded-xl p-4 mb-4" style={{ background: 'rgba(52,211,153,.06)', border: '1px solid rgba(52,211,153,.2)' }}>
+                  <p className="text-sm font-semibold text-white mb-1">No identity or tax documents are needed now.</p>
+                  <p className="text-xs" style={{ color: 'var(--muted)', lineHeight: 1.5 }}>If approved, you&apos;ll receive a secure onboarding link for your W-9, contractor agreement, and any role-specific documents. We never ask for a Social Security card image.</p>
+                </div>
+                <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,.4)', lineHeight: 1.5 }}>By submitting, you confirm the information is accurate and understand this is an application for an independent-contractor opportunity, not an offer of employment. By providing your phone number, you agree to receive messages about your application from {COMPANY.legalName}. Message &amp; data rates may apply. Reply STOP to opt out, HELP for help.</p>
                 {err && <p className="text-sm mb-3" role="alert" style={{ color: '#f87171' }}>{err}</p>}
-                <Nav onBack={() => setStep(5)} onNext={submit} nextLabel={busy ? 'Submitting…' : 'Submit Application →'} nextDisabled={busy || missingDocs.length > 0 || !contactOk} />
+                <Nav onBack={() => setStep(4)} onNext={submit} nextLabel={busy ? 'Submitting…' : 'Submit Contractor Application →'} nextDisabled={busy || !contactOk} />
               </>
             )}
 
-            {err && step !== 6 && <p className="text-sm mt-4" role="alert" style={{ color: '#f87171' }}>{err}</p>}
+            {err && step !== 5 && <p className="text-sm mt-4" role="alert" style={{ color: '#f87171' }}>{err}</p>}
           </div>
 
           {step === 1 && <p className="text-xs text-center mt-5" style={{ color: 'rgba(255,255,255,.35)' }}>💵 {PAY_NOTICE}</p>}

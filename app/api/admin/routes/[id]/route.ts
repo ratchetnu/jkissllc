@@ -10,7 +10,7 @@ import {
 import { addCrew, removeCrew, sendAssignmentText } from '../../../../lib/route-notify'
 import { clearPunchFromIndex } from '../../../../lib/timeclock/punch-index-sync'
 import { withRouteLock, RouteBusyError } from '../../../../lib/route-mutex'
-import { listStaff } from '../../../../lib/staff'
+import { listStaff, staffCanAcceptAssignments } from '../../../../lib/staff'
 import {
   parseMoneyCents, snapshotManualPrice, snapshotCrewPay, clearCrewPay, computeRouteMoney,
   payExceedsPrice, fmtCents, isFrozen,
@@ -44,6 +44,9 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
     // else from their configured rate for this business, else their default.
     const staff = (await listStaff()).find(s => s.id === S(body.staffId, 80))
     if (!staff) return NextResponse.json({ error: 'Contractor not found.' }, { status: 400 })
+    if (!staffCanAcceptAssignments(staff)) {
+      return NextResponse.json({ error: `${staff.name} cannot be assigned until contractor onboarding is verified.` }, { status: 409 })
+    }
     let manualCents: number | null | undefined
     if (S(body.pay, 80)) {
       manualCents = parseMoneyCents(body.pay)
@@ -146,6 +149,14 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
     const sid = S(body.staffId, 80)
     const targets = sid ? list.filter(a => a.staffId === sid) : list.filter(a => a.phone)
     if (!targets.length) return NextResponse.json({ error: 'No one to text.' }, { status: 400 })
+    const roster = await listStaff()
+    const unavailable = targets.find(a => {
+      const staff = roster.find(s => s.id === a.staffId)
+      return !staff || !staffCanAcceptAssignments(staff)
+    })
+    if (unavailable) {
+      return NextResponse.json({ error: `${unavailable.name} is no longer available for dispatch. Reassign this route first.` }, { status: 409 })
+    }
     const errs: string[] = []
     for (const a of targets) { const r = await sendAssignmentText(route, a); if (!r.ok && r.error) errs.push(`${a.name}: ${r.error}`) }
     if (errs.length) smsWarning = errs.join('; ')

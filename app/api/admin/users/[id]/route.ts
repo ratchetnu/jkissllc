@@ -5,6 +5,7 @@ import { getUser, saveUser, setUserPassword, deleteUser, toSafeUser } from '../.
 import { isRole } from '../../../../lib/rbac'
 import { passwordPolicyError } from '../../../../lib/password'
 import { auditAdmin } from '../../../../lib/audit'
+import { getStaff, staffCanAcceptAssignments } from '../../../../lib/staff'
 
 // Update / deactivate / delete a single user login. Admin-only (users:manage);
 // changing a role additionally requires roles:manage — both live on admin, so this
@@ -26,6 +27,15 @@ export const PATCH = withTenantRoute(async (req: NextRequest, { params }: { para
   const editingSelf = who.sub === user.id
   const prevRole = user.role
   const prevActive = user.active
+  const requestedRole = body.role !== undefined ? body.role : user.role
+  const requestedStaffId = body.staffId !== undefined ? (body.staffId ? String(body.staffId) : undefined) : user.staffId
+  if (requestedRole === 'crew' && requestedStaffId) {
+    const staff = await getStaff(requestedStaffId)
+    if (!staff) return NextResponse.json({ ok: false, error: 'That crew member no longer exists.' }, { status: 400 })
+    if (!staffCanAcceptAssignments(staff) && (body.staffId !== undefined || body.active === true || body.role === 'crew')) {
+      return NextResponse.json({ ok: false, error: 'Verify contractor onboarding before enabling portal access.' }, { status: 409 })
+    }
+  }
 
   if (typeof body.name === 'string' && body.name.trim()) user.name = body.name.trim()
 

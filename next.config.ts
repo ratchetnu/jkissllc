@@ -3,9 +3,9 @@ import { withBotId } from "botid/next/config";
 
 const nextConfig: NextConfig = {
   /* config options here */
-  // heic-convert (libheif wasm) is a server-only image decoder — keep it external
-  // so it loads from node_modules at runtime instead of being bundled.
-  serverExternalPackages: ['heic-convert'],
+  // These packages provide server-only binary assets (libheif wasm and the
+  // Unicode signing fonts), so load them from node_modules at runtime.
+  serverExternalPackages: ['heic-convert', 'dejavu-fonts-ttf'],
   async redirects() {
     return [
       // The platform's public page moved from /opspilot to /operion (brand rename).

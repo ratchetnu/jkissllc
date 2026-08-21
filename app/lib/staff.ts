@@ -8,6 +8,16 @@ import { redis } from './redis'
 // stamped on the route (see lib/finance.bucketOf).
 export type PayKind = 'driver' | 'helper' | 'contractor' | 'employee'
 
+// Operational projection of the post-approval contractor lifecycle. Applicant
+// records remain the compliance source of truth; this small field lets every
+// scheduling and payroll entry point enforce the same readiness decision without
+// copying sensitive onboarding data into the crew roster.
+export type ContractorEngagementStatus =
+  | 'pending_onboarding'
+  | 'pending_verification'
+  | 'ready'
+  | 'ended'
+
 // One entry per pay change, newest last. Old routes keep their snapshotted pay —
 // this is the audit trail of what the person's *rate* was over time.
 export type PayHistoryEntry = {
@@ -69,10 +79,12 @@ export type Staff = {
   address?: StaffAddress  // mailing/home address; admin + the crew member themself only
   active: boolean
   applicantId?: string    // back-link to the Applicant this crew member was hired from
+  contractorStatus?: ContractorEngagementStatus
 
   // ── Onboarding ──
   // Set when a crew member is created from an approved applicant but hasn't finished
-  // onboarding (docs, start date, etc.). Undefined = fully active. UI-only signal.
+  // onboarding. Undefined = fully active for legacy
+  // records. Kept for portal compatibility; contractorStatus is authoritative.
   onboarding?: boolean
 
   // ── Pay settings ──
@@ -112,6 +124,45 @@ export type Staff = {
 // True unless the owner explicitly turned the timeclock off for this person.
 export const staffUsesTimeclock = (s: Pick<Staff, 'usesTimeclock'> | null | undefined): boolean =>
   s?.usesTimeclock !== false
+
+export type ContractorReadiness = {
+  readyForWork: boolean
+  mayReceivePay: boolean
+  label: string
+  nextAction?: string
+}
+
+// Legacy/manual crew records have no contractorStatus and retain the established
+// `active` behaviour. Applicant-linked contractors are assignable only after an
+// admin verifies onboarding. Ended contractors may still receive final or
+// historical statements, but can never be assigned new work.
+export function contractorReadiness(s: Pick<Staff, 'active' | 'contractorStatus'>): ContractorReadiness {
+  switch (s.contractorStatus) {
+  case 'pending_onboarding':
+    return { readyForWork: false, mayReceivePay: false, label: 'Onboarding required', nextAction: 'Contractor completes secure onboarding' }
+  case 'pending_verification':
+    return { readyForWork: false, mayReceivePay: false, label: 'Awaiting verification', nextAction: 'Admin verifies onboarding documents' }
+  case 'ready':
+    return s.active
+      ? { readyForWork: true, mayReceivePay: true, label: 'Ready for work' }
+      : { readyForWork: false, mayReceivePay: true, label: 'Inactive', nextAction: 'Review contractor relationship status' }
+  case 'ended':
+    return { readyForWork: false, mayReceivePay: true, label: 'Relationship ended' }
+  default:
+    return {
+      readyForWork: s.active,
+      mayReceivePay: true,
+      label: s.active ? 'Active' : 'Inactive',
+      nextAction: s.active ? undefined : 'Admin reactivates the crew record',
+    }
+  }
+}
+
+export const staffCanAcceptAssignments = (s: Pick<Staff, 'active' | 'contractorStatus'>): boolean =>
+  contractorReadiness(s).readyForWork
+
+export const staffMayReceivePay = (s: Pick<Staff, 'active' | 'contractorStatus'>): boolean =>
+  contractorReadiness(s).mayReceivePay
 
 // Compensation and W-9/tax fields are governed by pay:view:all and tax:view — both
 // explicitly EXCLUDED from the manager role (see app/lib/rbac.ts). The crew directory

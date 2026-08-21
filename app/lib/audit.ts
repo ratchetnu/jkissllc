@@ -38,6 +38,17 @@ export type AuditAction =
   // bare fact that "settings changed". ──
   | 'settings.moving_pricing_updated'
   | 'settings.business_address_updated'
+  | 'applicant.retention_purged'
+  // ── 1099 contractor lifecycle ──
+  // The agreement TEXT is never logged; these record which version became current,
+  // which version a request pinned, and who decided what.
+  | 'contractor_agreement.published'
+  | 'contractor_agreement.replaced'
+  | 'contractor.onboarding_requested'
+  | 'contractor.agreement_signed'
+  | 'contractor.agreement_countersigned'
+  | 'contractor.onboarding_verified'
+  | 'contractor.crew_link_confirmed'
 
 export type AuditOutcome = 'success' | 'denied' | 'failure'
 

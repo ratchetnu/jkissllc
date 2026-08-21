@@ -9,7 +9,7 @@ import {
 } from './routes'
 import { addCrew } from './route-notify'
 import { getBusiness, bizKey } from './businesses'
-import { listStaff } from './staff'
+import { listStaff, staffCanAcceptAssignments } from './staff'
 import { snapshotBusinessPrice } from './finance'
 
 // The standing crew for one weekday, e.g. Monday always runs Marcus + Dee.
@@ -180,7 +180,7 @@ export async function materializeTemplate(
     // pay for this business and sends NOTHING; the owner texts them when ready.
     for (const staffId of crewForWeekday(tpl, dow)) {
       const staff = roster.find(s => s.id === staffId)
-      if (staff) addCrew(route, staff)
+      if (staff && staffCanAcceptAssignments(staff)) addCrew(route, staff)
     }
 
     try { await saveRoute(route); created.push(route.routeNumber); existing.add(day) }

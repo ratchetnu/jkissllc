@@ -8,7 +8,7 @@ import {
 import { addCrew } from '../../../lib/route-notify'
 import { contractorStatsObject } from '../../../lib/route-stats'
 import { getBusiness, bizKey } from '../../../lib/businesses'
-import { listStaff } from '../../../lib/staff'
+import { listStaff, staffCanAcceptAssignments } from '../../../lib/staff'
 import {
   parseMoneyCents, snapshotBusinessPrice, snapshotManualPrice,
   computeRouteMoney, payExceedsPrice, fmtCents,
@@ -98,6 +98,9 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     for (const c of rawCrew) {
       const staff = staffList.find(s => s.id === c.staffId)
       if (!staff) continue
+      if (!staffCanAcceptAssignments(staff)) {
+        return NextResponse.json({ error: `${staff.name} cannot be assigned until contractor onboarding is verified.` }, { status: 409 })
+      }
       let manualCents: number | null | undefined
       if (c.pay) {
         manualCents = parseMoneyCents(c.pay)

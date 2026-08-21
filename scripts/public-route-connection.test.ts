@@ -36,6 +36,7 @@ import { bindToken } from '../app/lib/platform/tenancy/token-binding'
 import { GET, POST } from '../app/api/route/[token]/route'
 import { PATCH as ADMIN_ROUTE_PATCH } from '../app/api/admin/routes/[id]/route'
 import { createSessionToken } from '../app/api/admin/_lib/session'
+import { saveStaff } from '../app/lib/staff'
 import { appendCorrection, punchId, validateCorrection } from '../app/lib/time-corrections'
 import { selectTimeEntries } from '../app/lib/timesheets'
 import { buildPunchOverlapReport } from '../app/lib/timeclock/punch-overlap-scan'
@@ -562,9 +563,50 @@ const adminComplete = async () => {
     body: JSON.stringify({ action: 'status', status: 'completed' }),
   }), { params: Promise.resolve({ id: ROUTE_TOK }) })
 }
+const adminRouteAction = async (body: Record<string, unknown>) => {
+  const session = await createSessionToken()
+  return ADMIN_ROUTE_PATCH(new NextRequest(`http://localhost/api/admin/routes/${ROUTE_TOK}`, {
+    method: 'PATCH',
+    headers: { cookie: `jk_admin_session=${session}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  }), { params: Promise.resolve({ id: ROUTE_TOK }) })
+}
 const me = async () => (await stored(ROUTE_TOK))!.assignees![0]
 const events = async (t: string) => ((await stored(ROUTE_TOK))!.events ?? []).filter(e => e.type === t).length
 const audits = async (re: RegExp) => ((await stored(ROUTE_TOK))!.audit ?? []).filter(a => re.test(a.action)).length
+
+test('ONBOARDING GATE: route assignment blocks pending contractors and allows verified contractors', async () => {
+  await seed(mkRoute({ assignees: [] }))
+  const now = Date.now()
+  await runWithTenant({ tenantId: TENANT }, () => saveStaff({
+    id: 'pending-staff', name: 'Pending Contractor', active: false,
+    contractorStatus: 'pending_verification', onboarding: true,
+    createdAt: now, updatedAt: now,
+  }))
+
+  const blocked = await adminRouteAction({ action: 'assign', staffId: 'pending-staff' })
+  assert.equal(blocked.status, 409)
+  assert.match((await blocked.json()).error, /onboarding is verified/)
+  assert.deepEqual((await stored(ROUTE_TOK))?.assignees, [], 'blocked assignment writes nothing')
+
+  await runWithTenant({ tenantId: TENANT }, () => saveStaff({
+    id: 'pending-staff', name: 'Pending Contractor', active: true,
+    contractorStatus: 'ready', onboarding: false,
+    createdAt: now, updatedAt: now,
+  }))
+  const allowed = await adminRouteAction({ action: 'assign', staffId: 'pending-staff' })
+  assert.equal(allowed.status, 200)
+  assert.equal((await stored(ROUTE_TOK))?.assignees?.[0]?.staffId, 'pending-staff')
+
+  await runWithTenant({ tenantId: TENANT }, () => saveStaff({
+    id: 'pending-staff', name: 'Pending Contractor', active: false,
+    contractorStatus: 'ended', onboarding: false,
+    createdAt: now, updatedAt: now + 1,
+  }))
+  const dispatch = await adminRouteAction({ action: 'send', staffId: 'pending-staff' })
+  assert.equal(dispatch.status, 409)
+  assert.match((await dispatch.json()).error, /no longer available for dispatch/)
+})
 
 test('AUTO CLOCK-OUT: an open punch is closed at the SAME instant as completion', async () => {
   await seed(); await confirmed(); await clockIn()
