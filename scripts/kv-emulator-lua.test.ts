@@ -8,12 +8,18 @@
 //   • baseline adoption — the multi-key CAS fell into the generic version-CAS branch,
 //     which read the wrong key, compared the wrong field against the wrong ARGV, and
 //     wrote one of the script's four keys
+//   • release discovery — shipped with NO branch at all, so every local run of the
+//     discovery endpoint died on EMULATOR_UNSUPPORTED_SCRIPT
 //
-// Each of those made a runtime result meaningless while still printing PASS. These
-// tests pin every shape the app ships, so the next mismatch fails here instead.
+// The first three made a runtime result meaningless while still printing PASS; the
+// fourth made local reproduction impossible. These tests pin each modelled shape and
+// assert the discovery script is byte-identical to the one the app ships, so a
+// mismatch fails here instead. See the scope note at the end of this file for what
+// that does and does not cover.
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { spawn, type ChildProcess } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
 const PORT = 6412
@@ -81,6 +87,32 @@ const CONSUME_CAS = `
   redis.call('PEXPIRE', KEYS[1], ARGV[3])
   return 1
 `
+
+const DISCOVERY = `
+    local existing = redis.call('GET', KEYS[1])
+    if existing then return 'E:' .. existing end
+    local seq = redis.call('INCR', KEYS[3])
+    local key = 'UPD-' .. tostring(1000 + seq)
+    local recordKey = ARGV[3] .. key
+    if redis.call('EXISTS', recordKey) == 1 then return '__UPDATE_KEY_COLLISION__' end
+    redis.call('SET', recordKey, string.gsub(ARGV[1], ARGV[4], key, 1))
+    redis.call('ZADD', KEYS[2], ARGV[2], key)
+    redis.call('SET', KEYS[1], key)
+    return 'C:' .. key
+  `
+
+const MARKER = 'platform:update-discovery:deadbeef'
+const UPD_IDX = 'platform:update:index'
+const UPD_CTR = 'platform:update:counter'
+const UPD_PREFIX = 'platform:update:'
+const PLACEHOLDER = '__OPERION_UPDATE_KEY__'
+
+const record = (extra: Record<string, unknown> = {}) =>
+  JSON.stringify({ recordVersion: 1, key: PLACEHOLDER, title: 'feat: x', status: 'discovered', ...extra })
+
+const discover = (payload = record(), at = 1700) => cmd(
+  'EVAL', DISCOVERY, 3, MARKER, UPD_IDX, UPD_CTR, payload, String(at), UPD_PREFIX, PLACEHOLDER,
+)
 
 const REC_IDX = 'platform:baseline-adoption:index'
 const BIZ = 'platform:business:acme'
@@ -216,3 +248,114 @@ test('a script that merely looks similar is not silently accepted', async () => 
     assert.equal(JSON.parse((await dump()).strings[BIZ]).updatedAt, 1000)
   })
 })
+
+
+// ── Automatic release discovery ─────────────────────────────────────────────
+//
+// This script had NO emulator branch when it shipped. It threw
+// EMULATOR_UNSUPPORTED_SCRIPT — safe, but it meant discovery could not be exercised
+// locally at all, and it made this file's claim to pin "every shape the app ships"
+// false. These tests make the claim true again.
+
+test('discovery: a first delivery allocates a number and writes record, index and marker together', async () => {
+  await flush()
+  const result = await discover()
+  assert.equal(result, 'C:UPD-1001', 'created, with the key it allocated')
+  const d = await dump()
+  assert.ok(d.strings['platform:update:UPD-1001'], 'the record exists')
+  assert.equal(JSON.parse(d.strings['platform:update:UPD-1001']).key, 'UPD-1001', 'the placeholder was substituted')
+  assert.equal(d.strings[MARKER], 'UPD-1001', 'the marker points at it')
+  assert.equal(d.strings[UPD_CTR], '1', 'the counter advanced exactly once')
+  assert.deepEqual(Object.keys(d.zsets[UPD_IDX] ?? {}), ['UPD-1001'], 'and it is indexed')
+})
+
+test('discovery: a DUPLICATE delivery consumes no number and writes no second record', async () => {
+  await flush()
+  await discover()
+  const again = await discover()
+  assert.equal(again, 'E:UPD-1001', 'the duplicate path is reported distinctly from a create')
+  const d = await dump()
+  assert.equal(d.strings[UPD_CTR], '1', 'THE COUNTER DID NOT MOVE — this is the D5 regression')
+  assert.equal(Object.keys(d.strings).filter(k => k.startsWith('platform:update:UPD-')).length, 1)
+})
+
+test('discovery: a different artifact gets its own number', async () => {
+  await flush()
+  await discover()
+  const second = await cmd('EVAL', DISCOVERY, 3, 'platform:update-discovery:cafe', UPD_IDX, UPD_CTR, record(), '1701', UPD_PREFIX, PLACEHOLDER)
+  assert.equal(second, 'C:UPD-1002')
+  assert.equal((await dump()).strings[UPD_CTR], '2')
+})
+
+test('discovery: an existing record key is REFUSED, never overwritten', async () => {
+  await flush()
+  // A human-authored UPD-1001 already occupies the slot the counter is about to hand out.
+  await cmd('SET', 'platform:update:UPD-1001', JSON.stringify({ key: 'UPD-1001', title: 'HUMAN', status: 'approved' }))
+  const result = await discover()
+  assert.equal(result, '__UPDATE_KEY_COLLISION__')
+  const d = await dump()
+  assert.equal(JSON.parse(d.strings['platform:update:UPD-1001']).title, 'HUMAN', 'the existing record survived untouched')
+  assert.equal(JSON.parse(d.strings['platform:update:UPD-1001']).status, 'approved')
+  assert.equal(d.strings[MARKER], undefined, 'and no marker was written for a write that did not happen')
+})
+
+test('discovery: a dangling marker returns the stale key rather than inventing a record', async () => {
+  await flush()
+  await cmd('SET', MARKER, 'UPD-GONE')
+  assert.equal(await discover(), 'E:UPD-GONE')
+  assert.equal((await dump()).strings[UPD_CTR], undefined, 'and still no number was consumed')
+  // The store layer turns this into DISCOVERY_MARKER_WITHOUT_UPDATE; the script's job
+  // is only to report the marker honestly, which it does.
+})
+
+test('discovery: the substitution replaces the key field and nothing else', async () => {
+  await flush()
+  // A commit message that happens to contain the token must not be rewritten: gsub
+  // is bounded to ONE replacement, and `key` is the first field serialised.
+  await discover(record({ description: `mentions ${PLACEHOLDER} in prose` }))
+  const stored = JSON.parse((await dump()).strings['platform:update:UPD-1001'])
+  assert.equal(stored.key, 'UPD-1001')
+  assert.equal(stored.description, `mentions ${PLACEHOLDER} in prose`, 'only the first occurrence is replaced')
+})
+
+test('discovery: the emulator models the script the app ACTUALLY ships', async () => {
+  // Not a paraphrase — the constant above is extracted from the source at authoring
+  // time, and this asserts the shipped script still contains the load-bearing lines.
+  const store = readFileSync(new URL('../app/lib/platform/updates/store.ts', import.meta.url), 'utf8')
+  for (const line of [
+    "local existing = redis.call('GET', KEYS[1])",
+    "local seq = redis.call('INCR', KEYS[3])",
+    "if redis.call('EXISTS', recordKey) == 1 then return '__UPDATE_KEY_COLLISION__' end",
+    "redis.call('SET', KEYS[1], key)",
+  ]) {
+    assert.ok(store.includes(line), `the shipped script no longer contains: ${line}`)
+    assert.ok(DISCOVERY.includes(line), `the pinned copy no longer contains: ${line}`)
+  }
+})
+
+test('the pinned discovery script is BYTE-IDENTICAL to the one the app ships', () => {
+  // Drift protection that is exact rather than approximate. The emulator recognises
+  // this script by shape; if the source changes and this copy does not, the emulator
+  // would keep modelling the OLD contract while the app ran the new one — which is
+  // precisely how the three silent mismatches in this file's header happened.
+  const source = readFileSync(new URL('../app/lib/platform/updates/store.ts', import.meta.url), 'utf8')
+  const match = /const script = `\n([\s\S]*?)\n  `\n/.exec(source)
+  assert.ok(match, 'could not find the discovery script in store.ts — this test is now blind')
+  assert.equal(
+    match![1].trim(),
+    DISCOVERY.trim(),
+    'the shipped discovery script changed; update the pinned copy AND the emulator branch together',
+  )
+})
+
+// SCOPE NOTE, deliberately stated rather than implied. This file pins the shapes
+// listed above — baseline adoption, the booking version CAS, lock release/renew, the
+// approval consume CAS, the three pay-statement scripts, and now discovery. It does
+// NOT prove that every `.eval(` call site in the app is modelled: there are ~34 call
+// sites sharing far fewer shapes, and a scanner accurate enough to tell them apart
+// was more likely to produce false alarms than to catch a real gap.
+//
+// The rule for a NEW script is therefore a human one, and it is short: add an
+// emulator branch and a pin here in the same change. An unmodelled script fails
+// loudly at runtime (EMULATOR_UNSUPPORTED_SCRIPT, asserted above), so the failure
+// mode is a blocked local run — never a silently wrong one.
