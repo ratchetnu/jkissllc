@@ -44,6 +44,8 @@ export async function adoptBaseline(input: {
   actor: string
   now: number
   approvalSecret: string
+  /** Facts recorded on the owner's word — escalates the required confirmation phrase. */
+  attestedFacts?: string[]
   /** Re-read server-side at write time; the receipt is bound to it, so Production moving
    *  between the dry run and the adopt invalidates the approval instead of being ignored. */
   liveProduction?: LiveProductionEvidence | null
@@ -58,7 +60,7 @@ export async function adoptBaseline(input: {
   if (dryRun.verdict !== 'safe_to_adopt' || !dryRun.proposedVersion) {
     return { ok: false, reason: 'baseline evidence is no longer safe to adopt', dryRun }
   }
-  const phrase = baselineConfirmationPhrase(input.business.id)
+  const phrase = baselineConfirmationPhrase(input.business.id, input.attestedFacts ?? [])
   if (input.confirmationPhrase !== phrase) {
     return { ok: false, reason: `confirmation phrase must be exactly "${phrase}"` }
   }
@@ -93,6 +95,7 @@ export async function adoptBaseline(input: {
     },
     rollbackSnapshot: dryRun.rollbackSnapshot,
     commitVerification: dryRun.commitVerification,
+    attestedFacts: input.attestedFacts?.length ? input.attestedFacts : undefined,
     // Preserve the provider's canonical commit, not a user-entered abbreviation.
     deployedCommit: provenCommit ?? evidence.deployedCommit,
   }

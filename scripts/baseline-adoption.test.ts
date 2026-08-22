@@ -242,9 +242,13 @@ test('generic business editing cannot write either release version field', () =>
   assert.doesNotMatch(editable, /currentVersion|latestVerifiedVersion/)
 })
 
-test('the browser consumes the server dry-run verdict instead of reimplementing evidence policy', () => {
+test('the browser consumes the server verdict instead of reimplementing evidence policy', () => {
   const source = readFileSync('app/admin/operations/release/BaselineAdoptionPanel.tsx', 'utf8')
-  assert.match(source, /action: 'dry_run'/)
-  assert.match(source, /dryRun\?\.verdict === 'safe_to_adopt'/)
+  // The action was renamed when evidence collection moved server-side: the browser no
+  // longer SENDS evidence to be judged, it asks the server to go and read it. The
+  // property under test is unchanged — no policy, no crypto, no version parsing here.
+  assert.match(source, /action: 'check_evidence'/)
   assert.doesNotMatch(source, /createBaselineApprovalToken|verifyBaselineApprovalToken|parseSemanticVersion/)
+  // And the browser must not be able to submit a commit at all.
+  assert.doesNotMatch(source, /setCommit|deployedCommit:\s*commit\b/)
 })

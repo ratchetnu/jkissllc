@@ -225,6 +225,10 @@ test('strict version authorship is confined to finalization, adoption, and relea
     // "only the two evidence-based writers may PERSIST a version" in
     // scripts/version-lifecycle.test.ts. Both guards have to agree before a version
     // can move.
+    // Also advisory: starting-version.ts validates the ONE number an owner chooses for a
+    // first baseline. It parses (to refuse "1.4" or "latest") and never persists — the
+    // adoption service and its evidence gate remain the only write path.
+    'app/lib/platform/release/starting-version.ts',
     'app/lib/platform/release/version-proposal.ts',
   ])
 })

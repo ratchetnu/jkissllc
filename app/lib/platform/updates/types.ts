@@ -433,6 +433,9 @@ export type BaselineFlagEvidence = {
   assessed: boolean
   flags: Record<string, boolean>
 }
+/** Facts a baseline rests on that Operion could not verify — the owner asserted them. */
+export type BaselineAttestedFacts = string[]
+
 export type BaselineVerificationEvidence = {
   kind: 'production_deployment' | 'health_check' | 'smoke_test' | 'owner_attestation'
   reference: string
@@ -495,6 +498,12 @@ export type BaselineOwnerApproval = {
 export type BaselineAdoptionRecord = BaselineAdoptionInput & {
   recordVersion: 1
   id: string
+  /**
+   * Facts this baseline rests on that Operion could NOT verify — the owner asserted
+   * them. Durable on purpose: a reader must always be able to tell which parts of a
+   * baseline were measured and which were taken on somebody's word.
+   */
+  attestedFacts?: BaselineAttestedFacts
   proposedVersion: string
   capabilityManifestHash: string
   baselineSource: 'adopted'
