@@ -39,6 +39,23 @@ export type AnalyzeJunkPhotosInput = {
   // the customer's request can never outlive its function ceiling.
   timeoutMs?: number
   attempts?: number
+  /**
+   * Output-token ceiling override. Omitted or 0 ⇒ the photo-count-scaled budget
+   * below applies (the durable worker's behaviour, unchanged).
+   *
+   * A caller that pins `timeoutMs` MUST pin this too. The scaled budget and the
+   * scaled timeout are two views of ONE quantity — `analysisTimeoutMs` is literally
+   * derived from `analysisOutputTokenBudget` — so overriding only the clock asks the
+   * model for more tokens than the clock can buy, and the call can do nothing but
+   * time out. That is exactly what the interactive route did, at every photo count.
+   */
+  maxOutputTokens?: number
+  /**
+   * Response shape for this call. The interactive route uses the compact contract
+   * because its fixed request deadline cannot accommodate the durable worker's full
+   * audit payload. Omitted preserves the configured/default durable behaviour.
+   */
+  responseContract?: 'full' | 'compact'
 }
 
 export type AnalyzeJunkPhotosResult = {
@@ -138,7 +155,12 @@ export function readAnalysisResponse(
 }
 
 /** Which primary-analysis prompt spec runs. Flag OFF ⇒ the shipped v1 spec. */
-export function analysisTaskId(env: Record<string, string | undefined> = process.env): string {
+export function analysisTaskId(
+  env: Record<string, string | undefined> = process.env,
+  responseContract?: 'full' | 'compact',
+): string {
+  if (responseContract === 'compact') return 'ops.junkAnalysisCompact'
+  if (responseContract === 'full') return 'ops.junkAnalysis'
   return isEnabled('AI_COMPACT_ANALYSIS_PROMPT', env) ? 'ops.junkAnalysisCompact' : 'ops.junkAnalysis'
 }
 
@@ -191,11 +213,15 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
     // means model routing, cost dashboards and the AI audit log continue to see one
     // feature, while `taskId` records which spec actually ran — which is what makes
     // the two directly comparable in a LAT-002 report.
-    taskId: analysisTaskId(),
+    taskId: analysisTaskId(process.env, input.responseContract),
     feature: 'ops.junkAnalysis',
     vars: await truckVars(),
     messages,
-    maxOutputTokens: analysisOutputTokenBudget(photos.length),
+    // Pinned by interactive callers to what their slice can actually pay for; the
+    // durable worker passes nothing and keeps the full scaled budget.
+    maxOutputTokens: input.maxOutputTokens && input.maxOutputTokens > 0
+      ? Math.min(input.maxOutputTokens, analysisOutputTokenBudget(photos.length))
+      : analysisOutputTokenBudget(photos.length),
     temperature: 0.2,
     // Interactive callers pin an explicit slice + single shot and it still wins. The
     // durable worker no longer falls back to the platform's 30s default: that default is

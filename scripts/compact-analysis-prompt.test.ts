@@ -127,6 +127,8 @@ test('both analysis specs are registered and the compact one is opt-in', () => {
   assert.equal(analysisTaskId({}), 'ops.junkAnalysis', 'flag unset ⇒ the shipped v1 spec')
   assert.equal(analysisTaskId({ AI_COMPACT_ANALYSIS_PROMPT: '0' }), 'ops.junkAnalysis')
   assert.equal(analysisTaskId({ AI_COMPACT_ANALYSIS_PROMPT: '1' }), 'ops.junkAnalysisCompact')
+  assert.equal(analysisTaskId({}, 'compact'), 'ops.junkAnalysisCompact', 'a bounded caller can select compact explicitly')
+  assert.equal(analysisTaskId({ AI_COMPACT_ANALYSIS_PROMPT: '1' }, 'full'), 'ops.junkAnalysis', 'durable can require the full contract')
 })
 
 test('the compact spec really is smaller, and keeps the reasoning rules', () => {

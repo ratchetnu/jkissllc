@@ -10,6 +10,12 @@ import './globals.css'
 const PROTECTED_ROUTES = [
   { path: '/api/contact', method: 'POST' },
   { path: '/api/quote', method: 'POST' },
+  // The photo-estimate call. `/api/quote` above does NOT cover it — BotID matches
+  // the path exactly, so leaving it off meant the client never attached a challenge
+  // token while the route still called isBlockedBot(), and every analyze 403'd.
+  // That shipped in 4c0cf23 and silently killed instant quotes for ~5 weeks; the
+  // 403 returns before any telemetry, so it never even recorded a failure.
+  { path: '/api/quote/analyze', method: 'POST' },
   { path: '/api/coi', method: 'POST' },
   { path: '/api/ai/photo-estimate', method: 'POST' },
   { path: '/api/book', method: 'POST' },
