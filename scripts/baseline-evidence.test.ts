@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   collectBaselineEvidence, evidenceSummary, repoRefOf, resolveFullCommit,
-  parsePublicHealthResponse, type BaselineEvidenceDeps, type ReleaseReadinessEvidence,
+  healthUrlOf, parsePublicHealthResponse, type BaselineEvidenceDeps, type ReleaseReadinessEvidence,
 } from '../app/lib/platform/release/baseline-evidence'
 import type { PlatformBusiness } from '../app/lib/platform/updates/types'
 
@@ -193,6 +193,28 @@ test('a legacy business with no production URL still reports every other fact', 
   assert.equal(byId(report, 'health').status, 'missing')
   assert.equal(byId(report, 'commit').status, 'ok', 'the other readings are unaffected')
   assert.equal(report.ok, false)
+})
+
+test('relative health endpoints are fetched from the public production origin', async () => {
+  let requested = ''
+  const report = await run(business({ healthEndpoint: '/api/health' }), deps({
+    fetchHealth: async (url) => {
+      requested = url
+      return { ok: true, status: 200, build: 'dpl_live', reportedStatus: 'healthy' }
+    },
+  }))
+
+  assert.equal(requested, 'https://superchargedenterprise.com/api/health')
+  assert.equal(byId(report, 'health').status, 'ok')
+})
+
+test('legacy root checks and absolute health endpoints keep their configured target', () => {
+  assert.equal(healthUrlOf(business({ healthEndpoint: '/' })), 'https://superchargedenterprise.com/')
+  assert.equal(
+    healthUrlOf(business({ healthEndpoint: 'https://status.example.com/live' })),
+    'https://status.example.com/live',
+  )
+  assert.equal(healthUrlOf(business({ productionUrl: undefined, healthEndpoint: '/api/health' })), '')
 })
 
 test('repoRefOf prefers the split fields and falls back to owner/name', () => {
