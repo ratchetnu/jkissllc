@@ -191,7 +191,8 @@ function evalScript(script, keys, args) {
     //   local key = 'UPD-' .. tostring(1000 + seq)
     //   local recordKey = ARGV[3] .. key
     //   if redis.call('EXISTS', recordKey) == 1 then return '__UPDATE_KEY_COLLISION__' end
-    //   redis.call('SET', recordKey, string.gsub(ARGV[1], ARGV[4], key, 1))
+    //   local record = string.gsub(ARGV[1], ARGV[4], key, 1)   -- ONE value, see below
+    //   redis.call('SET', recordKey, record)
     //   redis.call('ZADD', KEYS[2], ARGV[2], key)
     //   redis.call('SET', KEYS[1], key)
     //   return 'C:' .. key
@@ -210,6 +211,13 @@ function evalScript(script, keys, args) {
     // `string.gsub(s, pat, repl, 1)` replaces the FIRST occurrence. A function
     // replacement is used so a `$` in the key could never be read as a JS
     // substitution pattern — faithful to Lua, which has no such syntax.
+    //
+    // The script assigns gsub to a LOCAL before SET because gsub returns two
+    // values (string, count) and a Lua call in final argument position expands to
+    // all of them — inlining it issues `SET key value 1`, which real Redis rejects
+    // AFTER the INCR has already landed. This emulator cannot see that class of
+    // bug (it models shapes in JS, not Lua), which is why
+    // scripts/lua-multi-return-guard.test.ts exists.
     strings.set(recordKey, { v: args[0].replace(args[3], () => key), exp: null })
     zset(keys[1]).set(key, Number(args[1]))
     strings.set(keys[0], { v: key, exp: null })

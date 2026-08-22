@@ -95,7 +95,8 @@ const DISCOVERY = `
     local key = 'UPD-' .. tostring(1000 + seq)
     local recordKey = ARGV[3] .. key
     if redis.call('EXISTS', recordKey) == 1 then return '__UPDATE_KEY_COLLISION__' end
-    redis.call('SET', recordKey, string.gsub(ARGV[1], ARGV[4], key, 1))
+    local record = string.gsub(ARGV[1], ARGV[4], key, 1)
+    redis.call('SET', recordKey, record)
     redis.call('ZADD', KEYS[2], ARGV[2], key)
     redis.call('SET', KEYS[1], key)
     return 'C:' .. key

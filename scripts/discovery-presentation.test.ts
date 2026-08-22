@@ -11,7 +11,8 @@ import {
   updateBucket, groupUpdates, statusLabel, STATUS_LABEL,
   matchesStatusFilter, statusFilterLabel, STATUS_FILTERS, BUCKET_ORDER, BUCKET_BLURB,
 } from '../app/lib/platform/updates/business-view'
-import { touchesStoredData, touchesSecretSurface, discoveredUpdateFromGitHub } from '../app/lib/platform/updates/discovery'
+import { touchesStoredData, touchesSecretSurface, discoveredUpdateFromGitHub, validateGitHubDiscoveryPayload } from '../app/lib/platform/updates/discovery'
+import { isSafeRepoPath } from '../app/lib/platform/automation/manifest'
 import type { PlatformUpdate } from '../app/lib/platform/updates/types'
 
 // ── D2: what counts as touching stored data ────────────────────────────────
@@ -211,4 +212,27 @@ test('D4: the mobile audit actually visits the platform page', () => {
   // look like it was covered.
   const classify = readFileSync(new URL('./mobile-audit-classify.mjs', import.meta.url), 'utf8')
   assert.match(classify, /owner:\s*\['owner'\]/, 'and an owner route can actually be measured')
+})
+
+test('an over-long path can never be TRUNCATED into acceptance', () => {
+  // `text(value, 500)` slices a path rather than refusing it — the same shape as the
+  // 41-character SHA defect. It is unreachable only because isSafeRepoPath caps a
+  // path at 400 characters, so a slice to 500 is still refused downstream. That is a
+  // guarantee spread across two modules, which is exactly the kind that quietly stops
+  // holding: raise the cap in manifest.ts above 500 and truncated paths start being
+  // accepted, misclassified (a sliced `…/booking-migration.ts` touches no stored data)
+  // and recorded under a path that does not exist. This pins the interaction.
+  assert.equal(isSafeRepoPath('app/lib/' + 'x'.repeat(500 - 8)), false, 'a 500-char path is refused')
+  assert.equal(isSafeRepoPath('app/lib/' + 'x'.repeat(401 - 8)), false, 'so is anything past the 400 cap')
+  assert.equal(isSafeRepoPath('app/lib/' + 'x'.repeat(400 - 8)), true, 'the cap itself is unchanged')
+
+  const long = `app/lib/${'x'.repeat(480)}/booking-migration.ts`
+  assert.ok(long.length > 500, 'long enough to be sliced by text()')
+  const refused = validateGitHubDiscoveryPayload({
+    deliveryId: 'd', repository: 'ratchetnu/jkissllc', ref: 'refs/heads/main',
+    before: 'b'.repeat(40), after: 'a'.repeat(40), title: 'feat: x', commitMessage: 'feat: x',
+    changedFileCount: 1, filesTruncated: false, changedFiles: [long],
+  })
+  assert.equal(refused.ok, false)
+  assert.match((refused as { reason: string }).reason, /unsafe path/)
 })
