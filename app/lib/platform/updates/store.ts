@@ -16,6 +16,7 @@ const K_UPD = 'platform:update:'
 const K_UPD_IDX = 'platform:update:index'
 const K_UPD_CTR = 'platform:update:counter'
 const K_UPD_DISCOVERY = 'platform:update-discovery:'
+const K_UPD_DELIVERY = 'platform:update-delivery:'
 const K_COMPAT = 'platform:compat:'          // platform:compat:{updateKey} -> Record<bizId, UpdateCompatibility>
 const K_REL = 'platform:release:'
 const K_REL_IDX = 'platform:release:index'
@@ -64,41 +65,124 @@ type DiscoveryStore = Pick<typeof redis, 'eval' | 'get'>
 export type DiscoveryWrite = { kind: 'created' | 'existing'; update: PlatformUpdate }
 
 /**
- * Create one update for a source artifact, exactly once.
+ * The token `saveDiscoveredUpdate` substitutes with the allocated key.
  *
- * GitHub retries jobs and owners can re-run them. A read-then-write check would race,
- * so the artifact marker, update record, and index entry are written in one Lua call.
- * A duplicate receives the original record and can return 200 without creating a new
- * UPD item. Keys are never derived from an untrusted repository name; the identity is
- * hashed first.
+ * Deliberately not a valid UPD key: if substitution ever failed, a record carrying
+ * this literal would be obviously broken rather than plausibly wrong.
+ */
+export const DISCOVERY_KEY_PLACEHOLDER = '__OPERION_UPDATE_KEY__'
+
+/** The discovery identity → marker digest. Never a raw repository name in a key. */
+function discoveryDigest(identity: { repository: string; commit: string }): string {
+  return crypto.createHash('sha256')
+    .update(`${identity.repository.toLowerCase()}@${identity.commit.toLowerCase()}`)
+    .digest('hex')
+}
+
+/**
+ * Create one update for a source artifact, exactly once — allocating its number
+ * ONLY when it is genuinely the first delivery.
+ *
+ * ── Why the sequence moved inside the script ────────────────────────────────
+ *
+ * The number used to be allocated by the caller, before the marker was consulted.
+ * GitHub retries jobs and owners re-run them, so every duplicate delivery burned a
+ * UPD number and left a permanent gap in the sequence. A gap is not a correctness
+ * failure, but a release ledger whose identifiers skip is one an owner cannot
+ * reason about — "where did UPD-1009 go?" has no good answer.
+ *
+ * Reading the marker first and only then allocating would be a check-then-act: two
+ * simultaneous first deliveries would both read "absent", both allocate, and one
+ * would still be discarded. So the allocation happens INSIDE the same Lua call as
+ * the marker check — one atomic step, no window between deciding and acting.
+ *
+ * ── What the script guarantees ──────────────────────────────────────────────
+ *
+ *   duplicate delivery  → returns the original key. No INCR. No second record.
+ *   first delivery      → INCR, write record + index + marker, all or nothing.
+ *   key collision       → refuses loudly; an existing record is NEVER overwritten.
+ *   dangling marker     → refuses loudly rather than inventing a record.
+ *
+ * KEYS carries the marker, the index and the counter. The update record's key is
+ * derived inside the script from a prefix in ARGV, because it cannot be known until
+ * the counter is read — the one key that is computed rather than declared. Every
+ * key here lives under the `platform:` prefix, which is on the never-tenant-scoped
+ * allowlist (keys.ts), so scoping is a no-op and the computed key cannot escape a
+ * tenant boundary. (On a clustered Redis an undeclared key would need a hash tag;
+ * this deployment is a single logical Upstash database.)
  */
 export async function saveDiscoveredUpdate(
   update: PlatformUpdate,
   identity: { repository: string; commit: string },
   store: DiscoveryStore = redis,
 ): Promise<DiscoveryWrite> {
-  const digest = crypto.createHash('sha256').update(`${identity.repository.toLowerCase()}@${identity.commit.toLowerCase()}`).digest('hex')
-  const markerKey = K_UPD_DISCOVERY + digest
-  const updateKey = K_UPD + update.key
+  const encoded = JSON.stringify(update)
+  // The record is written by substituting this token. If it is absent the script
+  // would persist a placeholder key; if it appears twice the wrong one could be
+  // replaced. Both are refused here rather than discovered later in the ledger.
+  const occurrences = encoded.split(DISCOVERY_KEY_PLACEHOLDER).length - 1
+  if (occurrences !== 1) {
+    throw new Error(`DISCOVERY_PLACEHOLDER_NOT_UNIQUE: expected exactly one, found ${occurrences}`)
+  }
+
+  const markerKey = K_UPD_DISCOVERY + discoveryDigest(identity)
+  // The return value carries WHICH PATH ran, not just the key. The caller cannot
+  // infer it: a deduplicated delivery and a created one both end with a real key,
+  // and the candidate it passed in carries only a placeholder.
   const script = `
     local existing = redis.call('GET', KEYS[1])
-    if existing then return existing end
-    if redis.call('EXISTS', KEYS[2]) == 1 then return '__UPDATE_KEY_COLLISION__' end
-    redis.call('SET', KEYS[2], ARGV[1])
-    redis.call('ZADD', KEYS[3], ARGV[2], ARGV[3])
-    redis.call('SET', KEYS[1], ARGV[3])
-    return ARGV[3]
+    if existing then return 'E:' .. existing end
+    local seq = redis.call('INCR', KEYS[3])
+    local key = 'UPD-' .. tostring(1000 + seq)
+    local recordKey = ARGV[3] .. key
+    if redis.call('EXISTS', recordKey) == 1 then return '__UPDATE_KEY_COLLISION__' end
+    redis.call('SET', recordKey, string.gsub(ARGV[1], ARGV[4], key, 1))
+    redis.call('ZADD', KEYS[2], ARGV[2], key)
+    redis.call('SET', KEYS[1], key)
+    return 'C:' .. key
   `
   const result = String(await store.eval(
     script,
-    [markerKey, updateKey, K_UPD_IDX],
-    [JSON.stringify(update), String(update.updatedAt), update.key],
+    [markerKey, K_UPD_IDX, K_UPD_CTR],
+    [encoded, String(update.updatedAt), K_UPD, DISCOVERY_KEY_PLACEHOLDER],
   ))
+
   if (result === '__UPDATE_KEY_COLLISION__') throw new Error('UPDATE_KEY_COLLISION')
-  if (result === update.key) return { kind: 'created', update }
-  const existing = parse<PlatformUpdate>(await store.get(K_UPD + result))
-  if (!existing) throw new Error('DISCOVERY_MARKER_WITHOUT_UPDATE')
-  return { kind: 'existing', update: existing }
+  const kind = result.startsWith('C:') ? 'created' : result.startsWith('E:') ? 'existing' : null
+  if (!kind) throw new Error(`DISCOVERY_UNEXPECTED_RESULT: ${result.slice(0, 40)}`)
+  const key = result.slice(2)
+
+  // The authoritative record is the one the store holds — re-read it rather than
+  // trusting the in-memory candidate, so a caller is never handed a record that
+  // differs from what was persisted (and, on the created path, so the substituted
+  // key is the one that comes back).
+  const stored = parse<PlatformUpdate>(await store.get(K_UPD + key))
+  if (!stored) throw new Error('DISCOVERY_MARKER_WITHOUT_UPDATE')
+  return { kind, update: stored }
+}
+
+/**
+ * Delivery replay guard, mirroring the sibling automation callback.
+ *
+ * This is DEFENCE IN DEPTH, not the duplicate-update guarantee — that remains the
+ * repository+commit marker above, which is what makes "one commit, one update" true
+ * even across workflow re-runs that carry a fresh delivery id.
+ *
+ * What this adds is narrower and worth having anyway: a signed request captured off
+ * the wire cannot be replayed inside the signature's freshness window to re-enter
+ * the handler. The stored value is the update key the delivery produced, so a replay
+ * can be answered with the same body instead of a bare acknowledgement.
+ *
+ * Marked only AFTER a delivery succeeds. The workflow retries the same delivery id
+ * when the endpoint is unreachable, so marking a failed attempt would lock out the
+ * retry that was supposed to recover it.
+ */
+export async function discoveryDeliverySeen(deliveryId: string): Promise<string | null> {
+  return await redis.get(K_UPD_DELIVERY + deliveryId)
+}
+export async function markDiscoveryDelivery(deliveryId: string, updateKey: string, ttlMs = 24 * 60 * 60_000): Promise<void> {
+  await redis.set(K_UPD_DELIVERY + deliveryId, updateKey)
+  await redis.pexpire(K_UPD_DELIVERY + deliveryId, ttlMs)
 }
 
 // ── Compatibility (one blob per update: bizId -> record) ─────────────────────
