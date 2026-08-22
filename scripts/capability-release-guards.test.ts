@@ -23,6 +23,7 @@ const zsets = new Map<string, Map<string, number>>()
 const z = (key: string) => zsets.get(key) ?? zsets.set(key, new Map()).get(key)!
 /** Every call that is NOT the fake store — i.e. every real external provider call. */
 const externalCalls: string[] = []
+let beforeCapabilityProfileCas: ((key: string) => void) | undefined
 
 globalThis.fetch = (async (url: string, init: { body?: string } = {}) => {
   if (url !== UPSTASH) {
@@ -49,6 +50,20 @@ globalThis.fetch = (async (url: string, init: { body?: string } = {}) => {
     }
     case 'PEXPIRE':
     case 'EXPIRE': result = 1; break
+    case 'EVAL': {
+      const script = args[0]
+      if (!script.includes('CAPABILITY_PROFILE_CAS')) throw new Error('fake redis: unhandled EVAL')
+      const casKey = args[2]
+      beforeCapabilityProfileCas?.(casKey)
+      beforeCapabilityProfileCas = undefined
+      const current = kv.get(casKey)
+      const mode = args[3]
+      const expected = args[4]
+      const next = args[5]
+      if ((mode === 'absent' && current !== undefined) || (mode !== 'absent' && current !== expected)) result = 0
+      else { kv.set(casKey, next); result = 1 }
+      break
+    }
     default: throw new Error(`fake redis: unhandled ${command}`)
   }
   return { ok: true, status: 200, json: async () => ({ result }) }
@@ -354,6 +369,40 @@ test('the backfill never overwrites an explicit choice, and never removes one', 
   assert.equal(r.capabilities['sms-delivery'].state, 'ready')
   assert.equal(r.capabilities['hiring'].state, 'disabled')
   assert.equal(r.capabilities['sms-delivery'].selectionSource, 'explicit')
+})
+
+test('a later settings change cannot erase the backfill marker', async () => {
+  await runWithTenant({ tenantId: 'marker-test' }, () => upsertTenant({
+    id: 'marker-test', slug: 'marker-test', displayName: 'Marker Test', legal: {}, brand: {},
+    status: 'active', plan: 'pro', createdAt: NOW,
+  }))
+  await upsertMembership({ tenantId: 'marker-test', userId: OWNER.sub, role: 'admin', status: 'active' })
+  await backfillCapabilityProfile('marker-test', {
+    dryRun: false, actor: 'operator', env: BARE_ENV, at: NOW + 20,
+  })
+  await setCapabilitySelections(OWNER, 'marker-test', {
+    'sms-delivery': { selection: 'enabled' },
+  }, { ...OPTS, env: BARE_ENV, at: NOW + 21 })
+
+  const after = await resolveTenantCapabilities('marker-test', { env: FULL_ENV })
+  assert.equal(after.profile.initializedAt, NOW + 20)
+  assert.equal(after.profile.initializedBy, 'operator')
+  assert.equal(after.capabilities['payments-stripe'].state, 'disabled', 'environment inference must stay retired')
+})
+
+test('a concurrent owner choice wins over the backfill atomically', async () => {
+  const tenantId = 'backfill-race'
+  beforeCapabilityProfileCas = (key) => kv.set(key, JSON.stringify({
+    ...emptyProfile(tenantId),
+    entries: { 'sms-delivery': { selection: 'disabled', updatedAt: NOW, updatedBy: 'owner' } },
+  }))
+  await assert.rejects(
+    () => backfillCapabilityProfile(tenantId, { dryRun: false, actor: 'operator', env: FULL_ENV, at: NOW + 30 }),
+    /changed while the backfill was running/,
+  )
+  const after = await resolveTenantCapabilities(tenantId, { env: FULL_ENV })
+  assert.equal(after.capabilities['sms-delivery'].state, 'disabled')
+  assert.equal(after.profile.initializedAt, undefined, 'the owner record was preserved byte-for-byte')
 })
 
 test('a plan computed BEFORE a choice was made cannot clobber it', () => {

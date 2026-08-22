@@ -39,6 +39,15 @@ import { recordMigrationCompleted } from '../tenancy/migration-markers'
 
 /** The tenant-owned Redis key (scoped by the chokepoint when tenancy is on). */
 const CAPABILITY_KEY = 'settings:capabilities'
+const SET_PROFILE_IF_UNCHANGED = `-- CAPABILITY_PROFILE_CAS
+local current = redis.call('get', KEYS[1])
+if ARGV[1] == 'absent' then
+  if current then return 0 end
+elseif current ~= ARGV[2] then
+  return 0
+end
+redis.call('set', KEYS[1], ARGV[3])
+return 1`
 
 export type CapabilityActor = { sub: string; role: Role }
 
@@ -155,6 +164,7 @@ export type BackfillResult = {
   /** True when the profile was already initialized and nothing was written. */
   alreadyInitialized: boolean
   written: boolean
+  warnings: string[]
 }
 
 /**
@@ -176,7 +186,8 @@ export async function backfillCapabilityProfile(
   const at = opts.at ?? Date.now()
   const actor = opts.actor ?? 'system'
 
-  const current = await getCapabilityProfile(tid)
+  const raw = await runWithTenant({ tenantId: tid }, () => redis.get(CAPABILITY_KEY)) as string | null
+  const current = parseStoredProfile(tid, raw)
   const plan = planCapabilityBackfill({
     tenantId: tid,
     profile: current.profile,
@@ -186,11 +197,21 @@ export async function backfillCapabilityProfile(
   })
 
   if (plan.alreadyInitialized || dryRun) {
-    return { tenantId: tid, dryRun, plan, alreadyInitialized: plan.alreadyInitialized, written: false }
+    return { tenantId: tid, dryRun, plan, alreadyInitialized: plan.alreadyInitialized, written: false, warnings: current.warnings }
+  }
+  if (current.fellBackToDefaults) {
+    throw new Error(`capability profile is unreadable; backfill made no changes: ${current.warnings.join('; ')}`)
   }
 
   const next = applyBackfillPlan(current.profile, plan, { at, actor })
-  await runWithTenant({ tenantId: tid }, () => redis.set(CAPABILITY_KEY, JSON.stringify(next)))
+  const changed = await runWithTenant({ tenantId: tid }, () => redis.eval(
+    SET_PROFILE_IF_UNCHANGED,
+    [CAPABILITY_KEY],
+    [raw === null ? 'absent' : 'present', raw ?? '', JSON.stringify(next)],
+  ))
+  if (changed !== 1 && changed !== '1') {
+    throw new Error('capability profile changed while the backfill was running; nothing was overwritten, review and retry')
+  }
 
   await runWithTenant({ tenantId: tid }, () => recordMigrationCompleted({
     id: 'capability-profile-backfill',
@@ -213,7 +234,7 @@ export async function backfillCapabilityProfile(
     meta: { recorded: plan.entries.map((e) => e.capability) },
   }))
 
-  return { tenantId: tid, dryRun: false, plan, alreadyInitialized: false, written: true }
+  return { tenantId: tid, dryRun: false, plan, alreadyInitialized: false, written: true, warnings: current.warnings }
 }
 
 /** Read on behalf of `actor`, enforcing active membership first. */
@@ -328,6 +349,8 @@ export async function setCapabilitySelections(
     version: CAPABILITY_PROFILE_VERSION,
     tenantId: tid,
     entries,
+    initializedAt: current.profile.initializedAt,
+    initializedBy: current.profile.initializedBy,
     updatedAt: at,
     updatedBy: actor.sub,
   }
