@@ -7,7 +7,7 @@ import ConfirmDialog from './ConfirmDialog'
 import GuidedDeploy from './GuidedDeploy'
 import { fmtTs } from '../ui'
 import { parseRepoName } from '../../../lib/platform/automation/repo-identity'
-import { businessReadiness, businessNextStep, groupUpdates, BUCKET_ORDER } from '../../../lib/platform/updates/business-view'
+import { businessReadiness, businessNextStep, groupUpdates, statusLabel, matchesStatusFilter, statusFilterLabel, STATUS_FILTERS, BUCKET_ORDER, BUCKET_BLURB } from '../../../lib/platform/updates/business-view'
 import { deployPrimary, deployStage, DEPLOY_STAGES, failureExplanation } from '../../../lib/platform/automation/deploy-view'
 import { PROMOTION_STAGES, promotionStage } from '../../../lib/platform/automation/promotion'
 import type {
@@ -91,7 +91,7 @@ function OverviewView({ data, onOpenUpdate, onOpenBusiness, onSeeded }: { data: 
   const [showReg, setShowReg] = useState(false)
   const [busy, setBusy] = useState('')
   const seed = async () => { setBusy('seed'); try { await pf('/api/admin/platform/seed', { method: 'POST', body: '{}' }); onSeeded() } catch { /* */ } finally { setBusy('') } }
-  const rows = updates.filter(u => filter === 'all' ? true : filter === 'pending' ? !['fully_deployed', 'cancelled', 'archived'].includes(u.status) : u.status === filter)
+  const rows = updates.filter(u => matchesStatusFilter(u.status, filter))
 
   return (
     <>
@@ -141,9 +141,18 @@ function OverviewView({ data, onOpenUpdate, onOpenBusiness, onSeeded }: { data: 
       {/* Updates */}
       <div style={card}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
-          <p style={{ ...lab, margin: 0 }}>Updates</p>
-          <select value={filter} onChange={e => setFilter(e.target.value)} style={{ ...field, width: 'auto' }}>
-            {['all', 'pending', 'ready_for_review', 'approved', 'blocked', 'failed', 'partially_deployed', 'fully_deployed', 'archived'].map(s => <option key={s} value={s}>{nice(s)}</option>)}
+          <label style={{ ...lab, margin: 0 }} htmlFor="update-status-filter">Updates</label>
+          <select
+            id="update-status-filter"
+            aria-label="Filter updates by status"
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            style={{ ...field, width: 'auto' }}
+          >
+            {/* `discovered` is first among the real statuses: it is where every
+                automatically-filed update lands, and it was previously the one
+                status an owner could see but not select. */}
+            {STATUS_FILTERS.map(s => <option key={s} value={s}>{statusFilterLabel(s)}</option>)}
           </select>
           <button style={{ ...btn('primary'), marginLeft: 'auto' }} onClick={() => setShowReg(v => !v)}>{showReg ? 'Close' : '+ Register update'}</button>
         </div>
@@ -154,7 +163,7 @@ function OverviewView({ data, onOpenUpdate, onOpenBusiness, onSeeded }: { data: 
             <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--muted)' }}>{u.key}</span>
             <span style={{ fontWeight: 700, fontSize: 13.5 }}>{u.title}</span>
             <span style={{ fontSize: 11, color: 'var(--muted)' }}>{nice(u.type)} · {nice(u.scope)}</span>
-            <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: u.status === 'blocked' || u.status === 'failed' ? '#f87171' : u.status === 'fully_deployed' ? '#34d399' : '#fbbf24' }}>{nice(u.status)}</span>
+            <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: u.status === 'blocked' || u.status === 'failed' ? '#f87171' : u.status === 'fully_deployed' ? '#34d399' : '#fbbf24' }}>{statusLabel(u.status)}</span>
           </button>
         ))}
       </div>
@@ -209,7 +218,7 @@ function UpdateDetail({ k, businesses, onChanged }: { k: string; businesses: Pla
         <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
           <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--muted)' }}>{u.key}</span>
           <h2 style={{ fontSize: 17, fontWeight: 800 }}>{u.title}</h2>
-          <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 800, color: u.status === 'blocked' || u.status === 'failed' ? '#f87171' : u.status === 'fully_deployed' ? '#34d399' : '#fbbf24' }}>{nice(u.status)}</span>
+          <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 800, color: u.status === 'blocked' || u.status === 'failed' ? '#f87171' : u.status === 'fully_deployed' ? '#34d399' : '#fbbf24' }}>{statusLabel(u.status)}</span>
         </div>
         <p style={{ color: 'var(--muted)', fontSize: 13.5, marginTop: 6 }}>{u.summary}</p>
         <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8, display: 'grid', gap: 2 }}>
@@ -908,12 +917,16 @@ function BusinessDetail({ id, onChanged, onOpenUpdate }: { id: string; onChanged
         {pending.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 13 }}>Nothing pending.</p>}
         {groupOrder.filter(g => groups[g].length).map(g => (
           <div key={g} style={{ marginTop: 8 }}>
-            <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4 }}>{g} ({groups[g].length})</p>
+            <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 2 }}>{g} ({groups[g].length})</p>
+            {/* One sentence saying what the bucket MEANS. "Found automatically"
+                especially: without it, a list of records nobody has looked at is
+                indistinguishable from a list of work already in flight. */}
+            <p style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4, lineHeight: 1.45 }}>{BUCKET_BLURB[g]}</p>
             {groups[g].map(u => (
               <div key={u.key} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '7px 0', borderTop: '1px solid var(--line)' }}>
                 <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--muted)' }}>{u.key}</span>
                 <span style={{ fontSize: 13, fontWeight: 600 }}>{u.title}</span>
-                <Badge tone={u.status === 'blocked' || u.status === 'failed' ? 'red' : g === 'Ready for Preview' ? 'green' : 'amber'}>{nice(u.status)}</Badge>
+                <Badge tone={u.status === 'blocked' || u.status === 'failed' ? 'red' : g === 'Ready for Preview' ? 'green' : 'amber'}>{statusLabel(u.status)}</Badge>
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>prio {u.priority}</span>
                 <button style={{ ...btn(), marginLeft: 'auto', padding: '4px 10px' }} onClick={() => onOpenUpdate(u.key)}>View Update</button>
               </div>
