@@ -207,6 +207,22 @@ export function repoRefOf(business: Pick<PlatformBusiness, 'repoName' | 'reposit
   return parts?.length === 2 && parts[0] && parts[1] ? { owner: parts[0], name: parts[1] } : undefined
 }
 
+/** Resolve a stored health path against the business's public production origin. */
+export function healthUrlOf(
+  business: Pick<PlatformBusiness, 'healthEndpoint' | 'productionUrl'>,
+): string {
+  const productionUrl = business.productionUrl?.trim()
+  const endpoint = business.healthEndpoint?.trim() || '/api/health'
+
+  try {
+    const base = productionUrl ? `${productionUrl.replace(/\/+$/, '')}/` : undefined
+    const url = base ? new URL(endpoint, base) : new URL(endpoint)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : ''
+  } catch {
+    return ''
+  }
+}
+
 /**
  * Read everything needed to justify a starting version. Read-only, and safe to run as
  * often as an owner presses the button.
@@ -292,7 +308,7 @@ export async function collectBaselineEvidence(input: {
   }
 
   // ── 5. Production health ──────────────────────────────────────────────────
-  const healthUrl = business.healthEndpoint || (business.productionUrl ? `${business.productionUrl.replace(/\/$/, '')}/api/health` : '')
+  const healthUrl = healthUrlOf(business)
   if (!healthUrl) {
     items.push(item('health', 'Site responding', 'missing', 'unresolved',
       'No production address is recorded for this business.',
