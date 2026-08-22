@@ -134,6 +134,8 @@ export function deriveReleaseStatus(targets: ReleaseTargetState[]): ReleaseStatu
 export type BusinessProvenancePatch = {
   currentCommit?: string
   latestVerifiedCommit?: string
+  /** The deployment that PROVES the version below. Set from the same verified facts. */
+  currentDeploymentId?: string
   currentVersion?: string
   latestVerifiedVersion?: string
   baselineSource?: 'installed_by_release'
@@ -159,12 +161,28 @@ export function deriveBusinessProvenance(input: {
     patch.currentCommit = input.facts.commit
     patch.latestVerifiedCommit = input.facts.commit
   }
+  // Recorded here and nowhere else, for the same reason the version is: a deployment
+  // id that did not come from a VERIFIED deployment would be evidence of nothing.
+  if (input.facts.deploymentId) patch.currentDeploymentId = input.facts.deploymentId
   if (input.releaseVersion) {
     const version = parseSemanticVersion(input.releaseVersion)
     if (!version.ok) throw new Error(`verified release has invalid semantic version: ${input.releaseVersion}`)
     patch.currentVersion = version.normalized
     patch.latestVerifiedVersion = version.normalized
     patch.baselineSource = 'installed_by_release'
+    // The evidence belongs to THIS release, so it is assigned unconditionally —
+    // including to `undefined`. The keys are present either way, which is what lets
+    // the application site clear a stale value instead of inheriting it.
+    //
+    // Without this, the two `if`s above were independent: a promotion that adopted a
+    // version but carried no provider deployment id (`productionDeploymentId` is
+    // optional on a job) left the PREVIOUS release's dpl_ attached to the new number.
+    // The page then presented the artifact for v1.3.2 as proof of v1.4.0, and a
+    // rollback "to the deployment behind v1.4.0" would have gone to the wrong build.
+    // No evidence is honest; wrong evidence is not.
+    patch.currentDeploymentId = input.facts.deploymentId
+    patch.currentCommit = input.facts.commit
+    patch.latestVerifiedCommit = input.facts.commit
   }
   return patch
 }

@@ -4,6 +4,7 @@
 // facing logic (what's ready, what to do next, how updates group) is unit-testable.
 
 import type { PlatformBusiness, PlatformUpdate } from './types'
+import { displayVersion } from '../release/version-proposal'
 import { businessRepoRef } from '../automation/repo-identity'
 
 export type UpdateBucket = 'Found automatically' | 'Ready for Preview' | 'Needs Review' | 'Queued' | 'Already Deployed'
@@ -141,4 +142,73 @@ export function businessNextStep(b: PlatformBusiness, pendingCount: number): { k
   if (!r.previewReady) return { key: 'configure', title: 'Complete Preview configuration', detail: r.missing.length ? `Missing: ${r.missing.join(', ')}` : 'Re-run validation to reach “ready”.' }
   if (pendingCount) return { key: 'prepare', title: `Prepare a Preview for ${pendingCount} pending update${pendingCount === 1 ? '' : 's'}`, detail: 'Open a ready update and click Prepare Preview.' }
   return { key: 'done', title: 'All set', detail: 'Connection ready, configuration complete, and no updates pending.' }
+}
+
+// ── Release identity ────────────────────────────────────────────────────────
+//
+// What a business IS, right now, in one place — so a card, a heading and a report
+// cannot quote different numbers at each other.
+//
+//   Supercharged v1.4.0
+//   Verified commit: abc1234…
+//   Production deployment: dpl_…
+//   Verified: 18 Jul 2026
+//
+// The version is the business-facing claim. The commit and the deployment id are the
+// immutable technical evidence for it, and they are shown TOGETHER on purpose: a
+// version with no evidence behind it is a number somebody typed. All four fields come
+// from the same verified-deployment write, so they describe one moment or none.
+
+export type ReleaseIdentity = {
+  name: string
+  /** `v1.4.0`, or `—` when no baseline has been established. */
+  version: string
+  /** True when this business has no version baseline at all — say so, never guess. */
+  unversioned: boolean
+  verifiedCommit?: string
+  shortCommit?: string
+  deploymentId?: string
+  verifiedAt?: number
+}
+
+export function releaseIdentity(business: {
+  name: string
+  currentVersion?: string
+  currentCommit?: string
+  latestVerifiedCommit?: string
+  currentDeploymentId?: string
+  lastVerificationAt?: number
+}): ReleaseIdentity {
+  const version = displayVersion(business.currentVersion)
+  const commit = business.latestVerifiedCommit ?? business.currentCommit
+  return {
+    name: business.name,
+    version,
+    unversioned: version === '—',
+    verifiedCommit: commit,
+    shortCommit: commit ? `${commit.slice(0, 7)}…` : undefined,
+    deploymentId: business.currentDeploymentId,
+    verifiedAt: business.lastVerificationAt,
+  }
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/** `18 Jul 2026 (UTC)` — one reading of a verified moment, wherever it is read. */
+export function formatVerifiedAt(at: number): string {
+  const d = new Date(at)
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()} (UTC)`
+}
+
+/** The four display lines, in order, with the empty ones dropped. */
+export function releaseIdentityLines(identity: ReleaseIdentity): { label: string; value: string }[] {
+  const rows: { label: string; value: string }[] = []
+  rows.push({ label: 'Version', value: identity.unversioned ? 'No baseline established' : identity.version })
+  if (identity.shortCommit) rows.push({ label: 'Verified commit', value: identity.shortCommit })
+  if (identity.deploymentId) rows.push({ label: 'Production deployment', value: identity.deploymentId })
+  // UTC, explicitly labelled. This row is EVIDENCE: rendered in the viewer's own
+  // timezone, the same verified deployment reads as a different day either side of
+  // midnight, and two people comparing notes would disagree about a fact.
+  if (identity.verifiedAt) rows.push({ label: 'Verified', value: formatVerifiedAt(identity.verifiedAt) })
+  return rows
 }

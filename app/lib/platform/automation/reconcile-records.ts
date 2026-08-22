@@ -212,16 +212,20 @@ export async function reconcileJobRecords(input: {
   await audit({ action: 'promotion.deployment_verified', deploymentId: plan.facts.deploymentId, commit: plan.facts.commit, newStatus: 'verified', summary: `Deployment record ${depId} verified (${business.name})` })
 
   // ── 2) PlatformBusiness provenance ─────────────────────────────────────────
+  // The whole derived patch is applied, not transcribed field by field.
+  //
+  // Transcribing had two failure modes, one of which had already happened: a field
+  // could be derived and then forgotten here (currentDeploymentId was, for one
+  // commit), and `?? business.x` inherited the PREVIOUS release's value for any field
+  // the patch did not carry — which is how a new version kept an old deployment id.
+  //
+  // Spreading gives the derivation exact control: a key it omits leaves the existing
+  // value alone, and a key it sets to `undefined` clears it. deriveBusinessProvenance()
+  // uses both deliberately, so the version and the evidence that proves it always
+  // describe one release.
   const nextBiz: PlatformBusiness = {
     ...business,
-    currentCommit: plan.business.currentCommit ?? business.currentCommit,
-    latestVerifiedCommit: plan.business.latestVerifiedCommit ?? business.latestVerifiedCommit,
-    currentVersion: plan.business.currentVersion ?? business.currentVersion,
-    latestVerifiedVersion: plan.business.latestVerifiedVersion ?? business.latestVerifiedVersion,
-    baselineSource: plan.business.baselineSource ?? business.baselineSource,
-    lastDeploymentAt: plan.business.lastDeploymentAt,
-    lastVerificationAt: plan.business.lastVerificationAt,
-    healthStatus: plan.business.healthStatus,
+    ...plan.business,
     updatedAt: now(),
   }
   await saveBusiness(nextBiz)
