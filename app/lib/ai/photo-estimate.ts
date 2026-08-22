@@ -129,6 +129,10 @@ export async function buildPhotoEstimate(
     : await timeStage('ai', () => analyze({
       analysisId: input.analysisId, bookingId: input.bookingId, photoUrls: input.photoUrls, serviceLabel, nowIso,
       timeoutMs: primary.timeoutMs, attempts: primary.attempts, maxOutputTokens: primary.maxOutputTokens,
+      // The customer-waiting path has a hard 32s provider slice. Its compact contract
+      // preserves every pricing/safety field while omitting audit-only prose that was
+      // truncating live responses. Durable jobs retain the full contract.
+      responseContract: interactive ? 'compact' : 'full',
     }))
 
   // Did the interactive budget — rather than the provider — end this read? A timeout

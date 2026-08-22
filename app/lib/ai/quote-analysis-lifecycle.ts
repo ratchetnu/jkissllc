@@ -32,6 +32,7 @@ export type AnalysisLifecycleOutcome =
     kind: 'analyzed'
     stored: StoredAiEstimate
     analyzedOk: boolean
+    outcome: string
     degraded?: InteractiveDegradeReason
     /** False when the draft could not be persisted — then nothing was published. */
     draftSaved: boolean
@@ -44,6 +45,7 @@ export type AnalysisLifecycleOutcome =
 export type AnalysisRun = {
   stored: StoredAiEstimate
   analyzedOk: boolean
+  outcome: string
   degraded?: InteractiveDegradeReason
 }
 
@@ -125,5 +127,5 @@ export async function runAnalysisLifecycle(
     }
   }
 
-  return { kind: 'analyzed', stored: run.stored, analyzedOk: run.analyzedOk, degraded: run.degraded, draftSaved, published, ownedClaim }
+  return { kind: 'analyzed', stored: run.stored, analyzedOk: run.analyzedOk, outcome: run.outcome, degraded: run.degraded, draftSaved, published, ownedClaim }
 }

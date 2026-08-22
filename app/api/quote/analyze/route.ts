@@ -184,7 +184,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
       const r = await buildPhotoEstimate({
         analysisId, bookingId: 'draft', photoUrls: photos, serviceType, debris, budget,
       })
-      return { stored: r.stored, analyzedOk: r.analyzedOk, degraded: r.degraded }
+      return { stored: r.stored, analyzedOk: r.analyzedOk, outcome: r.outcome, degraded: r.degraded }
     },
   })
 
@@ -211,7 +211,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
     })
   }
 
-  const { stored, analyzedOk, degraded } = lifecycle
+  const { stored, analyzedOk, outcome: analysisOutcome, degraded } = lifecycle
 
   await recordFunnelEvent(analyzedOk ? 'ai_analysis_completed' : 'ai_analysis_failed', nowIso)
   // A budget overrun is its own funnel outcome. Before the interactive policy this
@@ -266,6 +266,7 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   const outcome = !analyzedOk
     ? (degraded === 'budget_exhausted' ? 'analysis_budget_exhausted'
       : degraded ? 'analysis_timeout'
+        : analysisOutcome === 'output_truncated' ? 'analysis_output_truncated'
         : 'analysis_failed')
     : stored.decision === 'manual_review' ? 'manual_review'
       : 'analysis_complete'

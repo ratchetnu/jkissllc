@@ -51,7 +51,7 @@ test('the new funnel events are registered in the runtime list', () => {
 test('every junk-lane exit carries a stable machine-readable outcome', () => {
   for (const outcome of [
     'analysis_complete', 'analysis_pending', 'analysis_timeout',
-    'analysis_budget_exhausted', 'analysis_failed', 'manual_review',
+    'analysis_budget_exhausted', 'analysis_output_truncated', 'analysis_failed', 'manual_review',
   ]) {
     assert.ok(JUNK_LANE.includes(`'${outcome}'`), `${outcome} is a declared outcome`)
   }
@@ -64,6 +64,7 @@ test('a skipped read, a timed-out read and a considered review are three differe
   // stays silent.
   assert.match(JUNK_LANE, /degraded === 'budget_exhausted' \? 'analysis_budget_exhausted'/)
   assert.match(JUNK_LANE, /degraded \? 'analysis_timeout'/)
+  assert.match(JUNK_LANE, /analysisOutcome === 'output_truncated' \? 'analysis_output_truncated'/)
   assert.match(JUNK_LANE, /decision === 'manual_review' \? 'manual_review'/)
 })
 

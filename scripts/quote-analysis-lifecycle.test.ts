@@ -64,7 +64,7 @@ function harness(opts: {
       order.push('analyze')
       if (opts.onAnalyze) await opts.onAnalyze()
       const id = opts.run?.stored?.id ?? 'a1'
-      return { stored: draft(id), analyzedOk: true, ...opts.run } as AnalysisRun
+      return { stored: draft(id), analyzedOk: true, outcome: 'success', ...opts.run } as AnalysisRun
     },
   }
   return { order, drafts, deps, providerCalls: () => providerCalls }

@@ -120,13 +120,23 @@ const CONFIDENT = {
   additionalQuestions: [], warnings: [], reviewRequired: false, reviewReasons: [],
 }
 
-type Seen = { timeoutMs?: number; attempts?: number; maxOutputTokens?: number }
+type Seen = {
+  timeoutMs?: number
+  attempts?: number
+  maxOutputTokens?: number
+  responseContract?: 'full' | 'compact'
+}
 
 function harness(analyzed?: Partial<AnalyzeJunkPhotosResult>) {
   const seen: Seen[] = []
   const deps = {
     analyze: async (i: Seen) => {
-      seen.push({ timeoutMs: i.timeoutMs, attempts: i.attempts, maxOutputTokens: i.maxOutputTokens })
+      seen.push({
+        timeoutMs: i.timeoutMs,
+        attempts: i.attempts,
+        maxOutputTokens: i.maxOutputTokens,
+        responseContract: i.responseContract,
+      })
       return {
         analysis: normalizeAnalysis(CONFIDENT, ctx), ok: true, outcome: 'success',
         model: 'test-model', latencyMs: 100, ...analyzed,
@@ -152,6 +162,7 @@ test('the interactive path pins a token ceiling alongside its timeout', async ()
   assert.ok(call.maxOutputTokens != null && call.maxOutputTokens > 0, 'a ceiling is pinned — leaving it unset is the bug')
   const needMs = (call.maxOutputTokens! / B.outputTokensPerSec) * 1000 + B.fixedOverheadMs
   assert.ok(needMs <= call.timeoutMs!, 'what we ask for fits what we allow')
+  assert.equal(call.responseContract, 'compact', 'the bounded request uses the bounded response contract')
 })
 
 test('the durable worker is untouched — full budget, no override', async () => {
@@ -159,6 +170,7 @@ test('the durable worker is untouched — full budget, no override', async () =>
   await buildPhotoEstimate({ ...input, budget: durableBudget(), now: () => T0 }, h.deps)
   assert.equal(h.seen[0].maxOutputTokens, undefined, 'undefined = no override; the analyzer keeps its scaled budget')
   assert.equal(h.seen[0].timeoutMs, 0)
+  assert.equal(h.seen[0].responseContract, 'full', 'the durable worker keeps the complete audit contract')
 })
 
 test('a shrunken slice shrinks the ask with it', async () => {

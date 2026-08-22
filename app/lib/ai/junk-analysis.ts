@@ -50,6 +50,12 @@ export type AnalyzeJunkPhotosInput = {
    * time out. That is exactly what the interactive route did, at every photo count.
    */
   maxOutputTokens?: number
+  /**
+   * Response shape for this call. The interactive route uses the compact contract
+   * because its fixed request deadline cannot accommodate the durable worker's full
+   * audit payload. Omitted preserves the configured/default durable behaviour.
+   */
+  responseContract?: 'full' | 'compact'
 }
 
 export type AnalyzeJunkPhotosResult = {
@@ -149,7 +155,12 @@ export function readAnalysisResponse(
 }
 
 /** Which primary-analysis prompt spec runs. Flag OFF ⇒ the shipped v1 spec. */
-export function analysisTaskId(env: Record<string, string | undefined> = process.env): string {
+export function analysisTaskId(
+  env: Record<string, string | undefined> = process.env,
+  responseContract?: 'full' | 'compact',
+): string {
+  if (responseContract === 'compact') return 'ops.junkAnalysisCompact'
+  if (responseContract === 'full') return 'ops.junkAnalysis'
   return isEnabled('AI_COMPACT_ANALYSIS_PROMPT', env) ? 'ops.junkAnalysisCompact' : 'ops.junkAnalysis'
 }
 
@@ -202,7 +213,7 @@ export async function analyzeJunkPhotos(input: AnalyzeJunkPhotosInput): Promise<
     // means model routing, cost dashboards and the AI audit log continue to see one
     // feature, while `taskId` records which spec actually ran — which is what makes
     // the two directly comparable in a LAT-002 report.
-    taskId: analysisTaskId(),
+    taskId: analysisTaskId(process.env, input.responseContract),
     feature: 'ops.junkAnalysis',
     vars: await truckVars(),
     messages,
