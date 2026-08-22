@@ -141,7 +141,7 @@ function timeAgo(at?: number): string {
 }
 
 const LIVE_STEPS = ['Checking', 'Preparing test', 'Opening test site', 'Running safety checks', 'Ready to publish']
-type Prog = { step: number; stepLabel: string; message: string; running: boolean; previewReady: boolean; blocked: boolean; canRetry: boolean; issue?: string }
+type Prog = { step: number; stepLabel: string; message: string; running: boolean; previewReady: boolean; blocked: boolean; canRetry: boolean; issue?: string; archived?: boolean }
 
 function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolean }) {
   const [open, setOpen] = useState(false)
@@ -241,6 +241,22 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
           </div>
 
           {/* Guided flow — LIVE steps driven by the real job when one is running, else a calm preview. */}
+          {prog?.archived ? (
+            /* An archived update is over. Showing the live step rail here would present a
+               workflow that is never going to advance — the owner waits on "Preparing
+               test" forever. A compact summary and the one useful action instead. */
+            <div style={{ padding: 12, borderRadius: 10, border: '1px solid var(--line)', background: 'color-mix(in srgb, var(--card) 88%, #000)' }}>
+              <div style={{ ...osLabel, marginBottom: 4 }}>Archived update</div>
+              <p style={{ fontSize: 13, margin: 0, lineHeight: 1.5 }}>{prog.message}</p>
+              <button
+                onClick={() => { setProg(null); setHasJob(false); setNote('Choose an update to prepare from the list above.') }}
+                className="os-tap"
+                style={{ marginTop: 10, fontSize: 12.5, fontWeight: 700, padding: '7px 12px', borderRadius: 9, color: 'var(--text)', background: 'transparent', border: '1px solid var(--line)', cursor: 'pointer' }}
+              >
+                Choose another update
+              </button>
+            </div>
+          ) : (
           <div>
             <div style={{ ...osLabel, marginBottom: 8 }}>What happens next</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -267,6 +283,7 @@ function BusinessRow({ b, updatesEnabled }: { b: BizView; updatesEnabled: boolea
             )}
             {prog?.previewReady && <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '6px 0 0' }}>Your test is ready. Choose “Publish to Production” to review everything before the live site changes.</p>}
           </div>
+          )}
 
           <div style={{ display: 'grid', gap: 4 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><span style={{ fontSize: 12.5, color: 'var(--muted)' }}>Test site</span><span style={{ fontSize: 12.5, color: 'var(--text)', textAlign: 'right' }}>{b.detail.previewStatus}</span></div>

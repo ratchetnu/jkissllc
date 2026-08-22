@@ -12,6 +12,9 @@ import {
 } from '../../../../../../lib/platform/release/baseline-adoption'
 import { adoptBaseline } from '../../../../../../lib/platform/release/baseline-adoption-service'
 import { readCurrentProductionDeployment } from '../../../../../../lib/platform/release/production-deployment'
+import { collectBaselineEvidence, evidenceSummary } from '../../../../../../lib/platform/release/baseline-evidence'
+import { liveBaselineEvidenceDeps } from '../../../../../../lib/platform/release/baseline-evidence-deps'
+import { prereleaseAllowedForChannel, resolveStartingVersion, STARTING_VERSION_CHOICES } from '../../../../../../lib/platform/release/starting-version'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -36,10 +39,17 @@ export const GET = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
       targetProduct: business.id,
       businessName: business.name,
       currentVersion: business.currentVersion ?? null,
-      deployedCommit: business.currentCommit ?? business.latestVerifiedCommit ?? null,
+      // The stored commit is NOT offered as a starting point. It only advances when an
+      // Operion job finalizes, so for anything deployed outside the pipeline it is
+      // stale — and pre-filling it is how a form came to propose adopting a baseline
+      // against a commit Production had long since moved past. The live commit is read
+      // fresh by `check_evidence` and shown read-only.
+      recordedCommit: business.currentCommit ?? business.latestVerifiedCommit ?? null,
       source: baselineSourceOf(business),
       adoptionId: business.baselineAdoptionId ?? null,
       confirmationPhrase: baselineConfirmationPhrase(id),
+      startingVersionChoices: STARTING_VERSION_CHOICES,
+      allowPrerelease: prereleaseAllowedForChannel(business.releaseChannel),
     },
     latestAdoption: latestAdoption ?? null,
   })
@@ -64,6 +74,47 @@ export const POST = withTenantRoute(async (req: NextRequest, ctx: Ctx) => {
   // Read-only provider lookup. Authoritative over the stored commit, which only advances on
   // Operion job finalization and is therefore stale for anything deployed outside the pipeline.
   const liveProduction = await readCurrentProductionDeployment(business).catch(() => null)
+
+  // ── check_evidence ────────────────────────────────────────────────────────
+  // Operion collects every technical fact itself, from the LIVE deployment and the
+  // authoritative repository. The owner supplies only where numbering should start.
+  // Read-only: this path performs no writes of any kind.
+  if (action === 'check_evidence') {
+    const now = Date.now()
+    const report = await collectBaselineEvidence({ business, now, deps: liveBaselineEvidenceDeps(business) })
+    const version = resolveStartingVersion({
+      choice: body?.startingVersionChoice,
+      customVersion: body?.customVersion,
+      allowPrerelease: prereleaseAllowedForChannel(business.releaseChannel),
+    })
+
+    // The decision engine is fed SERVER-COLLECTED evidence. Nothing from the client
+    // reaches it except the version the owner deliberately chose.
+    const dryRun = version.ok && report.ok
+      ? dryRunBaselineAdoption({
+          business,
+          evidence: {
+            proposedVersion: version.version,
+            deployedCommit: report.live?.fullCommit,
+            capabilityManifestHash: report.capabilityManifestHash,
+            capabilities: report.capabilities,
+            schemaMigrationState: report.schemaMigrationState,
+            relevantFlagState: report.relevantFlagState,
+            verificationEvidence: report.verificationEvidence,
+          },
+          now,
+          approvalSecret: secret,
+          liveProduction,
+        })
+      : null
+
+    return NextResponse.json({
+      ok: !!dryRun && dryRun.verdict === 'safe_to_adopt',
+      evidence: { ...report, summary: evidenceSummary(report) },
+      versionChoice: version.ok ? { ok: true, version: version.version } : { ok: false, reason: version.reason, detail: version.detail },
+      dryRun,
+    })
+  }
 
   if (action === 'dry_run') {
     const dryRun = dryRunBaselineAdoption({

@@ -20,6 +20,8 @@ export type UpdateProgress = {
   previewReady: boolean        // verified preview — Ready to Publish (NOT installed)
   blocked: boolean
   canRetry: boolean
+  /** Terminal: the underlying update ended. Never shown as an active workflow. */
+  archived?: boolean
   issue?: string               // one clear human message when blocked
 }
 
@@ -44,6 +46,25 @@ export function mapJobToProgress(
 
   if (!opts.hasJob || !status) {
     return { step: 0, stepLabel: UPDATE_STEPS[0], message: 'Ready to check for and apply the latest update.', done: 0, running: false, previewReady: false, blocked: false, canRetry: false }
+  }
+
+  // An ARCHIVED (or cancelled) update is over. Its job may still be sitting in
+  // `applying_update`, which the switch below renders as "Preparing the update…" with a
+  // moving progress bar — an active workflow for something that ended, and an owner
+  // waiting on a step that will never advance.
+  //
+  // Only the IN-FLIGHT statuses are intercepted. A FAILED archived job already reports
+  // correctly (blocked, with an archived message and no retry) and keeps doing so —
+  // the defect was never about failures, it was about a workflow that looked alive.
+  const IN_FLIGHT = new Set(['draft', 'validating', 'queued', 'creating_branch', 'applying_update', 'testing', 'preview_deploying', 'preview_ready'])
+  if ((opts.updateStatus === 'archived' || opts.updateStatus === 'cancelled') && IN_FLIGHT.has(status)) {
+    return {
+      step: 0, stepLabel: UPDATE_STEPS[0], done: 0, running: false, previewReady: false,
+      blocked: false, canRetry: false, archived: true,
+      message: opts.updateStatus === 'archived'
+        ? 'This update was archived, so it is no longer being prepared.'
+        : 'This update was cancelled, so it is no longer being prepared.',
+    }
   }
 
   switch (status) {

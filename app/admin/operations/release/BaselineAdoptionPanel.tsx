@@ -1,302 +1,304 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, ChevronDown, Loader2, ShieldCheck } from 'lucide-react'
+// ── Recording a starting version, for a non-technical owner ─────────────────
+//
+// The previous form asked for a production commit, a capability manifest SHA-256, a
+// schema state, a flag assessment and two verification references. An owner cannot
+// know any of that, and the one field it pre-filled — the commit — came from the
+// stored record, which is stale for anything deployed outside the pipeline. It
+// therefore offered to record the WRONG commit as permanent provenance.
+//
+// Operion reads all of it now. The owner makes one decision (where numbering starts),
+// reads a summary in plain language, and confirms. Hashes and raw diagnostics live
+// under "Technical details" — available, never in the way.
+
+import { useCallback, useEffect, useState } from 'react'
+import { AlertTriangle, CheckCircle2, ChevronDown, HelpCircle, Loader2, RefreshCw, ShieldCheck, XCircle } from 'lucide-react'
 
 type BaselineSource = 'installed_by_release' | 'adopted' | 'unknown'
-type DryRun = {
-  verdict: 'safe_to_adopt' | 'needs_review' | 'insufficient_evidence'
-  proposedVersion?: string
-  missingEvidence: string[]
-  conflicts: string[]
-  approvalToken?: string
+type EvidenceStatus = 'ok' | 'missing' | 'contradictory'
+type EvidenceItem = { id: string; label: string; status: EvidenceStatus; detail: string; action?: string; technical?: string }
+type VersionChoice = { id: string; version?: string; label: string; meaning: string; pickWhen: string }
+
+type EvidenceReport = {
+  ok: boolean
+  items: EvidenceItem[]
+  verifiedAt: number
+  live?: { fullCommit: string; deploymentId: string; deployedAt?: number; url?: string }
+  repo?: { owner: string; name: string; branch: string }
+  capabilities: { id: string; evidence: string }[]
+  capabilityManifestHash?: string
+  schemaMigrationState: { state: string; evidence?: string }
+  summary: { ok: boolean; missing: number; contradictory: number; headline: string }
 }
 
+type DryRun = { verdict: string; proposedVersion?: string; missingEvidence: string[]; conflicts: string[]; approvalToken?: string }
 type BaselineState = {
   baseline: {
     currentVersion: string | null
-    deployedCommit: string | null
     confirmationPhrase: string
+    startingVersionChoices: VersionChoice[]
+    allowPrerelease: boolean
   }
 }
 
 const field: React.CSSProperties = {
-  width: '100%',
-  minWidth: 0,
-  boxSizing: 'border-box',
-  borderRadius: 10,
-  border: '1px solid var(--line)',
-  background: 'color-mix(in srgb, var(--card) 88%, #000)',
-  color: 'var(--text)',
-  padding: '10px 11px',
-  fontSize: 13,
+  width: '100%', minWidth: 0, boxSizing: 'border-box', borderRadius: 10,
+  border: '1px solid var(--line)', background: 'color-mix(in srgb, var(--card) 88%, #000)',
+  color: 'var(--text)', padding: '10px 11px', fontSize: 13,
+}
+const mono: React.CSSProperties = { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }
+
+const TONE: Record<EvidenceStatus, { color: string; Icon: typeof CheckCircle2 }> = {
+  ok: { color: '#34d399', Icon: CheckCircle2 },
+  missing: { color: '#fbbf24', Icon: HelpCircle },
+  contradictory: { color: '#f87171', Icon: AlertTriangle },
 }
 
-const label: React.CSSProperties = {
-  display: 'grid',
-  gap: 5,
-  minWidth: 0,
-  color: 'var(--muted)',
-  fontSize: 11.5,
-  fontWeight: 700,
-}
-
-function parseFlags(value: string): Record<string, boolean> {
-  const flags: Record<string, boolean> = {}
-  for (const line of value.split(/\n|,/)) {
-    const [rawName, rawState] = line.split('=')
-    const name = rawName?.trim()
-    const state = rawState?.trim().toLowerCase()
-    if (name && (state === 'true' || state === 'false')) flags[name] = state === 'true'
-  }
-  return flags
+function EvidenceRow({ item }: { item: EvidenceItem }) {
+  const { color, Icon } = TONE[item.status]
+  return (
+    <li style={{ display: 'flex', gap: 9, alignItems: 'flex-start', padding: '8px 0', borderTop: '1px solid var(--line)' }}>
+      <Icon size={15} style={{ color, flexShrink: 0, marginTop: 2 }} aria-hidden />
+      <div style={{ minWidth: 0 }}>
+        <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>{item.label}</p>
+        <p style={{ fontSize: 12.5, color: 'var(--muted)', margin: '2px 0 0', lineHeight: 1.5 }}>{item.detail}</p>
+        {item.action && (
+          <p style={{ fontSize: 12.5, margin: '4px 0 0', lineHeight: 1.5, color: item.status === 'contradictory' ? '#fca5a5' : '#fcd34d' }}>
+            <strong>What to do:</strong> {item.action}
+          </p>
+        )}
+      </div>
+    </li>
+  )
 }
 
 export function BaselineAdoptionPanel({
-  businessId,
-  businessName,
-  baselineSource,
-  onAdopted,
+  businessId, businessName, baselineSource, onAdopted,
 }: {
-  businessId: string
-  businessName: string
-  baselineSource: BaselineSource
-  onAdopted: () => void
+  businessId: string; businessName: string; baselineSource: BaselineSource; onAdopted: () => void
 }) {
   const [open, setOpen] = useState(false)
   const [state, setState] = useState<BaselineState | null>(null)
-  const [version, setVersion] = useState('')
-  const [commit, setCommit] = useState('')
-  const [manifestHash, setManifestHash] = useState('')
-  const [capabilities, setCapabilities] = useState('')
-  const [schemaState, setSchemaState] = useState<'unknown' | 'verified' | 'not_applicable'>('unknown')
-  const [schemaEvidence, setSchemaEvidence] = useState('')
-  const [flagsAssessed, setFlagsAssessed] = useState(false)
-  const [flags, setFlags] = useState('')
-  const [deploymentReference, setDeploymentReference] = useState('')
-  const [healthReference, setHealthReference] = useState('')
-  const [confirmation, setConfirmation] = useState('')
+  const [choice, setChoice] = useState<string>('')          // deliberately no default
+  const [customVersion, setCustomVersion] = useState('')
+  const [report, setReport] = useState<EvidenceReport | null>(null)
   const [dryRun, setDryRun] = useState<DryRun | null>(null)
+  const [versionError, setVersionError] = useState('')
+  const [confirmation, setConfirmation] = useState('')
+  const [stage, setStage] = useState<'choose' | 'confirm'>('choose')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [showTechnical, setShowTechnical] = useState(false)
 
   useEffect(() => {
-    if (!open || state) return
-    let live = true
-    fetch(`/api/admin/release/businesses/${businessId}/baseline-adoption`, { credentials: 'same-origin' })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('Starting-point details could not be loaded.')
-        return response.json()
-      })
-      .then((result: BaselineState) => {
-        if (!live) return
-        setState(result)
-        setCommit(result.baseline.deployedCommit ?? '')
-      })
-      .catch((reason) => { if (live) setError(reason instanceof Error ? reason.message : 'Something went wrong.') })
-    return () => { live = false }
-  }, [businessId, open, state])
+    if (!open) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetch(`/api/admin/release/businesses/${businessId}/baseline-adoption`, { credentials: 'same-origin' })
+        const result = await res.json()
+        if (!cancelled && result?.baseline) setState(result)
+      } catch { /* fail-soft */ }
+    })()
+    return () => { cancelled = true }
+  }, [businessId, open])
 
-  const evidence = useMemo(() => ({
-    proposedVersion: version,
-    deployedCommit: commit,
-    capabilityManifestHash: manifestHash,
-    capabilities: capabilities.split(',').map((value) => value.trim()).filter(Boolean)
-      .map((id) => ({ id, evidence: 'Confirmed in the reviewed capability record' })),
-    schemaMigrationState: {
-      state: schemaState,
-      evidence: schemaEvidence,
-    },
-    relevantFlagState: {
-      assessed: flagsAssessed,
-      flags: parseFlags(flags),
-    },
-    verificationEvidence: [
-      ...(deploymentReference.trim()
-        ? [{ kind: 'production_deployment', reference: deploymentReference.trim() }]
-        : []),
-      ...(healthReference.trim()
-        ? [{ kind: 'health_check', reference: healthReference.trim() }]
-        : []),
-    ],
-  }), [
-    capabilities, commit, deploymentReference, flags, flagsAssessed, healthReference,
-    manifestHash, schemaEvidence, schemaState, version,
-  ])
-
-  function invalidateCheck() {
-    if (dryRun) setDryRun(null)
-    if (confirmation) setConfirmation('')
-  }
+  // Any change to the decision invalidates a completed check — the owner must not be
+  // able to confirm a version that was never checked against the evidence.
+  const invalidate = useCallback(() => { setReport(null); setDryRun(null); setStage('choose') }, [])
 
   async function checkEvidence() {
-    setBusy(true)
-    setError('')
-    setDryRun(null)
+    setBusy(true); setError(''); setVersionError('')
     try {
-      const response = await fetch(`/api/admin/release/businesses/${businessId}/baseline-adoption`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'dry_run', evidence }),
+      const res = await fetch(`/api/admin/release/businesses/${businessId}/baseline-adoption`, {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'check_evidence', startingVersionChoice: choice, customVersion }),
       })
-      const result = await response.json()
-      if (!response.ok && !result?.dryRun) throw new Error(result?.error || 'The evidence check could not be completed.')
-      setDryRun(result.dryRun)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'The evidence check could not be completed.')
-    } finally {
-      setBusy(false)
-    }
+      const result = await res.json()
+      if (!res.ok) { setError(result?.error ?? 'Could not check the evidence.'); return }
+      setReport(result.evidence ?? null)
+      setDryRun(result.dryRun ?? null)
+      if (result.versionChoice && !result.versionChoice.ok) setVersionError(result.versionChoice.detail ?? '')
+      if (result.ok) setStage('confirm')
+    } catch { setError('Could not reach Operion to check the evidence.') }
+    finally { setBusy(false) }
   }
 
   async function adopt() {
-    if (!dryRun?.approvalToken || !state) return
-    setBusy(true)
-    setError('')
+    if (!dryRun?.approvalToken || !report?.live) return
+    setBusy(true); setError('')
     try {
-      const response = await fetch(`/api/admin/release/businesses/${businessId}/baseline-adoption`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch(`/api/admin/release/businesses/${businessId}/baseline-adoption`, {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'adopt',
-          evidence,
           approvalToken: dryRun.approvalToken,
           confirmationPhrase: confirmation,
+          evidence: {
+            proposedVersion: dryRun.proposedVersion,
+            deployedCommit: report.live.fullCommit,
+            capabilityManifestHash: report.capabilityManifestHash,
+            capabilities: report.capabilities,
+            schemaMigrationState: report.schemaMigrationState,
+            relevantFlagState: { assessed: true, flags: {} },
+            verificationEvidence: [],
+          },
         }),
       })
-      const result = await response.json()
-      if (!response.ok || !result?.ok) throw new Error(result?.error || 'The starting point was not saved.')
-      onAdopted()
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'The starting point was not saved.')
-    } finally {
-      setBusy(false)
-    }
+      const result = await res.json()
+      if (!res.ok || !result.ok) { setError(result?.error ?? 'Could not record the starting version.'); return }
+      setOpen(false); onAdopted()
+    } catch { setError('Could not reach Operion to record the starting version.') }
+    finally { setBusy(false) }
   }
 
-  if (baselineSource === 'installed_by_release') {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#86efac', fontSize: 12.5 }}>
-        <CheckCircle2 size={15} /> Starting version verified by an Operion release.
-      </div>
-    )
-  }
-  if (baselineSource === 'adopted') {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#93c5fd', fontSize: 12.5 }}>
-        <ShieldCheck size={15} /> Starting version verified from approved production evidence.
-      </div>
-    )
-  }
-
-  const phrase = state?.baseline.confirmationPhrase ?? ''
-  const safe = dryRun?.verdict === 'safe_to_adopt' && !!dryRun.approvalToken
+  if (baselineSource !== 'unknown') return null
+  const choices = state?.baseline.startingVersionChoices ?? []
+  const chosen = choices.find((c) => c.id === choice)
+  const resolvedVersion = dryRun?.proposedVersion ?? chosen?.version ?? customVersion
 
   return (
-    <div style={{ border: '1px solid rgba(245,158,11,.28)', borderRadius: 12, overflow: 'hidden', background: 'rgba(245,158,11,.05)' }}>
-      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}
-        style={{ width: '100%', minWidth: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '12px 13px', border: 0, color: 'var(--text)', background: 'transparent', cursor: 'pointer', textAlign: 'left' }}>
-        <ShieldCheck size={17} style={{ color: '#fcd34d', flex: '0 0 auto' }} />
-        <span style={{ flex: 1, minWidth: 0 }}>
-          <strong style={{ display: 'block', fontSize: 13 }}>Verify the starting version</strong>
-          <span style={{ display: 'block', marginTop: 2, color: 'var(--muted)', fontSize: 11.5, lineHeight: 1.4 }}>
-            {businessName} existed before Operion started tracking releases.
-          </span>
-        </span>
-        <ChevronDown size={16} style={{ color: 'var(--muted)', transform: open ? 'rotate(180deg)' : undefined }} />
+    <div style={{ marginTop: 12 }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 0, color: '#a5b4fc', fontSize: 13, fontWeight: 700, cursor: 'pointer', padding: 0 }}
+      >
+        <ShieldCheck size={15} aria-hidden />
+        Record a starting version for {businessName}
+        <ChevronDown size={14} style={{ transform: open ? 'rotate(180deg)' : undefined }} aria-hidden />
       </button>
 
       {open && (
-        <div style={{ borderTop: '1px solid rgba(245,158,11,.2)', padding: 13, display: 'grid', gap: 12 }}>
-          <p style={{ margin: 0, fontSize: 12.5, color: 'var(--muted)', lineHeight: 1.5 }}>
-            Record the version already running in Production. Operion will check the evidence without changing the site.
+        <div style={{ marginTop: 10, display: 'grid', gap: 14 }}>
+          <p style={{ fontSize: 12.5, color: 'var(--muted)', lineHeight: 1.55, margin: 0 }}>
+            {businessName} is running, but has no version number recorded. Choose where numbering should start —
+            Operion will check everything else itself, and show you what it found before anything is saved.
           </p>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 210px), 1fr))', gap: 10 }}>
-            <label style={label}>Starting version
-              <input value={version} onChange={(event) => { setVersion(event.target.value); invalidateCheck() }} placeholder="1.0.0" style={field} />
-            </label>
-            <label style={label}>Production commit
-              <input value={commit} onChange={(event) => { setCommit(event.target.value); invalidateCheck() }} placeholder="Verified commit ID" style={field} />
-            </label>
+          {/* ── 1. The one decision ─────────────────────────────────────── */}
+          <fieldset style={{ border: 0, padding: 0, margin: 0, display: 'grid', gap: 8 }}>
+            <legend style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', padding: 0 }}>Where should numbering start?</legend>
+            {choices.map((c) => (
+              <label key={c.id} style={{ display: 'flex', gap: 9, alignItems: 'flex-start', padding: 10, borderRadius: 10, cursor: 'pointer', border: `1px solid ${choice === c.id ? 'rgba(129,140,248,.5)' : 'var(--line)'}`, background: choice === c.id ? 'rgba(129,140,248,.08)' : 'transparent' }}>
+                <input
+                  type="radio" name={`starting-version-${businessId}`} value={c.id} checked={choice === c.id}
+                  onChange={() => { setChoice(c.id); invalidate() }}
+                  style={{ marginTop: 3, flexShrink: 0 }}
+                />
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ fontSize: 13.5, fontWeight: 700, display: 'block' }}>{c.label}</span>
+                  <span style={{ fontSize: 12.5, color: 'var(--muted)', display: 'block', marginTop: 2, lineHeight: 1.5 }}>{c.meaning}</span>
+                  <span style={{ fontSize: 12.5, color: 'var(--muted)', display: 'block', marginTop: 3, lineHeight: 1.5, fontStyle: 'italic' }}>{c.pickWhen}</span>
+                </span>
+              </label>
+            ))}
+            {choice === 'custom' && (
+              <label style={{ display: 'grid', gap: 5, fontSize: 11.5, fontWeight: 700, color: 'var(--muted)' }}>
+                Version number
+                <input
+                  value={customVersion} onChange={(e) => { setCustomVersion(e.target.value); invalidate() }}
+                  placeholder="2.3.0" style={field} aria-label="Starting version number"
+                />
+              </label>
+            )}
+            {versionError && <p role="alert" style={{ fontSize: 12.5, color: '#fca5a5', margin: 0 }}>{versionError}</p>}
+          </fieldset>
+
+          {/* ── 2. Check ────────────────────────────────────────────────── */}
+          <div>
+            <button
+              onClick={checkEvidence} disabled={busy || !choice}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 7, borderRadius: 10, border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--text)', padding: '9px 14px', fontSize: 13, fontWeight: 700, cursor: busy || !choice ? 'not-allowed' : 'pointer', opacity: busy || !choice ? 0.6 : 1 }}
+            >
+              {busy ? <Loader2 size={14} className="spin" aria-hidden /> : <RefreshCw size={14} aria-hidden />}
+              Check evidence
+            </button>
+            <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '6px 0 0', lineHeight: 1.5 }}>
+              Reads the live site and the connected repository. Nothing is saved by checking.
+            </p>
           </div>
 
-          <label style={label}>Capabilities confirmed
-            <textarea value={capabilities} onChange={(event) => { setCapabilities(event.target.value); invalidateCheck() }}
-              placeholder="booking, scheduling, crew portal" rows={2} style={{ ...field, resize: 'vertical' }} />
-          </label>
+          {error && <p role="alert" style={{ fontSize: 12.5, color: '#fca5a5', margin: 0 }}>{error}</p>}
 
-          <details>
-            <summary style={{ color: 'var(--muted)', fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>Evidence details</summary>
-            <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
-              <label style={label}>Capability record fingerprint
-                <input value={manifestHash} onChange={(event) => { setManifestHash(event.target.value); invalidateCheck() }}
-                  placeholder="SHA-256 fingerprint" style={field} />
-              </label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 210px), 1fr))', gap: 10 }}>
-                <label style={label}>Data setup
-                  <select value={schemaState} onChange={(event) => { setSchemaState(event.target.value as typeof schemaState); invalidateCheck() }} style={field}>
-                    <option value="unknown">Not checked</option>
-                    <option value="verified">Verified</option>
-                    <option value="not_applicable">Not applicable</option>
-                  </select>
-                </label>
-                <label style={label}>Data setup evidence
-                  <input value={schemaEvidence} onChange={(event) => { setSchemaEvidence(event.target.value); invalidateCheck() }} placeholder="Migration or review reference" style={field} />
-                </label>
-              </div>
-              <label style={{ ...label, display: 'flex', gridTemplateColumns: undefined, alignItems: 'center', gap: 8 }}>
-                <input type="checkbox" checked={flagsAssessed} onChange={(event) => { setFlagsAssessed(event.target.checked); invalidateCheck() }} />
-                Feature settings were reviewed
-              </label>
-              <label style={label}>Feature settings (optional)
-                <textarea value={flags} onChange={(event) => { setFlags(event.target.value); invalidateCheck() }}
-                  placeholder={'BOOKING_ENABLED=true\nLEGACY_MODE=false'} rows={2} style={{ ...field, resize: 'vertical' }} />
-              </label>
-              <label style={label}>Production deployment evidence
-                <input value={deploymentReference} onChange={(event) => { setDeploymentReference(event.target.value); invalidateCheck() }} placeholder="Deployment ID or reviewed record" style={field} />
-              </label>
-              <label style={label}>Production health evidence
-                <input value={healthReference} onChange={(event) => { setHealthReference(event.target.value); invalidateCheck() }} placeholder="Health check or smoke-test record" style={field} />
-              </label>
-            </div>
-          </details>
+          {/* ── 3. What Operion found ───────────────────────────────────── */}
+          {report && (
+            <div>
+              <p style={{ fontSize: 13, fontWeight: 700, margin: '0 0 2px', color: report.ok ? '#34d399' : report.summary.contradictory ? '#f87171' : '#fbbf24' }}>
+                {report.summary.headline}
+              </p>
+              <ul style={{ listStyle: 'none', padding: 0, margin: '4px 0 0' }}>
+                {report.items.map((i) => <EvidenceRow key={i.id} item={i} />)}
+              </ul>
 
-          <button type="button" onClick={checkEvidence} disabled={busy}
-            style={{ justifySelf: 'start', display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 13px', borderRadius: 10, border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--text)', fontSize: 12.5, fontWeight: 800, cursor: busy ? 'default' : 'pointer', opacity: busy ? .65 : 1 }}>
-            {busy && <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />}
-            Check evidence
-          </button>
-
-          {dryRun && (
-            <div role="status" style={{ borderRadius: 10, padding: 11, background: safe ? 'rgba(34,197,94,.09)' : 'rgba(239,68,68,.08)', border: `1px solid ${safe ? 'rgba(34,197,94,.25)' : 'rgba(239,68,68,.22)'}` }}>
-              <strong style={{ fontSize: 12.5, color: safe ? '#86efac' : '#fca5a5' }}>
-                {safe ? 'Evidence is ready for approval.' : dryRun.verdict === 'needs_review' ? 'A conflict needs review.' : 'More evidence is needed.'}
-              </strong>
-              {[...dryRun.missingEvidence, ...dryRun.conflicts].length > 0 && (
-                <ul style={{ margin: '7px 0 0', paddingLeft: 18, color: 'var(--muted)', fontSize: 12, lineHeight: 1.5 }}>
-                  {[...dryRun.missingEvidence, ...dryRun.conflicts].map((item) => <li key={item}>{item}</li>)}
-                </ul>
+              <button
+                onClick={() => setShowTechnical((v) => !v)} aria-expanded={showTechnical}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 0, color: 'var(--muted)', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', padding: '9px 0 0' }}
+              >
+                <ChevronDown size={13} style={{ transform: showTechnical ? 'rotate(180deg)' : undefined }} aria-hidden />
+                Technical details
+              </button>
+              {showTechnical && (
+                <div style={{ marginTop: 6, padding: 10, borderRadius: 8, background: 'color-mix(in srgb, var(--card) 88%, #000)', overflowX: 'auto' }}>
+                  {report.items.filter((i) => i.technical).map((i) => (
+                    <p key={i.id} style={{ ...mono, color: 'var(--muted)', margin: '0 0 4px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                      {i.id}: {i.technical}
+                    </p>
+                  ))}
+                </div>
               )}
             </div>
           )}
 
-          {safe && (
-            <div style={{ display: 'grid', gap: 8 }}>
-              <p style={{ margin: 0, color: 'var(--muted)', fontSize: 11.5, lineHeight: 1.45 }}>
-                To approve this starting point, type <strong style={{ color: 'var(--text)', overflowWrap: 'anywhere' }}>{phrase}</strong>.
+          {/* ── 4. Confirm ──────────────────────────────────────────────── */}
+          {stage === 'confirm' && report?.ok && report.live && (
+            <div style={{ padding: 12, borderRadius: 10, border: '1px solid rgba(52,211,153,.35)', background: 'rgba(52,211,153,.06)' }}>
+              <p style={{ fontSize: 14, fontWeight: 800, margin: '0 0 8px' }}>Ready to record</p>
+              <dl style={{ margin: 0, display: 'grid', gap: 6 }}>
+                {[
+                  ['Starting version', `v${resolvedVersion}`],
+                  ['Live commit', `${report.live.fullCommit.slice(0, 12)}…`],
+                  ['Production deployment', report.live.deploymentId],
+                  ['Verified', new Date(report.verifiedAt).toISOString().slice(0, 10)],
+                  ['Features detected', report.capabilities.map((c) => c.id).join(', ') || 'none'],
+                  ['Data structure', report.schemaMigrationState.state === 'verified' ? 'Up to date' : 'Not applicable'],
+                ].map(([k, v]) => (
+                  <div key={k} style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <dt style={{ fontSize: 11.5, color: 'var(--muted)', fontWeight: 700, minWidth: 150 }}>{k}</dt>
+                    <dd style={{ ...(k === 'Starting version' ? {} : mono), margin: 0, fontSize: 12.5, wordBreak: 'break-all', minWidth: 0 }}>{v}</dd>
+                  </div>
+                ))}
+              </dl>
+              <p style={{ fontSize: 12.5, color: 'var(--muted)', margin: '10px 0 0', lineHeight: 1.55 }}>
+                Recording this <strong>does not deploy anything and does not change the site</strong>. It only tells
+                Operion which version {businessName} is on today, so future updates can be numbered from it.
               </p>
-              <input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} aria-label="Confirmation phrase" style={field} />
-              <button type="button" onClick={adopt} disabled={busy || confirmation !== phrase}
-                style={{ justifySelf: 'start', padding: '9px 13px', borderRadius: 10, border: 0, background: '#2563eb', color: '#fff', fontSize: 12.5, fontWeight: 800, cursor: busy || confirmation !== phrase ? 'default' : 'pointer', opacity: busy || confirmation !== phrase ? .5 : 1 }}>
-                Save verified starting point
+              <label style={{ display: 'grid', gap: 5, fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', marginTop: 10 }}>
+                Type <span style={mono}>{state?.baseline.confirmationPhrase}</span> to confirm
+                <input
+                  value={confirmation} onChange={(e) => setConfirmation(e.target.value)}
+                  style={field} aria-label="Confirmation phrase"
+                />
+              </label>
+              <button
+                onClick={adopt}
+                disabled={busy || confirmation !== state?.baseline.confirmationPhrase}
+                style={{ marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 7, borderRadius: 10, border: 0, background: '#e11d48', color: '#fff', padding: '10px 16px', fontSize: 13, fontWeight: 800, cursor: busy || confirmation !== state?.baseline.confirmationPhrase ? 'not-allowed' : 'pointer', opacity: busy || confirmation !== state?.baseline.confirmationPhrase ? 0.55 : 1 }}
+              >
+                {busy ? <Loader2 size={14} className="spin" aria-hidden /> : <CheckCircle2 size={14} aria-hidden />}
+                Record v{resolvedVersion} as the starting version
               </button>
             </div>
           )}
 
-          {error && <p role="alert" style={{ margin: 0, color: '#fca5a5', fontSize: 12 }}>{error}</p>}
+          {report && !report.ok && (
+            <p style={{ display: 'flex', gap: 7, alignItems: 'flex-start', fontSize: 12.5, color: 'var(--muted)', margin: 0, lineHeight: 1.55 }}>
+              <XCircle size={14} style={{ color: '#f87171', flexShrink: 0, marginTop: 2 }} aria-hidden />
+              A starting version can only be recorded once everything above checks out — otherwise Operion would be
+              recording something it could not verify.
+            </p>
+          )}
         </div>
       )}
     </div>
