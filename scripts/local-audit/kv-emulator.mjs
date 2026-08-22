@@ -96,6 +96,14 @@ const STATUS_CAS_RE = /decoded\.status/i
 // zero adoptions, and "no partial state" was measured against a partial write the
 // emulator itself invented.
 const BASELINE_CAS_RE = /decoded\.updatedAt/i
+// Automatic release discovery (app/lib/platform/updates/store.ts). Recognised by its
+// collision sentinel, which no other script contains — this one allocates the UPD
+// sequence itself, so mis-recognising it would either mint numbers nothing asked for
+// or silently skip the allocation and write a record whose key is still a
+// placeholder. Before this branch existed the script matched NOTHING and the
+// emulator threw EMULATOR_UNSUPPORTED_SCRIPT, which was safe but meant discovery
+// could not be exercised locally at all.
+const DISCOVERY_RE = /__UPDATE_KEY_COLLISION__/
 
 function evalScript(script, keys, args) {
   if (OWNED_RE.test(script) && RENEW_RE.test(script)) {  // compare-and-extend lock renewal
@@ -174,6 +182,46 @@ function evalScript(script, keys, args) {
     strings.set(keys[2], { v: args[3], exp: null })
     zset(keys[3]).set(args[4], Number(args[1]))
     return 1
+  }
+  if (DISCOVERY_RE.test(script)) {
+    // Automatic release discovery — one atomic step:
+    //   local existing = redis.call('GET', KEYS[1])            -- repo@commit marker
+    //   if existing then return 'E:' .. existing end           -- duplicate: NO INCR
+    //   local seq = redis.call('INCR', KEYS[3])                -- allocate only now
+    //   local key = 'UPD-' .. tostring(1000 + seq)
+    //   local recordKey = ARGV[3] .. key
+    //   if redis.call('EXISTS', recordKey) == 1 then return '__UPDATE_KEY_COLLISION__' end
+    //   local record = string.gsub(ARGV[1], ARGV[4], key, 1)   -- ONE value, see below
+    //   redis.call('SET', recordKey, record)
+    //   redis.call('ZADD', KEYS[2], ARGV[2], key)
+    //   redis.call('SET', KEYS[1], key)
+    //   return 'C:' .. key
+    // Lua is 1-indexed: KEYS[1..3] are keys[0..2], ARGV[1..4] are args[0..3].
+    const existing = getStr(keys[0])
+    // The duplicate path must not touch the counter. That is the whole point of the
+    // allocation living inside the script, so modelling it wrongly here would make a
+    // sequence-gap regression invisible to every local run.
+    if (existing !== null) return `E:${existing}`
+    const seq = Number(getStr(keys[2]) ?? 0) + 1
+    strings.set(keys[2], { v: String(seq), exp: null })
+    const key = `UPD-${1000 + seq}`
+    const recordKey = args[2] + key
+    // An existing record is refused, never overwritten.
+    if (getStr(recordKey) !== null) return '__UPDATE_KEY_COLLISION__'
+    // `string.gsub(s, pat, repl, 1)` replaces the FIRST occurrence. A function
+    // replacement is used so a `$` in the key could never be read as a JS
+    // substitution pattern — faithful to Lua, which has no such syntax.
+    //
+    // The script assigns gsub to a LOCAL before SET because gsub returns two
+    // values (string, count) and a Lua call in final argument position expands to
+    // all of them — inlining it issues `SET key value 1`, which real Redis rejects
+    // AFTER the INCR has already landed. This emulator cannot see that class of
+    // bug (it models shapes in JS, not Lua), which is why
+    // scripts/lua-multi-return-guard.test.ts exists.
+    strings.set(recordKey, { v: args[0].replace(args[3], () => key), exp: null })
+    zset(keys[1]).set(key, Number(args[1]))
+    strings.set(keys[0], { v: key, exp: null })
+    return `C:${key}`
   }
   if (CAS_RE.test(script)) {                           // optimistic version CAS on a JSON doc
     const raw = getStr(keys[0])

@@ -29,19 +29,24 @@ Data lives in the process and is discarded on exit.
 ### Lua fidelity
 
 The emulator recognises the app's Lua scripts by **shape** rather than interpreting
-Lua. That is a fair trade for a handful of fixed scripts, but it has silently
-mis-modelled one three times — a lock heartbeat executed as a delete (LOCK-1), the
-approval consume CAS compared against the wrong field (APRV-1), and the
-baseline-adoption multi-key CAS falling into the generic version-CAS branch, where
-it read the wrong key, compared the wrong field against the wrong ARGV, and wrote
-one of the script's four keys. In each case a runtime result stayed green while
-proving nothing.
+Lua. That is a fair trade for a handful of fixed scripts, but it has gone wrong four
+times — a lock heartbeat executed as a delete (LOCK-1), the approval consume CAS
+compared against the wrong field (APRV-1), the baseline-adoption multi-key CAS
+falling into the generic version-CAS branch (it read the wrong key, compared the
+wrong field against the wrong ARGV, and wrote one of the script's four keys), and
+automatic release discovery shipping with **no branch at all**. The first three left a
+runtime result meaningless while still printing PASS; the fourth made every local run
+of the discovery endpoint die on `EMULATOR_UNSUPPORTED_SCRIPT`.
 
-Every shipped script shape is now pinned by `scripts/kv-emulator-lua.test.ts`,
-including that an **unrecognised script fails loudly** (`EMULATOR_UNSUPPORTED_SCRIPT`)
-rather than being treated as executed. If you add a Lua script to the app, add its
-shape here and a test there — a script the emulator does not model must never look
-like it ran.
+The modelled shapes are pinned by `scripts/kv-emulator-lua.test.ts`, including that an
+**unrecognised script fails loudly** (`EMULATOR_UNSUPPORTED_SCRIPT`) rather than being
+treated as executed. The discovery script is additionally asserted **byte-identical**
+to the one `app/lib/platform/updates/store.ts` ships, so editing one without the other
+fails there rather than in a local run. That drift check is per-script and deliberate:
+there is no generic scanner proving every `.eval()` call site is modelled, and the
+scope note at the end of that test file says so. If you add a Lua script to the app,
+add its shape here and a test there — a script the emulator does not model must never
+look like it ran.
 
 ## 2. Start
 
