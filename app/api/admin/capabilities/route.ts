@@ -5,7 +5,7 @@ import { currentTenantId } from '../../../lib/platform/tenancy/context'
 import { DEFAULT_TENANT_ID } from '../../../lib/platform/tenancy/types'
 import { TenantAccessDeniedError } from '../../../lib/platform/tenancy/membership'
 import {
-  resolveTenantCapabilities, setCapabilitySelections, CapabilityConfigError,
+  backfillCapabilityProfile, resolveTenantCapabilities, setCapabilitySelections, CapabilityConfigError,
   type CapabilityPatch,
 } from '../../../lib/platform/capabilities/tenant-profile-store'
 import { CAPABILITY_REGISTRY } from '../../../lib/platform/capabilities/registry'
@@ -137,4 +137,30 @@ export const PATCH = withTenantRoute(async (req: NextRequest) => {
     }
     throw err
   }
+})
+
+// POST /api/admin/capabilities — safely retire legacy credential inference.
+// Preview is the default. A write requires a typed, tenant-specific confirmation;
+// the tenant itself still comes only from the signed session.
+export const POST = withTenantRoute(async (req: NextRequest) => {
+  const who = await requirePermission(req, 'settings:manage')
+  if (who instanceof NextResponse) return who
+  const principal = await getPrincipal(req)
+  if (!principal) return NextResponse.json({ error: 'unauthorized' }, { status: 401, headers: noStore })
+
+  const tenantId = actingTenant()
+  const body = (await req.json().catch(() => ({}))) as { action?: unknown; apply?: unknown; confirmation?: unknown }
+  if (body.action !== 'backfill') {
+    return NextResponse.json({ error: 'expected action "backfill"' }, { status: 400, headers: noStore })
+  }
+  const apply = body.apply === true
+  if (apply && body.confirmation !== `BACKFILL ${tenantId}`) {
+    return NextResponse.json({ error: `type BACKFILL ${tenantId} to apply` }, { status: 400, headers: noStore })
+  }
+
+  const result = await backfillCapabilityProfile(tenantId, {
+    dryRun: !apply,
+    actor: principal.sub,
+  })
+  return NextResponse.json({ ok: true, ...result }, { headers: noStore })
 })
