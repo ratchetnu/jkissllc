@@ -19,6 +19,7 @@
 // renders the refusal instead of pretending the change landed.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import styles from './settings.module.css'
 
 type Capability = {
   id: string
@@ -80,6 +81,7 @@ export default function CapabilitiesPanel() {
   const [data, setData] = useState<Payload | null>(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState<string | null>(null)
+  const [activeGroup, setActiveGroup] = useState('')
   const inflight = useRef(false)
 
   const load = useCallback(async () => {
@@ -125,6 +127,11 @@ export default function CapabilitiesPanel() {
   const grouped = GROUPS.map(g => ({ ...g, items: optional.filter(g.match) }))
     .filter(g => g.items.length > 0)
   const ungrouped = optional.filter(c => !GROUPS.some(g => g.match(c)))
+  const availableGroups = [
+    ...grouped.map(g => ({ id: g.title, title: g.title, blurb: g.blurb, items: g.items })),
+    ...(ungrouped.length > 0 ? [{ id: 'Everything else', title: 'Everything else', blurb: 'Additional choices for this product.', items: ungrouped }] : []),
+  ]
+  const selectedGroup = availableGroups.find(group => group.id === activeGroup) ?? availableGroups[0]
 
   const row = (c: Capability) => {
     const tone = TONE[c.state]
@@ -185,8 +192,10 @@ export default function CapabilitiesPanel() {
   }
 
   return (
-    <div className="os-card os-rise" style={{ padding: 22 }}>
-      <h2 className="jkos-h" style={{ fontSize: 18, marginBottom: 4 }}>Optional features</h2>
+    <div>
+      <div className={styles.panelHeading}><h2 className="jkos-h" style={{ fontSize: 22 }}>Optional features</h2><p>Choose what this business uses. Disabled providers never block software updates.</p></div>
+      <div className="os-card os-rise" style={{ padding: 22 }}>
+      <h3 className="jkos-h" style={{ fontSize: 18, marginBottom: 4 }}>Feature choices</h3>
       <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16, lineHeight: 1.55 }}>
         These are yours to choose. Turning one off is a decision, not a fault: the app stays healthy,
         your bookings and invoices keep working, your existing records are kept, and software updates
@@ -207,20 +216,16 @@ export default function CapabilitiesPanel() {
       )}
       {!data && !error && <p style={{ color: 'var(--muted)', fontSize: 13 }}>Loading…</p>}
 
-      {grouped.map(g => (
-        <section key={g.title} style={{ marginTop: 18 }}>
-          <h3 style={{ fontSize: 14.5, fontWeight: 800 }}>{g.title}</h3>
-          <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 3, lineHeight: 1.5 }}>{g.blurb}</p>
-          <div style={{ marginTop: 6 }}>{g.items.map(row)}</div>
-        </section>
-      ))}
-      {ungrouped.length > 0 && (
-        <section style={{ marginTop: 18 }}>
-          <h3 style={{ fontSize: 14.5, fontWeight: 800 }}>Everything else</h3>
-          <div style={{ marginTop: 6 }}>{ungrouped.map(row)}</div>
-        </section>
-      )}
+      {availableGroups.length > 0 && <div className={styles.groupPicker} aria-label="Feature groups">
+        {availableGroups.map(group => <button key={group.id} type="button" aria-pressed={selectedGroup?.id === group.id} className={`${styles.groupButton} os-tap`} onClick={() => setActiveGroup(group.id)}>{group.title}</button>)}
+      </div>}
+      {selectedGroup && <section aria-label={selectedGroup.title}>
+        <h3 style={{ fontSize: 14.5, fontWeight: 800 }}>{selectedGroup.title}</h3>
+        <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 3, lineHeight: 1.5 }}>{selectedGroup.blurb}</p>
+        <div style={{ marginTop: 6 }}>{selectedGroup.items.map(row)}</div>
+      </section>}
       {data && optional.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 13 }}>No optional features are available in this build.</p>}
+      </div>
     </div>
   )
 }
