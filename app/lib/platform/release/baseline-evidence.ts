@@ -57,6 +57,44 @@ export type EvidenceItem = {
   action?: string
   /** Hashes and raw diagnostics — belongs under "Technical details", never inline. */
   technical?: string
+  /** Established evidence that is safe to adopt, but carries an operational caveat. */
+  warning?: boolean
+}
+
+export type ReleaseReadinessEvidence = {
+  status: 'ready' | 'ready_with_warnings' | 'blocked'
+  blockers: string[]
+  warnings: string[]
+}
+
+/** Parse only the value-free public health fields Operion understands. */
+export function parsePublicHealthResponse(text: string): {
+  build?: string
+  reportedStatus?: string
+  releaseReadiness?: ReleaseReadinessEvidence
+} {
+  try {
+    const parsed = JSON.parse(text) as {
+      build?: unknown
+      status?: unknown
+      releaseReadiness?: { status?: unknown; blockers?: unknown; warnings?: unknown }
+    }
+    const rr = parsed.releaseReadiness
+    const validStatus = rr?.status === 'ready' || rr?.status === 'ready_with_warnings' || rr?.status === 'blocked'
+    const validNames = (value: unknown): value is string[] => Array.isArray(value)
+      && value.length <= 50
+      && value.every((name) => typeof name === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(name))
+    const releaseReadiness = validStatus && validNames(rr?.blockers) && validNames(rr?.warnings)
+      ? { status: rr.status as ReleaseReadinessEvidence['status'], blockers: rr.blockers, warnings: rr.warnings }
+      : undefined
+    return {
+      build: typeof parsed.build === 'string' ? parsed.build : undefined,
+      reportedStatus: typeof parsed.status === 'string' ? parsed.status : undefined,
+      releaseReadiness,
+    }
+  } catch {
+    return {}
+  }
 }
 
 export type LiveCommitResolution =
@@ -91,7 +129,14 @@ export type BaselineEvidenceDeps = {
   readBranch: (repo: RepoRef, branch: string) => Promise<{ commit: string } | null>
   /** Paths in the repository AT AN EXACT COMMIT. The bootstrap path for schema state. */
   readRepoTree: (repo: RepoRef, sha: string) => Promise<string[] | null>
-  fetchHealth: (url: string) => Promise<{ ok: boolean; status: number; build?: string; reportedStatus?: string; body?: string } | null>
+  fetchHealth: (url: string) => Promise<{
+    ok: boolean
+    status: number
+    build?: string
+    reportedStatus?: string
+    releaseReadiness?: ReleaseReadinessEvidence
+    body?: string
+  } | null>
   readCapabilities: (business: PlatformBusiness) => Promise<{ manifestHash?: string; capabilities: { id: string; evidence: string }[] } | null>
   readSchemaState: (business: PlatformBusiness) => Promise<BaselineSchemaEvidence | null>
   readFlagState: (business: PlatformBusiness) => Promise<BaselineFlagEvidence | null>
@@ -151,7 +196,7 @@ export async function resolveFullCommit(
 
 const item = (
   id: string, label: string, status: EvidenceStatus, source: EvidenceSource, detail: string,
-  extra: { action?: string; technical?: string; attestable?: boolean } = {},
+  extra: { action?: string; technical?: string; attestable?: boolean; warning?: boolean } = {},
 ): EvidenceItem => ({ id, label, status, source, detail, ...extra })
 
 export function repoRefOf(business: Pick<PlatformBusiness, 'repoName' | 'repositoryOwner' | 'repositoryNameOnly'>): RepoRef | undefined {
@@ -262,6 +307,47 @@ export async function collectBaselineEvidence(input: {
       items.push(item('health', 'Site responding', 'contradictory', 'provider_verified',
         `The production site answered, but reported a problem (HTTP ${health.status}).`,
         { action: 'Resolve the site error before recording a starting version.', technical: `GET ${healthUrl} → ${health.status}` }))
+    } else if (health.build && live?.deploymentId && health.build !== live.deploymentId) {
+      // Read both, and they disagree — the site is not serving the deployment the
+      // provider calls current. This is checked BEFORE any warning exception so a
+      // release-ready label can never waive build identity.
+      items.push(item('health', 'Site responding', 'contradictory', 'provider_verified',
+        'The live site is reporting a different build than the hosting provider lists as current.',
+        {
+          action: 'Wait for the deployment to finish rolling out, then check again.',
+          technical: `health build=${health.build} · provider deployment=${live.deploymentId}`,
+        }))
+    } else if (health.releaseReadiness && !(
+      (health.reportedStatus === 'healthy'
+        && health.releaseReadiness.status === 'ready'
+        && health.releaseReadiness.blockers.length === 0
+        && health.releaseReadiness.warnings.length === 0)
+      || (health.reportedStatus === 'degraded'
+        && health.releaseReadiness.status === 'ready_with_warnings'
+        && health.releaseReadiness.blockers.length === 0
+        && health.releaseReadiness.warnings.length > 0)
+    )) {
+      items.push(item('health', 'Site responding', 'contradictory', 'provider_verified',
+        'The production site reported inconsistent health and release-readiness verdicts.',
+        {
+          action: 'Fix the production health response before recording a starting version.',
+          technical: `status=${health.reportedStatus ?? '(missing)'} releaseReadiness=${health.releaseReadiness.status} blockers=${health.releaseReadiness.blockers.join(',')} warnings=${health.releaseReadiness.warnings.join(',')}`,
+        }))
+    } else if (
+      health.reportedStatus === 'degraded'
+      && health.releaseReadiness?.status === 'ready_with_warnings'
+      && health.releaseReadiness.blockers.length === 0
+      && health.releaseReadiness.warnings.length > 0
+    ) {
+      // Overall health remains honestly degraded. The site's narrower, public
+      // release-readiness projection says the artifact/build evidence is usable and
+      // names the non-blocking checks. This is machine evidence, not an owner waiver.
+      items.push(item('health', 'Site responding', 'ok', 'provider_verified',
+        `The production site is up. It reports an operational warning that does not invalidate release evidence: ${health.releaseReadiness.warnings.join(', ')}.`,
+        {
+          warning: true,
+          technical: `GET ${healthUrl} → ${health.status} status=degraded releaseReadiness=ready_with_warnings warnings=${health.releaseReadiness.warnings.join(',')}${health.build ? ` build=${health.build}` : ''}`,
+        }))
     } else if (health.reportedStatus && health.reportedStatus !== 'healthy') {
       // Found by checking the real Supercharged deployment: /api/health answers HTTP 200
       // with {"status":"degraded"}. Treating the transport code as the answer would have
@@ -271,16 +357,6 @@ export async function collectBaselineEvidence(input: {
         {
           action: 'Resolve what the site is reporting before recording a starting version.',
           technical: `GET ${healthUrl} → ${health.status} status=${health.reportedStatus}${health.build ? ` build=${health.build}` : ''}`,
-        }))
-    } else if (health.build && live?.deploymentId && health.build !== live.deploymentId) {
-      // Read both, and they disagree — the site is not serving the deployment the
-      // provider calls current. Recording a baseline now would attribute one build's
-      // evidence to another.
-      items.push(item('health', 'Site responding', 'contradictory', 'provider_verified',
-        'The live site is reporting a different build than the hosting provider lists as current.',
-        {
-          action: 'Wait for the deployment to finish rolling out, then check again.',
-          technical: `health build=${health.build} · provider deployment=${live.deploymentId}`,
         }))
     } else {
       items.push(item('health', 'Site responding', 'ok', 'provider_verified', 'The production site is up and reporting healthy.',
@@ -421,16 +497,19 @@ export async function collectBaselineEvidence(input: {
 
 /** Counts for a one-line owner summary ("3 things to fix", "everything checks out"). */
 export function evidenceSummary(report: BaselineEvidenceReport): {
-  ok: boolean; missing: number; contradictory: number; headline: string
+  ok: boolean; missing: number; contradictory: number; warnings: number; headline: string
 } {
   const missing = report.items.filter((i) => i.status === 'missing').length
   const contradictory = report.items.filter((i) => i.status === 'contradictory').length
+  const warnings = report.items.filter((i) => i.warning).length
   const headline = report.ok
-    ? 'Everything checks out.'
+    ? warnings
+      ? `Everything required checks out, with ${warnings} operational warning${warnings === 1 ? '' : 's'}.`
+      : 'Everything checks out.'
     : contradictory
       // Contradictions come first: something is actively wrong, and it will not clear
       // by waiting the way a missing reading might.
       ? `${contradictory} thing${contradictory === 1 ? '' : 's'} ${contradictory === 1 ? 'does not' : 'do not'} match${missing ? `, and ${missing} could not be read` : ''}.`
       : `${missing} thing${missing === 1 ? '' : 's'} could not be read yet.`
-  return { ok: report.ok, missing, contradictory, headline }
+  return { ok: report.ok, missing, contradictory, warnings, headline }
 }

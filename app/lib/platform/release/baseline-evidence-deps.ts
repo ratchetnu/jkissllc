@@ -6,7 +6,7 @@
 
 import { createHash } from 'node:crypto'
 import type { PlatformBusiness, BaselineFlagEvidence, BaselineSchemaEvidence } from '../updates/types'
-import type { BaselineEvidenceDeps, RepoRef } from './baseline-evidence'
+import { parsePublicHealthResponse, type BaselineEvidenceDeps, type RepoRef } from './baseline-evidence'
 import { readCurrentProductionDeployment } from './production-deployment'
 import { GitHubActionsProvider } from '../automation/github-provider'
 import { resolveTenantCapabilities } from '../capabilities/tenant-profile-store'
@@ -49,16 +49,8 @@ export function liveBaselineEvidenceDeps(business: PlatformBusiness): BaselineEv
       try {
         const res = await fetch(url, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(8000) })
         const text = await res.text().catch(() => '')
-        let build: string | undefined
-        let reportedStatus: string | undefined
-        try {
-          const parsed = JSON.parse(text) as { build?: string; status?: string }
-          build = parsed.build
-          // The site's OWN verdict. A 200 carrying {"status":"degraded"} is not healthy,
-          // and the transport code must not be mistaken for the answer.
-          reportedStatus = parsed.status
-        } catch { /* not JSON — fine */ }
-        return { ok: res.ok, status: res.status, build, reportedStatus, body: text.slice(0, 500) }
+        const parsed = parsePublicHealthResponse(text)
+        return { ok: res.ok, status: res.status, ...parsed, body: text.slice(0, 500) }
       } catch { return null }
     },
 

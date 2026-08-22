@@ -269,3 +269,12 @@ test('every evidence row shows where its fact came from', () => {
   assert.match(p, /Worked out from the code that is live/)
   assert.match(p, /Operion could not check this itself/)
 })
+
+test('a non-blocking operational warning stays visible on an otherwise passing check', () => {
+  const p = panel()
+  const evidence = readFileSync('app/lib/platform/release/baseline-evidence.ts', 'utf8')
+  assert.match(p, /item\.warning/)
+  assert.match(evidence, /operational warning/)
+  assert.match(p, /AlertTriangle/)
+  assert.match(p, /report\.summary\.warnings/)
+})

@@ -18,7 +18,7 @@ import { AlertTriangle, CheckCircle2, ChevronDown, HelpCircle, Loader2, RefreshC
 type BaselineSource = 'installed_by_release' | 'adopted' | 'unknown'
 type EvidenceStatus = 'ok' | 'missing' | 'contradictory'
 type EvidenceSource = 'provider_verified' | 'repository_derived' | 'owner_attested' | 'unresolved'
-type EvidenceItem = { id: string; label: string; status: EvidenceStatus; source: EvidenceSource; detail: string; action?: string; technical?: string; attestable?: boolean }
+type EvidenceItem = { id: string; label: string; status: EvidenceStatus; source: EvidenceSource; detail: string; action?: string; technical?: string; attestable?: boolean; warning?: boolean }
 type VersionChoice = { id: string; version?: string; label: string; meaning: string; pickWhen: string }
 
 type EvidenceReport = {
@@ -32,7 +32,7 @@ type EvidenceReport = {
   schemaMigrationState: { state: string; evidence?: string }
   attestable: string[]
   attested: string[]
-  summary: { ok: boolean; missing: number; contradictory: number; headline: string }
+  summary: { ok: boolean; missing: number; contradictory: number; warnings: number; headline: string }
 }
 
 type DryRun = { verdict: string; proposedVersion?: string; missingEvidence: string[]; conflicts: string[]; approvalToken?: string }
@@ -68,7 +68,9 @@ const TONE: Record<EvidenceStatus, { color: string; Icon: typeof CheckCircle2 }>
 }
 
 function EvidenceRow({ item }: { item: EvidenceItem }) {
-  const { color, Icon } = TONE[item.status]
+  const { color, Icon } = item.warning
+    ? { color: '#fbbf24', Icon: AlertTriangle }
+    : TONE[item.status]
   return (
     <li style={{ display: 'flex', gap: 9, alignItems: 'flex-start', padding: '8px 0', borderTop: '1px solid var(--line)' }}>
       <Icon size={15} style={{ color, flexShrink: 0, marginTop: 2 }} aria-hidden />
@@ -245,7 +247,7 @@ export function BaselineAdoptionPanel({
           {/* ── 3. What Operion found ───────────────────────────────────── */}
           {report && (
             <div>
-              <p style={{ fontSize: 13, fontWeight: 700, margin: '0 0 2px', color: report.ok ? '#34d399' : report.summary.contradictory ? '#f87171' : '#fbbf24' }}>
+              <p style={{ fontSize: 13, fontWeight: 700, margin: '0 0 2px', color: report.ok && !report.summary.warnings ? '#34d399' : report.summary.contradictory ? '#f87171' : '#fbbf24' }}>
                 {report.summary.headline}
               </p>
               <ul style={{ listStyle: 'none', padding: 0, margin: '4px 0 0' }}>

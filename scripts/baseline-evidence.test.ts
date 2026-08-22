@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   collectBaselineEvidence, evidenceSummary, repoRefOf, resolveFullCommit,
-  type BaselineEvidenceDeps,
+  parsePublicHealthResponse, type BaselineEvidenceDeps, type ReleaseReadinessEvidence,
 } from '../app/lib/platform/release/baseline-evidence'
 import type { PlatformBusiness } from '../app/lib/platform/updates/types'
 
@@ -329,6 +329,82 @@ test('a 200 response that reports "degraded" is CONTRADICTORY, not healthy', asy
   assert.match(health.detail, /reports its own status as "degraded"/)
   assert.equal(report.ok, false)
   assert.equal(health.attestable, undefined, 'and it is NOT something an owner may attest away')
+})
+
+test('a degraded site may publish a narrow, machine-readable release warning', async () => {
+  const report = await run(business(), deps({
+    fetchHealth: async () => ({
+      ok: true,
+      status: 200,
+      build: 'dpl_live',
+      reportedStatus: 'degraded',
+      releaseReadiness: { status: 'ready_with_warnings', blockers: [], warnings: ['alerting'] },
+    }),
+  }))
+  const health = byId(report, 'health')
+  assert.equal(report.ok, true)
+  assert.equal(health.status, 'ok')
+  assert.equal(health.warning, true)
+  assert.equal(health.source, 'provider_verified')
+  assert.match(health.detail, /operational warning/i)
+  assert.match(health.detail, /alerting/)
+  assert.deepEqual(evidenceSummary(report), {
+    ok: true,
+    missing: 0,
+    contradictory: 0,
+    warnings: 1,
+    headline: 'Everything required checks out, with 1 operational warning.',
+  })
+})
+
+test('release-readiness exceptions fail closed unless internally consistent', async () => {
+  const invalid: { reportedStatus?: string; releaseReadiness: ReleaseReadinessEvidence }[] = [
+    { reportedStatus: 'degraded', releaseReadiness: { status: 'ready_with_warnings', blockers: ['kv'], warnings: ['alerting'] } },
+    { reportedStatus: 'degraded', releaseReadiness: { status: 'ready_with_warnings', blockers: [], warnings: [] } },
+    { reportedStatus: 'degraded', releaseReadiness: { status: 'ready', blockers: [], warnings: [] } },
+    { reportedStatus: 'degraded', releaseReadiness: { status: 'blocked', blockers: ['kv'], warnings: [] } },
+    { reportedStatus: 'healthy', releaseReadiness: { status: 'ready_with_warnings', blockers: [], warnings: ['alerting'] } },
+    { releaseReadiness: { status: 'ready', blockers: [], warnings: [] } },
+  ]
+  for (const { reportedStatus, releaseReadiness } of invalid) {
+    const report = await run(business(), deps({
+      fetchHealth: async () => ({ ok: true, status: 200, build: 'dpl_live', reportedStatus, releaseReadiness }),
+    }))
+    assert.equal(byId(report, 'health').status, 'contradictory', JSON.stringify(releaseReadiness))
+  }
+})
+
+test('a release warning can never waive a live/provider build mismatch', async () => {
+  const report = await run(business(), deps({
+    fetchHealth: async () => ({
+      ok: true,
+      status: 200,
+      build: 'dpl_NOT_CURRENT',
+      reportedStatus: 'degraded',
+      releaseReadiness: { status: 'ready_with_warnings', blockers: [], warnings: ['alerting'] },
+    }),
+  }))
+  const health = byId(report, 'health')
+  assert.equal(report.ok, false)
+  assert.equal(health.status, 'contradictory')
+  assert.match(health.detail, /different build/i)
+  assert.equal(health.warning, undefined)
+})
+
+test('the public health parser accepts only bounded, value-free component names', () => {
+  assert.deepEqual(parsePublicHealthResponse(JSON.stringify({
+    status: 'degraded', build: 'dpl_live',
+    releaseReadiness: { status: 'ready_with_warnings', blockers: [], warnings: ['alerting'] },
+  })), {
+    reportedStatus: 'degraded', build: 'dpl_live',
+    releaseReadiness: { status: 'ready_with_warnings', blockers: [], warnings: ['alerting'] },
+  })
+  for (const warnings of [['SECRET=value'], ['has space'], [1], Array.from({ length: 51 }, () => 'x')]) {
+    const parsed = parsePublicHealthResponse(JSON.stringify({
+      status: 'degraded', releaseReadiness: { status: 'ready_with_warnings', blockers: [], warnings },
+    }))
+    assert.equal(parsed.releaseReadiness, undefined)
+  }
 })
 
 test('only an explicitly healthy body passes', async () => {
