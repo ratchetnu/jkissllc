@@ -49,6 +49,7 @@ export type PlatformAuditAction =
   | 'deployment.promoted'
   // Evidence-based adoption of a pre-Operion installed baseline.
   | 'baseline.adopted'
+  | 'update.discovered'
   | 'release_package.created'
   | 'release_package.ready'
   | 'release_package.approved'

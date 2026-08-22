@@ -1,0 +1,128 @@
+# Automatically park source changes in Operion's Release Center.
+#
+# This workflow creates a status=discovered record only. It cannot approve, package,
+# dispatch, merge, deploy, or publish anything. The production boundary remains the
+# existing owner review + typed confirmation flow.
+name: Operion Update Discovery
+run-name: "Discover ${{ github.sha }}"
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: operion-discovery-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the landed commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Register a discovered update in Operion
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPERION_CALLBACK_URL: ${{ secrets.OPERION_CALLBACK_URL }}
+          # Source-only. Never copy this secret into Supercharged or another target.
+          OPERION_DISCOVERY_SECRET: ${{ secrets.OPERION_DISCOVERY_SECRET }}
+          SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OPERION_CALLBACK_URL" ] || [ -z "$OPERION_DISCOVERY_SECRET" ]; then
+            echo "::error::OPERION_CALLBACK_URL and source-only OPERION_DISCOVERY_SECRET are required for automatic discovery"
+            exit 1
+          fi
+          CALLBACK_BASE="${OPERION_CALLBACK_URL%/}"
+          if [[ "$CALLBACK_BASE" != */api/automation/callback ]]; then
+            echo "::error::OPERION_CALLBACK_URL must end in /api/automation/callback"
+            exit 1
+          fi
+          DISCOVERY_URL="${CALLBACK_BASE%/callback}/discover"
+
+          PARENT="$(git rev-parse "${SOURCE_COMMIT}^1" 2>/dev/null || true)"
+          if [ -n "$PARENT" ]; then
+            FILES_JSON="$(git diff --name-only -z "$PARENT" "$SOURCE_COMMIT" | jq -Rs 'split("\u0000") | map(select(length > 0))')"
+          else
+            FILES_JSON="$(git ls-tree -r --name-only -z "$SOURCE_COMMIT" | jq -Rs 'split("\u0000") | map(select(length > 0))')"
+          fi
+          FILE_COUNT="$(jq 'length' <<<"$FILES_JSON")"
+          if [ "$FILE_COUNT" -eq 0 ]; then
+            echo "No changed files; nothing to register."
+            exit 0
+          fi
+          FILE_SAMPLE="$(jq '.[0:300]' <<<"$FILES_JSON")"
+          FILES_TRUNCATED=false
+          if [ "$FILE_COUNT" -gt 300 ]; then FILES_TRUNCATED=true; fi
+
+          PR_JSON="$(gh api "repos/$SOURCE_REPOSITORY/commits/$SOURCE_COMMIT/pulls" \
+            --jq '[.[] | select(.merged_at != null)] | first // {}' 2>/dev/null || printf '{}')"
+          PR_NUMBER="$(jq -r '.number // empty' <<<"$PR_JSON")"
+          PR_URL="$(jq -r '.html_url // empty' <<<"$PR_JSON")"
+          TITLE="$(jq -r '.title // empty' <<<"$PR_JSON")"
+          if [ -z "$TITLE" ]; then TITLE="$(git log -1 --pretty=%s "$SOURCE_COMMIT")"; fi
+          COMMIT_MESSAGE="$(git log -1 --pretty=%B "$SOURCE_COMMIT")"
+          BEFORE="$PARENT"
+          if [ -z "$BEFORE" ]; then BEFORE="0000000000000000000000000000000000000000"; fi
+          DELIVERY_ID="push:${WORKFLOW_RUN_ID}:${WORKFLOW_RUN_ATTEMPT}"
+
+          BODY="$(jq -nc \
+            --arg deliveryId "$DELIVERY_ID" \
+            --arg repository "$SOURCE_REPOSITORY" \
+            --arg ref "$SOURCE_REF" \
+            --arg before "$BEFORE" \
+            --arg after "$SOURCE_COMMIT" \
+            --arg title "$TITLE" \
+            --arg commitMessage "$COMMIT_MESSAGE" \
+            --arg prNumber "$PR_NUMBER" \
+            --arg prUrl "$PR_URL" \
+            --arg workflowRunId "$WORKFLOW_RUN_ID" \
+            --argjson changedFiles "$FILE_SAMPLE" \
+            --argjson changedFileCount "$FILE_COUNT" \
+            --argjson filesTruncated "$FILES_TRUNCATED" \
+            '{deliveryId:$deliveryId,repository:$repository,ref:$ref,before:$before,after:$after,
+              title:$title,commitMessage:$commitMessage,changedFiles:$changedFiles,
+              changedFileCount:$changedFileCount,filesTruncated:$filesTruncated,
+              pullRequestNumber:(if $prNumber == "" then null else ($prNumber | tonumber) end),
+              pullRequestUrl:(if $prUrl == "" then null else $prUrl end),workflowRunId:$workflowRunId}')"
+          RESPONSE_FILE="$(mktemp)"
+          for ATTEMPT in $(seq 1 20); do
+            # Refresh the timestamp/signature on every retry so waiting for the first
+            # deployment of this endpoint can never age the event past the replay window.
+            TS="$(date +%s000)"
+            SIG="$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$OPERION_DISCOVERY_SECRET" | sed 's/^.*= *//')"
+            HTTP="$(curl -sS --max-time 25 -o "$RESPONSE_FILE" -w '%{http_code}' -X POST "$DISCOVERY_URL" \
+              -H 'content-type: application/json' \
+              -H "x-operion-timestamp: $TS" \
+              -H "x-operion-signature: $SIG" \
+              -d "$BODY")" || HTTP="000"
+            if [ "$HTTP" = "200" ] || [ "$HTTP" = "201" ]; then
+              cat "$RESPONSE_FILE"
+              echo
+              echo "Operion discovery accepted on attempt $ATTEMPT."
+              exit 0
+            fi
+            if [ "$HTTP" = "400" ] || [ "$HTTP" = "401" ] || [ "$HTTP" = "403" ] || [ "$HTTP" = "409" ]; then
+              cat "$RESPONSE_FILE"
+              echo
+              echo "::error::Operion discovery refused the signed event (HTTP $HTTP)"
+              exit 1
+            fi
+            echo "Operion discovery endpoint not ready (HTTP $HTTP); retrying $ATTEMPT/20..."
+            sleep 15
+          done
+          cat "$RESPONSE_FILE"
+          echo
+          echo "::error::Operion discovery did not become available"
+          exit 1
