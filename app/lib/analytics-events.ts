@@ -18,6 +18,15 @@ export type FunnelEvent =
   // analysis short. Distinct from 'ai_analysis_failed' (the provider rejected us):
   // this is OUR deadline firing, and it is the rate a rollout has to watch.
   | 'ai_analysis_timeout'
+  // A request was refused by the bot check. Recorded because its ABSENCE is what let
+  // a total outage look like an absence of traffic: /api/quote/analyze bot-checked a
+  // path the client never registered with BotID, rejected every real browser, and
+  // returned before any funnel write — so the whole failure was invisible for weeks.
+  | 'ai_analysis_blocked'
+  // The exact photo set is already being analysed by another in-flight request (a
+  // refresh, a second tab, a double click). Counted so the duplicate-suppression rate
+  // is visible: these are the paid provider calls the idempotency guard did NOT make.
+  | 'ai_analysis_deduped'
   // A head-start analysis the CUSTOMER did not ask for yet (lib/ai/pre-analysis).
   // It buys latency at the cost of analyzing sets that may be abandoned, so the
   // ratio of speculative starts to quote_analyze_started is the number that says
@@ -41,6 +50,7 @@ export type FunnelEvent =
 
 export const FUNNEL_EVENTS: FunnelEvent[] = [
   'quote_analyze_started', 'ai_analysis_completed', 'ai_analysis_failed', 'ai_analysis_timeout',
+  'ai_analysis_blocked', 'ai_analysis_deduped',
   'quote_analyze_speculative', 'instant_quote_displayed', 'estimate_range_displayed', 'manual_review_required',
   'quote_request_persisted',
   'confirmation_started', 'confirmation_item_corrected', 'confirmation_conflict_detected',

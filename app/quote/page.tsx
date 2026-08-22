@@ -380,7 +380,14 @@ export default function QuotePage() {
   // so don't show the customer the size-based auto-range (it reads as a firm high
   // quote next to "we'll review your photos"). Fall back to the "Priced by our team"
   // copy the sidebar already renders when showLow is null.
-  const photoManualReview = estimate?.decision === 'manual_review'
+  // The same reasoning covers the analysis never ARRIVING. `estimate` is null both
+  // before the read and when it failed outright, so keying only on decision left the
+  // size-based range on screen next to "We'll review your photos" — the exact pairing
+  // the rule above exists to prevent. Once photos have settled for a job-based
+  // service the range is the customer's own size guess, not a read of their pile, so
+  // withhold it until an estimate actually says otherwise.
+  const awaitingPhotoRead = !!svc?.jobBased && uploadedUrls.length > 0 && !anyUploading && !estimate
+  const photoManualReview = estimate?.decision === 'manual_review' || awaitingPhotoRead
   const showLow = !photoManualReview && est?.hasPrice && est.low != null ? est.low + upgradeTotal : null
   const showHigh = !photoManualReview && est?.hasPrice && est.high != null ? est.high + upgradeTotal : null
 
@@ -1736,10 +1743,13 @@ function ConfirmUnavailable() {
       <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 56, height: 56, borderRadius: 999, background: 'rgba(255,255,255,.05)', color: RED, marginBottom: 14 }}>
         <Clock size={26} />
       </span>
-      <h2 className="text-2xl font-black text-white" style={{ letterSpacing: '-0.02em', fontFamily: 'var(--font-display)' }}>We’ll review your photos</h2>
+      <h2 className="text-2xl font-black text-white" style={{ letterSpacing: '-0.02em', fontFamily: 'var(--font-display)' }}>We’ll price this from your photos</h2>
       <p className="text-sm mt-2" style={{ color: 'var(--muted)', lineHeight: 1.55, maxWidth: 420, margin: '8px auto 0' }}>
-        We couldn’t read every detail automatically, so a team member will review your photos and confirm your quote. Continue and we’ll take it from here.
+        We couldn’t finish reading your photos automatically, so a team member is pricing this one by hand — you’ll get a firm number, usually within one business hour. Continue and we’ll take it from here.
       </p>
+      {/* Says the quote is still COMING rather than implying the number beside it is
+          it. The sidebar range is suppressed in this state (see awaitingPhotoRead),
+          so the customer is not left reading their own size guess as our answer. */}
     </div>
   )
 }
