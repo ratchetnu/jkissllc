@@ -17,7 +17,8 @@ import { AlertTriangle, CheckCircle2, ChevronDown, HelpCircle, Loader2, RefreshC
 
 type BaselineSource = 'installed_by_release' | 'adopted' | 'unknown'
 type EvidenceStatus = 'ok' | 'missing' | 'contradictory'
-type EvidenceItem = { id: string; label: string; status: EvidenceStatus; detail: string; action?: string; technical?: string }
+type EvidenceSource = 'provider_verified' | 'repository_derived' | 'owner_attested' | 'unresolved'
+type EvidenceItem = { id: string; label: string; status: EvidenceStatus; source: EvidenceSource; detail: string; action?: string; technical?: string; attestable?: boolean }
 type VersionChoice = { id: string; version?: string; label: string; meaning: string; pickWhen: string }
 
 type EvidenceReport = {
@@ -29,6 +30,8 @@ type EvidenceReport = {
   capabilities: { id: string; evidence: string }[]
   capabilityManifestHash?: string
   schemaMigrationState: { state: string; evidence?: string }
+  attestable: string[]
+  attested: string[]
   summary: { ok: boolean; missing: number; contradictory: number; headline: string }
 }
 
@@ -49,6 +52,15 @@ const field: React.CSSProperties = {
 }
 const mono: React.CSSProperties = { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }
 
+/** Where a fact came from — shown on every established item, so "we measured this" and
+ *  "you told us this" never read the same. */
+const SOURCE_LABEL: Record<EvidenceSource, string> = {
+  provider_verified: 'Checked directly',
+  repository_derived: 'Worked out from the code that is live',
+  owner_attested: 'Your confirmation — Operion could not check this itself',
+  unresolved: '',
+}
+
 const TONE: Record<EvidenceStatus, { color: string; Icon: typeof CheckCircle2 }> = {
   ok: { color: '#34d399', Icon: CheckCircle2 },
   missing: { color: '#fbbf24', Icon: HelpCircle },
@@ -63,6 +75,11 @@ function EvidenceRow({ item }: { item: EvidenceItem }) {
       <div style={{ minWidth: 0 }}>
         <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>{item.label}</p>
         <p style={{ fontSize: 12.5, color: 'var(--muted)', margin: '2px 0 0', lineHeight: 1.5 }}>{item.detail}</p>
+        {item.status === 'ok' && (
+          <p style={{ fontSize: 11, color: item.source === 'owner_attested' ? '#fcd34d' : 'var(--muted)', margin: '3px 0 0', opacity: item.source === 'owner_attested' ? 1 : 0.75 }}>
+            {SOURCE_LABEL[item.source]}
+          </p>
+        )}
         {item.action && (
           <p style={{ fontSize: 12.5, margin: '4px 0 0', lineHeight: 1.5, color: item.status === 'contradictory' ? '#fca5a5' : '#fcd34d' }}>
             <strong>What to do:</strong> {item.action}
@@ -90,6 +107,11 @@ export function BaselineAdoptionPanel({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [showTechnical, setShowTechnical] = useState(false)
+  const [attestSchema, setAttestSchema] = useState(false)
+  const [capNote, setCapNote] = useState('')
+  // The phrase ESCALATES when a fact is attested, so it comes from the check response —
+  // the GET cannot know what the owner will attest to.
+  const [phrase, setPhrase] = useState('')
 
   useEffect(() => {
     if (!open) return
@@ -106,18 +128,19 @@ export function BaselineAdoptionPanel({
 
   // Any change to the decision invalidates a completed check — the owner must not be
   // able to confirm a version that was never checked against the evidence.
-  const invalidate = useCallback(() => { setReport(null); setDryRun(null); setStage('choose') }, [])
+  const invalidate = useCallback(() => { setReport(null); setDryRun(null); setStage('choose'); setConfirmation('') }, [])
 
   async function checkEvidence() {
     setBusy(true); setError(''); setVersionError('')
     try {
       const res = await fetch(`/api/admin/release/businesses/${businessId}/baseline-adoption`, {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'check_evidence', startingVersionChoice: choice, customVersion }),
+        body: JSON.stringify({ action: 'check_evidence', startingVersionChoice: choice, customVersion, attestations: { schema: attestSchema } }),
       })
       const result = await res.json()
       if (!res.ok) { setError(result?.error ?? 'Could not check the evidence.'); return }
       setReport(result.evidence ?? null)
+      setPhrase(typeof result.confirmationPhrase === 'string' ? result.confirmationPhrase : '')
       setDryRun(result.dryRun ?? null)
       if (result.versionChoice && !result.versionChoice.ok) setVersionError(result.versionChoice.detail ?? '')
       if (result.ok) setStage('confirm')
@@ -131,19 +154,16 @@ export function BaselineAdoptionPanel({
     try {
       const res = await fetch(`/api/admin/release/businesses/${businessId}/baseline-adoption`, {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        // No evidence is sent. The server re-reads it at write time and binds the
+        // receipt to a digest of what it found, so evidence that moved since the check
+        // is rejected rather than replayed.
         body: JSON.stringify({
           action: 'adopt',
           approvalToken: dryRun.approvalToken,
           confirmationPhrase: confirmation,
-          evidence: {
-            proposedVersion: dryRun.proposedVersion,
-            deployedCommit: report.live.fullCommit,
-            capabilityManifestHash: report.capabilityManifestHash,
-            capabilities: report.capabilities,
-            schemaMigrationState: report.schemaMigrationState,
-            relevantFlagState: { assessed: true, flags: {} },
-            verificationEvidence: [],
-          },
+          startingVersionChoice: choice,
+          customVersion,
+          attestations: { schema: attestSchema },
         }),
       })
       const result = await res.json()
@@ -232,6 +252,44 @@ export function BaselineAdoptionPanel({
                 {report.items.map((i) => <EvidenceRow key={i.id} item={i} />)}
               </ul>
 
+              {report.attestable.includes('schema') && (
+                <label style={{ display: 'flex', gap: 9, alignItems: 'flex-start', marginTop: 10, padding: 10, borderRadius: 10, border: '1px solid rgba(251,191,36,.35)', background: 'rgba(251,191,36,.07)', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={attestSchema} onChange={(e) => { setAttestSchema(e.target.checked); invalidate() }} style={{ marginTop: 3, flexShrink: 0 }} />
+                  <span style={{ fontSize: 12.5, lineHeight: 1.55 }}>
+                    <strong>I confirm this myself.</strong> Operion cannot check whether this site’s data changes were
+                    applied. Ticking this records it on your word, marked as unverified, and you will be asked to type a
+                    different confirmation phrase because of it.
+                  </span>
+                </label>
+              )}
+              {report.items.some((i) => i.id === 'capabilities' && i.status !== 'ok') && (
+                <div style={{ marginTop: 10, padding: 10, borderRadius: 10, border: '1px solid var(--line)' }}>
+                  <p style={{ fontSize: 12.5, margin: 0, lineHeight: 1.55 }}>
+                    Operion has not recorded which features {businessName} is running. That is a one-time step, and it is
+                    separate from this check — it records today’s effective settings and turns nothing on.
+                  </p>
+                  <button
+                    onClick={async () => {
+                      setBusy(true); setCapNote('')
+                      try {
+                        const res = await fetch(`/api/admin/release/businesses/${businessId}/baseline-adoption`, {
+                          method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ action: 'initialize_capabilities' }),
+                        })
+                        const r = await res.json()
+                        setCapNote(r?.message ?? 'Done.'); invalidate()
+                      } catch { setCapNote('Could not record the features.') }
+                      finally { setBusy(false) }
+                    }}
+                    disabled={busy}
+                    style={{ marginTop: 8, fontSize: 12.5, fontWeight: 700, padding: '7px 12px', borderRadius: 9, color: 'var(--text)', background: 'transparent', border: '1px solid var(--line)', cursor: busy ? 'not-allowed' : 'pointer' }}
+                  >
+                    Record today’s features
+                  </button>
+                  {capNote && <p style={{ fontSize: 12, color: 'var(--muted)', margin: '6px 0 0' }}>{capNote}</p>}
+                </div>
+              )}
+
               <button
                 onClick={() => setShowTechnical((v) => !v)} aria-expanded={showTechnical}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 0, color: 'var(--muted)', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', padding: '9px 0 0' }}
@@ -255,6 +313,13 @@ export function BaselineAdoptionPanel({
           {stage === 'confirm' && report?.ok && report.live && (
             <div style={{ padding: 12, borderRadius: 10, border: '1px solid rgba(52,211,153,.35)', background: 'rgba(52,211,153,.06)' }}>
               <p style={{ fontSize: 14, fontWeight: 800, margin: '0 0 8px' }}>Ready to record</p>
+              {report.attested.length > 0 && (
+                <p style={{ fontSize: 12.5, color: '#fcd34d', margin: '0 0 8px', lineHeight: 1.55 }}>
+                  <AlertTriangle size={13} style={{ verticalAlign: -2, marginRight: 5 }} aria-hidden />
+                  Part of this baseline rests on your confirmation rather than on something Operion measured. That is
+                  recorded permanently alongside it.
+                </p>
+              )}
               <dl style={{ margin: 0, display: 'grid', gap: 6 }}>
                 {[
                   ['Starting version', `v${resolvedVersion}`],
@@ -275,7 +340,7 @@ export function BaselineAdoptionPanel({
                 Operion which version {businessName} is on today, so future updates can be numbered from it.
               </p>
               <label style={{ display: 'grid', gap: 5, fontSize: 11.5, fontWeight: 700, color: 'var(--muted)', marginTop: 10 }}>
-                Type <span style={mono}>{state?.baseline.confirmationPhrase}</span> to confirm
+                Type <span style={mono}>{phrase || state?.baseline.confirmationPhrase}</span> to confirm
                 <input
                   value={confirmation} onChange={(e) => setConfirmation(e.target.value)}
                   style={field} aria-label="Confirmation phrase"
@@ -283,8 +348,8 @@ export function BaselineAdoptionPanel({
               </label>
               <button
                 onClick={adopt}
-                disabled={busy || confirmation !== state?.baseline.confirmationPhrase}
-                style={{ marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 7, borderRadius: 10, border: 0, background: '#e11d48', color: '#fff', padding: '10px 16px', fontSize: 13, fontWeight: 800, cursor: busy || confirmation !== state?.baseline.confirmationPhrase ? 'not-allowed' : 'pointer', opacity: busy || confirmation !== state?.baseline.confirmationPhrase ? 0.55 : 1 }}
+                disabled={busy || !phrase || confirmation !== phrase}
+                style={{ marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 7, borderRadius: 10, border: 0, background: '#e11d48', color: '#fff', padding: '10px 16px', fontSize: 13, fontWeight: 800, cursor: busy || confirmation !== phrase ? 'not-allowed' : 'pointer', opacity: busy || confirmation !== phrase ? 0.55 : 1 }}
               >
                 {busy ? <Loader2 size={14} className="spin" aria-hidden /> : <CheckCircle2 size={14} aria-hidden />}
                 Record v{resolvedVersion} as the starting version

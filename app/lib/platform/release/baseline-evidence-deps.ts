@@ -39,13 +39,26 @@ export function liveBaselineEvidenceDeps(business: PlatformBusiness): BaselineEv
       return r.ok && r.data?.commit ? { commit: r.data.commit } : null
     },
 
+    readRepoTree: async (repo: RepoRef, sha: string) => {
+      if (!installation) return null
+      const r = await github.readTree(installation, repo, sha)
+      return r.ok && r.data?.paths ? r.data.paths : null
+    },
+
     fetchHealth: async (url: string) => {
       try {
         const res = await fetch(url, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(8000) })
         const text = await res.text().catch(() => '')
         let build: string | undefined
-        try { build = (JSON.parse(text) as { build?: string }).build } catch { /* not JSON — fine */ }
-        return { ok: res.ok, status: res.status, build, body: text.slice(0, 500) }
+        let reportedStatus: string | undefined
+        try {
+          const parsed = JSON.parse(text) as { build?: string; status?: string }
+          build = parsed.build
+          // The site's OWN verdict. A 200 carrying {"status":"degraded"} is not healthy,
+          // and the transport code must not be mistaken for the answer.
+          reportedStatus = parsed.status
+        } catch { /* not JSON — fine */ }
+        return { ok: res.ok, status: res.status, build, reportedStatus, body: text.slice(0, 500) }
       } catch { return null }
     },
 

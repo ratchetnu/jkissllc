@@ -25,17 +25,32 @@
 import type {
   BaselineFlagEvidence, BaselineSchemaEvidence, BaselineVerificationEvidence, PlatformBusiness,
 } from '../updates/types'
+import { touchesStoredData } from '../updates/discovery'
 
 const FULL_SHA = /^[0-9a-f]{40}$/i
 const ABBREV_SHA = /^[0-9a-f]{7,39}$/i
 
 export type EvidenceStatus = 'ok' | 'missing' | 'contradictory'
 
+/**
+ * WHERE a fact came from. Recorded per item and carried into the adoption record,
+ * because "Vercel told us" and "the owner said so" are not the same claim and must not
+ * read the same afterwards.
+ */
+export type EvidenceSource =
+  | 'provider_verified'   // read from the deployment provider or the live site
+  | 'repository_derived'  // computed from repository contents at the exact commit
+  | 'owner_attested'      // the owner asserted it; Operion could not establish it
+  | 'unresolved'          // not established, and not attested either
+
 export type EvidenceItem = {
   id: string
   /** What this is, in the owner's language. */
   label: string
   status: EvidenceStatus
+  source: EvidenceSource
+  /** True when an owner attestation would resolve this item (and only then). */
+  attestable?: boolean
   /** One sentence saying what was found, or what could not be. */
   detail: string
   /** What the owner should DO. Present whenever status is not `ok`. */
@@ -60,6 +75,10 @@ export type BaselineEvidenceReport = {
   schemaMigrationState: BaselineSchemaEvidence
   relevantFlagState: BaselineFlagEvidence
   verificationEvidence: BaselineVerificationEvidence[]
+  /** Items an owner could resolve by attesting. Empty when everything was established. */
+  attestable: string[]
+  /** Facts recorded on the owner's word. Non-empty ⇒ stronger confirmation is required. */
+  attested: string[]
 }
 
 export type RepoRef = { owner: string; name: string }
@@ -70,7 +89,9 @@ export type BaselineEvidenceDeps = {
   /** Authoritative: asks the repository what full SHA an identifier refers to. */
   readCommit: (repo: RepoRef, sha: string) => Promise<{ sha: string; message?: string } | null>
   readBranch: (repo: RepoRef, branch: string) => Promise<{ commit: string } | null>
-  fetchHealth: (url: string) => Promise<{ ok: boolean; status: number; build?: string; body?: string } | null>
+  /** Paths in the repository AT AN EXACT COMMIT. The bootstrap path for schema state. */
+  readRepoTree: (repo: RepoRef, sha: string) => Promise<string[] | null>
+  fetchHealth: (url: string) => Promise<{ ok: boolean; status: number; build?: string; reportedStatus?: string; body?: string } | null>
   readCapabilities: (business: PlatformBusiness) => Promise<{ manifestHash?: string; capabilities: { id: string; evidence: string }[] } | null>
   readSchemaState: (business: PlatformBusiness) => Promise<BaselineSchemaEvidence | null>
   readFlagState: (business: PlatformBusiness) => Promise<BaselineFlagEvidence | null>
@@ -129,9 +150,9 @@ export async function resolveFullCommit(
 }
 
 const item = (
-  id: string, label: string, status: EvidenceStatus, detail: string,
-  extra: { action?: string; technical?: string } = {},
-): EvidenceItem => ({ id, label, status, detail, ...extra })
+  id: string, label: string, status: EvidenceStatus, source: EvidenceSource, detail: string,
+  extra: { action?: string; technical?: string; attestable?: boolean } = {},
+): EvidenceItem => ({ id, label, status, source, detail, ...extra })
 
 export function repoRefOf(business: Pick<PlatformBusiness, 'repoName' | 'repositoryOwner' | 'repositoryNameOnly'>): RepoRef | undefined {
   if (business.repositoryOwner && business.repositoryNameOnly) {
@@ -149,17 +170,20 @@ export async function collectBaselineEvidence(input: {
   business: PlatformBusiness
   now: number
   deps: BaselineEvidenceDeps
+  /** Facts the owner has explicitly attested. Only ever consulted for `attestable` items. */
+  attestations?: { schema?: boolean }
 }): Promise<BaselineEvidenceReport> {
   const { business, now, deps } = input
+  const attestations = input.attestations ?? {}
   const items: EvidenceItem[] = []
   const repo = repoRefOf(business)
 
   // ── 1. Repository identity ────────────────────────────────────────────────
   if (repo) {
-    items.push(item('repository', 'Repository and branch', 'ok',
+    items.push(item('repository', 'Repository and branch', 'ok', 'provider_verified',
       `Connected to ${repo.owner}/${repo.name}, branch ${business.defaultBranch}.`))
   } else {
-    items.push(item('repository', 'Repository and branch', 'missing',
+    items.push(item('repository', 'Repository and branch', 'missing', 'unresolved',
       'No code repository is connected to this business.',
       { action: 'Connect the repository in Business settings, then check again.' }))
   }
@@ -167,14 +191,14 @@ export async function collectBaselineEvidence(input: {
   // ── 2. Live production deployment ─────────────────────────────────────────
   const live = await deps.readProduction(business).catch(() => null)
   if (!live?.deploymentId) {
-    items.push(item('deployment', 'Live production deployment', 'missing',
+    items.push(item('deployment', 'Live production deployment', 'missing', 'unresolved',
       'Could not read the live production deployment for this business.',
       {
         action: 'Check that the hosting project is connected in Business settings, then check again.',
         technical: `project: ${business.productionProjectId || business.deployProject || '(none mapped)'}`,
       }))
   } else {
-    items.push(item('deployment', 'Live production deployment', 'ok',
+    items.push(item('deployment', 'Live production deployment', 'ok', 'provider_verified',
       `Serving deployment ${live.deploymentId}.`,
       { technical: `deploymentId=${live.deploymentId} url=${live.url ?? '—'} deployedAt=${live.deployedAt ?? '—'}` }))
   }
@@ -184,18 +208,18 @@ export async function collectBaselineEvidence(input: {
   let fullCommit: string | undefined
   if (resolution.ok) {
     fullCommit = resolution.fullCommit
-    items.push(item('commit', 'Exact code version live', 'ok',
+    items.push(item('commit', 'Exact code version live', 'ok', 'provider_verified',
       `Live production is running commit ${fullCommit.slice(0, 12)}.`,
       {
         technical: `full commit ${fullCommit} (resolved via ${resolution.source === 'provider_full' ? 'deployment metadata' : 'repository lookup'})`,
       }))
   } else if (!live?.deploymentId) {
     // Already reported as a missing deployment; do not scold twice for one cause.
-    items.push(item('commit', 'Exact code version live', 'missing',
+    items.push(item('commit', 'Exact code version live', 'missing', 'unresolved',
       'Cannot identify the live code version until the deployment can be read.',
       { action: 'Resolve the deployment connection above, then check again.' }))
   } else {
-    items.push(item('commit', 'Exact code version live', 'missing', resolution.detail,
+    items.push(item('commit', 'Exact code version live', 'missing', 'unresolved', resolution.detail,
       {
         action: 'Redeploy production from the connected repository so the exact code version can be confirmed, then check again.',
         technical: resolution.technical,
@@ -208,7 +232,7 @@ export async function collectBaselineEvidence(input: {
   if (fullCommit && repo) {
     const known = await deps.readCommit(repo, fullCommit).catch(() => null)
     if (!known?.sha) {
-      items.push(item('commit_in_repo', 'Code version matches the repository', 'contradictory',
+      items.push(item('commit_in_repo', 'Code version matches the repository', 'contradictory', 'repository_derived',
         `Live production is running a commit that ${repo.owner}/${repo.name} does not recognise.`,
         {
           action: 'Confirm the business is connected to the repository its site is actually deployed from.',
@@ -216,7 +240,7 @@ export async function collectBaselineEvidence(input: {
         }))
     } else {
       const branch = await deps.readBranch(repo, business.defaultBranch).catch(() => null)
-      items.push(item('commit_in_repo', 'Code version matches the repository', 'ok',
+      items.push(item('commit_in_repo', 'Code version matches the repository', 'ok', 'repository_derived',
         `Confirmed in ${repo.owner}/${repo.name}.`,
         { technical: `branch ${business.defaultBranch} head=${branch?.commit ?? 'unread'} · live=${fullCommit}` }))
     }
@@ -225,31 +249,41 @@ export async function collectBaselineEvidence(input: {
   // ── 5. Production health ──────────────────────────────────────────────────
   const healthUrl = business.healthEndpoint || (business.productionUrl ? `${business.productionUrl.replace(/\/$/, '')}/api/health` : '')
   if (!healthUrl) {
-    items.push(item('health', 'Site responding', 'missing',
+    items.push(item('health', 'Site responding', 'missing', 'unresolved',
       'No production address is recorded for this business.',
       { action: 'Add the production URL in Business settings, then check again.' }))
   } else {
     const health = await deps.fetchHealth(healthUrl).catch(() => null)
     if (!health) {
-      items.push(item('health', 'Site responding', 'missing',
+      items.push(item('health', 'Site responding', 'missing', 'unresolved',
         'Could not reach the production site to confirm it is healthy.',
         { action: 'Check the site is online, then check again.', technical: `GET ${healthUrl} → no response` }))
     } else if (!health.ok) {
-      items.push(item('health', 'Site responding', 'contradictory',
+      items.push(item('health', 'Site responding', 'contradictory', 'provider_verified',
         `The production site answered, but reported a problem (HTTP ${health.status}).`,
         { action: 'Resolve the site error before recording a starting version.', technical: `GET ${healthUrl} → ${health.status}` }))
+    } else if (health.reportedStatus && health.reportedStatus !== 'healthy') {
+      // Found by checking the real Supercharged deployment: /api/health answers HTTP 200
+      // with {"status":"degraded"}. Treating the transport code as the answer would have
+      // recorded a baseline against a site that is telling us something is wrong.
+      items.push(item('health', 'Site responding', 'contradictory', 'provider_verified',
+        `The production site is reachable but reports its own status as "${health.reportedStatus}".`,
+        {
+          action: 'Resolve what the site is reporting before recording a starting version.',
+          technical: `GET ${healthUrl} → ${health.status} status=${health.reportedStatus}${health.build ? ` build=${health.build}` : ''}`,
+        }))
     } else if (health.build && live?.deploymentId && health.build !== live.deploymentId) {
       // Read both, and they disagree — the site is not serving the deployment the
       // provider calls current. Recording a baseline now would attribute one build's
       // evidence to another.
-      items.push(item('health', 'Site responding', 'contradictory',
+      items.push(item('health', 'Site responding', 'contradictory', 'provider_verified',
         'The live site is reporting a different build than the hosting provider lists as current.',
         {
           action: 'Wait for the deployment to finish rolling out, then check again.',
           technical: `health build=${health.build} · provider deployment=${live.deploymentId}`,
         }))
     } else {
-      items.push(item('health', 'Site responding', 'ok', 'The production site is up and reporting healthy.',
+      items.push(item('health', 'Site responding', 'ok', 'provider_verified', 'The production site is up and reporting healthy.',
         { technical: `GET ${healthUrl} → ${health.status}${health.build ? ` build=${health.build}` : ''}` }))
     }
   }
@@ -258,49 +292,99 @@ export async function collectBaselineEvidence(input: {
   const caps = await deps.readCapabilities(business).catch(() => null)
   const capabilities = caps?.capabilities ?? []
   if (!caps || !capabilities.length) {
-    items.push(item('capabilities', 'Features detected', 'missing',
+    items.push(item('capabilities', 'Features detected', 'missing', 'unresolved',
       'Could not determine which features this business is running.',
       { action: 'Open the business once so it reports its features, then check again.' }))
   } else {
-    items.push(item('capabilities', 'Features detected', 'ok',
+    items.push(item('capabilities', 'Features detected', 'ok', 'provider_verified',
       `${capabilities.length} feature${capabilities.length === 1 ? '' : 's'} detected: ${capabilities.slice(0, 6).map((c) => c.id).join(', ')}${capabilities.length > 6 ? '…' : ''}.`,
       { technical: `manifest ${caps.manifestHash ?? '(none)'} · ${capabilities.map((c) => `${c.id}=${c.evidence}`).join('; ')}` }))
   }
   if (!caps?.manifestHash) {
-    items.push(item('manifest', 'Feature fingerprint', 'missing',
+    items.push(item('manifest', 'Feature fingerprint', 'missing', 'unresolved',
       'Could not compute a fingerprint of this business’s feature set.',
       { action: 'This usually clears once the site has reported in. Check again shortly.' }))
   } else {
-    items.push(item('manifest', 'Feature fingerprint', 'ok', 'Recorded.',
+    items.push(item('manifest', 'Feature fingerprint', 'ok', 'provider_verified', 'Recorded.',
       { technical: caps.manifestHash }))
   }
 
   // ── 7. Schema / migration state ───────────────────────────────────────────
+  // A business that predates Operion has NO prior Operion-verified deployment, so asking
+  // for one is circular: it could never adopt a first baseline. Three tiers, strongest
+  // first, and each records where the answer came from.
+  //
+  //   1. a prior Operion-verified deployment              → provider_verified
+  //   2. the repository at the exact deployed commit      → repository_derived
+  //   3. the owner, explicitly and visibly                → owner_attested
+  //
+  // Tier 2 is what breaks the circle: if the code at that commit contains no migration
+  // or backfill of any kind, there is nothing outstanding to apply, and that is a fact
+  // about the artifact rather than about Operion's history with it.
   const schema = await deps.readSchemaState(business).catch(() => null)
-  const schemaMigrationState: BaselineSchemaEvidence = schema ?? { state: 'unknown' }
-  if (schemaMigrationState.state === 'unknown') {
-    items.push(item('schema', 'Data structure', 'missing',
-      'Could not confirm whether this business has any outstanding data changes.',
-      { action: 'Check again once the site has reported its data state.' }))
-  } else {
-    items.push(item('schema', 'Data structure', 'ok',
-      schemaMigrationState.state === 'not_applicable'
+  let schemaMigrationState: BaselineSchemaEvidence = schema ?? { state: 'unknown' }
+  if (schema && schema.state !== 'unknown') {
+    items.push(item('schema', 'Data structure', 'ok', 'provider_verified',
+      schema.state === 'not_applicable'
         ? 'No data migrations apply to this business.'
         : 'Data structure is up to date, with no outstanding migrations.',
-      { technical: `state=${schemaMigrationState.state} ${schemaMigrationState.evidence ?? ''}`.trim() }))
+      { technical: `state=${schema.state} ${schema.evidence ?? ''}`.trim() }))
+  } else if (fullCommit && repo) {
+    const tree = await deps.readRepoTree(repo, fullCommit).catch(() => null)
+    const migrationPaths = tree?.filter(touchesStoredData) ?? []
+    if (!tree) {
+      items.push(item('schema', 'Data structure', 'missing', 'unresolved',
+        'Could not read the code at the version that is live, so outstanding data changes could not be ruled out.',
+        {
+          action: 'Reconnect the repository so Operion can read it, then check again.',
+          technical: `tree read failed for ${repo.owner}/${repo.name}@${fullCommit}`,
+          attestable: true,
+        }))
+    } else if (!migrationPaths.length) {
+      schemaMigrationState = { state: 'not_applicable', evidence: `no migration or backfill files exist at ${fullCommit.slice(0, 12)}` }
+      items.push(item('schema', 'Data structure', 'ok', 'repository_derived',
+        'The code running live contains no data migrations, so there is nothing outstanding to apply.',
+        { technical: `${tree.length} paths scanned at ${fullCommit}; 0 migration/backfill paths` }))
+    } else {
+      // Migrations exist in the code. Whether they were APPLIED is not knowable from the
+      // repository, and Operion has no record of running them. Unknown — and unknown is
+      // never described as clean.
+      items.push(item('schema', 'Data structure', 'missing', 'unresolved',
+        `The code running live contains ${migrationPaths.length} data migration file${migrationPaths.length === 1 ? '' : 's'}, and Operion has no record of whether they were applied.`,
+        {
+          action: 'Confirm with whoever deployed this site that its data changes were applied, then attest to it below.',
+          technical: migrationPaths.slice(0, 10).join(', '),
+          attestable: true,
+        }))
+    }
+  } else {
+    items.push(item('schema', 'Data structure', 'missing', 'unresolved',
+      'Could not confirm whether this business has any outstanding data changes.',
+      { action: 'Resolve the live code version above, then check again.', attestable: true }))
+  }
+
+  // An attestation resolves an attestable item — and ONLY an attestable one. It is
+  // recorded as owner_attested, never promoted to a verified reading.
+  const schemaItem = items.find((i) => i.id === 'schema')!
+  if (attestations.schema && schemaItem.attestable && schemaItem.status !== 'ok') {
+    const attested = items.indexOf(schemaItem)
+    items[attested] = item('schema', 'Data structure', 'ok', 'owner_attested',
+      'You have confirmed that this site’s data changes were applied. Operion could not verify this itself.',
+      { technical: `owner attestation; original finding: ${schemaItem.detail}` })
+    schemaMigrationState = { state: 'verified', evidence: 'owner attestation — not verified by Operion' }
   }
 
   // ── 8. Feature flags ──────────────────────────────────────────────────────
   const flags = await deps.readFlagState(business).catch(() => null)
   const relevantFlagState: BaselineFlagEvidence = flags ?? { assessed: false, flags: {} }
   if (!relevantFlagState.assessed) {
-    items.push(item('flags', 'Feature switches', 'missing',
+    items.push(item('flags', 'Feature switches', 'missing', 'unresolved',
       'Could not read which optional features are switched on.',
       { action: 'Check again once the site has reported its settings.' }))
   } else {
     const keys = Object.keys(relevantFlagState.flags)
     const on = keys.filter((k) => relevantFlagState.flags[k])
-    items.push(item('flags', 'Feature switches', 'ok',
+    items.push(item('flags', 'Feature switches', 'ok', 'provider_verified',
       keys.length
         ? `${keys.length} relevant switch${keys.length === 1 ? '' : 'es'} assessed, ${on.length} on.`
         : 'No release-relevant switches apply.',
@@ -330,6 +414,8 @@ export async function collectBaselineEvidence(input: {
     schemaMigrationState,
     relevantFlagState,
     verificationEvidence,
+    attestable: items.filter((i) => i.attestable && i.status !== 'ok').map((i) => i.id),
+    attested: items.filter((i) => i.source === 'owner_attested').map((i) => i.id),
   }
 }
 

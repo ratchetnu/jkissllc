@@ -82,8 +82,13 @@ export function baselineSourceOf(business: Pick<PlatformBusiness, 'baselineSourc
     : 'unknown'
 }
 
-export function baselineConfirmationPhrase(targetProduct: string): string {
-  return `ADOPT ${targetProduct.toUpperCase()} BASELINE`
+export function baselineConfirmationPhrase(targetProduct: string, attestedFacts: string[] = []): string {
+  // A baseline resting partly on the owner's word is a different commitment from one
+  // resting entirely on readings, so it is confirmed with a different sentence. The
+  // owner cannot type this one without noticing what they are agreeing to.
+  return attestedFacts.length
+    ? `ADOPT ${targetProduct.toUpperCase()} BASELINE WITH UNVERIFIED FACTS`
+    : `ADOPT ${targetProduct.toUpperCase()} BASELINE`
 }
 
 export function rollbackSnapshotFor(business: PlatformBusiness): BaselineRollbackSnapshot {

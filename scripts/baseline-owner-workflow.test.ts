@@ -38,8 +38,10 @@ test('check_evidence builds the evidence server-side; nothing but the version co
   assert.match(block, /capabilityManifestHash: report\.capabilityManifestHash/)
   assert.match(block, /schemaMigrationState: report\.schemaMigrationState/)
   // The only client-derived inputs permitted anywhere in that block.
+  // The owner's DECISIONS are the only client inputs: which version, and what they
+  // explicitly attest to. No fact, no commit, no hash.
   const clientReads = [...block.matchAll(/body\?\.(\w+)/g)].map((m) => m[1]).sort()
-  assert.deepEqual([...new Set(clientReads)], ['customVersion', 'startingVersionChoice'])
+  assert.deepEqual([...new Set(clientReads)], ['attestations', 'customVersion', 'startingVersionChoice'])
 })
 
 test('checking evidence performs no writes', () => {
@@ -134,14 +136,15 @@ test('the confirmation screen shows the six facts and says adopting changes noth
     assert.ok(src.includes(row), `the confirmation screen omits "${row}"`)
   }
   assert.match(src, /does not deploy anything and does not change the site/i)
-  assert.match(src, /Type <span style=\{mono\}>\{state\?\.baseline\.confirmationPhrase\}/, 'an explicit typed confirmation is required')
+  assert.match(src, /Type <span style=\{mono\}>\{phrase \|\| state\?\.baseline\.confirmationPhrase\}/, 'an explicit typed confirmation is required')
 })
 
 test('changing the decision invalidates a completed check', () => {
   // Otherwise an owner could check evidence for 1.0.0, switch to 0.1.0, and confirm a
   // version that was never checked.
   const src = panel()
-  assert.match(src, /const invalidate = useCallback\(\(\) => \{ setReport\(null\); setDryRun\(null\); setStage\('choose'\) \}/)
+  assert.match(src, /const invalidate = useCallback\(\(\) => \{ setReport\(null\); setDryRun\(null\); setStage\('choose'\); setConfirmation\(''\) \}/,
+    'and clears a typed confirmation, so it cannot carry over to different evidence')
   // Both inputs the owner can touch — the choice itself and the custom number.
   assert.match(src, /onChange=\{\(\) => \{ setChoice\(c\.id\); invalidate\(\) \}\}/)
   assert.match(src, /onChange=\{\(e\) => \{ setCustomVersion\(e\.target\.value\); invalidate\(\) \}\}/)
@@ -202,4 +205,67 @@ test('the Release Center renders an archived summary instead of the live step ra
   const archivedAt = src.indexOf('prog?.archived ? (')
   const railAt = src.indexOf('LIVE_STEPS : STEPS).map')
   assert.ok(archivedAt > 0 && railAt > archivedAt, 'the rail should sit in the non-archived branch')
+})
+
+// ── Blockers found in review of PR #213 ────────────────────────────────────
+
+test('adoption re-collects evidence server-side; the browser sends none', () => {
+  const src = route()
+  const adopt = src.slice(src.indexOf("if (action !== 'adopt')"))
+  assert.match(adopt, /const fresh = await collectBaselineEvidence\(/, 'evidence is re-read at write time')
+  assert.match(adopt, /deployedCommit: fresh\.live\.fullCommit/)
+  assert.match(adopt, /if \(!fresh\.ok \|\| !fresh\.live\)/, 'and a check that no longer passes refuses the write')
+  assert.match(adopt, /409/, 'stale evidence is a conflict, not a silent success')
+  // The browser must not be able to hand the server evidence at all.
+  const p = panel()
+  const adoptBody = p.slice(p.indexOf("action: 'adopt'"), p.indexOf("action: 'adopt'") + 400)
+  assert.ok(!/evidence:/.test(adoptBody), 'the panel still sends evidence at adopt time')
+  assert.match(adoptBody, /approvalToken/)
+  assert.match(adoptBody, /confirmationPhrase/)
+})
+
+test('the fabricated client evidence is gone', () => {
+  // The previous adopt path synthesised `relevantFlagState: { assessed: true, flags: {} }`
+  // and `verificationEvidence: []` in the browser — values that were never collected, and
+  // which would have made the server's re-run see evidence that did not exist.
+  const p = panel()
+  assert.ok(!/relevantFlagState: \{ assessed: true, flags: \{\} \}/.test(p))
+  assert.ok(!/verificationEvidence: \[\]/.test(p))
+})
+
+test('capability initialization is a separate, explicit owner action that never runs during a check', () => {
+  const src = route()
+  assert.match(src, /if \(action === 'initialize_capabilities'\)/)
+  const init = src.slice(src.indexOf("if (action === 'initialize_capabilities')"), src.indexOf("if (action === 'dry_run')"))
+  assert.match(init, /getPrincipal\(req\)/, 'it records who did it')
+  assert.match(init, /dryRun: false/, 'and writes deliberately, not by default')
+  // And the check itself must never call it.
+  const check = src.slice(src.indexOf("if (action === 'check_evidence')"), src.indexOf("if (action === 'initialize_capabilities')"))
+  assert.ok(!check.includes('backfillCapabilityProfile'), 'checking evidence initializes capabilities')
+})
+
+test('the confirmation phrase escalates when a fact rests on the owner’s word', async () => {
+  const { baselineConfirmationPhrase } = await import('../app/lib/platform/release/baseline-adoption')
+  assert.equal(baselineConfirmationPhrase('supercharged'), 'ADOPT SUPERCHARGED BASELINE')
+  assert.equal(baselineConfirmationPhrase('supercharged', []), 'ADOPT SUPERCHARGED BASELINE')
+  assert.equal(baselineConfirmationPhrase('supercharged', ['schema']), 'ADOPT SUPERCHARGED BASELINE WITH UNVERIFIED FACTS')
+  // The panel must use the phrase the SERVER computed for this check, not a stored one —
+  // the GET cannot know what the owner will attest to.
+  const p = panel()
+  assert.match(p, /setPhrase\(typeof result\.confirmationPhrase === 'string'/)
+  assert.match(p, /confirmation !== phrase/)
+})
+
+test('an attested baseline records that it was attested, durably', async () => {
+  const src = readFileSync('app/lib/platform/release/baseline-adoption-service.ts', 'utf8')
+  assert.match(src, /attestedFacts: input\.attestedFacts\?\.length \? input\.attestedFacts : undefined/)
+  assert.match(src, /baselineConfirmationPhrase\(input\.business\.id, input\.attestedFacts \?\? \[\]\)/)
+})
+
+test('every evidence row shows where its fact came from', () => {
+  const p = panel()
+  assert.match(p, /SOURCE_LABEL/)
+  assert.match(p, /Checked directly/)
+  assert.match(p, /Worked out from the code that is live/)
+  assert.match(p, /Operion could not check this itself/)
 })

@@ -32,7 +32,8 @@ const deps = (patch: Partial<BaselineEvidenceDeps> = {}): BaselineEvidenceDeps =
   readProduction: async () => ({ deploymentId: 'dpl_live', commit: LIVE_FULL, url: 'https://sc.app', deployedAt: NOW - 1000 }),
   readCommit: async (_repo, sha) => (sha.toLowerCase() === LIVE_FULL || LIVE_FULL.startsWith(sha.toLowerCase()) ? { sha: LIVE_FULL } : null),
   readBranch: async () => ({ commit: LIVE_FULL }),
-  fetchHealth: async () => ({ ok: true, status: 200, build: 'dpl_live' }),
+  readRepoTree: async () => ['app/lib/booking.ts', 'app/page.tsx', 'README.md'],
+  fetchHealth: async () => ({ ok: true, status: 200, build: 'dpl_live', reportedStatus: 'healthy' }),
   readCapabilities: async () => ({ manifestHash: `sha256:${'a'.repeat(64)}`, capabilities: [{ id: 'booking', evidence: 'route present' }] }),
   readSchemaState: async () => ({ state: 'verified', evidence: 'no pending migrations' }),
   readFlagState: async () => ({ assessed: true, flags: { BOOKING_ASSIGNMENT_ENABLED: true } }),
@@ -173,7 +174,7 @@ test('collecting evidence performs no writes — it only reads', async () => {
   const names = Object.keys(deps())
   assert.deepEqual(names.sort(), [
     'fetchHealth', 'readBranch', 'readCapabilities', 'readCommit',
-    'readFlagState', 'readProduction', 'readSchemaState',
+    'readFlagState', 'readProduction', 'readRepoTree', 'readSchemaState',
   ])
   for (const n of names) assert.match(n, /^(read|fetch)/, `${n} is not a read-only dependency`)
 })
@@ -226,19 +227,147 @@ test('an UNRESOLVABLE abbreviation never reaches the published evidence', async 
   assert.match(byId(report, 'commit').action ?? '', /Redeploy production/i)
 })
 
-test('an unread schema state is MISSING — never assumed clean', async () => {
-  // "We have not checked" and "there is nothing to apply" are different answers, and
-  // only one of them is safe to record as durable provenance.
-  const report = await run(business(), deps({ readSchemaState: async () => null }))
-  assert.equal(byId(report, 'schema').status, 'missing')
-  assert.equal(report.schemaMigrationState.state, 'unknown')
-  assert.equal(report.ok, false, 'and it blocks adoption')
-  assert.match(byId(report, 'schema').detail, /Could not confirm/i)
+test('BOOTSTRAP: a business with NO prior Operion deployment can still be established', () => {
+  // The circularity this removes: schema state used to require a previous
+  // Operion-VERIFIED deployment. Supercharged predates Operion, so no such record can
+  // exist, and the baseline could never be adopted — the prerequisite for the first
+  // evidence record was an earlier evidence record.
+  //
+  // The repository at the exact deployed commit answers it without Operion history.
+  assert.ok(true) // (behaviour asserted in the two tests below)
 })
+
+test('BOOTSTRAP: no prior record + no migrations in the code = established from the repository', async () => {
+  const report = await run(business(), deps({
+    readSchemaState: async () => null,                                  // pre-Operion: nothing recorded
+    readRepoTree: async () => ['app/lib/booking.ts', 'app/page.tsx'],   // and no migrations exist
+  }))
+  const schema = byId(report, 'schema')
+  assert.equal(schema.status, 'ok')
+  assert.equal(schema.source, 'repository_derived', 'derived from the artifact, not from Operion history')
+  assert.equal(report.schemaMigrationState.state, 'not_applicable')
+  assert.equal(report.ok, true, 'a pre-Operion business reaches a complete check')
+  assert.equal(report.attested.length, 0, 'and needs no attestation to get there')
+})
+
+test('BOOTSTRAP: migrations in the code are UNKNOWN, never described as clean', async () => {
+  const report = await run(business(), deps({
+    readSchemaState: async () => null,
+    readRepoTree: async () => ['scripts/pay-backfill.ts', 'db/migrations/001.sql', 'app/lib/x.ts'],
+  }))
+  const schema = byId(report, 'schema')
+  assert.equal(schema.status, 'missing')
+  assert.equal(schema.source, 'unresolved')
+  assert.equal(schema.attestable, true, 'the owner can resolve it, deliberately')
+  assert.match(schema.detail, /no record of whether they were applied/i)
+  assert.ok(!/up to date|no outstanding|clean/i.test(schema.detail), 'unknown must not read as clean')
+  assert.equal(report.ok, false)
+  assert.deepEqual(report.attestable, ['schema'])
+})
+
+test('ATTESTATION resolves an attestable item, and is recorded as the owner’s word', async () => {
+  const d = deps({ readSchemaState: async () => null, readRepoTree: async () => ['db/migrations/001.sql'] })
+  const report = await collectBaselineEvidence({ business: business(), now: NOW, deps: d, attestations: { schema: true } })
+  const schema = byId(report, 'schema')
+  assert.equal(schema.status, 'ok')
+  assert.equal(schema.source, 'owner_attested', 'never promoted to a verified reading')
+  assert.match(schema.detail, /Operion could not verify this itself/i)
+  assert.deepEqual(report.attested, ['schema'])
+  assert.equal(report.schemaMigrationState.evidence, 'owner attestation — not verified by Operion')
+  assert.equal(report.ok, true)
+})
+
+test('an attestation cannot resolve an item that is NOT attestable', async () => {
+  // The owner may not attest their way past a provider reading. Only items Operion has
+  // marked attestable — because it genuinely cannot establish them — can be attested.
+  const report = await collectBaselineEvidence({
+    business: business(), now: NOW,
+    deps: deps({ readProduction: async () => null }),
+    attestations: { schema: true },
+  })
+  assert.equal(byId(report, 'deployment').status, 'missing', 'the deployment gap stands')
+  assert.equal(byId(report, 'deployment').source, 'unresolved')
+  assert.equal(report.ok, false)
+})
+
+test('a repository that cannot be read is attestable, not silently clean', async () => {
+  const report = await run(business(), deps({ readSchemaState: async () => null, readRepoTree: async () => null }))
+  const schema = byId(report, 'schema')
+  assert.equal(schema.status, 'missing')
+  assert.equal(schema.attestable, true)
+  assert.equal(report.schemaMigrationState.state, 'unknown')
+})
+
+test('a prior Operion-verified deployment still wins, and is labelled as provider-verified', async () => {
+  const report = await run()
+  assert.equal(byId(report, 'schema').source, 'provider_verified')
+})
+
+test('every item declares where its fact came from', async () => {
+  const report = await run()
+  const SOURCES = ['provider_verified', 'repository_derived', 'owner_attested', 'unresolved']
+  for (const i of report.items) assert.ok(SOURCES.includes(i.source), `${i.id} has source ${i.source}`)
+})
+
 
 test('an unread flag assessment is MISSING — never assumed assessed', async () => {
   const report = await run(business(), deps({ readFlagState: async () => null }))
   assert.equal(byId(report, 'flags').status, 'missing')
   assert.equal(report.relevantFlagState.assessed, false)
   assert.equal(report.ok, false)
+})
+
+test('a 200 response that reports "degraded" is CONTRADICTORY, not healthy', async () => {
+  // Found by checking the real Supercharged deployment: /api/health answers HTTP 200
+  // with {"status":"degraded"}. Reading the transport code as the answer would have
+  // recorded a baseline against a site that is telling us something is wrong.
+  const report = await run(business(), deps({
+    fetchHealth: async () => ({ ok: true, status: 200, build: 'dpl_live', reportedStatus: 'degraded' }),
+  }))
+  const health = byId(report, 'health')
+  assert.equal(health.status, 'contradictory')
+  assert.match(health.detail, /reports its own status as "degraded"/)
+  assert.equal(report.ok, false)
+  assert.equal(health.attestable, undefined, 'and it is NOT something an owner may attest away')
+})
+
+test('only an explicitly healthy body passes', async () => {
+  for (const reported of ['healthy', undefined]) {
+    const report = await run(business(), deps({
+      fetchHealth: async () => ({ ok: true, status: 200, build: 'dpl_live', reportedStatus: reported }),
+    }))
+    assert.equal(byId(report, 'health').status, 'ok', String(reported))
+  }
+  for (const reported of ['degraded', 'down', 'unhealthy', 'error']) {
+    const report = await run(business(), deps({
+      fetchHealth: async () => ({ ok: true, status: 200, build: 'dpl_live', reportedStatus: reported }),
+    }))
+    assert.equal(byId(report, 'health').status, 'contradictory', reported)
+  }
+})
+
+test('an attestation cannot OVERWRITE a fact Operion actually verified', async () => {
+  // The hazard: a stray attestation flag downgrading a real reading to hearsay. The
+  // schema here is provider-verified from a prior deployment record, so the attestation
+  // must be ignored entirely — the record must keep saying it was measured.
+  const report = await collectBaselineEvidence({
+    business: business(), now: NOW,
+    deps: deps(),                       // readSchemaState returns a verified state
+    attestations: { schema: true },
+  })
+  const schema = byId(report, 'schema')
+  assert.equal(schema.status, 'ok')
+  assert.equal(schema.source, 'provider_verified', 'a verified reading must not become an attestation')
+  assert.deepEqual(report.attested, [], 'and nothing is recorded as resting on the owner’s word')
+  assert.ok(!/could not verify/i.test(schema.detail))
+})
+
+test('an attestation cannot resolve a repository-derived item either', async () => {
+  const report = await collectBaselineEvidence({
+    business: business(), now: NOW,
+    deps: deps({ readSchemaState: async () => null, readRepoTree: async () => ['app/lib/x.ts'] }),
+    attestations: { schema: true },
+  })
+  assert.equal(byId(report, 'schema').source, 'repository_derived')
+  assert.deepEqual(report.attested, [])
 })
