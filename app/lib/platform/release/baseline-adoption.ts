@@ -178,11 +178,22 @@ export function baselineEvidenceHash(
   rollback: BaselineRollbackSnapshot,
   liveProduction?: { commit: string; deploymentId: string },
 ): string {
+  // `health_check.verifiedAt` is the time the read happened, so the required write-time
+  // re-check necessarily produces a different value even when every underlying fact is
+  // unchanged. Bind the receipt to the evidence identity and result-bearing fields, not
+  // to that observation clock. The adopt path still requires the fresh collection to be
+  // safe before it verifies this receipt.
+  const receiptInput = {
+    ...input,
+    verificationEvidence: input.verificationEvidence.map(({ kind, reference }) => ({ kind, reference })),
+  }
   // Bind both the artifact and its concrete deployment. A redeploy may change environment,
   // build output, or configuration without changing the Git commit, so commit-only binding
   // would allow a receipt minted for one Production state to be spent against another.
   // Omitted when live provider evidence is not required, preserving the legacy hash shape.
-  const payload = liveProduction ? { input, rollback, liveProduction } : { input, rollback }
+  const payload = liveProduction
+    ? { input: receiptInput, rollback, liveProduction }
+    : { input: receiptInput, rollback }
   return createHash('sha256').update(stable(payload)).digest('hex')
 }
 

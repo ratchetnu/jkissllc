@@ -228,3 +228,32 @@ test('a receipt cannot be spent after a same-commit Production redeploy', async 
   assert.equal(result.ok, false)
   if (!result.ok) assert.match(result.reason, /receipt/)
 })
+
+test('a fresh write-time health check does not invalidate an otherwise identical receipt', async () => {
+  const target = business({ deployProject: 'supercharged' })
+  const checkedEvidence = evidence()
+  const run = dry({ evidence: checkedEvidence })
+  const freshlyCollectedEvidence = evidence({
+    verificationEvidence: [
+      { kind: 'production_deployment', reference: 'dpl_live', verifiedAt: NOW - 1000 },
+      // A real adopt always re-collects this fact later than the read-only check.
+      { kind: 'health_check', reference: 'smoke/2026-07-26', verifiedAt: NOW + 1000 },
+    ],
+  })
+  const result = await adoptBaseline({
+    business: target,
+    evidence: freshlyCollectedEvidence,
+    approvalToken: run.approvalToken!,
+    confirmationPhrase: baselineConfirmationPhrase('supercharged'),
+    actor: 'owner',
+    now: NOW + 1000,
+    approvalSecret: SECRET,
+    liveProduction: { deploymentId: 'dpl_live', commit: LIVE },
+    deps: {
+      nextId: async () => 'BAS-1005',
+      save: async () => true,
+      audit: async () => undefined as never,
+    },
+  })
+  assert.equal(result.ok, true)
+})
