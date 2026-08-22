@@ -164,6 +164,13 @@ const ROUTES = [
   { path: '/admin/operations/release', auth: 'admin', ready: 'h1',
     data: { required: ['/api/admin/release'] },
     expectDenial: { roles: ['manager'], text: 'The Release Center is restricted to administrators' } },
+  // The Update Center. Automatic release discovery files a record here for every
+  // merge to main, which turned this from an occasional page into the one an owner
+  // opens to see what has landed — and it was the only release surface the mobile
+  // audit did not measure. `/api/admin/platform` is `requirePlatformOwner`, a tier
+  // above admin, so a named admin is refused: the owner session is what measures it.
+  { path: '/admin/operations/platform', auth: 'owner', ready: 'h1',
+    data: { required: ['/api/admin/platform'] } },
   // AI Command Center sections — the data-dense pages most prone to mobile overflow.
   //
   // Every endpoint behind these four is `requirePlatformOwner` — a tier ABOVE admin (see

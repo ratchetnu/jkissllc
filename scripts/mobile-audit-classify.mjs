@@ -127,6 +127,10 @@ export const ROUTE_ROLE_MATRIX = {
   none: ['anonymous', 'crew', 'manager', 'admin', 'owner'],
   crew: ['crew'],
   admin: ['manager', 'admin', 'owner'],
+  // Platform-owner routes are a tier ABOVE admin (requirePlatformOwner in
+  // app/api/admin/_lib/session.ts). A named admin is genuinely refused there, so
+  // listing anyone else here would measure a denial screen and call it the page.
+  owner: ['owner'],
 }
 
 /** True when the signed-in principal may reach a route with this requirement. */
