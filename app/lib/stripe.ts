@@ -1,4 +1,5 @@
 import Stripe from 'stripe'
+import { requireCapability } from './platform/capabilities/guard'
 
 // Single Stripe account shared with ClaimGuard (same company). Uses the same
 // STRIPE_SECRET_KEY env var. Lazily constructed so the rest of the app still
@@ -19,6 +20,23 @@ export function getStripe(): Stripe {
 
 export function stripeConfigured(): boolean {
   return !!process.env.STRIPE_SECRET_KEY
+}
+
+/**
+ * The server-side gate every CARD-COLLECTION entry point must pass.
+ *
+ * `getStripe()` stays a plain constructor because the webhook and the return path
+ * legitimately need a client to VERIFY and RECONCILE work that already happened —
+ * refusing there would strand a payment the customer has already made. What must be
+ * gated is STARTING a new charge, and this is the shared resolver for it, so no
+ * route re-implements the rule with a raw env read.
+ *
+ * Fail closed: throws `CapabilityUnavailableError` (carrying a stable, non-secret
+ * code and an HTTP status) unless card payments are ready for the acting tenant.
+ * The tenant is resolved from ambient server context, never from the request body.
+ */
+export async function requireCardPayments(): Promise<void> {
+  await requireCapability('payments-stripe')
 }
 
 // ── Processing-fee gross-up ──────────────────────────────────────────────────

@@ -121,13 +121,44 @@ test('public view still advances booking_created to customer_viewed', async () =
   assert.equal((await getBookingByToken(TOKEN))?.status, 'customer_viewed')
 })
 
-test('resending a link never downgrades recorded customer-view evidence', async () => {
+// CORRECTED SEMANTICS. `send-link` used to stamp confirmationLinkSentAt and advance
+// the status on the strength of "we have an address and a key", discarding the
+// provider result entirely. With email and SMS now optional per business, that would
+// mean a business running neither channel recorded every booking as "link sent"
+// while nothing ever left the building. Delivery is now decided by the provider
+// RESULT; the invariant this test was written to protect — a resend never downgrades
+// recorded customer-view evidence — is asserted directly.
+test('a link that could not be delivered is NOT recorded as sent, and never downgrades status', async () => {
   await seed('customer_viewed')
   const response = await adminPatch({ action: 'send-link' })
   assert.equal(response.status, 200)
+  const body = await response.json()
+  // No provider is configured in this test process, so nothing delivered.
+  assert.equal(body.manualDeliveryRequired, true)
+  assert.equal(body.channels.delivered, false)
   const saved = await getBookingByToken(TOKEN)
-  assert.equal(saved?.status, 'customer_viewed')
+  assert.equal(saved?.status, 'customer_viewed', 'recorded customer-view evidence survives')
+  assert.ok(!saved?.confirmationLinkSentAt, 'nothing went out, so nothing claims it did')
+})
+
+test('the manual fallback hands the admin the link, and only an explicit assertion records delivery', async () => {
+  await seed('booking_created')
+  const offered = await (await adminPatch({ action: 'send-link' })).json()
+  // The link is offered so the job can still be done by hand — this is the same
+  // token the admin booking page already links to, not a new exposure.
+  assert.equal(offered.manualDeliveryRequired, true)
+  assert.match(offered.manualLink, new RegExp(TOKEN))
+  assert.ok(offered.manualReason.length > 0, 'the admin is told WHY nothing went out')
+  assert.ok(!(await getBookingByToken(TOKEN))?.confirmationLinkSentAt)
+
+  // The admin says they handed it over. Only now is it recorded — and attributed as
+  // a manual delivery, so the timeline never claims a channel that does not exist.
+  const confirmed = await adminPatch({ action: 'send-link', manualDelivered: true })
+  assert.equal(confirmed.status, 200)
+  const saved = await getBookingByToken(TOKEN)
   assert.ok(saved?.confirmationLinkSentAt)
+  assert.equal(saved?.confirmationLinkSentBy, 'admin-manual')
+  assert.ok(saved?.events?.some(e => e.action === 'link.manual_delivery'))
 })
 
 test('illegal admin lifecycle transition returns 400 and writes nothing', async () => {

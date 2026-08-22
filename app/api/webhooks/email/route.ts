@@ -14,6 +14,7 @@ import { recordMessage, claimProviderMessage, releaseProviderMessageClaim } from
 import { notifyOwnerOfReply } from '../../../lib/owner-alerts'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
 import { resolveTenantFromEmailChannel } from '../../../lib/platform/tenancy/tenant-channel-resolve'
+import { checkCapability, webhookDisposition } from '../../../lib/platform/capabilities/guard'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -57,6 +58,23 @@ export async function POST(req: NextRequest) {
   const tenantId = await resolveTenantFromEmailChannel(p.to || p.To)
   if (!tenantId) return NextResponse.json({ ok: true, skipped: 'unknown_recipient' })
   return withBackgroundTenant('webhook', async () => {
+
+  // ── Capability disposition (AFTER authentication, never before) ──
+  // Same rule as the inbound SMS webhook: an inbound reply is new work, not the
+  // confirmation of something we already did. A business that does not run email
+  // acknowledges and discards the authenticated event (200), because a 5xx would
+  // make the forwarder retry indefinitely against an endpoint that will never
+  // accept it. Enabled-but-unconfigured still refuses with 503 — that is a real
+  // outage and the retry is wanted. See platform/capabilities/guard.ts.
+  const emailCapability = await checkCapability('email-delivery', { tenantId })
+  const disposition = webhookDisposition(emailCapability)
+  if (disposition.action === 'refuse') {
+    console.error('[email-webhook] refusing:', disposition.code)
+    return new NextResponse('email not operational', { status: disposition.status })
+  }
+  if (disposition.action === 'acknowledge') {
+    return NextResponse.json({ ok: true, ignored: true, code: disposition.code })
+  }
 
   const fromRaw = p.from || p.From || p.sender || ''
   const from = extractEmail(fromRaw)

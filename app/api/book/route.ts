@@ -7,7 +7,8 @@ import {
   SERVICE_TYPES, type Booking, type ServiceType, type Payment,
 } from '../../lib/bookings'
 import { isDateBookable, getDepositCents, unitsForLoad } from '../../lib/availability'
-import { getStripe, stripeConfigured, grossUp } from '../../lib/stripe'
+import { getStripe, grossUp } from '../../lib/stripe'
+import { capabilityAvailable } from '../../lib/platform/capabilities/guard'
 import { rateLimit } from '../../lib/rate-limit'
 import { isBlockedBot } from '../../lib/botcheck'
 import { emailOpsBookingCreated, siteUrl } from '../../lib/booking-emails'
@@ -209,7 +210,12 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   if (!commit.ok) return await concededTo(commit.winnerToken)
   await emailOpsBookingCreated(booking).catch(() => {})
 
-  if (stripeConfigured()) {
+  // Card checkout is OPTIONAL here by design: a business with no card processor
+  // still books, still gets a confirmed record, and still lands on its booking page
+  // to pay by Zelle/cash/check. `capabilityAvailable` replaces the raw env read so
+  // an owner who has deliberately turned cards off gets the same graceful path as an
+  // owner who never configured them.
+  if (await capabilityAvailable('payments-stripe')) {
     try {
       const { feeCents, totalCents } = grossUp(depositCents)
       const stripe = getStripe()

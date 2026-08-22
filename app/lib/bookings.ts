@@ -153,6 +153,12 @@ export type BookingEventAction =
   | 'stripe.verified'
   | 'zelle.uploaded' | 'zelle.replacement_uploaded' | 'zelle.approved' | 'zelle.rejected'
   | 'notification.sent' | 'notification.failed' | 'notification.resent'
+  // No delivery channel was available (this business runs neither email nor SMS, or
+  // the customer left neither), so the secure link was handed to the admin to pass
+  // on by hand. Recorded because "the customer was given their link" is a fact the
+  // timeline has to carry however it happened — and because the booking is
+  // deliberately NOT advanced to "link sent" on this path.
+  | 'link.manual_delivery'
   | 'customer.confirmation'
   | 'ai.override' | 'ai.reprice' | 'ai.modify'
   | 'ai.invalidated'

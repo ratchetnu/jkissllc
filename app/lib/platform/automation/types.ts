@@ -8,6 +8,8 @@
 // Everything here is types; the state machine (machine.ts) reasons over them and the
 // store (store.ts) persists them under the `platform:autojob:*` key family.
 
+import type { TargetDeploymentEvidence } from '../updates/types'
+
 export const AUTOMATION_JOB_VERSION = 1
 
 // Statuses are automation-specific (never reuse DeploymentStatus for these).
@@ -162,6 +164,14 @@ export type UpdateAutomationJob = {
    *  evidence itself lives under `platform:autoev:<id>` so bulk job reads stay cheap.
    *  Absent on every record written before §4 #7 closed; readers must tolerate that. */
   transferEvidenceAt?: number
+  /**
+   * The value-free snapshot the TARGET returned through the signed callback after
+   * Preview: the build it is running and which optional capabilities are live
+   * there. Validated by automation/target-evidence.ts before it is stored — booleans,
+   * stable state codes and variable NAMES only, never an environment value. Absent
+   * on every job that predates it and on any target that did not report.
+   */
+  targetEvidence?: TargetDeploymentEvidence
   // production promotion (Sprint 2)
   mergeCommit?: string
   rollbackTargetDeploymentId?: string   // the known-good production deployment captured before promoting

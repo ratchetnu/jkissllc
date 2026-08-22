@@ -5,7 +5,8 @@
 // dispatched, merged, or deployed. Production promotion always requires the owner.
 
 import { isEnabled } from '../flags'
-import type { PlatformUpdate, PlatformBusiness, UpdateCompatibility } from '../updates/types'
+import type { PlatformUpdate, PlatformBusiness, UpdateCompatibility, TargetDeploymentEvidence } from '../updates/types'
+import { evaluateCapabilityImpact, type UpdateApplicability } from './target-evidence'
 import { AUTOMATION_JOB_VERSION, type UpdateAutomationJob, type ExecutionStrategy } from './types'
 import { evaluatePreflight, workBranchFor, commitDriftDetected, automaticRollbackEligible, type PreflightResult } from './preflight'
 import { businessRepoRef } from './repo-identity'
@@ -115,11 +116,41 @@ export async function checkTransferReady(input: {
 
 /** READ-ONLY preflight evaluation — no job is created, nothing is dispatched. The UI calls
  *  this to render readiness + disable "Prepare Preview" until every blocking gate passes. */
+/**
+ * The most recent value-free capability snapshot a target reported about ITSELF.
+ *
+ * Absence is not evidence of absence: a target that has never reported (an older
+ * workflow, or one whose owner has not run a Preview since the contract shipped)
+ * yields `null`, and `evaluateCapabilityImpact` then judges nothing missing. The
+ * alternative — treating "no report" as "nothing installed" — would block every
+ * transfer to a target that simply has not spoken yet.
+ */
+export async function latestTargetEvidence(businessId: string): Promise<TargetDeploymentEvidence | null> {
+  const jobs = await store.listJobs(200)
+  const reported = jobs
+    .filter((j) => j.businessId === businessId && j.targetEvidence)
+    .sort((a, b) => (b.targetEvidence!.recordedAt ?? 0) - (a.targetEvidence!.recordedAt ?? 0))
+  return reported[0]?.targetEvidence ?? null
+}
+
+/** What this update means for this target, given what the target last reported. */
+export async function resolveCapabilityImpact(
+  update: PlatformUpdate,
+  business: PlatformBusiness,
+): Promise<UpdateApplicability> {
+  // Fail-soft: an unreadable job list must not block a deployment. With no evidence
+  // the impact evaluation reports "installs, nothing known to be missing", which is
+  // exactly the pre-contract behavior.
+  const evidence = await latestTargetEvidence(business.id).catch(() => null)
+  return evaluateCapabilityImpact(update, evidence)
+}
+
 export async function evaluatePreviewReadiness(input: ReadinessInput): Promise<PreflightResult> {
   const env = input.env ?? process.env
-  const [hasActiveJob, requiredUpdates] = await Promise.all([
+  const [hasActiveJob, requiredUpdates, capabilityImpact] = await Promise.all([
     store.activeJobForBusiness(input.business.id).then(Boolean),
     resolveRequiredUpdates(input.update, input.business),
+    resolveCapabilityImpact(input.update, input.business),
   ])
   // The transfer check costs GitHub reads, so it runs only when every cheaper gate
   // already passes — and never for the read-only UI poll.
@@ -135,6 +166,7 @@ export async function evaluatePreviewReadiness(input: ReadinessInput): Promise<P
       },
       approvals: input.approvals,
       requiredUpdates,
+      capabilityImpact,
     })
     if (cheap.ok) transferReady = await checkTransferReady({ update: input.update, business: input.business, compat: input.compat, provider: input.provider })
   }
@@ -151,6 +183,7 @@ export async function evaluatePreviewReadiness(input: ReadinessInput): Promise<P
     approvals: input.approvals,
     requiredUpdates,
     transferReady,
+    capabilityImpact,
   })
 }
 

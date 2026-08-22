@@ -217,11 +217,50 @@ async function patchBooking(req: NextRequest, id: string): Promise<NextResponse>
       break
     }
     case 'send-link': {
+      // MANUAL FALLBACK. When neither channel delivers — because this business does
+      // not run email or SMS, or the customer left neither an address nor a usable
+      // number — the admin still has to be able to hand the link over: read it out,
+      // text it from a personal phone, print it. Withholding it would make an
+      // optional integration a hard dependency of doing the job at all.
+      //
+      // No new exposure: the booking token is already on this record, which this
+      // same staff-session route returns, and the admin booking page links to
+      // /booking/{token} directly. What changes is that the link is now offered
+      // deliberately, with the reason attached, instead of the admin being told the
+      // link was sent when it was not. It is never logged and never leaves an
+      // authenticated staff response.
+      //
+      // Two shapes, deliberately:
+      //   plain            try to deliver. On success the record advances as before.
+      //                    On failure it does NOT advance — marking a booking "link
+      //                    sent" when nothing left the building puts the record into
+      //                    a state the customer has never seen — and the link is
+      //                    returned so the admin can pass it on.
+      //   manualDelivered  the admin ASSERTS they handed it over. Only then does the
+      //                    record advance, attributed as a manual delivery so the
+      //                    timeline never claims a channel that does not exist.
+      if (body.manualDelivered === true) {
+        b.confirmationLinkSentAt = Date.now()
+        b.confirmationLinkSentBy = 'admin-manual'
+        b.status = statusAfterConfirmationLinkSent(b.status)
+        pushBookingEvent(b, { actor, action: 'link.manual_delivery', result: 'delivered', meta: { by: actor } })
+        extra = { manualDelivered: true }
+        break
+      }
       const channels = await sendConfirmationLink(b)
-      b.confirmationLinkSentAt = Date.now()
-      b.confirmationLinkSentBy = 'admin'
-      b.status = statusAfterConfirmationLinkSent(b.status)
-      extra = { channels }
+      if (channels.delivered) {
+        b.confirmationLinkSentAt = Date.now()
+        b.confirmationLinkSentBy = 'admin'
+        b.status = statusAfterConfirmationLinkSent(b.status)
+        extra = { channels }
+      } else {
+        extra = {
+          channels,
+          manualDeliveryRequired: true,
+          manualLink: bookingLink(b.token),
+          manualReason: channels.reason ?? 'no delivery channel is available for this business',
+        }
+      }
       break
     }
     case 'confirm-payment': {

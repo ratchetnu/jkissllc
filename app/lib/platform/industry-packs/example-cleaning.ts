@@ -20,7 +20,7 @@ export const CLEANING_PACK: IndustryPack = {
     customerNoun: 'Customer',
     assignmentNoun: 'Shift',
   },
-  supportedCapabilities: ['bookings', 'scheduling', 'workforce', 'messaging', 'invoicing', 'payments', 'customer-portal', 'crew-portal'],
+  supportedCapabilities: ['bookings', 'scheduling', 'workforce', 'messaging', 'invoicing', 'payments', 'payments-stripe', 'sms-delivery', 'email-delivery', 'customer-portal', 'crew-portal'],
   serviceTemplates: [
     { id: 'standard-clean', label: 'Standard Clean', pricingMethod: 'hourly', jobBased: true },
     { id: 'deep-clean', label: 'Deep Clean', pricingMethod: 'flat', jobBased: true },

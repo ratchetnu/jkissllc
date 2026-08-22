@@ -4,6 +4,7 @@ import {
   SERVICE_LABELS, fmtUSD, balanceDueCents, BOOKING_STATUS_LABEL, PAYMENT_METHOD_LABEL,
 } from './bookings'
 import { COMPANY, CREDENTIALS_SLASH } from './company'
+import { checkCapability } from './platform/capabilities/guard'
 
 // Tenant identity comes from lib/company.ts. Per-tenant resolution (a verified
 // Resend sending domain per tenant, etc.) is a later step —
@@ -81,9 +82,34 @@ function locationBlock(b: Booking): string {
   ])
 }
 
-export type EmailResult = { ok: boolean; id?: string; error?: string }
+export type EmailResult = {
+  ok: boolean
+  id?: string
+  error?: string
+  /**
+   * Stable, non-secret capability code when the refusal came from the tenant's
+   * capability profile rather than from Resend. Lets a caller fall back to a manual
+   * workflow (copy the link, hand it over in person) instead of reporting an outage.
+   */
+  capabilityCode?: string
+}
 
 async function send(args: { to: string[]; subject: string; html: string; replyTo?: string }): Promise<EmailResult> {
+  // ── Capability gate (server-side, tenant-resolved) ──
+  // Every transactional email in the app funnels through this one function, so the
+  // guard belongs here rather than at each of the ~20 call sites. Fail closed: any
+  // state other than `ready` sends nothing. The tenant is resolved from ambient
+  // server context, never from a caller argument.
+  const emailCapability = await checkCapability('email-delivery')
+  if (emailCapability.state !== 'ready') {
+    return {
+      ok: false,
+      error: emailCapability.state === 'disabled'
+        ? 'Email is turned off for this business — deliver the link manually from the admin.'
+        : `Email is unavailable (${emailCapability.code}).`,
+      capabilityCode: emailCapability.code,
+    }
+  }
   const client = resend()
   if (!client) {
     console.error('[booking-emails] not sent — RESEND_API_KEY missing:', args.subject)
@@ -134,8 +160,12 @@ export async function emailCustomerMessage(b: Booking, text: string): Promise<bo
   }
 }
 
-export async function emailConfirmationLink(b: Booking): Promise<void> {
-  if (!b.customerEmail) return
+// Returns the provider result rather than swallowing it. The caller needs to know
+// whether the link ACTUALLY went out: with email delivery switched off (or Resend
+// unconfigured) this now reports a failure instead of a silent success, which is
+// what lets the admin fall back to handing the link over manually.
+export async function emailConfirmationLink(b: Booking): Promise<EmailResult> {
+  if (!b.customerEmail) return { ok: false, error: 'no customer email on file' }
   const link = bookingLink(b.token)
   const body = `
     <p style="font-size:15px;line-height:1.6">Hi ${esc(b.customerName)}, your ${esc(SERVICE_LABELS[b.serviceType])} with ${COMPANY.legalName} is almost confirmed.</p>
@@ -145,7 +175,7 @@ export async function emailConfirmationLink(b: Booking): Promise<void> {
     </p>
     <p style="font-size:13px;color:#888">Booking ${esc(b.bookingNumber)}${b.invoiceNumber ? ` · Invoice ${esc(b.invoiceNumber)}` : ''}</p>
     ${moneyBlock(b)}`
-  await send({ to: [b.customerEmail], subject: `Confirm your ${COMPANY.legalName} booking — ${b.bookingNumber}`, html: shell("You're almost booked", body) })
+  return send({ to: [b.customerEmail], subject: `Confirm your ${COMPANY.legalName} booking — ${b.bookingNumber}`, html: shell("You're almost booked", body) })
 }
 
 export async function emailTimeVerifiedCustomer(b: Booking): Promise<void> {
@@ -214,8 +244,8 @@ export async function emailPaidInFullCustomer(b: Booking): Promise<void> {
 
 // ── Automated reminders (sent by the daily cron) ─────────────────────────────
 
-export async function emailBookingReminderCustomer(b: Booking): Promise<void> {
-  if (!b.customerEmail) return
+export async function emailBookingReminderCustomer(b: Booking): Promise<EmailResult> {
+  if (!b.customerEmail) return { ok: false, error: 'no customer email on file' }
   const link = bookingLink(b.token)
   const body = `
     <p style="font-size:15px;line-height:1.6">Hi ${esc(b.customerName)}, just a friendly reminder to finish confirming your ${esc(SERVICE_LABELS[b.serviceType])} with ${COMPANY.legalName}. It only takes a minute.</p>
@@ -223,11 +253,11 @@ export async function emailBookingReminderCustomer(b: Booking): Promise<void> {
       <a href="${link}" style="background:${RED};color:#fff;font-weight:700;text-decoration:none;padding:14px 28px;border-radius:10px;display:inline-block">Confirm Your Booking →</a>
     </p>
     ${moneyBlock(b)}`
-  await send({ to: [b.customerEmail], subject: `Reminder: confirm your ${COMPANY.legalName} booking — ${b.bookingNumber}`, html: shell('Finish confirming your booking', body) })
+  return send({ to: [b.customerEmail], subject: `Reminder: confirm your ${COMPANY.legalName} booking — ${b.bookingNumber}`, html: shell('Finish confirming your booking', body) })
 }
 
-export async function emailPaymentReminderCustomer(b: Booking): Promise<void> {
-  if (!b.customerEmail) return
+export async function emailPaymentReminderCustomer(b: Booking): Promise<EmailResult> {
+  if (!b.customerEmail) return { ok: false, error: 'no customer email on file' }
   const link = bookingLink(b.token)
   const body = `
     <p style="font-size:15px;line-height:1.6">Hi ${esc(b.customerName)}, this is a friendly reminder that a balance of <strong>${fmtUSD(balanceDueCents(b))}</strong> remains on your ${COMPANY.legalName} invoice.</p>
@@ -236,21 +266,21 @@ export async function emailPaymentReminderCustomer(b: Booking): Promise<void> {
     </p>
     <p style="font-size:13px;color:#888">You can also pay fee-free by Zelle to ${COMPANY.zelle} — include ${esc(b.invoiceNumber ?? b.bookingNumber)} in the memo.</p>
     ${moneyBlock(b)}`
-  await send({ to: [b.customerEmail], subject: `Balance reminder — ${COMPANY.legalName} ${b.bookingNumber}`, html: shell('A balance is due', body) })
+  return send({ to: [b.customerEmail], subject: `Balance reminder — ${COMPANY.legalName} ${b.bookingNumber}`, html: shell('A balance is due', body) })
 }
 
-export async function emailJobTomorrowCustomer(b: Booking): Promise<void> {
-  if (!b.customerEmail) return
+export async function emailJobTomorrowCustomer(b: Booking): Promise<EmailResult> {
+  if (!b.customerEmail) return { ok: false, error: 'no customer email on file' }
   const body = `
     <p style="font-size:15px;line-height:1.6">Hi ${esc(b.customerName)}, a quick heads-up — your ${esc(SERVICE_LABELS[b.serviceType])} with ${COMPANY.legalName} is <strong>tomorrow</strong>.</p>
     ${rows([['Date', b.selectedDate], ['Arrival Window', b.selectedWindow], ['Service', SERVICE_LABELS[b.serviceType]], ['Your Crew', [b.assignedTo, b.assignedHelper].filter(Boolean).join(' & ') || undefined]])}
     ${locationBlock(b)}
     <p style="font-size:14px;line-height:1.6;margin-top:14px">Please make sure the crew has clear access. Questions? Call or text ${COMPANY.phoneDisplay}.</p>`
-  await send({ to: [b.customerEmail], subject: `Reminder: your ${COMPANY.legalName} service is tomorrow — ${b.bookingNumber}`, html: shell('See you tomorrow', body) })
+  return send({ to: [b.customerEmail], subject: `Reminder: your ${COMPANY.legalName} service is tomorrow — ${b.bookingNumber}`, html: shell('See you tomorrow', body) })
 }
 
-export async function emailReviewRequestCustomer(b: Booking): Promise<void> {
-  if (!b.customerEmail) return
+export async function emailReviewRequestCustomer(b: Booking): Promise<EmailResult> {
+  if (!b.customerEmail) return { ok: false, error: 'no customer email on file' }
   const receipt = receiptLink(b.token)
   const body = `
     <p style="font-size:15px;line-height:1.6">Hi ${esc(b.customerName)}, thanks again for choosing ${COMPANY.legalName} for your ${esc(SERVICE_LABELS[b.serviceType])}. How did we do?</p>
@@ -258,7 +288,7 @@ export async function emailReviewRequestCustomer(b: Booking): Promise<void> {
     <p style="text-align:center;margin:24px 0">
       <a href="${receipt}#review" style="background:${RED};color:#fff;font-weight:700;text-decoration:none;padding:14px 28px;border-radius:10px;display:inline-block">Leave a Quick Review →</a>
     </p>`
-  await send({ to: [b.customerEmail], subject: `How did we do? — ${COMPANY.legalName} ${b.bookingNumber}`, html: shell('Mind leaving a review?', body) })
+  return send({ to: [b.customerEmail], subject: `How did we do? — ${COMPANY.legalName} ${b.bookingNumber}`, html: shell('Mind leaving a review?', body) })
 }
 
 // ── Rescheduling ─────────────────────────────────────────────────────────────

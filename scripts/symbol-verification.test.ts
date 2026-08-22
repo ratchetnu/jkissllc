@@ -428,7 +428,7 @@ test('a symbol failure fails the blocking transfer_ready gate, so no job is ever
   // blocking transfer_ready means: no job, no branch, no dispatch, no PR, no preview.
   const base = {
     update: {
-      key: 'UPD-TEST', status: 'approved', sourceCommit: 'abc', sourceRepo: 'ratchetnu/jkissllc',
+      key: 'UPD-TEST', status: 'approved', sourceCommit: 'abc1234', sourceRepo: 'ratchetnu/jkissllc',
       validation: { tests: 'passed', build: 'passed' }, rollbackSupported: true,
     },
     business: {

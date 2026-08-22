@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { after as afterResponse } from 'next/server'
 import { withTenantRoute } from '../../../lib/platform/tenancy/with-tenant-route'
+import { checkCapability, capabilityErrorBody, CapabilityUnavailableError } from '../../../lib/platform/capabilities/guard'
 import { rateLimit } from '../../../lib/rate-limit'
 import { isBlockedBot } from '../../../lib/botcheck'
 import { buildPhotoEstimate } from '../../../lib/ai/photo-estimate'
@@ -81,6 +82,23 @@ export const POST = withTenantRoute(async (req: NextRequest) => {
   if (await isBlockedBot()) {
     await recordFunnelEvent('ai_analysis_blocked', new Date().toISOString())
     return NextResponse.json({ error: 'Request blocked. Please try again.' }, { status: 403 })
+  }
+
+  // ── Tenant capability gate (server-side, before any billed work) ──
+  //
+  // Photo estimating is a PAID external capability. A business that has not turned
+  // it on must not have vision calls made on its behalf, and must not be told the
+  // feature is broken — it is not broken, it is not in use. 409 with a stable code,
+  // and the customer-facing copy points at the alternative rather than an error.
+  const photoEstimates = await checkCapability('photo-estimation')
+  if (photoEstimates.state !== 'ready') {
+    const refusal = new CapabilityUnavailableError(photoEstimates)
+    return NextResponse.json({
+      ...capabilityErrorBody(refusal),
+      error: photoEstimates.state === 'disabled'
+        ? 'Instant photo estimates aren’t offered here — send your photos and we’ll price it by hand, usually the same day.'
+        : 'Instant estimates are temporarily unavailable — send your photos and we’ll price it by hand.',
+    }, { status: refusal.httpStatus })
   }
 
   const body = await req.json().catch(() => ({}))

@@ -27,6 +27,9 @@ export const JKISS_PACK: IndustryPack = {
     'workforce', 'availability', 'time-off', 'time-tracking', 'gps-verification',
     'compliance-photos', 'equipment', 'fleet', 'messaging', 'notifications',
     'documents', 'invoicing', 'payments', 'contractor-compensation', 'reporting',
+    // Optional external provider adapters. A pack OFFERS a capability; whether this
+    // particular business uses it is the tenant's own capability profile to answer.
+    'payments-stripe', 'sms-delivery', 'email-delivery',
     'analytics', 'automations', 'ai-intelligence', 'audit-logs',
     'customer-portal', 'crew-portal', 'management-workspace',
   ],

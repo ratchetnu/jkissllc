@@ -1,6 +1,6 @@
 # Operion — Current State & Engineering Handoff
 
-**Original audit:** 2026-07-22 · **Latest reconciliation:** 2026-08-20 (§0.4) · **Auditor:** automated engineering agent · **Purpose:** allow another AI engineering agent to take over Operion development with no prior context.
+**Original audit:** 2026-07-22 · **Latest reconciliation:** 2026-08-21 (§0.6) · **Auditor:** automated engineering agent · **Purpose:** allow another AI engineering agent to take over Operion development with no prior context.
 
 **Scope of this document:** the Operion platform as it runs for two real businesses — **J KISS LLC** (source of truth) and **Supercharged** (target). Enterprise/multi-tenant SaaS expansion is explicitly *deferred*; everything below is oriented to daily internal operations.
 
@@ -19,6 +19,224 @@
 > deploying normally through its **own Vercel Git integration** (a push to `main` builds and
 > promotes, as it always has); that path is independent of Operion release automation. See
 > §7 and §9.
+
+---
+
+## 0.6 RECONCILIATION — capability independence, round two, 2026-08-21 — read this first
+
+Same branches as §0.5, extended: `codex/tenant-capability-independence` (J KISS) and
+`codex/operion-capability-contract` (Supercharged). **Still not merged, not pushed, not
+deployed. No environment variable and no Production flag was changed; `TENANCY_ENABLED`
+remains off in Production.** Where this conflicts with §0.5, this section wins.
+
+### The root cause §0.5 did not go far enough on
+
+§0.5 removed the *consequences* of treating a credential as a decision, but kept the
+inference itself: an adapter with no stored choice was "in use if its key exists". That
+is wrong as a steady state. The presence of a key is evidence that somebody once
+configured something, not that this business wants the feature on — and it means a new
+tenant's features are decided by whatever happens to be in the deployment's environment.
+
+**Enablement is no longer inferred.** Resolution is `mandatory → explicit choice →
+registry default → (legacy)`. `TenantCapabilityProfile.initializedAt` switches the two
+regimes: until the backfill records a tenant's choices, provider adapters still fall back
+to credential inference and report `legacy-uninitialized` everywhere — a transitional
+state somebody has to close, never a choice anybody made. After it runs, the environment
+decides only whether a switched-on capability is CONFIGURED.
+
+Every paid or customer-contacting capability now defaults to **disabled**, enforced by
+the registry validator. Verified: with J KISS's environment and no profile, all four
+paid channels still resolve `ready`; with a bare environment they resolve `disabled`
+(healthy, not degraded) and every core module stays `ready`.
+
+### Coverage, past the three adapters
+
+`booking-intake` (the public Book Now form, split from the booking RECORD, which stays
+mandatory because scheduling, invoicing, dispatch, time tracking and pay are all built
+on it) · `photo-estimation` (paid vision calls, split from the governed `ai-intelligence`
+chokepoint) · `claims` · `contractor-compensation` · `hiring` · `gps-verification` ·
+`compliance-photos` · `crew-reliability` · `equipment` · `fleet` — all switchable, each
+required by the validator to state in plain language what stops working when it is off.
+Every mandatory capability must say why it is mandatory.
+
+A PLAN axis exists (`unavailable_on_plan`). It is **implemented and tested but inert**:
+every capability declares all three tiers, so nothing is withheld today. Absent plan
+means NOT ENFORCED — a tenant that predates plans is on no tier, and treating "unknown"
+as "free" would have removed working features from every existing business.
+
+### Four readiness questions, and one verdict
+
+`platform/readiness.ts` separates platform health · release compatibility · capability
+readiness · provider health, and states the rules: a provider failing degrades the
+capabilities that use it and nothing else; a `disabled` capability is not a failure of
+anything; only a critical dependency may take the platform down.
+
+Preflight returns `ready` · `ready_optional_unavailable` · `manual_review` ·
+`blocked_by_platform`, with exact reasons and affected capabilities. `manual_review` is
+separate from `blocked_by_platform` because a decision waiting on you and an outage
+waiting on somebody else have different fixes.
+
+### Release identity
+
+`release/source-artifact.ts` accepts a commit SHA and nothing else. A branch resolves,
+and resolves to something else an hour later; a working tree cannot be diffed or rolled
+back to a known point because there is no known point. Moving and local refs are refused
+by name as well as shape, and a record marked dirty is refused outright.
+`release/target-owned-paths.ts` is a STANDING policy — a curated exclusion list is only
+as good as whoever remembered to curate it.
+
+### Verified gates (all re-run 2026-08-21)
+
+| Gate | J KISS | Supercharged |
+|---|---|---|
+| `npx tsc --noEmit` | clean | clean |
+| `npm test` | **4,015 / 4,015** | **757 / 757** |
+| `npx eslint .` | 0 errors, 2 warnings (baseline) | 38 findings (baseline), none in a changed file |
+| `npm run build` | **exit 0** | **exit 0** |
+| `npm run tenant:certify` | exit 1 — **identical** to baseline: same 3 unclassified diagnostics routes. Handlers 231 → 235, request-wrapped 206 → 210, so every new route is wrapped. | n/a |
+| `git diff --check` | clean | clean |
+
+**Correction to §0.5.** That section recorded `npm run build` as failing on
+`next/font/google`. It was re-checked properly this round against a clean detached
+worktree of `main`: that build also succeeds, so the earlier failure was a transient
+sandbox network condition, not a baseline. §0.5's table has been corrected in place.
+
+### Mutations
+
+19 run across both repositories, 19 caught. Two were NOT caught first time and were
+fixed rather than excused: plan override had no test at all, and the backfill's
+apply-time clobber guard was only reachable through a plan computed before a choice was
+made — now tested as the race it exists for.
+
+### Bugs found while doing this
+
+- `initializedAt` was dropped by the profile parser (both repos), silently returning a
+  migrated tenant to credential inference on every read.
+- The daily cron stamped its ONE-SHOT reminder markers regardless of outcome, so a
+  business with neither channel configured silently consumed every reminder it would
+  ever have sent — and enabling a channel later would not bring them back.
+- The four reminder `notify*` helpers reported `email: true` whenever an address and a
+  key existed, discarding the provider result.
+- `missingVars` was listed beside DISABLED capabilities, inviting somebody to configure
+  a feature nobody asked for.
+- Supercharged's `ai_provider` health accepted bare `VERCEL` — set on every Vercel
+  runtime, so the check could never go red. The existing test's title already said
+  "OIDC" while its assertion used `VERCEL`.
+
+### Still outstanding
+
+Everything in §0.5's GA list, unchanged, plus:
+
+1. **Run the capability backfill.** `backfillCapabilityProfile(tenantId, { dryRun: false })`
+   for each tenant. Until then both deployments are on the legacy fallback. It is
+   idempotent, non-destructive, and a dry run (the default) writes nothing.
+2. Plans are modelled but unpopulated — a product decision, not an engineering one.
+
+---
+
+## 0.5 RECONCILIATION — optional capabilities and update distribution, 2026-08-21 — read this first
+
+Branch `codex/tenant-capability-independence` (J KISS) and `codex/operion-capability-contract`
+(Supercharged). **Not merged, not pushed, not deployed. No Production flag was changed and
+`TENANCY_ENABLED` remains off in Production.** Where this section conflicts with §0.4 on the
+capability registry, optional-integration health, or multi-tenant GA status, **this section wins**;
+§0.4 remains the source for everything else.
+
+### What was wrong
+
+| Problem | Evidence |
+|---|---|
+| Payments, SMS and email were modelled as **core** capabilities | A business that runs none of them reported `/api/health` `degraded` permanently. A signal that can never be green is one everybody learns to ignore. |
+| `invoicing` declared `payments` a **hard** dependency | The one machine-readable place that answers the question said a business cannot bill anyone without a card processor. `reporting` had the same defect: a revenue report needed Stripe merely to load. |
+| Per-tenant enablement did not exist | `enabledForJkiss` answered for tenant zero and returned `false` for every other tenant, so a second business could not be configured at all. |
+| Nothing distinguished "off on purpose" from "broken" | Health, `sms.ts` and Supercharged's `integrations.ts` each read the environment their own way, so a deployment could report `payments: ok` while no charge could be made. |
+| An update record could not say what it meant for optional features | The only available vocabulary was `not_applicable`, which **removes a target from a rollout** — so a shared-library security fix would silently skip the business that had switched its integrations off, leaving no visible gap. |
+
+### What is now true
+
+- **Five axes are separated** in `app/lib/platform/capabilities/types.ts`: code installed →
+  offered by the product/industry pack → enabled by the tenant → provider configured →
+  operational. Installing code and activating a capability are different events.
+- **A typed, versioned, audited tenant capability profile** lives at the tenant-owned Redis key
+  `settings:capabilities`, so it passes through the existing chokepoint. Writes require active
+  membership plus `settings:manage`; dependency closure and mandatory capabilities are validated
+  before persistence. **No credential value is storable** — a reference must be a name or path, and
+  a pasted value is refused rather than truncated. A record written by a newer build is never
+  reinterpreted.
+- **Provider adapters are optional and independently selectable**: `payments-stripe`,
+  `sms-delivery`, `email-delivery`. The records they deliver (payments, messaging, notifications)
+  stay core. With no explicit owner choice an adapter is in use if and only if its credentials are
+  present, which is exactly the pre-existing effective behavior — so J KISS is unchanged and a
+  credential-free target reads **healthy "not in use"** instead of permanently degraded.
+- **One value-free readiness source** (`capabilities/provider-readiness.ts`) feeds health, the
+  settings surface, the runtime guards and the deployment evidence, so they cannot disagree.
+- **Server-side enforcement**, not UI-only: `sendSmsDetailed`, the Resend send, and Stripe checkout
+  creation all resolve through the guard and fail closed with stable, non-secret codes. The tenant
+  is server-resolved, so a forged client claim cannot reach the decision.
+- **Webhook policy is written down and enforced.** After signature verification: a verified event
+  for an intentionally disabled capability is acknowledged (200) and discarded rather than 5xx'd
+  into an hours-long retry storm; enabled-but-unconfigured still refuses 503, because that retry is
+  wanted. One documented carve-out — a Stripe checkout confirmation is always recorded, because the
+  money has already moved and dropping it only loses our record of it.
+- **Optional providers can never gate a deployment.** `preflight.ts` documents the invariant at its
+  input type, and a test greps the rendered gate set for `stripe`/`twilio`/`resend` and fails if any
+  appears. The one capability fact that MAY block is missing capability **code** on the target — the
+  same class of blocker as `requiredModules`, because it would not compile.
+- **A disabled capability makes an update DORMANT, never `not_applicable`.** A `platform_core` or
+  `shared_module` update is never dormant at all.
+- **The guided owner workflow** (`/admin/operations/platform`) presents one stage, one headline and
+  one action, derived entirely from server-held records so it survives a refresh or a logout. Every
+  action it names is an existing, separately-authorized endpoint — it is not a second executor.
+  `window.confirm` is gone from this workflow.
+
+### Verified gates on this work
+
+| Gate | Result |
+|---|---|
+| J KISS `npx tsc --noEmit` | clean |
+| J KISS `npm test` | **3,974/3,974** pass, twice (baseline before this work: 3,856/3,856) |
+| J KISS `npx eslint .` | 0 errors, 2 warnings — unchanged from the pre-existing baseline |
+| J KISS `npm run tenant:certify` | **FAILS, exactly as it did before this work** — same 3 unclassified diagnostics routes, same derived-key families. All 3 new routes are `withTenantRoute`-wrapped (request-wrapped 206 → 209). |
+| J KISS `npm run build` | **PASSES** (exit 0). An earlier note in this section recorded it as failing on `next/font/google`; that was a transient network condition in the sandbox, not a permanent baseline. Re-verified 2026-08-21 against a clean detached worktree of `main` (also exit 0) and against the branch. |
+| J KISS `git diff --check` | clean |
+
+One unrelated test was repaired along the way. `scripts/operion-rehearsal.test.ts` pinned real
+filenames on the sibling repo's `origin/main` — a MOVING ref — to assert "this path is missing on
+the target". `app/lib/crew-documents.ts` stopped being missing the moment Supercharged caught up,
+turning the suite red for a reason unrelated to the code under test. The fixtures are now DERIVED
+from the live trees, since the fact under test is "a path missing on the target", not any
+particular filename.
+| Supercharged `npx tsc --noEmit` | clean |
+| Supercharged `npm test` | **754/754** pass (worktree baseline: 726) |
+| Supercharged `npx eslint .` | 38 findings (27 errors, 11 warnings) — unchanged, and none in any changed file |
+| Supercharged `npm run build` | **PASSES** (exit 0), re-verified 2026-08-21. The font failure recorded previously was a transient sandbox network condition. |
+
+### Multi-tenant GA — the honest answer
+
+`GET /api/admin/platform/ga-readiness` (owner-only, read-only) reports **thirteen independent
+dimensions** with three verdicts: `proven` (evidence exists in this deployment), `built`
+(implemented, and nothing here has ever exercised it) and `gap`. `gaReady` requires every
+dimension. `tenancyEnablementSafe` is narrower still and is **never satisfied by `built`**, because
+"the code is right" is exactly the claim that has to be tested before the flag that makes it
+load-bearing goes on.
+
+**This deployment is not multi-tenant GA, and update distribution working does not make it so.**
+The remaining actions the projection reports today:
+
+1. `npm run tenant:certify` still fails — classify the 3 diagnostics route handlers and migrate the
+   externally-derived key families (`cust:email:{email}`, `msg:phone:{e164}`, `biz:{name}`, …). A
+   Redis prefix cannot make a phone number a safe tenant boundary.
+2. Run `runWave6Backfill({ dryRun: false })` — the user directory has never been copied into
+   per-tenant memberships in a real run.
+3. Run `backfillTokenBindings(tenantId, { dryRun: false })` for every tenant, so existing bookings,
+   routes, invoices, portals and pay statements carry a token binding.
+4. Enable `TENANCY_DARK_LAUNCH` in Preview and confirm a clean shadow-mismatch summary.
+5. Register a second real tenant. Until one exists, nothing has ever had to be told apart.
+
+Both backfills now record a platform-global completion marker on a real (non-dry-run) execution —
+a backfill that leaves no trace is indistinguishable from one that never ran. A dry run records
+nothing, and unresolved token conflicts are carried into the marker so it can never read as a clean
+completion.
 
 ---
 

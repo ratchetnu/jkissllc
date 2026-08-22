@@ -10,6 +10,7 @@ import { analyzeClosure, describeClosureProblems, isCodePath, type ClosureProble
 import { analyzeSymbols, collectTargetModules, describeSymbolProblems } from './exports'
 import type { UpdateAutomationProvider, RepoRef } from './provider'
 import type { UpdateCompatibility } from '../updates/types'
+import { isTargetOwned } from '../release/target-owned-paths'
 
 export type BuiltManifest = {
   manifest: ApplyManifest
@@ -66,6 +67,13 @@ export async function buildCommitTransferManifest(input: {
     if (!isSafeRepoPath(path)) return { ok: false, error: `invalid excluded repository path: ${JSON.stringify(raw)}` }
     excluded.add(path)
   }
+  // The STANDING policy, applied on top of whatever the compatibility record says.
+  // A curated exclusion list is only as good as whoever remembered to curate it, and
+  // the failure mode of forgetting is silent: the transfer succeeds, the tests pass,
+  // and the target's home page now carries the source company's name. Added here so
+  // it runs whether or not anyone remembered. A record may withhold MORE than this;
+  // it can never withhold less.
+  const standingExclusions = new Set<string>()
 
   const cf = await provider.readCommitFiles(installationId, sourceRepo, sourceCommit)
   if (!cf.ok) return { ok: false, error: `read commit files: ${cf.error}` }
@@ -75,8 +83,11 @@ export async function buildCommitTransferManifest(input: {
   }
 
   const commitEntries = manifestFromCommitFiles(cf.data.files)
+  for (const entry of commitEntries) {
+    if (isTargetOwned(entry.path)) { excluded.add(entry.path); standingExclusions.add(entry.path) }
+  }
   const commitPaths = new Set(commitEntries.map((entry) => entry.path))
-  const unmatchedExclusions = [...excluded].filter((path) => !commitPaths.has(path))
+  const unmatchedExclusions = [...excluded].filter((path) => !commitPaths.has(path) && !standingExclusions.has(path))
   if (unmatchedExclusions.length) {
     return { ok: false, error: `excluded repository path not present in source commit: ${unmatchedExclusions.sort().join(', ')}` }
   }

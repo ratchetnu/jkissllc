@@ -24,6 +24,9 @@ function addDaysStr(s: string, n: number): string {
 }
 const DAY = 86_400_000
 
+/** At least one channel actually delivered. Not "we had an address and a key". */
+const delivered = (c: { email: boolean; sms: boolean }): boolean => c.email || c.sms
+
 // Runs once daily (Vercel Cron). Sends time-based reminders with one-shot dedupe
 // stamps on each booking. Fail-soft: a single send error never aborts the run.
 async function run(): Promise<Record<string, number>> {
@@ -32,7 +35,10 @@ async function run(): Promise<Record<string, number>> {
   const tomorrowStr = addDaysStr(todayStr, 1)
   const daysSince = (ts?: number) => (ts ? (now - ts) / DAY : Infinity)
 
-  const counts = { processed: 0, recovery: 0, payment: 0, dayBefore: 0, review: 0, errors: 0 }
+  // `undeliverable` is not an error: a business that runs neither email nor SMS is
+  // configured that way on purpose. It is counted so the run is honest about how
+  // many reminders were computed but had nowhere to go.
+  const counts = { processed: 0, recovery: 0, payment: 0, dayBefore: 0, review: 0, undeliverable: 0, errors: 0 }
   const bookings = await listBookings(1000)
 
   // Dead statuses get NO automation at all. 'completed' is intentionally excluded —
@@ -53,8 +59,14 @@ async function run(): Promise<Record<string, number>> {
         !r.dayBeforeSentAt && b.selectedDate === tomorrowStr &&
         (b.status === 'confirmed' || b.status === 'time_verified')
       ) {
-        await notifyJobTomorrow(b)
-        r.dayBeforeSentAt = now; counts.dayBefore++; changed = true; nudgedThisRun = true
+        // STAMP ONLY ON REAL DELIVERY. These markers are one-shot: once set, the
+        // reminder never fires again for this booking. Stamping regardless of the
+        // outcome meant a business that had not configured (or had switched off)
+        // both channels silently consumed every reminder it would ever have sent —
+        // and turning a channel on later would not bring them back.
+        if (delivered(await notifyJobTomorrow(b))) {
+          r.dayBeforeSentAt = now; counts.dayBefore++; changed = true; nudgedThisRun = true
+        } else { counts.undeliverable++ }
       }
 
       // 2. Abandoned-booking recovery — link sent, never verified or paid, 2d+ stale.
@@ -63,8 +75,9 @@ async function run(): Promise<Record<string, number>> {
         b.amountPaidCents === 0 && balanceDueCents(b) > 0 &&
         daysSince(b.confirmationLinkSentAt) >= 2
       ) {
-        await notifyBookingReminder(b)
-        r.recoverySentAt = now; counts.recovery++; changed = true; nudgedThisRun = true
+        if (delivered(await notifyBookingReminder(b))) {
+          r.recoverySentAt = now; counts.recovery++; changed = true; nudgedThisRun = true
+        } else { counts.undeliverable++ }
       }
 
       // 3. Payment reminder — engaged customer with an unpaid balance, 3d+ stale.
@@ -74,8 +87,9 @@ async function run(): Promise<Record<string, number>> {
         (b.customerTimeVerifiedAt || b.amountPaidCents > 0) &&
         daysSince(b.confirmationLinkSentAt ?? b.createdAt) >= 3
       ) {
-        await notifyPaymentReminder(b)
-        r.paymentSentAt = now; counts.payment++; changed = true; nudgedThisRun = true
+        if (delivered(await notifyPaymentReminder(b))) {
+          r.paymentSentAt = now; counts.payment++; changed = true; nudgedThisRun = true
+        } else { counts.undeliverable++ }
       }
 
       // 4. Review request — completed + paid-in-full, 3d+ after completion.
@@ -83,8 +97,9 @@ async function run(): Promise<Record<string, number>> {
         !r.reviewRequestSentAt && b.status === 'completed' &&
         paymentSummaryStatus(b) === 'paid_in_full' && daysSince(b.completedAt) >= 3
       ) {
-        await notifyReviewRequest(b)
-        r.reviewRequestSentAt = now; counts.review++; changed = true
+        if (delivered(await notifyReviewRequest(b))) {
+          r.reviewRequestSentAt = now; counts.review++; changed = true
+        } else { counts.undeliverable++ }
       }
     } catch (e) {
       counts.errors++

@@ -90,7 +90,7 @@ const upd = (p: Partial<PlatformUpdate> = {}): PlatformUpdate => ({
   recordVersion: 1, key: 'UPD-1', title: 'T', summary: 'S', type: 'enhancement', scope: 'platform_core',
   severity: 'medium', priority: 'normal', status: 'approved', breakingChange: false, migrationRequired: false,
   environmentChangeRequired: false, secretRequired: false, featureFlagRequired: false, manualPortRequired: false,
-  rollbackSupported: true, validation: PASS, sourceCommit: 'src1', createdAt: 1, updatedAt: 1, ...p,
+  rollbackSupported: true, validation: PASS, sourceRepo: 'ratchetnu/jkissllc', sourceCommit: '5c1a9e2', createdAt: 1, updatedAt: 1, ...p,
 })
 
 test('target: picks the highest-priority eligible update; skips already-present/blocked/ineligible', () => {

@@ -159,7 +159,7 @@ const update = (p: Partial<PlatformUpdate> = {}): PlatformUpdate => ({
   recordVersion: 1, key: 'UPD-1004', title: 'T', summary: 'S', type: 'feature', scope: 'platform_core',
   severity: 'low', priority: 'normal', status: 'approved', breakingChange: false, migrationRequired: false,
   environmentChangeRequired: false, secretRequired: false, featureFlagRequired: false, manualPortRequired: false,
-  rollbackSupported: true, validation: PASS, sourceCommit: 'abc1234', createdAt: 1, updatedAt: 1, ...p,
+  rollbackSupported: true, validation: PASS, sourceRepo: 'ratchetnu/jkissllc', sourceCommit: 'abc1234', createdAt: 1, updatedAt: 1, ...p,
 } as PlatformUpdate)
 const business = (p: Partial<PlatformBusiness> = {}): PlatformBusiness => ({
   recordVersion: 1, id: 'supercharged', name: 'Supercharged', role: 'target',

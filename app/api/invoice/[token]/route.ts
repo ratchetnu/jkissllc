@@ -4,7 +4,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withPublicTokenRoute } from '../../../lib/platform/tenancy/with-public-token-route'
 import { getInvoiceByToken, subtotalCents, balanceCents } from '../../../lib/route-invoices'
 import { COMPANY } from '../../../lib/company'
-import { getStripe, stripeConfigured, grossUp } from '../../../lib/stripe'
+import { getStripe, stripeConfigured, requireCardPayments, grossUp } from '../../../lib/stripe'
+import { CapabilityUnavailableError, capabilityErrorBody } from '../../../lib/platform/capabilities/guard'
 import { siteUrl } from '../../../lib/booking-emails'
 import { rateLimit } from '../../../lib/rate-limit'
 import { resolveTenantFromResource, tenantIdForOutboundMetadata } from '../../../lib/platform/tenancy/tenant-resolve'
@@ -54,7 +55,6 @@ export const POST = withPublicTokenRoute(async (req: NextRequest, { params }: { 
   const inv = await getInvoiceByToken(token)
   if (!inv || inv.status === 'void') return NextResponse.json({ error: 'not_found' }, { status: 404 })
   if (inv.status === 'paid' || balanceCents(inv) <= 0) return NextResponse.json({ error: 'This invoice is already paid.' }, { status: 409 })
-  if (!stripeConfigured()) return NextResponse.json({ error: `Card payment isn’t available right now — contact ${COMPANY.legalName} to pay.` }, { status: 503 })
 
   // Tenant is derived from the RECORD the unguessable token binds to — never from a
   // client param/query/body. Fail closed when tenancy is on and the record has no
@@ -64,6 +64,21 @@ export const POST = withPublicTokenRoute(async (req: NextRequest, { params }: { 
   const resolution = resolveTenantFromResource(inv as { tenantId?: string | null }, { kind: 'invoice', correlationId: token })
   if (!resolution) return NextResponse.json({ error: 'not_found' }, { status: 404 })
   return runWithTenant({ tenantId: resolution.tenantId }, async () => {
+
+  // Card-payment capability gate, inside the invoice's own tenant scope. An invoice
+  // is a RECORD and remains payable by every offline method when this is off — which
+  // is why the refusal names an alternative instead of reporting a failure.
+  try {
+    await requireCardPayments()
+  } catch (err) {
+    if (err instanceof CapabilityUnavailableError) {
+      return NextResponse.json({
+        ...capabilityErrorBody(err),
+        error: `Card payment isn’t available for this invoice — contact ${COMPANY.legalName} to pay.`,
+      }, { status: err.httpStatus })
+    }
+    throw err
+  }
 
   const net = balanceCents(inv)
   const { feeCents, totalCents } = grossUp(net)

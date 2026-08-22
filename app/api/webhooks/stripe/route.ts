@@ -6,6 +6,7 @@ import { recordStripeInvoicePayment } from '../../../lib/route-invoices'
 import { alert } from '../../../lib/alerts'
 import { resolveTenantFromStripe } from '../../../lib/platform/tenancy/tenant-resolve'
 import { withBackgroundTenant } from '../../../lib/platform/tenancy/request-context'
+import { checkCapability } from '../../../lib/platform/capabilities/guard'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -50,6 +51,28 @@ export async function POST(req: NextRequest) {
         // Run the recorder (and its downstream redis/audit/notify writes) inside
         // the resolved tenant scope so record-payment inherits tenant context.
         await withBackgroundTenant('webhook', async () => {
+          // ── Deliberate carve-out from the disabled-capability webhook policy ──
+          //
+          // The sibling webhooks (inbound SMS, inbound email) DISCARD an
+          // authenticated event when the capability is off, because an inbound
+          // message is new work being pushed at us. A checkout completion is the
+          // opposite: it is the confirmation of a charge THIS deployment created,
+          // against a card the customer has already been debited. Dropping it does
+          // not decline anything — the money has moved either way; it only loses our
+          // record of it, leaving a paid booking marked unpaid.
+          //
+          // So a VERIFIED payment confirmation is always recorded, even if the owner
+          // switched card payments off while a checkout was in flight. What the
+          // capability state changes is the ALERT: an arriving payment for a channel
+          // nobody expects to be live is worth a human look.
+          const cardPayments = await checkCapability('payments-stripe')
+          if (cardPayments.state !== 'ready') {
+            await alert({
+              type: 'stripe_payment_while_capability_off', severity: 'ERROR', route: '/api/webhooks/stripe',
+              errorClass: cardPayments.code, correlationId: event.id,
+              meta: { eventType: event.type, sessionId: session.id, capabilityState: cardPayments.state },
+            }).catch(alertErr => console.error('[stripe-webhook] capability alert failed:', alertErr))
+          }
           // Re-fetch to be sure payment_status is current.
           const full = await getStripe().checkout.sessions.retrieve(session.id)
           // Dispatch by lane: a B2B route-invoice session carries invoiceToken and is

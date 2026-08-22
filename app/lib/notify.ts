@@ -12,10 +12,24 @@ import {
   emailOpsReturnConfirmed, emailOpsReturnChangeRequest,
   emailCustomerMessage,
 } from './booking-emails'
-import { sendSms, smsConfigured, toE164 } from './sms'
+import { sendSms, sendSmsDetailed, smsConfigured, toE164 } from './sms'
 import { recordMessage } from './messages'
 
 export type Channels = { email: boolean; sms: boolean }
+
+/**
+ * The outcome of trying to hand a customer their secure link.
+ *
+ * `email`/`sms` now mean "this channel ACTUALLY delivered", not "we had an address
+ * and a key". The distinction matters the moment either channel is optional: a
+ * business that has switched email off was previously told the link had been sent.
+ */
+export type LinkDelivery = Channels & {
+  /** True when at least one channel delivered. */
+  delivered: boolean
+  /** Why nothing went out — safe to show an admin. Never a credential. */
+  reason?: string
+}
 
 function hasEmail(b: Booking): boolean {
   return !!b.customerEmail && !!process.env.RESEND_API_KEY
@@ -26,13 +40,31 @@ function hasSms(b: Booking): boolean {
 
 // Send the secure booking/confirmation link over every channel we have contact
 // info + a configured provider for (email and/or SMS). Returns which actually went.
-export async function sendConfirmationLink(b: Booking): Promise<Channels> {
-  const out: Channels = { email: false, sms: false }
-  if (hasEmail(b)) { await emailConfirmationLink(b); out.email = true }
-  if (hasSms(b)) {
-    const msg = `${COMPANY.legalNameUpper}: Hi ${b.customerName}, you're almost booked (${b.bookingNumber}). Verify your service date & arrival window and view your invoice here: ${bookingLink(b.token)} Reply STOP to opt out, HELP for help.`
-    out.sms = await sendSms(b.customerPhone, msg)
+export async function sendConfirmationLink(b: Booking): Promise<LinkDelivery> {
+  const out: LinkDelivery = { email: false, sms: false, delivered: false }
+  const reasons: string[] = []
+
+  // The provider RESULT decides, not the presence of an address. Both channels are
+  // optional capabilities now, and either can refuse.
+  if (b.customerEmail) {
+    const r = await emailConfirmationLink(b)
+    out.email = r.ok
+    if (!r.ok) reasons.push(`email: ${r.error ?? 'not sent'}`)
+  } else {
+    reasons.push('email: no address on file')
   }
+
+  if (toE164(b.customerPhone)) {
+    const msg = `${COMPANY.legalNameUpper}: Hi ${b.customerName}, you're almost booked (${b.bookingNumber}). Verify your service date & arrival window and view your invoice here: ${bookingLink(b.token)} Reply STOP to opt out, HELP for help.`
+    const r = await sendSmsDetailed(b.customerPhone, msg)
+    out.sms = r.ok
+    if (!r.ok) reasons.push(`sms: ${r.error}`)
+  } else {
+    reasons.push('sms: no usable phone number on file')
+  }
+
+  out.delivered = out.email || out.sms
+  if (!out.delivered) out.reason = reasons.join(' · ')
   return out
 }
 
@@ -82,8 +114,13 @@ export async function notifyJobCompleted(b: Booking): Promise<Channels> {
 
 export async function notifyBookingReminder(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
-  if (hasEmail(b)) { await emailBookingReminderCustomer(b); out.email = true }
-  if (hasSms(b)) {
+  // The provider RESULT decides, not the presence of an address. `hasEmail` only ever
+  // meant "there is an address and a key", so a send that was refused or failed still
+  // reported success — and the daily cron then stamped its one-shot marker, silently
+  // consuming a reminder the customer never received. With email and SMS now optional
+  // per business, that would have burned every reminder for every booking.
+  if (b.customerEmail) out.email = (await emailBookingReminderCustomer(b)).ok
+  if (toE164(b.customerPhone)) {
     const msg = `${COMPANY.legalName}: Hi ${b.customerName}, don't forget to confirm your booking (${b.bookingNumber}) — verify your date & window here: ${bookingLink(b.token)} Reply STOP to opt out.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
@@ -92,8 +129,13 @@ export async function notifyBookingReminder(b: Booking): Promise<Channels> {
 
 export async function notifyPaymentReminder(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
-  if (hasEmail(b)) { await emailPaymentReminderCustomer(b); out.email = true }
-  if (hasSms(b)) {
+  // The provider RESULT decides, not the presence of an address. `hasEmail` only ever
+  // meant "there is an address and a key", so a send that was refused or failed still
+  // reported success — and the daily cron then stamped its one-shot marker, silently
+  // consuming a reminder the customer never received. With email and SMS now optional
+  // per business, that would have burned every reminder for every booking.
+  if (b.customerEmail) out.email = (await emailPaymentReminderCustomer(b)).ok
+  if (toE164(b.customerPhone)) {
     const msg = `${COMPANY.legalName}: Reminder — a balance of ${fmtUSD(balanceDueCents(b))} is due on ${b.bookingNumber}. Pay or pay fee-free by Zelle (${COMPANY.zelle}): ${bookingLink(b.token)} Reply STOP to opt out.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
@@ -102,8 +144,13 @@ export async function notifyPaymentReminder(b: Booking): Promise<Channels> {
 
 export async function notifyJobTomorrow(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
-  if (hasEmail(b)) { await emailJobTomorrowCustomer(b); out.email = true }
-  if (hasSms(b)) {
+  // The provider RESULT decides, not the presence of an address. `hasEmail` only ever
+  // meant "there is an address and a key", so a send that was refused or failed still
+  // reported success — and the daily cron then stamped its one-shot marker, silently
+  // consuming a reminder the customer never received. With email and SMS now optional
+  // per business, that would have burned every reminder for every booking.
+  if (b.customerEmail) out.email = (await emailJobTomorrowCustomer(b)).ok
+  if (toE164(b.customerPhone)) {
     const msg = `${COMPANY.legalName}: Reminder — your ${SERVICE_LABELS[b.serviceType]} (${b.bookingNumber}) is tomorrow${b.selectedWindow ? `, ${b.selectedWindow}` : ''}. Please ensure clear access. Questions? ${COMPANY.phoneDisplay}.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
@@ -112,8 +159,13 @@ export async function notifyJobTomorrow(b: Booking): Promise<Channels> {
 
 export async function notifyReviewRequest(b: Booking): Promise<Channels> {
   const out: Channels = { email: false, sms: false }
-  if (hasEmail(b)) { await emailReviewRequestCustomer(b); out.email = true }
-  if (hasSms(b)) {
+  // The provider RESULT decides, not the presence of an address. `hasEmail` only ever
+  // meant "there is an address and a key", so a send that was refused or failed still
+  // reported success — and the daily cron then stamped its one-shot marker, silently
+  // consuming a reminder the customer never received. With email and SMS now optional
+  // per business, that would have burned every reminder for every booking.
+  if (b.customerEmail) out.email = (await emailReviewRequestCustomer(b)).ok
+  if (toE164(b.customerPhone)) {
     const msg = `${COMPANY.legalName}: Thanks again, ${b.customerName}! How did we do? Leave a quick review here: ${receiptLink(b.token)}#review Reply STOP to opt out.`
     out.sms = await sendSms(b.customerPhone, msg)
   }
