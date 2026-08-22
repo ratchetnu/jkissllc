@@ -51,6 +51,13 @@ export type PlatformBusiness = {
   currentCommit?: string
   latestVerifiedVersion?: string
   latestVerifiedCommit?: string    // commit of the last VERIFIED production deployment (set by reconciliation)
+  /**
+   * Provider deployment id (`dpl_…`) of the VERIFIED production deployment that
+   * `currentVersion` and `currentCommit` describe. Immutable technical evidence for a
+   * business-facing version number: the version is a claim, this is what backs it.
+   * Written in the same patch as the version, so the two can never disagree.
+   */
+  currentDeploymentId?: string
   releaseChannel: ReleaseChannel
   updatePolicy: UpdatePolicy
   updatesPaused: boolean

@@ -134,6 +134,8 @@ export function deriveReleaseStatus(targets: ReleaseTargetState[]): ReleaseStatu
 export type BusinessProvenancePatch = {
   currentCommit?: string
   latestVerifiedCommit?: string
+  /** The deployment that PROVES the version below. Set from the same verified facts. */
+  currentDeploymentId?: string
   currentVersion?: string
   latestVerifiedVersion?: string
   baselineSource?: 'installed_by_release'
@@ -159,6 +161,9 @@ export function deriveBusinessProvenance(input: {
     patch.currentCommit = input.facts.commit
     patch.latestVerifiedCommit = input.facts.commit
   }
+  // Recorded here and nowhere else, for the same reason the version is: a deployment
+  // id that did not come from a VERIFIED deployment would be evidence of nothing.
+  if (input.facts.deploymentId) patch.currentDeploymentId = input.facts.deploymentId
   if (input.releaseVersion) {
     const version = parseSemanticVersion(input.releaseVersion)
     if (!version.ok) throw new Error(`verified release has invalid semantic version: ${input.releaseVersion}`)

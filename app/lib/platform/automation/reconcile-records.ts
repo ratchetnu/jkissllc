@@ -216,6 +216,7 @@ export async function reconcileJobRecords(input: {
     ...business,
     currentCommit: plan.business.currentCommit ?? business.currentCommit,
     latestVerifiedCommit: plan.business.latestVerifiedCommit ?? business.latestVerifiedCommit,
+    currentDeploymentId: plan.business.currentDeploymentId ?? business.currentDeploymentId,
     currentVersion: plan.business.currentVersion ?? business.currentVersion,
     latestVerifiedVersion: plan.business.latestVerifiedVersion ?? business.latestVerifiedVersion,
     baselineSource: plan.business.baselineSource ?? business.baselineSource,

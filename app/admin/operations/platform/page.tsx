@@ -7,7 +7,8 @@ import ConfirmDialog from './ConfirmDialog'
 import GuidedDeploy from './GuidedDeploy'
 import { fmtTs } from '../ui'
 import { parseRepoName } from '../../../lib/platform/automation/repo-identity'
-import { businessReadiness, businessNextStep, groupUpdates, statusLabel, matchesStatusFilter, statusFilterLabel, STATUS_FILTERS, BUCKET_ORDER, BUCKET_BLURB } from '../../../lib/platform/updates/business-view'
+import { businessReadiness, businessNextStep, groupUpdates, statusLabel, matchesStatusFilter, statusFilterLabel, releaseIdentity, releaseIdentityLines, STATUS_FILTERS, BUCKET_ORDER, BUCKET_BLURB } from '../../../lib/platform/updates/business-view'
+import { proposeNextVersion } from '../../../lib/platform/release/version-proposal'
 import { deployPrimary, deployStage, DEPLOY_STAGES, failureExplanation } from '../../../lib/platform/automation/deploy-view'
 import { PROMOTION_STAGES, promotionStage } from '../../../lib/platform/automation/promotion'
 import type {
@@ -733,6 +734,8 @@ function BusinessDetail({ id, onChanged, onOpenUpdate }: { id: string; onChanged
   const next = { ...ns, action: nextAction }
 
   // ── Pending-update grouping (pure) ──
+  const identity = releaseIdentity(b)
+  const identityLines = releaseIdentityLines(identity)
   const groupOrder = BUCKET_ORDER
   const groups = groupUpdates(pending)
 
@@ -761,8 +764,27 @@ function BusinessDetail({ id, onChanged, onOpenUpdate }: { id: string; onChanged
           <MetaRow label="Release channel" value={nice(b.releaseChannel)} />
           <MetaRow label="Health" value={<Badge tone={b.healthStatus === 'healthy' ? 'green' : b.healthStatus === 'down' ? 'red' : b.healthStatus === 'degraded' ? 'amber' : 'gray'}>{nice(b.healthStatus)}</Badge>} />
           <MetaRow label="Automation mode" value={nice(b.automationMode ?? 'manual_prompt')} />
-          <MetaRow label="Current version" value={b.currentVersion || '—'} />
-          <MetaRow label="Current commit" value={b.currentCommit ? <span style={{ fontFamily: 'monospace' }}>{b.currentCommit}</span> : '—'} />
+        </div>
+        {/* ── Release identity: the business-facing version, and the immutable
+            evidence behind it. Shown together on purpose — a version with no
+            verified commit and deployment behind it is a number somebody typed. */}
+        <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 10, background: 'rgba(129,140,248,.07)', border: '1px solid rgba(129,140,248,.22)' }}>
+          <p style={{ fontSize: 17, fontWeight: 800, margin: 0 }}>
+            {b.name} <span style={{ color: identity.unversioned ? 'var(--muted)' : '#a5b4fc' }}>{identity.unversioned ? 'no version baseline' : identity.version}</span>
+          </p>
+          {identity.unversioned && (
+            <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '4px 0 0', lineHeight: 1.45 }}>
+              No verified release has established a version for {b.name} yet. Adopt a baseline before proposing a next version — a number with nothing behind it is worse than none.
+            </p>
+          )}
+          <div style={{ marginTop: 8 }}>
+            {identityLines.filter(r => r.label !== 'Version').map(r => (
+              <MetaRow key={r.label} label={r.label} value={<span style={{ fontFamily: r.label === 'Verified' ? 'inherit' : 'monospace' }}>{r.value}</span>} />
+            ))}
+            {!identity.deploymentId && !identity.unversioned && (
+              <MetaRow label="Production deployment" value={<span style={{ color: 'var(--muted)' }}>not recorded for this version</span>} />
+            )}
+          </div>
         </div>
       </div>
 
@@ -928,6 +950,14 @@ function BusinessDetail({ id, onChanged, onOpenUpdate }: { id: string; onChanged
                 <span style={{ fontSize: 13, fontWeight: 600 }}>{u.title}</span>
                 <Badge tone={u.status === 'blocked' || u.status === 'failed' ? 'red' : g === 'Ready for Preview' ? 'green' : 'amber'}>{statusLabel(u.status)}</Badge>
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>prio {u.priority}</span>
+                {/* Advisory only. Nothing here changes b.currentVersion — that happens
+                    after this update is published, deployed and verified. */}
+                {(() => {
+                  const p = proposeNextVersion({ currentVersion: b.currentVersion, update: u, channel: b.releaseChannel })
+                  return p.ok
+                    ? <span title={p.detail} style={{ fontSize: 11, color: '#a5b4fc', fontWeight: 700 }}>would propose v{p.proposed}</span>
+                    : <span title={p.detail} style={{ fontSize: 11, color: 'var(--muted)' }}>no version proposed</span>
+                })()}
                 <button style={{ ...btn(), marginLeft: 'auto', padding: '4px 10px' }} onClick={() => onOpenUpdate(u.key)}>View Update</button>
               </div>
             ))}

@@ -218,5 +218,13 @@ test('strict version authorship is confined to finalization, adoption, and relea
     'app/lib/platform/release/baseline-adoption.ts',
     'app/lib/platform/release/release-package.ts',
     'app/lib/platform/release/semver-policy.ts',
+    // ADVISORY, and admitted here deliberately: version-proposal.ts computes what an
+    // update WOULD become so an owner can see it before deciding. It parses versions
+    // and applies bump arithmetic, so it belongs to this family — but it authors
+    // nothing durable. That it can never persist a version is pinned separately, by
+    // "only the two evidence-based writers may PERSIST a version" in
+    // scripts/version-lifecycle.test.ts. Both guards have to agree before a version
+    // can move.
+    'app/lib/platform/release/version-proposal.ts',
   ])
 })
