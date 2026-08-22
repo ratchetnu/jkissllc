@@ -227,31 +227,125 @@ test('the page shows the proposal as advisory and never writes it', () => {
   assert.ok(!/setCurrentVersion|currentVersion:\s*p\.proposed|currentVersion = /.test(src), 'the page must never assign a version')
 })
 
-test('every field the verified path DERIVES is actually applied to the business', () => {
-  // The bug class this catches: a provenance field derived correctly and then
-  // silently dropped on the way to the record. `currentDeploymentId` was exactly
-  // that shape — derived from verified facts, and one missing line away from never
-  // reaching the business, leaving the version on screen with no evidence beside it.
-  // Mutation testing found this gap; the assertion is structural so it holds for the
-  // NEXT field too, not just this one.
-  const finalize = readFileSync(new URL('../app/lib/platform/automation/finalize.ts', import.meta.url), 'utf8')
-  const reconcile = readFileSync(new URL('../app/lib/platform/automation/reconcile-records.ts', import.meta.url), 'utf8')
-
-  const block = /export type BusinessProvenancePatch = \{([\s\S]*?)\n\}/.exec(finalize)?.[1]
-  assert.ok(block, 'BusinessProvenancePatch should still be declared')
-  const derived = [...block.matchAll(/^\s{2}(\w+)\??:/gm)].map((m) => m[1])
-  assert.ok(derived.length >= 6, `expected the full patch shape, parsed: ${derived.join(', ')}`)
-
-  const applied = /const nextBiz: PlatformBusiness = \{([\s\S]*?)\n  \}/.exec(reconcile)?.[1]
-  assert.ok(applied, 'the business record assembly should still be there')
-
-  const dropped = derived.filter((field) => !new RegExp(`\\b${field}\\s*:`).test(applied))
-  assert.deepEqual(dropped, [], `derived by finalize.ts but never written to the business: ${dropped.join(', ')}`)
-})
-
 test('the verified date is the same fact in every timezone', () => {
   // 23:30 UTC — the hour where local rendering silently changes the day.
   const lateUtc = Date.UTC(2026, 6, 18, 23, 30)
   assert.equal(formatVerifiedAt(lateUtc), '18 Jul 2026 (UTC)')
   assert.equal(formatVerifiedAt(Date.UTC(2026, 0, 1, 0, 5)), '1 Jan 2026 (UTC)')
+})
+
+// ── Evidence may never outlive the version it proves ────────────────────────
+
+test('adopting a version REPLACES its evidence — an earlier deployment id is never inherited', () => {
+  // The defect this pins: `currentVersion` and `currentDeploymentId` were set by two
+  // independent conditions, and the record assembly inherited any field the patch did
+  // not carry. `productionDeploymentId` is optional on a job, so a verified promotion
+  // that adopted v1.4.0 without one kept the dpl_ from v1.3.2 — and the UI presented
+  // it as the deployment that proves v1.4.0. Someone rolling back "to the deployment
+  // behind v1.4.0" would have rolled back to the wrong build.
+  //
+  // No evidence is honest ("not recorded for this version"). Wrong evidence is not.
+  const patch = deriveBusinessProvenance({
+    facts: { commit: 'b'.repeat(40), verifiedAt: 2, buildPassed: true, healthPassed: true }, // no deploymentId
+    releaseVersion: '1.4.0',
+  })
+  assert.equal(patch.currentVersion, '1.4.0')
+  assert.ok('currentDeploymentId' in patch, 'the key must be PRESENT so it clears a stale id')
+  assert.equal(patch.currentDeploymentId, undefined, 'and carry no id, because this release has none')
+
+  const business = { currentVersion: '1.3.2', currentCommit: 'a'.repeat(40), currentDeploymentId: 'dpl_OLD_1_3_2' }
+  const next = { ...business, ...patch }
+  assert.equal(next.currentVersion, '1.4.0')
+  assert.equal(next.currentDeploymentId, undefined, 'v1.3.2 evidence must not survive onto v1.4.0')
+})
+
+test('a version and its evidence always describe the same release', () => {
+  const patch = deriveBusinessProvenance({
+    facts: { commit: 'c'.repeat(40), deploymentId: 'dpl_NEW', verifiedAt: 9, buildPassed: true, healthPassed: true },
+    releaseVersion: '2.0.0',
+  })
+  const next = { ...{ currentVersion: '1.9.9', currentCommit: 'z', currentDeploymentId: 'dpl_OLD' }, ...patch }
+  assert.equal(next.currentVersion, '2.0.0')
+  assert.equal(next.currentCommit, 'c'.repeat(40))
+  assert.equal(next.currentDeploymentId, 'dpl_NEW')
+  assert.equal(patch.lastVerificationAt, 9, 'and the timestamp is that same moment')
+})
+
+test('evidence-only verification does NOT clear an existing version', () => {
+  // The complementary direction: a deployment with no release version must leave the
+  // version and its evidence alone rather than blanking them.
+  const patch = deriveBusinessProvenance({
+    facts: { commit: 'd'.repeat(40), deploymentId: 'dpl_EV', verifiedAt: 3, buildPassed: true, healthPassed: true },
+  })
+  assert.ok(!('currentVersion' in patch), 'no version key at all — nothing to clobber')
+  const next = { ...{ currentVersion: '1.3.2', currentDeploymentId: 'dpl_OLD' }, ...patch }
+  assert.equal(next.currentVersion, '1.3.2', 'the version survives')
+  assert.equal(next.currentDeploymentId, 'dpl_EV', 'while the evidence advances to what was actually verified')
+})
+
+test('the record assembly applies the WHOLE patch — no field can be dropped in transit', () => {
+  // This REPLACED a weaker guard that parsed the field list of BusinessProvenancePatch
+  // and checked each name appeared in the assembly. That guard could only ever catch a
+  // field somebody forgot to transcribe; it could not catch `?? business.x` inheriting
+  // the previous release's value, which was the actual defect. Spreading the patch
+  // makes both impossible by construction, so the check here is that the construction
+  // itself has not regressed — a much smaller claim, and a true one.
+  const reconcile = readFileSync(new URL('../app/lib/platform/automation/reconcile-records.ts', import.meta.url), 'utf8')
+  const assembly = /const nextBiz: PlatformBusiness = \{([\s\S]*?)\n  \}/.exec(reconcile)?.[1] ?? ''
+  assert.match(assembly, /\.\.\.plan\.business/, 'the whole patch is spread, not transcribed')
+  assert.ok(!/currentVersion\s*:\s*plan\.business\.currentVersion\s*\?\?/.test(assembly),
+    'field-by-field inheritance is what let stale evidence survive a version change')
+})
+
+test('every proposal this module makes is ACCEPTED by the approval gate', () => {
+  // The property that matters for "reuses the existing policy": the number an owner is
+  // shown must be one the gate would actually accept. If the proposal and
+  // evaluateVersionBump() ever disagreed, the UI would advertise a version that is
+  // refused the moment it is used — and the two live in different modules, so nothing
+  // but this test keeps them aligned. Exhaustive over the type union × breaking.
+  const TYPES: PlatformUpdate['type'][] = [
+    'feature', 'enhancement', 'bug_fix', 'security', 'performance', 'accessibility',
+    'design', 'infrastructure', 'migration', 'configuration', 'documentation',
+    'deprecation', 'emergency_hotfix',
+  ]
+  for (const type of TYPES) {
+    for (const breakingChange of [false, true]) {
+      for (const migrationRequired of [false, true]) {
+        const update = upd({ type, breakingChange, migrationRequired })
+        const proposal = proposeNextVersion({ currentVersion: '1.3.2', update })
+        assert.equal(proposal.ok, true, `${type}/${breakingChange}`)
+        const shape = updateChangeShape(update)
+        const verdict = evaluateVersionBump({
+          proposedVersion: (proposal as { proposed: string }).proposed,
+          previousVersion: '1.3.2',
+          classification: shape.classification,
+          breakingChange: shape.breakingChange,
+          migration: shape.migration,
+          channel: 'stable',
+        })
+        assert.equal(verdict.ok, true,
+          `${type} breaking=${breakingChange} migration=${migrationRequired} → proposed ${(proposal as { proposed: string }).proposed} but the gate said ${verdict.reason}`)
+      }
+    }
+  }
+})
+
+test('a breaking change proposes major for EVERY update type', () => {
+  // The one direction that must never under-propose: if the record says breaking, the
+  // proposal has to be a major regardless of how the commit was classified.
+  for (const type of ['documentation', 'design', 'bug_fix', 'infrastructure'] as PlatformUpdate['type'][]) {
+    const p = proposeNextVersion({ currentVersion: '1.3.2', update: upd({ type, breakingChange: true }) })
+    assert.equal((p as { proposed: string }).proposed, '2.0.0', type)
+  }
+})
+
+test('an ambiguous commit fails toward review, not toward a major', () => {
+  // A subject with no conventional prefix classifies as `enhancement` → minor. It must
+  // never reach major on ambiguity alone: a major is the one bump that cannot be walked
+  // back once a business has been told it, and the record is parked for review anyway.
+  const ambiguous = upd({ type: 'enhancement', breakingChange: false, migrationRequired: true })
+  const p = proposeNextVersion({ currentVersion: '1.3.2', update: ambiguous })
+  assert.equal((p as { proposed: string }).proposed, '1.4.0')
+  assert.notEqual((p as { proposed: string }).proposed, '2.0.0')
+  assert.match((p as { detail: string }).detail, /Not applied/, 'and it says out loud that nothing was applied')
 })
