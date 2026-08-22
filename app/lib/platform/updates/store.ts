@@ -3,6 +3,7 @@
 // `platform:` prefix is on the never-tenant-scoped allowlist (keys.ts) — this is
 // intentionally global platform-owner data, independent of any tenant.
 
+import crypto from 'node:crypto'
 import { redis } from '../../redis'
 import type {
   PlatformBusiness, PlatformUpdate, UpdateCompatibility, PlatformRelease, DeploymentRecord,
@@ -14,6 +15,7 @@ const K_BIZ_IDX = 'platform:business:index'
 const K_UPD = 'platform:update:'
 const K_UPD_IDX = 'platform:update:index'
 const K_UPD_CTR = 'platform:update:counter'
+const K_UPD_DISCOVERY = 'platform:update-discovery:'
 const K_COMPAT = 'platform:compat:'          // platform:compat:{updateKey} -> Record<bizId, UpdateCompatibility>
 const K_REL = 'platform:release:'
 const K_REL_IDX = 'platform:release:index'
@@ -56,6 +58,47 @@ export async function saveUpdate(u: PlatformUpdate): Promise<void> {
 }
 export async function listUpdates(limit = 500): Promise<PlatformUpdate[]> {
   return loadMany(K_UPD, await redis.zrevrange(K_UPD_IDX, 0, Math.max(0, limit - 1)))
+}
+
+type DiscoveryStore = Pick<typeof redis, 'eval' | 'get'>
+export type DiscoveryWrite = { kind: 'created' | 'existing'; update: PlatformUpdate }
+
+/**
+ * Create one update for a source artifact, exactly once.
+ *
+ * GitHub retries jobs and owners can re-run them. A read-then-write check would race,
+ * so the artifact marker, update record, and index entry are written in one Lua call.
+ * A duplicate receives the original record and can return 200 without creating a new
+ * UPD item. Keys are never derived from an untrusted repository name; the identity is
+ * hashed first.
+ */
+export async function saveDiscoveredUpdate(
+  update: PlatformUpdate,
+  identity: { repository: string; commit: string },
+  store: DiscoveryStore = redis,
+): Promise<DiscoveryWrite> {
+  const digest = crypto.createHash('sha256').update(`${identity.repository.toLowerCase()}@${identity.commit.toLowerCase()}`).digest('hex')
+  const markerKey = K_UPD_DISCOVERY + digest
+  const updateKey = K_UPD + update.key
+  const script = `
+    local existing = redis.call('GET', KEYS[1])
+    if existing then return existing end
+    if redis.call('EXISTS', KEYS[2]) == 1 then return '__UPDATE_KEY_COLLISION__' end
+    redis.call('SET', KEYS[2], ARGV[1])
+    redis.call('ZADD', KEYS[3], ARGV[2], ARGV[3])
+    redis.call('SET', KEYS[1], ARGV[3])
+    return ARGV[3]
+  `
+  const result = String(await store.eval(
+    script,
+    [markerKey, updateKey, K_UPD_IDX],
+    [JSON.stringify(update), String(update.updatedAt), update.key],
+  ))
+  if (result === '__UPDATE_KEY_COLLISION__') throw new Error('UPDATE_KEY_COLLISION')
+  if (result === update.key) return { kind: 'created', update }
+  const existing = parse<PlatformUpdate>(await store.get(K_UPD + result))
+  if (!existing) throw new Error('DISCOVERY_MARKER_WITHOUT_UPDATE')
+  return { kind: 'existing', update: existing }
 }
 
 // ── Compatibility (one blob per update: bizId -> record) ─────────────────────
